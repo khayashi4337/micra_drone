@@ -7,12 +7,15 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CropBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
+import io.github.khayashi4337.micradrone.drone.FarmCellRules.CellFacts;
+
 /**
  * Maps the drone's grid cell onto real world blocks, reusing vanilla farmland/wheat mechanics
  * (moisture, random-tick growth) instead of a bespoke crop simulation. The plot is a square area
  * starting one block diagonally from the controller, extending toward whichever diagonal quadrant
  * {@link DroneGridState#dirX()}/{@link DroneGridState#dirZ()} points at (see
- * DroneControllerBlockEntity#scanForCornerMarker).
+ * DroneControllerBlockEntity#scanForCornerMarker). Reads the real blocks into {@link CellFacts} and
+ * leaves the actual till/plant/harvest decisions to {@link FarmCellRules}.
  */
 public final class LiveFarmBlockAccess implements FarmBlockAccess {
     private final Level level;
@@ -42,12 +45,20 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         return groundPos().above();
     }
 
+    private CellFacts readFacts(BlockPos ground, BlockPos above) {
+        BlockState groundState = level.getBlockState(ground);
+        BlockState aboveState = level.getBlockState(above);
+        return new CellFacts(
+                groundState.is(BlockTags.DIRT),
+                groundState.is(Blocks.FARMLAND),
+                aboveState.isAir(),
+                isMatureCrop(aboveState));
+    }
+
     @Override
     public Attempt attemptTill() {
         BlockPos ground = groundPos();
-        BlockState groundState = level.getBlockState(ground);
-        boolean tillable = groundState.is(BlockTags.DIRT) && level.getBlockState(ground.above()).isAir();
-        if (!tillable) {
+        if (!FarmCellRules.canTill(readFacts(ground, ground.above()))) {
             return Attempt.failure();
         }
         return new Attempt(true, () -> level.setBlockAndUpdate(ground, Blocks.FARMLAND.defaultBlockState()));
@@ -55,13 +66,9 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
 
     @Override
     public Attempt attemptPlant(String crop) {
-        if (!"wheat".equals(crop)) {
-            return Attempt.failure();
-        }
         BlockPos ground = groundPos();
         BlockPos above = cropPos();
-        boolean plantable = level.getBlockState(ground).is(Blocks.FARMLAND) && level.getBlockState(above).isAir();
-        if (!plantable) {
+        if (!FarmCellRules.canPlant(crop, readFacts(ground, above))) {
             return Attempt.failure();
         }
         return new Attempt(true, () -> level.setBlockAndUpdate(above, Blocks.WHEAT.defaultBlockState()));
@@ -69,8 +76,9 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
 
     @Override
     public Attempt attemptHarvest() {
+        BlockPos ground = groundPos();
         BlockPos above = cropPos();
-        if (!isMatureCrop(level.getBlockState(above))) {
+        if (!FarmCellRules.canHarvest(readFacts(ground, above))) {
             return Attempt.failure();
         }
         return new Attempt(true, () -> level.setBlockAndUpdate(above, Blocks.AIR.defaultBlockState()));
@@ -78,7 +86,8 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
 
     @Override
     public boolean canHarvest() {
-        return isMatureCrop(level.getBlockState(cropPos()));
+        BlockPos ground = groundPos();
+        return FarmCellRules.canHarvest(readFacts(ground, cropPos()));
     }
 
     private static boolean isMatureCrop(BlockState state) {
