@@ -63,4 +63,14 @@ public class DroneControllerBlock extends BaseEntityBlock {
         }
         return InteractionResult.sidedSuccess(level.isClientSide);
     }
+
+    // Clean up the visible DroneEntity so it doesn't linger after the controller that owns it is gone.
+    @Override
+    protected void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
+        if (state.hasBlockEntity() && !state.is(newState.getBlock())
+                && level.getBlockEntity(pos) instanceof DroneControllerBlockEntity be) {
+            be.discardDroneEntity();
+        }
+        super.onRemove(state, level, pos, newState, movedByPiston);
+    }
 }

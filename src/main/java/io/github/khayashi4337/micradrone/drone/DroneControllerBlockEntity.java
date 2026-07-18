@@ -1,6 +1,7 @@
 package io.github.khayashi4337.micradrone.drone;
 
 import java.util.List;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
@@ -53,6 +54,8 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private volatile int dirZ = 1;
 
     private DroneScriptRunner scriptRunner;
+    /** The visible {@link DroneEntity} tracked by UUID (entities aren't safe to hold direct references to across reloads). */
+    private UUID droneEntityUuid;
 
     public DroneControllerBlockEntity(BlockPos pos, BlockState state) {
         super(MicraDrone.DRONE_CONTROLLER_BLOCK_ENTITY.get(), pos, state);
@@ -77,6 +80,50 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         this.gridX = x;
         this.gridY = y;
         setChanged();
+        if (level instanceof ServerLevel serverLevel) {
+            syncDronePosition(serverLevel);
+        }
+    }
+
+    /** Moves the visible {@link DroneEntity} to match the current grid position, spawning it if needed. */
+    private void syncDronePosition(ServerLevel level) {
+        int[] offset = LiveFarmBlockAccess.groundOffset(dirX, dirZ, gridX, gridY);
+        double x = getBlockPos().getX() + offset[0] + 0.5;
+        double y = getBlockPos().getY() + 1.0;
+        double z = getBlockPos().getZ() + offset[1] + 0.5;
+
+        DroneEntity drone = resolveDroneEntity(level);
+        if (drone == null) {
+            drone = MicraDrone.DRONE_ENTITY.get().create(level);
+            if (drone == null) {
+                return; // shouldn't happen; entity factory misconfigured
+            }
+            drone.moveTo(x, y, z);
+            drone.setPersistenceRequired(); // tied to this controller - must not naturally despawn
+            level.addFreshEntity(drone);
+            droneEntityUuid = drone.getUUID();
+            setChanged();
+        } else {
+            drone.moveTo(x, y, z);
+        }
+    }
+
+    private DroneEntity resolveDroneEntity(ServerLevel level) {
+        if (droneEntityUuid == null) {
+            return null;
+        }
+        return level.getEntity(droneEntityUuid) instanceof DroneEntity drone ? drone : null;
+    }
+
+    /** Removes the visible drone entity, e.g. when this controller block is broken. */
+    public void discardDroneEntity() {
+        if (level instanceof ServerLevel serverLevel) {
+            DroneEntity drone = resolveDroneEntity(serverLevel);
+            if (drone != null) {
+                drone.discard();
+            }
+        }
+        droneEntityUuid = null;
     }
 
     @Override
@@ -140,6 +187,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         super.loadAdditional(tag, registries);
         gridX = tag.getInt("GridX");
         gridY = tag.getInt("GridY");
+        droneEntityUuid = tag.hasUUID("DroneEntityUuid") ? tag.getUUID("DroneEntityUuid") : null;
     }
 
     @Override
@@ -147,5 +195,8 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         super.saveAdditional(tag, registries);
         tag.putInt("GridX", gridX);
         tag.putInt("GridY", gridY);
+        if (droneEntityUuid != null) {
+            tag.putUUID("DroneEntityUuid", droneEntityUuid);
+        }
     }
 }

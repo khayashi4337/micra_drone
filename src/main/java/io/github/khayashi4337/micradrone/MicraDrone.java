@@ -6,7 +6,11 @@ import com.mojang.logging.LogUtils;
 
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlock;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
+import io.github.khayashi4337.micradrone.drone.DroneEntity;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.MobCategory;
+import net.minecraft.world.entity.animal.allay.Allay;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.CreativeModeTabs;
@@ -20,6 +24,7 @@ import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
+import net.neoforged.neoforge.event.entity.EntityAttributeCreationEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.registries.DeferredBlock;
 import net.neoforged.neoforge.registries.DeferredHolder;
@@ -59,6 +64,18 @@ public class MicraDrone {
     public static final DeferredItem<BlockItem> CORNER_MARKER_ITEM =
             ITEMS.registerSimpleBlockItem("corner_marker", CORNER_MARKER_BLOCK);
 
+    // Create a Deferred Register to hold EntityTypes which will all be registered under the "micradrone" namespace
+    public static final DeferredRegister<EntityType<?>> ENTITY_TYPES = DeferredRegister.create(Registries.ENTITY_TYPE, MODID);
+    // Visible drone entity: an Allay subclass with all its AI stripped, see DroneEntity. Same size as
+    // vanilla Allay (its model/renderer are reused as-is) and MISC category (not a wild spawnable creature).
+    public static final DeferredHolder<EntityType<?>, EntityType<DroneEntity>> DRONE_ENTITY = ENTITY_TYPES.register(
+            "drone", () -> EntityType.Builder.of(DroneEntity::new, MobCategory.MISC)
+                    .sized(0.35f, 0.6f)
+                    .eyeHeight(0.36f)
+                    .clientTrackingRange(8)
+                    .updateInterval(2)
+                    .build("drone"));
+
     // The constructor for the mod class is the first code that is run when your mod is loaded.
     // FML will recognize some parameter types like IEventBus or ModContainer and pass them in automatically.
     public MicraDrone(IEventBus modEventBus, ModContainer modContainer) {
@@ -70,16 +87,23 @@ public class MicraDrone {
         ITEMS.register(modEventBus);
         CREATIVE_MODE_TABS.register(modEventBus);
         BLOCK_ENTITY_TYPES.register(modEventBus);
+        ENTITY_TYPES.register(modEventBus);
 
         // Register ourselves for server and other game events we are interested in.
         NeoForge.EVENT_BUS.register(this);
 
         // Add the drone controller to the vanilla "Functional Blocks" creative tab
         modEventBus.addListener(this::addCreative);
+        modEventBus.addListener(this::registerAttributes);
     }
 
     private void commonSetup(FMLCommonSetupEvent event) {
         LOGGER.info("MicraDrone: common setup complete");
+    }
+
+    private void registerAttributes(EntityAttributeCreationEvent event) {
+        // DroneEntity is a plain Allay subclass (see DroneEntity), so it needs the same attributes.
+        event.put(DRONE_ENTITY.get(), Allay.createAttributes().build());
     }
 
     private void addCreative(BuildCreativeModeTabContentsEvent event) {
