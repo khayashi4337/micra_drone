@@ -22,8 +22,9 @@ class CornerMarkerScanTest {
 
     @Test
     void findsMarkerOnExactDiagonalAtSameY() {
+        // marker 3 diagonal steps away: a 4x4 span including both corner cells, so a 2x2 interior remains
         PlotBounds bounds = CornerMarkerScan.scan(markersAt(new int[]{3, 0, 3}), 10, 4, 5);
-        assertEquals(new PlotBounds(4, 1, 1), bounds);
+        assertEquals(new PlotBounds(2, 1, 1), bounds);
     }
 
     // Regression test for the reported bug: natural terrain is rarely perfectly flat, so a marker
@@ -31,7 +32,22 @@ class CornerMarkerScanTest {
     @Test
     void findsMarkerWithinYTolerance() {
         PlotBounds bounds = CornerMarkerScan.scan(markersAt(new int[]{3, 2, 3}), 10, 4, 5);
-        assertEquals(new PlotBounds(4, 1, 1), bounds);
+        assertEquals(new PlotBounds(2, 1, 1), bounds);
+    }
+
+    // Regression test for the exact scenario 林さん reported: a 3x3 span (marker 2 diagonal steps away,
+    // both corner cells included) must leave only the single center cell farmable - not the corners'
+    // own rows/columns, and not spilling one cell past the marker.
+    @Test
+    void threeByThreeSpanLeavesOnlyTheCenterCellFarmable() {
+        PlotBounds bounds = CornerMarkerScan.scan(markersAt(new int[]{2, 0, 2}), 10, 4, 5);
+        assertEquals(new PlotBounds(1, 1, 1), bounds);
+    }
+
+    @Test
+    void markerTouchingDiagonallyLeavesNoFarmableCells() {
+        PlotBounds bounds = CornerMarkerScan.scan(markersAt(new int[]{1, 0, 1}), 10, 4, 5);
+        assertEquals(new PlotBounds(0, 1, 1), bounds);
     }
 
     @Test
@@ -51,15 +67,15 @@ class CornerMarkerScanTest {
         // a farther south-east marker and a closer north-west marker: nearest wins regardless of direction
         CornerMarkerScan.MarkerLookup lookup = markersAt(new int[]{6, 0, 6}, new int[]{-2, 0, -2});
         PlotBounds bounds = CornerMarkerScan.scan(lookup, 10, 4, 5);
-        assertEquals(new PlotBounds(3, -1, -1), bounds);
+        assertEquals(new PlotBounds(1, -1, -1), bounds);
     }
 
     @Test
     void identifiesEachOfTheFourDiagonalDirections() {
-        assertEquals(new PlotBounds(3, 1, 1), CornerMarkerScan.scan(markersAt(new int[]{2, 0, 2}), 10, 0, 5)); // south-east
-        assertEquals(new PlotBounds(3, -1, 1), CornerMarkerScan.scan(markersAt(new int[]{-2, 0, 2}), 10, 0, 5)); // south-west
-        assertEquals(new PlotBounds(3, 1, -1), CornerMarkerScan.scan(markersAt(new int[]{2, 0, -2}), 10, 0, 5)); // north-east
-        assertEquals(new PlotBounds(3, -1, -1), CornerMarkerScan.scan(markersAt(new int[]{-2, 0, -2}), 10, 0, 5)); // north-west
+        assertEquals(new PlotBounds(1, 1, 1), CornerMarkerScan.scan(markersAt(new int[]{2, 0, 2}), 10, 0, 5)); // south-east
+        assertEquals(new PlotBounds(1, -1, 1), CornerMarkerScan.scan(markersAt(new int[]{-2, 0, 2}), 10, 0, 5)); // south-west
+        assertEquals(new PlotBounds(1, 1, -1), CornerMarkerScan.scan(markersAt(new int[]{2, 0, -2}), 10, 0, 5)); // north-east
+        assertEquals(new PlotBounds(1, -1, -1), CornerMarkerScan.scan(markersAt(new int[]{-2, 0, -2}), 10, 0, 5)); // north-west
     }
 
     @Test

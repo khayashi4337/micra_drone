@@ -28,18 +28,19 @@ final class CornerMarkerScan {
      * Scans the 4 diagonals (nearest distance first, within {@code yTolerance} of dy=0) for a marker.
      * Returns {@code defaultSize} toward south-east if none is found.
      *
-     * <p>The marker's own cell is counted as part of the plot (worldSize = distance + 1, WorldEdit-style
-     * inclusive corners), but since the marker block itself occupies that cell, the last row/column
-     * will always fail to till - the effectively farmable area is one smaller in each direction than
-     * worldSize suggests. This is treated as an acceptable, discoverable Minecraft-native constraint
-     * rather than a bug (see project memory: prefer real block behavior over hiding it).
+     * <p>Neither corner's own row/column is part of the farmable plot: the controller's is already
+     * excluded by construction (grid cell 0 sits one block away from the controller, see
+     * {@link LiveFarmBlockAccess#groundPos}), and the marker's row/column is excluded here by using
+     * {@code distance - 1} rather than {@code distance} as the plot size. E.g. a marker 2 diagonal
+     * steps away (a 3x3 span including both corner cells) leaves only the single center cell farmable.
+     * A marker only 1 step away (touching diagonally) leaves 0 farmable cells.
      */
     static PlotBounds scan(MarkerLookup lookup, int maxDistance, int yTolerance, int defaultSize) {
         for (int i = 1; i <= maxDistance; i++) {
             for (int[] dir : DIAGONAL_DIRECTIONS) {
                 for (int dy = -yTolerance; dy <= yTolerance; dy++) {
                     if (lookup.isMarkerAt(dir[0] * i, dy, dir[1] * i)) {
-                        return new PlotBounds(i + 1, dir[0], dir[1]);
+                        return new PlotBounds(Math.max(0, i - 1), dir[0], dir[1]);
                     }
                 }
             }

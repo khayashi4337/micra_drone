@@ -25,8 +25,17 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         this.grid = grid;
     }
 
+    /**
+     * Pure coordinate math (no Minecraft types), so it can be unit tested without a real world.
+     * Returns {dx, dz}: the offset from the controller to grid cell (gx, gy).
+     */
+    static int[] groundOffset(int dirX, int dirZ, int gx, int gy) {
+        return new int[]{dirX * (1 + gx), dirZ * (1 + gy)};
+    }
+
     private BlockPos groundPos() {
-        return origin.offset(grid.dirX() * (1 + grid.gridX()), 0, grid.dirZ() * (1 + grid.gridY()));
+        int[] offset = groundOffset(grid.dirX(), grid.dirZ(), grid.gridX(), grid.gridY());
+        return origin.offset(offset[0], 0, offset[1]);
     }
 
     private BlockPos cropPos() {
