@@ -9,8 +9,10 @@ import net.minecraft.world.level.block.state.BlockState;
 
 /**
  * Maps the drone's grid cell onto real world blocks, reusing vanilla farmland/wheat mechanics
- * (moisture, random-tick growth) instead of a bespoke crop simulation. The plot is a fixed 5x5
- * area starting one block diagonally from the controller (MVP: no facing-awareness yet).
+ * (moisture, random-tick growth) instead of a bespoke crop simulation. The plot is a square area
+ * starting one block diagonally from the controller, extending toward whichever diagonal quadrant
+ * {@link DroneGridState#dirX()}/{@link DroneGridState#dirZ()} points at (see
+ * DroneControllerBlockEntity#scanForCornerMarker).
  */
 public final class LiveFarmBlockAccess implements FarmBlockAccess {
     private final Level level;
@@ -24,7 +26,7 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     }
 
     private BlockPos groundPos() {
-        return origin.offset(1 + grid.gridX(), 0, 1 + grid.gridY());
+        return origin.offset(grid.dirX() * (1 + grid.gridX()), 0, grid.dirZ() * (1 + grid.gridY()));
     }
 
     private BlockPos cropPos() {

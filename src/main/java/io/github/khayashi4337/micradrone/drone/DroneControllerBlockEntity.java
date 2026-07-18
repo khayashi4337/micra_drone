@@ -15,16 +15,25 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
-/** Holds the drone's grid position for the farm plot claimed by this controller. */
+/**
+ * Holds the drone's grid position for the farm plot claimed by this controller. Plot size/direction
+ * is decided by an optional paired {@link MicraDrone#CORNER_MARKER_BLOCK}: it must sit on one of the
+ * 4 world-space diagonals from this block (dx == dz in absolute value) so the plot is always square,
+ * which both matches the original game's single-side-length farm size and keeps the search simple -
+ * only 4 rays need scanning instead of a general-area search.
+ */
 public class DroneControllerBlockEntity extends BlockEntity implements DroneGridState {
-    /** MVP: fixed-size square grid (see Phase 1 design doc). */
-    private static final int WORLD_SIZE = 5;
+    /** Used when no corner marker is found (see {@link #scanForCornerMarker}). */
+    private static final int DEFAULT_WORLD_SIZE = 5;
+    private static final int MAX_MARKER_SCAN_DISTANCE = 64;
+    private static final int[][] DIAGONAL_DIRECTIONS = {{1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
 
     /**
      * Temporary stand-in for Phase 1 task 5 (real script file + GUI trigger): till and plant two
      * cells so right-clicking the controller produces a visible result while task 5 isn't built yet.
      */
     private static final String DEMO_SCRIPT = """
+            print(get_world_size())
             till()
             plant("wheat")
             move("east")
@@ -34,9 +43,13 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
     private final PacedActionQueue pacedActionQueue = new PacedActionQueue();
 
-    // Written only on the main thread (paced action apply); read from the script worker thread too.
+    // Written only on the main thread (paced action apply, or scanForCornerMarker); read from the
+    // script worker thread too.
     private volatile int gridX = 0;
     private volatile int gridY = 0;
+    private volatile int worldSize = DEFAULT_WORLD_SIZE;
+    private volatile int dirX = 1;
+    private volatile int dirZ = 1;
 
     private DroneScriptRunner scriptRunner;
 
@@ -67,7 +80,41 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
     @Override
     public int worldSize() {
-        return WORLD_SIZE;
+        return worldSize;
+    }
+
+    @Override
+    public int dirX() {
+        return dirX;
+    }
+
+    @Override
+    public int dirZ() {
+        return dirZ;
+    }
+
+    /**
+     * Looks for a {@link MicraDrone#CORNER_MARKER_BLOCK} on one of the 4 diagonals from this block
+     * (up to {@link #MAX_MARKER_SCAN_DISTANCE} away) and, if found, sizes/orients the plot to match.
+     * A marker placed off the true diagonal is simply never found - the plot silently stays square.
+     * Falls back to {@link #DEFAULT_WORLD_SIZE} toward +X/+Z when no marker is found.
+     */
+    private void scanForCornerMarker(ServerLevel level) {
+        BlockPos pos = getBlockPos();
+        for (int[] dir : DIAGONAL_DIRECTIONS) {
+            for (int i = 1; i <= MAX_MARKER_SCAN_DISTANCE; i++) {
+                BlockPos check = pos.offset(dir[0] * i, 0, dir[1] * i);
+                if (level.getBlockState(check).is(MicraDrone.CORNER_MARKER_BLOCK.get())) {
+                    worldSize = i + 1;
+                    dirX = dir[0];
+                    dirZ = dir[1];
+                    return;
+                }
+            }
+        }
+        worldSize = DEFAULT_WORLD_SIZE;
+        dirX = 1;
+        dirZ = 1;
     }
 
     /** See {@link #DEMO_SCRIPT}. No-op if a script is already running. */
@@ -78,6 +125,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         if (scriptRunner != null && scriptRunner.getState() == DroneScriptRunner.State.RUNNING) {
             return;
         }
+        scanForCornerMarker(serverLevel);
         MainThreadGateway gateway = new ServerMainThreadGateway(serverLevel.getServer());
         FarmBlockAccess farm = new LiveFarmBlockAccess(serverLevel, getBlockPos(), this);
         Consumer<String> log = msg -> MicraDrone.LOGGER.info("[drone {}] {}", getBlockPos(), msg);

@@ -51,6 +51,14 @@ public class MicraDrone {
             BLOCK_ENTITY_TYPES.register("drone_controller", () -> BlockEntityType.Builder.of(
                     DroneControllerBlockEntity::new, DRONE_CONTROLLER_BLOCK.get()).build(null));
 
+    // Placed at the opposite diagonal corner from a drone_controller to size its (square) plot.
+    // Plain block, no BlockEntity: the controller scans the 4 diagonals for it, see
+    // DroneControllerBlockEntity#scanForCornerMarker.
+    public static final DeferredBlock<net.minecraft.world.level.block.Block> CORNER_MARKER_BLOCK =
+            BLOCKS.registerSimpleBlock("corner_marker", BlockBehaviour.Properties.of().mapColor(MapColor.GOLD).strength(2.0f));
+    public static final DeferredItem<BlockItem> CORNER_MARKER_ITEM =
+            ITEMS.registerSimpleBlockItem("corner_marker", CORNER_MARKER_BLOCK);
+
     // The constructor for the mod class is the first code that is run when your mod is loaded.
     // FML will recognize some parameter types like IEventBus or ModContainer and pass them in automatically.
     public MicraDrone(IEventBus modEventBus, ModContainer modContainer) {
@@ -77,6 +85,7 @@ public class MicraDrone {
     private void addCreative(BuildCreativeModeTabContentsEvent event) {
         if (event.getTabKey() == CreativeModeTabs.FUNCTIONAL_BLOCKS) {
             event.accept(DRONE_CONTROLLER_ITEM);
+            event.accept(CORNER_MARKER_ITEM);
         }
     }
 

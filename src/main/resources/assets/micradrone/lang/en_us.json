@@ -1,3 +1,4 @@
 {
-  "block.micradrone.drone_controller": "Drone Controller"
+  "block.micradrone.drone_controller": "Drone Controller",
+  "block.micradrone.corner_marker": "Corner Marker"
 }

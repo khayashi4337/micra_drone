@@ -29,4 +29,14 @@ final class FakeGridState implements DroneGridState {
     public int worldSize() {
         return size;
     }
+
+    @Override
+    public int dirX() {
+        return 1;
+    }
+
+    @Override
+    public int dirZ() {
+        return 1;
+    }
 }
