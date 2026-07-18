@@ -13,9 +13,8 @@ import io.github.khayashi4337.micradrone.lang.ScriptStoppedException;
 /**
  * Real {@link DroneApi} backing a placed drone. World-mutating calls are dispatched to the main
  * thread and paced via {@link PacedActionQueue} so the drone visibly takes time to act, mirroring
- * the original game's per-command "operations" cost.
- *
- * till/plant/harvest are stubbed pending Phase 1 task 4 (grid&lt;-&gt;vanilla block wiring).
+ * the original game's per-command "operations" cost. till/plant/harvest delegate the actual block
+ * work to {@link FarmBlockAccess}.
  */
 public final class LiveDroneApi implements DroneApi {
     private static final int ACTION_DELAY_TICKS = 4;
@@ -24,12 +23,15 @@ public final class LiveDroneApi implements DroneApi {
     private final MainThreadGateway gateway;
     private final PacedActionQueue pacedQueue;
     private final DroneGridState grid;
+    private final FarmBlockAccess farm;
     private final Consumer<String> logSink;
 
-    public LiveDroneApi(MainThreadGateway gateway, PacedActionQueue pacedQueue, DroneGridState grid, Consumer<String> logSink) {
+    public LiveDroneApi(MainThreadGateway gateway, PacedActionQueue pacedQueue, DroneGridState grid,
+            FarmBlockAccess farm, Consumer<String> logSink) {
         this.gateway = gateway;
         this.pacedQueue = pacedQueue;
         this.grid = grid;
+        this.farm = farm;
         this.logSink = logSink;
     }
 
@@ -54,22 +56,22 @@ public final class LiveDroneApi implements DroneApi {
 
     @Override
     public boolean till() {
-        return false; // TODO(Phase 1 task 4): convert the ground block under the drone to farmland.
+        return dispatch(farm::attemptTill);
     }
 
     @Override
     public boolean plant(String crop) {
-        return false; // TODO(Phase 1 task 4): place a crop block.
+        return dispatch(() -> farm.attemptPlant(crop));
     }
 
     @Override
     public boolean harvest() {
-        return false; // TODO(Phase 1 task 4): harvest a mature crop block.
+        return dispatch(farm::attemptHarvest);
     }
 
     @Override
     public boolean canHarvest() {
-        return false; // TODO(Phase 1 task 4)
+        return queryMainThread(farm::canHarvest);
     }
 
     @Override
@@ -92,9 +94,6 @@ public final class LiveDroneApi implements DroneApi {
         logSink.accept(text);
     }
 
-    /** Phase A result: success/failure decided immediately; apply() performs the Phase B mutation. */
-    private record Attempt(boolean succeeded, Runnable apply) {}
-
     /**
      * Decides success/failure of {@code attempt} on the main thread right away, then defers the
      * actual mutation - and unblocking the caller - until the resulting pacing delay elapses.
@@ -112,6 +111,17 @@ public final class LiveDroneApi implements DroneApi {
                 future.complete(result.succeeded());
             });
         });
+        return blockOn(future);
+    }
+
+    /** Runs a read-only query on the main thread and returns its result immediately (no pacing delay). */
+    private <T> T queryMainThread(Supplier<T> query) {
+        CompletableFuture<T> future = new CompletableFuture<>();
+        gateway.runOnMainThread(() -> future.complete(query.get()));
+        return blockOn(future);
+    }
+
+    private <T> T blockOn(CompletableFuture<T> future) {
         try {
             return future.get(MAIN_THREAD_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (InterruptedException e) {

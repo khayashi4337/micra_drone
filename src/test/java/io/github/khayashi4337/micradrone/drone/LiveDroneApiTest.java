@@ -23,12 +23,17 @@ class LiveDroneApiTest {
         worker.shutdownNow();
     }
 
+    private static LiveDroneApi newApi(FakeMainThreadGateway gateway, PacedActionQueue queue, FakeGridState grid,
+            FakeFarmBlockAccess farm, java.util.function.Consumer<String> logSink) {
+        return new LiveDroneApi(gateway, queue, grid, farm, logSink);
+    }
+
     @Test
     void successfulMoveTakesFourTicksAndUpdatesPosition() throws Exception {
         FakeMainThreadGateway gateway = new FakeMainThreadGateway();
         PacedActionQueue queue = new PacedActionQueue();
         FakeGridState grid = new FakeGridState(5);
-        LiveDroneApi api = new LiveDroneApi(gateway, queue, grid, msg -> {});
+        LiveDroneApi api = newApi(gateway, queue, grid, new FakeFarmBlockAccess(), msg -> {});
 
         Future<Boolean> result = worker.submit(() -> api.move("east"));
 
@@ -51,7 +56,7 @@ class LiveDroneApiTest {
         FakeMainThreadGateway gateway = new FakeMainThreadGateway();
         PacedActionQueue queue = new PacedActionQueue();
         FakeGridState grid = new FakeGridState(5); // starts at (0,0)
-        LiveDroneApi api = new LiveDroneApi(gateway, queue, grid, msg -> {});
+        LiveDroneApi api = newApi(gateway, queue, grid, new FakeFarmBlockAccess(), msg -> {});
 
         Future<Boolean> result = worker.submit(() -> api.move("north"));
 
@@ -70,7 +75,7 @@ class LiveDroneApiTest {
         PacedActionQueue queue = new PacedActionQueue();
         FakeGridState grid = new FakeGridState(5);
         List<String> logs = new ArrayList<>();
-        LiveDroneApi api = new LiveDroneApi(gateway, queue, grid, logs::add);
+        LiveDroneApi api = newApi(gateway, queue, grid, new FakeFarmBlockAccess(), logs::add);
 
         api.print("hello");
 
@@ -83,8 +88,63 @@ class LiveDroneApiTest {
         FakeMainThreadGateway gateway = new FakeMainThreadGateway();
         PacedActionQueue queue = new PacedActionQueue();
         FakeGridState grid = new FakeGridState(5);
-        LiveDroneApi api = new LiveDroneApi(gateway, queue, grid, msg -> {});
+        LiveDroneApi api = newApi(gateway, queue, grid, new FakeFarmBlockAccess(), msg -> {});
 
         assertThrows(IllegalArgumentException.class, () -> api.move("up"));
+    }
+
+    @Test
+    void tillPlantAndHarvestGoThroughToFarmBlockAccess() throws Exception {
+        FakeMainThreadGateway gateway = new FakeMainThreadGateway();
+        PacedActionQueue queue = new PacedActionQueue();
+        FakeGridState grid = new FakeGridState(5);
+        FakeFarmBlockAccess farm = new FakeFarmBlockAccess();
+        LiveDroneApi api = newApi(gateway, queue, grid, farm, msg -> {});
+
+        Future<Boolean> tillResult = worker.submit(api::till);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump();
+        gateway.advanceTo(4, queue);
+        assertTrue(tillResult.get(2, TimeUnit.SECONDS));
+        assertTrue(farm.isTilled());
+
+        Future<Boolean> plantResult = worker.submit(() -> api.plant("wheat"));
+        gateway.awaitQueuedWork(2000);
+        gateway.pump();
+        gateway.advanceTo(8, queue);
+        assertTrue(plantResult.get(2, TimeUnit.SECONDS));
+        assertEquals("wheat", farm.plantedCrop());
+
+        // not mature yet
+        Future<Boolean> earlyHarvest = worker.submit(api::harvest);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump();
+        gateway.advanceTo(8, queue); // failure: 0-tick delay
+        assertFalse(earlyHarvest.get(2, TimeUnit.SECONDS));
+        assertEquals("wheat", farm.plantedCrop());
+
+        farm.setMature(true);
+        Future<Boolean> harvestResult = worker.submit(api::harvest);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump();
+        gateway.advanceTo(12, queue);
+        assertTrue(harvestResult.get(2, TimeUnit.SECONDS));
+        assertEquals(null, farm.plantedCrop());
+    }
+
+    @Test
+    void canHarvestIsAnImmediateMainThreadReadWithNoPacingDelay() throws Exception {
+        FakeMainThreadGateway gateway = new FakeMainThreadGateway();
+        PacedActionQueue queue = new PacedActionQueue();
+        FakeGridState grid = new FakeGridState(5);
+        FakeFarmBlockAccess farm = new FakeFarmBlockAccess();
+        farm.setMature(false);
+        LiveDroneApi api = newApi(gateway, queue, grid, farm, msg -> {});
+
+        Future<Boolean> result = worker.submit(api::canHarvest);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump(); // no pacedQueue involvement needed: query completes as soon as it's run
+
+        assertFalse(result.get(2, TimeUnit.SECONDS));
     }
 }

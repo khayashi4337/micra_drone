@@ -6,6 +6,8 @@ import com.mojang.serialization.MapCodec;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseEntityBlock;
 import net.minecraft.world.level.block.RenderShape;
@@ -14,6 +16,7 @@ import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
 
 /** Placed to claim a farm plot; holds the drone's script and grid state via {@link DroneControllerBlockEntity}. */
 public class DroneControllerBlock extends BaseEntityBlock {
@@ -48,5 +51,16 @@ public class DroneControllerBlock extends BaseEntityBlock {
             return null;
         }
         return createTickerHelper(type, MicraDrone.DRONE_CONTROLLER_BLOCK_ENTITY.get(), DroneControllerBlockEntity::serverTick);
+    }
+
+    // Temporary: Phase 1 task 5 replaces this with a proper GUI (Run/Stop + script file). For now,
+    // right-clicking the controller runs a small hardcoded demo script so task 4's block wiring is
+    // visibly testable before the GUI exists.
+    @Override
+    protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hitResult) {
+        if (!level.isClientSide && level.getBlockEntity(pos) instanceof DroneControllerBlockEntity be) {
+            be.runDemoScript();
+        }
+        return InteractionResult.sidedSuccess(level.isClientSide);
     }
 }

@@ -40,7 +40,7 @@ class DroneScriptRunnerTest {
         PacedActionQueue queue = new PacedActionQueue();
         FakeGridState grid = new FakeGridState(5);
         List<String> logs = new ArrayList<>();
-        LiveDroneApi api = new LiveDroneApi(gateway, queue, grid, logs::add);
+        LiveDroneApi api = new LiveDroneApi(gateway, queue, grid, new FakeFarmBlockAccess(), logs::add);
         DroneScriptRunner runner = new DroneScriptRunner(api, logs::add);
 
         runner.start(parse("""
@@ -62,7 +62,7 @@ class DroneScriptRunnerTest {
         PacedActionQueue queue = new PacedActionQueue();
         FakeGridState grid = new FakeGridState(5);
         List<String> logs = new ArrayList<>();
-        LiveDroneApi api = new LiveDroneApi(gateway, queue, grid, logs::add);
+        LiveDroneApi api = new LiveDroneApi(gateway, queue, grid, new FakeFarmBlockAccess(), logs::add);
         DroneScriptRunner runner = new DroneScriptRunner(api, logs::add);
 
         runner.start(parse("""
@@ -80,7 +80,7 @@ class DroneScriptRunnerTest {
         FakeMainThreadGateway gateway = new FakeMainThreadGateway();
         PacedActionQueue queue = new PacedActionQueue();
         FakeGridState grid = new FakeGridState(5);
-        LiveDroneApi api = new LiveDroneApi(gateway, queue, grid, msg -> {});
+        LiveDroneApi api = new LiveDroneApi(gateway, queue, grid, new FakeFarmBlockAccess(), msg -> {});
         DroneScriptRunner runner = new DroneScriptRunner(api, msg -> {});
 
         runner.start(parse("""
