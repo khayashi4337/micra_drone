@@ -26,7 +26,8 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     /** Used when no corner marker is found (see {@link #scanForCornerMarker}). */
     private static final int DEFAULT_WORLD_SIZE = 5;
     private static final int MAX_MARKER_SCAN_DISTANCE = 64;
-    private static final int[][] DIAGONAL_DIRECTIONS = {{1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
+    /** Natural terrain is rarely perfectly flat, so the marker doesn't have to sit at the exact same Y. */
+    private static final int MAX_MARKER_SCAN_Y_TOLERANCE = 4;
 
     /**
      * Temporary stand-in for Phase 1 task 5 (real script file + GUI trigger): till and plant two
@@ -95,26 +96,19 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
     /**
      * Looks for a {@link MicraDrone#CORNER_MARKER_BLOCK} on one of the 4 diagonals from this block
-     * (up to {@link #MAX_MARKER_SCAN_DISTANCE} away) and, if found, sizes/orients the plot to match.
-     * A marker placed off the true diagonal is simply never found - the plot silently stays square.
-     * Falls back to {@link #DEFAULT_WORLD_SIZE} toward +X/+Z when no marker is found.
+     * (up to {@link #MAX_MARKER_SCAN_DISTANCE} away, within {@link #MAX_MARKER_SCAN_Y_TOLERANCE} of
+     * this block's Y level) and, if found, sizes/orients the plot to match. A marker placed off the
+     * true X/Z diagonal is simply never found - the plot silently stays square. Falls back to
+     * {@link #DEFAULT_WORLD_SIZE} toward south-east when no marker is found.
      */
     private void scanForCornerMarker(ServerLevel level) {
         BlockPos pos = getBlockPos();
-        for (int[] dir : DIAGONAL_DIRECTIONS) {
-            for (int i = 1; i <= MAX_MARKER_SCAN_DISTANCE; i++) {
-                BlockPos check = pos.offset(dir[0] * i, 0, dir[1] * i);
-                if (level.getBlockState(check).is(MicraDrone.CORNER_MARKER_BLOCK.get())) {
-                    worldSize = i + 1;
-                    dirX = dir[0];
-                    dirZ = dir[1];
-                    return;
-                }
-            }
-        }
-        worldSize = DEFAULT_WORLD_SIZE;
-        dirX = 1;
-        dirZ = 1;
+        CornerMarkerScan.PlotBounds bounds = CornerMarkerScan.scan(
+                (dx, dy, dz) -> level.getBlockState(pos.offset(dx, dy, dz)).is(MicraDrone.CORNER_MARKER_BLOCK.get()),
+                MAX_MARKER_SCAN_DISTANCE, MAX_MARKER_SCAN_Y_TOLERANCE, DEFAULT_WORLD_SIZE);
+        worldSize = bounds.worldSize();
+        dirX = bounds.dirX();
+        dirZ = bounds.dirZ();
     }
 
     /** See {@link #DEMO_SCRIPT}. No-op if a script is already running. */
@@ -126,6 +120,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             return;
         }
         scanForCornerMarker(serverLevel);
+        setGridPos(0, 0); // every run starts the drone back at the plot's origin cell
         MainThreadGateway gateway = new ServerMainThreadGateway(serverLevel.getServer());
         FarmBlockAccess farm = new LiveFarmBlockAccess(serverLevel, getBlockPos(), this);
         Consumer<String> log = msg -> MicraDrone.LOGGER.info("[drone {}] {}", getBlockPos(), msg);
