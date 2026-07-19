@@ -51,6 +51,8 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private volatile int worldSize = DEFAULT_WORLD_SIZE;
     private volatile int dirX = 1;
     private volatile int dirZ = 1;
+    // Belongs to this controller, not the plot's geometry: survives corner-marker re-scans on purpose.
+    private volatile long points = 0;
 
     private DroneScriptRunner scriptRunner;
     /** The visible {@link DroneEntity} tracked by UUID (entities aren't safe to hold direct references to across reloads). */
@@ -138,6 +140,17 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     @Override
     public int dirZ() {
         return dirZ;
+    }
+
+    @Override
+    public long getPoints() {
+        return points;
+    }
+
+    @Override
+    public void addPoints(long delta) {
+        points += delta;
+        setChanged();
     }
 
     /**
@@ -252,6 +265,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         super.loadAdditional(tag, registries);
         gridX = tag.getInt("GridX");
         gridY = tag.getInt("GridY");
+        points = tag.getLong("Points");
         droneEntityUuid = tag.hasUUID("DroneEntityUuid") ? tag.getUUID("DroneEntityUuid") : null;
     }
 
@@ -260,6 +274,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         super.saveAdditional(tag, registries);
         tag.putInt("GridX", gridX);
         tag.putInt("GridY", gridY);
+        tag.putLong("Points", points);
         if (droneEntityUuid != null) {
             tag.putUUID("DroneEntityUuid", droneEntityUuid);
         }

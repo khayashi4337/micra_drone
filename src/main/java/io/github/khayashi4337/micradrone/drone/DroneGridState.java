@@ -16,4 +16,10 @@ public interface DroneGridState {
 
     /** +1 or -1: which world Z direction grid row 0 starts in, relative to the controller. */
     int dirZ();
+
+    /** This plot's resource point balance. One pool per controller; never resets on its own. */
+    long getPoints();
+
+    /** Adds (or, with a negative delta, removes) points from this plot's pool. */
+    void addPoints(long delta);
 }

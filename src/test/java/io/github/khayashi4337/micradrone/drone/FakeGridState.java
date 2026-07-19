@@ -4,6 +4,7 @@ final class FakeGridState implements DroneGridState {
     private int x;
     private int y;
     private final int size;
+    private long points;
 
     FakeGridState(int size) {
         this.size = size;
@@ -38,5 +39,15 @@ final class FakeGridState implements DroneGridState {
     @Override
     public int dirZ() {
         return 1;
+    }
+
+    @Override
+    public long getPoints() {
+        return points;
+    }
+
+    @Override
+    public void addPoints(long delta) {
+        points += delta;
     }
 }
