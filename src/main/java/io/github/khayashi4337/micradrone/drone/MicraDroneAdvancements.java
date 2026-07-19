@@ -41,16 +41,20 @@ public final class MicraDroneAdvancements {
 
     /**
      * Called from {@link DroneControllerBlockEntity#addPoints} after each harvest. Awards every tier
-     * threshold {@code oldTotal} hadn't reached yet but {@code newTotal} has - a single big jump (e.g.
-     * a giant pumpkin patch's lump-sum bonus) can cross more than one tier at once, so every tier is
-     * checked rather than just the nearest one.
+     * {@code newTotal} has reached, full stop - not just whichever tier this particular harvest
+     * happened to cross. Re-awarding an already-completed advancement is a verified no-op (see
+     * AdvancementProgress#grantProgress: it returns false, no re-triggered toast/reward, once the
+     * criterion is already done), so this is both simpler and self-healing: a player who already had
+     * points banked before this feature shipped (or before a given tier existed) gets credited on
+     * their very next harvest instead of needing to earn enough new points to cross a tier they'd
+     * technically already cleared.
      */
-    public static void checkHarvestMilestones(ServerPlayer player, String crop, long oldTotal, long newTotal) {
+    public static void checkHarvestMilestones(ServerPlayer player, String crop, long newTotal) {
         if (!TIERED_CROPS.contains(crop)) {
             return;
         }
         for (long tier : HARVEST_TIERS) {
-            if (oldTotal < tier && newTotal >= tier) {
+            if (newTotal >= tier) {
                 ResourceLocation location = ResourceLocation.fromNamespaceAndPath(MicraDrone.MODID, "harvest_" + crop + "_" + tier);
                 award(player, location);
             }

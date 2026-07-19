@@ -184,11 +184,10 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
     @Override
     public void addPoints(String crop, long delta) {
-        long oldTotal = pointsByCrop.getOrDefault(crop, 0L);
         long newTotal = pointsByCrop.merge(crop, delta, Long::sum);
         setChanged();
         pushLogSnapshot();
-        resolveViewingPlayer().ifPresent(player -> MicraDroneAdvancements.checkHarvestMilestones(player, crop, oldTotal, newTotal));
+        resolveViewingPlayer().ifPresent(player -> MicraDroneAdvancements.checkHarvestMilestones(player, crop, newTotal));
     }
 
     @Override
