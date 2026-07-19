@@ -2,6 +2,7 @@ package io.github.khayashi4337.micradrone.drone;
 
 import com.mojang.serialization.Dynamic;
 
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.EntityType;
@@ -34,5 +35,17 @@ public class DroneEntity extends Allay {
     @Override
     protected InteractionResult mobInteract(Player player, InteractionHand hand) {
         return InteractionResult.PASS;
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        // The reference artwork shows a teal jet streaming down from the thruster nozzle. Soul fire
+        // flame is vanilla's teal flame and (via RisingParticle, verified in decompiled sources) it
+        // honors the velocity passed here, so a small downward speed makes it stream down instead of
+        // rising like a normal flame. Client side only - purely cosmetic.
+        if (this.level().isClientSide && this.tickCount % 3 == 0) {
+            this.level().addParticle(ParticleTypes.SOUL_FIRE_FLAME, this.getX(), this.getY() + 0.1, this.getZ(), 0.0, -0.06, 0.0);
+        }
     }
 }
