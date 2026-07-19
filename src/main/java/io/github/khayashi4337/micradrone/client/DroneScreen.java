@@ -2,6 +2,7 @@ package io.github.khayashi4337.micradrone.client;
 
 import java.util.List;
 
+import io.github.khayashi4337.micradrone.MicraDroneClient;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
@@ -47,6 +48,18 @@ public class DroneScreen extends Screen {
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.stop"),
                 b -> PacketDistributor.sendToServer(new StopScriptPayload(pos)))
                 .bounds(left + LOG_WIDTH - 80, buttonY, 80, 20)
+                .build());
+
+        int scriptsFolderY = buttonY + 24;
+        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.open_scripts_folder"),
+                b -> MicraDroneClient.openScriptsFolder())
+                .bounds(left, scriptsFolderY, LOG_WIDTH, 20)
+                .build());
+
+        int helpY = scriptsFolderY + 24;
+        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.help"),
+                b -> MicraDroneClient.openHelpFolder())
+                .bounds(left, helpY, LOG_WIDTH, 20)
                 .build());
 
         PacketDistributor.sendToServer(new RequestLogPayload(pos));

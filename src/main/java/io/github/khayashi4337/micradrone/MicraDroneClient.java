@@ -1,10 +1,18 @@
 package io.github.khayashi4337.micradrone;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+import io.github.khayashi4337.micradrone.client.CommandsHelpDoc;
 import io.github.khayashi4337.micradrone.client.DroneScreen;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
+import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.entity.AllayRenderer;
+import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.storage.LevelResource;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -42,5 +50,53 @@ public class MicraDroneClient {
         if (Minecraft.getInstance().screen instanceof DroneScreen screen) {
             screen.updateLog(payload.pos(), payload.lines());
         }
+    }
+
+    /** DroneScreen's "Open Scripts Folder" button: opens <world>/micradrone/scripts/ in the OS file browser. */
+    public static void openScriptsFolder() {
+        openMicradroneSubfolder("scripts");
+    }
+
+    /** DroneScreen's "Help" button: (re)writes the command reference doc, then opens its folder. */
+    public static void openHelpFolder() {
+        Path docsDir = micradroneSubfolder("docs");
+        if (docsDir == null) {
+            return;
+        }
+        try {
+            Files.createDirectories(docsDir);
+            Files.writeString(docsDir.resolve("commands.txt"), CommandsHelpDoc.CONTENT);
+        } catch (IOException e) {
+            MicraDrone.LOGGER.error("could not write commands.txt to {}", docsDir, e);
+            return;
+        }
+        Util.getPlatform().openPath(docsDir);
+    }
+
+    private static void openMicradroneSubfolder(String name) {
+        Path dir = micradroneSubfolder(name);
+        if (dir == null) {
+            return;
+        }
+        try {
+            Files.createDirectories(dir);
+        } catch (IOException e) {
+            MicraDrone.LOGGER.error("could not create {}", dir, e);
+            return;
+        }
+        Util.getPlatform().openPath(dir);
+    }
+
+    /**
+     * Resolves a subfolder under the current world's micradrone/ directory, or null if there is no
+     * local world to resolve it against (e.g. connected to a remote multiplayer server - this MVP is
+     * singleplayer/local-focused only, see the project's decision table).
+     */
+    private static Path micradroneSubfolder(String name) {
+        IntegratedServer server = Minecraft.getInstance().getSingleplayerServer();
+        if (server == null) {
+            return null;
+        }
+        return server.getWorldPath(LevelResource.ROOT).resolve("micradrone").resolve(name);
     }
 }
