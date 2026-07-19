@@ -64,10 +64,16 @@ public class DroneModel extends HierarchicalModel<DroneEntity> {
 
         // Round 2 fix: every reference image shows a small glowing "mount light" box between the body
         // and the dark mast - the previous version went straight from body to mast, missing it.
+        // Follow-up fix (from an in-game screenshot + direct feedback): the whole arm assembly was
+        // pure translation with no rotation anywhere, so it could only ever come out flat/horizontal -
+        // never the raised "banzai" angle every reference image shows. This is a real joint now: a
+        // single zRot here tilts this mount plus everything childed under it (arm, rotor) together as
+        // one rigid unit, the same way a shoulder joint would. Mounted higher on the body too (closer
+        // to the top edge, not mid-height) to match the reference silhouette.
         PartDefinition rightArmLight = body.addOrReplaceChild(
                 "right_arm_light",
                 CubeListBuilder.create().texOffs(0, 51).addBox(-1.0F, -1.0F, -1.0F, 2.0F, 2.0F, 2.0F, CubeDeformation.NONE),
-                PartPose.offset(-3.5F, -3.5F, 0.0F));
+                PartPose.offsetAndRotation(-3.5F, -5.5F, 0.0F, 0.0F, 0.0F, 0.45F));
         PartDefinition rightArm = rightArmLight.addOrReplaceChild(
                 "right_arm",
                 CubeListBuilder.create().texOffs(0, 16).addBox(-4.0F, -0.5F, -0.5F, 4.0F, 1.0F, 1.0F, CubeDeformation.NONE),
@@ -82,10 +88,11 @@ public class DroneModel extends HierarchicalModel<DroneEntity> {
                         .texOffs(0, 27).addBox(-1.0F, -0.5F, -3.0F, 2.0F, 1.0F, 6.0F, CubeDeformation.NONE),
                 PartPose.offset(-4.0F, 0.0F, 0.0F));
 
+        // Mirror of right_arm_light's joint - negative zRot so the raised angle mirrors left/right.
         PartDefinition leftArmLight = body.addOrReplaceChild(
                 "left_arm_light",
                 CubeListBuilder.create().texOffs(0, 57).addBox(-1.0F, -1.0F, -1.0F, 2.0F, 2.0F, 2.0F, CubeDeformation.NONE),
-                PartPose.offset(3.5F, -3.5F, 0.0F));
+                PartPose.offsetAndRotation(3.5F, -5.5F, 0.0F, 0.0F, 0.0F, -0.45F));
         PartDefinition leftArm = leftArmLight.addOrReplaceChild(
                 "left_arm",
                 CubeListBuilder.create().texOffs(0, 20).addBox(0.0F, -0.5F, -0.5F, 4.0F, 1.0F, 1.0F, CubeDeformation.NONE),
