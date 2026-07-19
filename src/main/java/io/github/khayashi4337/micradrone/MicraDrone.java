@@ -7,7 +7,12 @@ import com.mojang.logging.LogUtils;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlock;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
 import io.github.khayashi4337.micradrone.drone.DroneEntity;
+import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
+import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
+import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
+import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.entity.animal.allay.Allay;
@@ -26,6 +31,9 @@ import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
 import net.neoforged.neoforge.event.entity.EntityAttributeCreationEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import net.neoforged.neoforge.registries.DeferredBlock;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredItem;
@@ -95,6 +103,7 @@ public class MicraDrone {
         // Add the drone controller to the vanilla "Functional Blocks" creative tab
         modEventBus.addListener(this::addCreative);
         modEventBus.addListener(this::registerAttributes);
+        modEventBus.addListener(this::registerPayloadHandlers);
     }
 
     private void commonSetup(FMLCommonSetupEvent event) {
@@ -116,5 +125,36 @@ public class MicraDrone {
     @SubscribeEvent
     public void onServerStarting(ServerStartingEvent event) {
         LOGGER.info("MicraDrone: server starting");
+    }
+
+    private void registerPayloadHandlers(RegisterPayloadHandlersEvent event) {
+        PayloadRegistrar registrar = event.registrar("1");
+        registrar.playToServer(RunScriptPayload.TYPE, RunScriptPayload.STREAM_CODEC, MicraDrone::handleRunScript);
+        registrar.playToServer(StopScriptPayload.TYPE, StopScriptPayload.STREAM_CODEC, MicraDrone::handleStopScript);
+        registrar.playToServer(RequestLogPayload.TYPE, RequestLogPayload.STREAM_CODEC, MicraDrone::handleRequestLog);
+        registrar.playToClient(DroneLogPayload.TYPE, DroneLogPayload.STREAM_CODEC, MicraDroneClient::handleDroneLog);
+    }
+
+    // Payload handlers run on the main thread by default (PayloadRegistrar), so it's safe to touch
+    // the BlockEntity directly here.
+    private static void handleRunScript(RunScriptPayload payload, IPayloadContext context) {
+        if (context.player() instanceof ServerPlayer serverPlayer
+                && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
+            be.startScript(serverPlayer);
+        }
+    }
+
+    private static void handleStopScript(StopScriptPayload payload, IPayloadContext context) {
+        if (context.player() instanceof ServerPlayer serverPlayer
+                && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
+            be.stopScript(serverPlayer);
+        }
+    }
+
+    private static void handleRequestLog(RequestLogPayload payload, IPayloadContext context) {
+        if (context.player() instanceof ServerPlayer serverPlayer
+                && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
+            be.sendLogSnapshotTo(serverPlayer);
+        }
     }
 }

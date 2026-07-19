@@ -5,6 +5,7 @@ import javax.annotation.Nullable;
 import com.mojang.serialization.MapCodec;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
+import io.github.khayashi4337.micradrone.MicraDroneClient;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
@@ -53,13 +54,12 @@ public class DroneControllerBlock extends BaseEntityBlock {
         return createTickerHelper(type, MicraDrone.DRONE_CONTROLLER_BLOCK_ENTITY.get(), DroneControllerBlockEntity::serverTick);
     }
 
-    // Temporary: Phase 1 task 5 replaces this with a proper GUI (Run/Stop + script file). For now,
-    // right-clicking the controller runs a small hardcoded demo script so task 4's block wiring is
-    // visibly testable before the GUI exists.
+    // Client-only: open the Run/Stop/log screen. The screen itself sends network payloads for
+    // everything that touches server state (see MicraDroneClient/DroneScreen).
     @Override
     protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hitResult) {
-        if (!level.isClientSide && level.getBlockEntity(pos) instanceof DroneControllerBlockEntity be) {
-            be.runDemoScript();
+        if (level.isClientSide) {
+            MicraDroneClient.openDroneScreen(pos);
         }
         return InteractionResult.sidedSuccess(level.isClientSide);
     }

@@ -1,4 +1,9 @@
 {
   "block.micradrone.drone_controller": "Drone Controller",
-  "block.micradrone.corner_marker": "Corner Marker"
+  "block.micradrone.corner_marker": "Corner Marker",
+  "gui.micradrone.drone_screen.title": "Drone Controller",
+  "gui.micradrone.drone_screen.log": "Log",
+  "gui.micradrone.drone_screen.log_placeholder": "Script output will appear here",
+  "gui.micradrone.drone_screen.run": "Run",
+  "gui.micradrone.drone_screen.stop": "Stop"
 }

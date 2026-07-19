@@ -1,10 +1,14 @@
 package io.github.khayashi4337.micradrone.drone;
 
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 import java.util.UUID;
-import java.util.function.Consumer;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
+import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.lang.Lexer;
 import io.github.khayashi4337.micradrone.lang.Parser;
 import io.github.khayashi4337.micradrone.lang.ast.Stmt;
@@ -12,9 +16,12 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.storage.LevelResource;
+import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
  * Holds the drone's grid position for the farm plot claimed by this controller. Plot size/direction
@@ -29,21 +36,13 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private static final int MAX_MARKER_SCAN_DISTANCE = 64;
     /** Natural terrain is rarely perfectly flat, so the marker doesn't have to sit at the exact same Y. */
     private static final int MAX_MARKER_SCAN_Y_TOLERANCE = 4;
-
-    /**
-     * Temporary stand-in for Phase 1 task 5 (real script file + GUI trigger): till and plant two
-     * cells so right-clicking the controller produces a visible result while task 5 isn't built yet.
-     */
-    private static final String DEMO_SCRIPT = """
-            print(get_world_size())
-            till()
-            plant("wheat")
-            move("east")
-            till()
-            plant("wheat")
-            """;
+    /** Bounds how much log history is kept/sent; older lines are dropped as new ones arrive. */
+    private static final int LOG_BUFFER_CAPACITY = 100;
 
     private final PacedActionQueue pacedActionQueue = new PacedActionQueue();
+    private final Deque<String> logBuffer = new ArrayDeque<>();
+    /** The player who last clicked Run/Stop/opened the screen; log updates are pushed to them. */
+    private UUID viewingPlayerUuid;
 
     // Written only on the main thread (paced action apply, or scanForCornerMarker); read from the
     // script worker thread too.
@@ -158,23 +157,89 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         dirZ = bounds.dirZ();
     }
 
-    /** See {@link #DEMO_SCRIPT}. No-op if a script is already running. */
-    public void runDemoScript() {
+    /**
+     * Loads this controller's script file (creating it with default content if missing) and runs it.
+     * No-op (besides a log line) if a script is already running.
+     */
+    public void startScript(ServerPlayer requester) {
         if (!(level instanceof ServerLevel serverLevel)) {
             return;
         }
+        viewingPlayerUuid = requester.getUUID();
         if (scriptRunner != null && scriptRunner.getState() == DroneScriptRunner.State.RUNNING) {
+            appendLog("[run] a script is already running");
             return;
         }
+        logBuffer.clear();
+
+        String source;
+        try {
+            BlockPos pos = getBlockPos();
+            source = ScriptFileStore.loadOrCreateDefault(scriptsDir(serverLevel), pos.getX(), pos.getY(), pos.getZ());
+        } catch (IOException e) {
+            appendLog("[error] could not read script file: " + e.getMessage());
+            return;
+        }
+
+        List<Stmt> program;
+        try {
+            program = new Parser(new Lexer(source).scan()).parseProgram();
+        } catch (RuntimeException e) {
+            appendLog("[error] " + e.getMessage());
+            return;
+        }
+
         scanForCornerMarker(serverLevel);
         setGridPos(0, 0); // every run starts the drone back at the plot's origin cell
         MainThreadGateway gateway = new ServerMainThreadGateway(serverLevel.getServer());
         FarmBlockAccess farm = new LiveFarmBlockAccess(serverLevel, getBlockPos(), this);
-        Consumer<String> log = msg -> MicraDrone.LOGGER.info("[drone {}] {}", getBlockPos(), msg);
-        LiveDroneApi api = new LiveDroneApi(gateway, pacedActionQueue, this, farm, log);
-        scriptRunner = new DroneScriptRunner(api, log);
-        List<Stmt> program = new Parser(new Lexer(DEMO_SCRIPT).scan()).parseProgram();
+        LiveDroneApi api = new LiveDroneApi(gateway, pacedActionQueue, this, farm, this::appendLog);
+        scriptRunner = new DroneScriptRunner(api, this::appendLog);
+        appendLog("[run] script started");
         scriptRunner.start(program);
+    }
+
+    /** Requests the running script (if any) to stop. Safe to call even when nothing is running. */
+    public void stopScript(ServerPlayer requester) {
+        viewingPlayerUuid = requester.getUUID();
+        if (scriptRunner == null) {
+            return;
+        }
+        scriptRunner.stop();
+        appendLog("[stop] stop requested");
+    }
+
+    /** Sent when a {@code DroneScreen} opens, so it immediately shows log history instead of starting blank. */
+    public void sendLogSnapshotTo(ServerPlayer requester) {
+        viewingPlayerUuid = requester.getUUID();
+        pushLogSnapshotTo(requester);
+    }
+
+    private static Path scriptsDir(ServerLevel level) {
+        return level.getServer().getWorldPath(LevelResource.ROOT).resolve("micradrone").resolve("scripts");
+    }
+
+    private void appendLog(String line) {
+        MicraDrone.LOGGER.info("[drone {}] {}", getBlockPos(), line);
+        logBuffer.addLast(line);
+        while (logBuffer.size() > LOG_BUFFER_CAPACITY) {
+            logBuffer.removeFirst();
+        }
+        pushLogSnapshot();
+    }
+
+    private void pushLogSnapshot() {
+        if (!(level instanceof ServerLevel serverLevel) || viewingPlayerUuid == null) {
+            return;
+        }
+        ServerPlayer player = serverLevel.getServer().getPlayerList().getPlayer(viewingPlayerUuid);
+        if (player != null) {
+            pushLogSnapshotTo(player);
+        }
+    }
+
+    private void pushLogSnapshotTo(ServerPlayer player) {
+        PacketDistributor.sendToPlayer(player, new DroneLogPayload(getBlockPos(), List.copyOf(logBuffer)));
     }
 
     /** Registered as this block's {@link net.minecraft.world.level.block.entity.BlockEntityTicker}; server-side only. */
