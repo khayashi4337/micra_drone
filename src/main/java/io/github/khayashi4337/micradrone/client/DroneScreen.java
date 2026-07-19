@@ -11,11 +11,13 @@ import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.SetAliasPayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
+import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.MultiLineEditBox;
+import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -27,16 +29,15 @@ import net.neoforged.neoforge.network.PacketDistributor;
  */
 public class DroneScreen extends Screen {
     private static final int LOG_WIDTH = 240;
-    private static final int LOG_HEIGHT = 140;
+    private static final int LOG_HEIGHT = 110;
+    private static final int SCRIPT_LIST_HEIGHT = 64;
     private static final String DEFAULT_SCRIPT_NAME = "main.mdrone";
 
     private final BlockPos pos;
     private MultiLineEditBox logBox;
     private EditBox aliasBox;
-    private Button scriptButton;
+    private ScriptListWidget scriptList;
     private List<Component> pointsLines = List.of();
-    private List<String> availableScripts = List.of(DEFAULT_SCRIPT_NAME);
-    private int scriptIndex = 0;
 
     public DroneScreen(BlockPos pos) {
         super(Component.translatable("gui.micradrone.drone_screen.title"));
@@ -56,7 +57,13 @@ public class DroneScreen extends Screen {
                 .bounds(left + LOG_WIDTH - 76, 4, 76, 18)
                 .build());
 
-        int top = 48;
+        int scriptListY = 48;
+        scriptList = new ScriptListWidget(Minecraft.getInstance(), LOG_WIDTH, SCRIPT_LIST_HEIGHT, scriptListY, 16);
+        scriptList.setX(left);
+        scriptList.replaceEntries(Map.of(DEFAULT_SCRIPT_NAME, DEFAULT_SCRIPT_NAME));
+        addRenderableWidget(scriptList);
+
+        int top = scriptListY + SCRIPT_LIST_HEIGHT + 6;
         logBox = new MultiLineEditBox(this.font, left, top, LOG_WIDTH, LOG_HEIGHT,
                 Component.translatable("gui.micradrone.drone_screen.log_placeholder"),
                 Component.translatable("gui.micradrone.drone_screen.log"));
@@ -64,7 +71,7 @@ public class DroneScreen extends Screen {
 
         int buttonY = top + LOG_HEIGHT + 8;
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.run"),
-                b -> PacketDistributor.sendToServer(new RunScriptPayload(pos, currentScript())))
+                b -> PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptList.selectedFileName())))
                 .bounds(left, buttonY, 80, 20)
                 .build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.stop"),
@@ -84,34 +91,12 @@ public class DroneScreen extends Screen {
                 .bounds(left, helpY, LOG_WIDTH, 20)
                 .build());
 
-        int scriptY = helpY + 24;
-        scriptButton = addRenderableWidget(Button.builder(currentScriptLabel(), b -> cycleScript())
-                .bounds(left, scriptY, LOG_WIDTH, 20)
-                .build());
-
         PacketDistributor.sendToServer(new RequestLogPayload(pos));
-    }
-
-    private String currentScript() {
-        return availableScripts.get(scriptIndex);
-    }
-
-    private Component currentScriptLabel() {
-        return Component.translatable("gui.micradrone.drone_screen.script", currentScript());
-    }
-
-    /** Cycles to the next available script; picked up the next time Run is clicked. */
-    private void cycleScript() {
-        if (availableScripts.isEmpty()) {
-            return;
-        }
-        scriptIndex = (scriptIndex + 1) % availableScripts.size();
-        scriptButton.setMessage(currentScriptLabel());
     }
 
     /** Called from {@code MicraDroneClient} when a DroneLogPayload arrives for this controller. */
     public void updateLog(BlockPos sourcePos, List<String> lines, Map<String, Long> pointsByCrop,
-            List<String> scripts, String selectedScript, String alias) {
+            Map<String, String> scriptDescriptions, String selectedScript, String alias) {
         if (!sourcePos.equals(this.pos)) {
             return;
         }
@@ -126,13 +111,9 @@ public class DroneScreen extends Screen {
         }
         pointsLines = newLines;
 
-        if (!scripts.isEmpty()) {
-            availableScripts = scripts;
-            int idx = scripts.indexOf(selectedScript);
-            scriptIndex = idx >= 0 ? idx : 0;
-            if (scriptButton != null) {
-                scriptButton.setMessage(currentScriptLabel());
-            }
+        if (!scriptDescriptions.isEmpty()) {
+            scriptList.replaceEntries(scriptDescriptions);
+            scriptList.selectFileName(selectedScript);
         }
 
         // Don't clobber text the player is actively typing with a stale server echo.
@@ -154,5 +135,69 @@ public class DroneScreen extends Screen {
     @Override
     public boolean isPauseScreen() {
         return false;
+    }
+
+    /** Scrollable list of this controller's available scripts, showing each one's description (see ScriptFileStore#describeScript). */
+    private final class ScriptListWidget extends ObjectSelectionList<ScriptListWidget.ScriptEntry> {
+        ScriptListWidget(Minecraft minecraft, int width, int height, int y, int itemHeight) {
+            super(minecraft, width, height, y, itemHeight);
+        }
+
+        void replaceEntries(Map<String, String> descriptions) {
+            String previouslySelected = selectedFileName();
+            clearEntries();
+            new TreeMap<>(descriptions).forEach((fileName, description) -> addEntry(new ScriptEntry(fileName, description)));
+            selectFileName(previouslySelected);
+            if (getSelected() == null && getItemCount() > 0) {
+                setSelected(getEntry(0));
+            }
+        }
+
+        void selectFileName(String fileName) {
+            for (int i = 0; i < getItemCount(); i++) {
+                ScriptEntry entry = getEntry(i);
+                if (entry.fileName.equals(fileName)) {
+                    setSelected(entry);
+                    return;
+                }
+            }
+        }
+
+        String selectedFileName() {
+            ScriptEntry selected = getSelected();
+            return selected != null ? selected.fileName : DEFAULT_SCRIPT_NAME;
+        }
+
+        @Override
+        public int getRowWidth() {
+            return this.width - 10;
+        }
+
+        final class ScriptEntry extends ObjectSelectionList.Entry<ScriptEntry> {
+            private final String fileName;
+            private final Component label;
+
+            ScriptEntry(String fileName, String description) {
+                this.fileName = fileName;
+                this.label = Component.literal(description);
+            }
+
+            @Override
+            public Component getNarration() {
+                return label;
+            }
+
+            @Override
+            public void render(GuiGraphics guiGraphics, int index, int top, int left, int width, int height,
+                    int mouseX, int mouseY, boolean hovering, float partialTick) {
+                guiGraphics.drawString(DroneScreen.this.font, label, left + 2, top + (height - 8) / 2, 0xFFFFFF);
+            }
+
+            @Override
+            public boolean mouseClicked(double mouseX, double mouseY, int button) {
+                ScriptListWidget.this.setSelected(this);
+                return true;
+            }
+        }
     }
 }

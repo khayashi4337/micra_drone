@@ -95,6 +95,11 @@ public final class LiveDroneApi implements DroneApi {
     }
 
     @Override
+    public double getPoints(String crop) {
+        return grid.getPoints(crop);
+    }
+
+    @Override
     public void print(String text) {
         logSink.accept(text);
     }

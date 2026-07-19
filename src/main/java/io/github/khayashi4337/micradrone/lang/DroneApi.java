@@ -28,8 +28,11 @@ public interface DroneApi {
 
     double getWorldSize();
 
-    /** Read-only: this plot's current resource point balance. */
+    /** Read-only: this plot's current resource point balance, summed across every crop type. */
     double getPoints();
+
+    /** Read-only: this plot's current point balance for one crop type only (0 if it has none). */
+    double getPoints(String crop);
 
     /** Appends text to the script's log panel. */
     void print(String text);

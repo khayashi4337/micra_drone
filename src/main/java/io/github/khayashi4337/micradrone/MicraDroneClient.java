@@ -49,7 +49,7 @@ public class MicraDroneClient {
     public static void handleDroneLog(DroneLogPayload payload, IPayloadContext context) {
         if (Minecraft.getInstance().screen instanceof DroneScreen screen) {
             screen.updateLog(payload.pos(), payload.lines(), payload.pointsByCrop(),
-                    payload.availableScripts(), payload.selectedScript(), payload.alias());
+                    payload.scriptDescriptions(), payload.selectedScript(), payload.alias());
         }
     }
 

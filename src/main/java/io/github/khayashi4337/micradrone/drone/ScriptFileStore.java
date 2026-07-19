@@ -4,7 +4,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 /**
@@ -58,5 +60,38 @@ public final class ScriptFileStore {
             names.sort(String::compareTo);
             return names;
         }
+    }
+
+    /** {@link #listScripts}, but paired with each file's {@link #describeScript} result for display. */
+    public static Map<String, String> listScriptsWithDescriptions(Path controllerFolder) throws IOException {
+        Map<String, String> descriptions = new LinkedHashMap<>();
+        for (String name : listScripts(controllerFolder)) {
+            descriptions.put(name, describeScript(load(controllerFolder.resolve(name)), name));
+        }
+        return descriptions;
+    }
+
+    /**
+     * The script's first non-empty "#" comment line (leading blank lines are skipped), stripped of
+     * the "#" and surrounding whitespace - a raw file name like "till_and_plant.mdrone" says a lot
+     * less than the comment a script's author already wrote at the top of it. Falls back to
+     * {@code fallbackName} once real code is reached without finding a usable comment.
+     */
+    public static String describeScript(String content, String fallbackName) {
+        for (String rawLine : content.split("\n", -1)) {
+            String line = rawLine.strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (line.startsWith("#")) {
+                String description = line.substring(1).strip();
+                if (!description.isEmpty()) {
+                    return description;
+                }
+                continue;
+            }
+            break;
+        }
+        return fallbackName;
     }
 }

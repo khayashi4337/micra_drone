@@ -32,6 +32,9 @@ public final class CommandsHelpDoc {
             get_points()
                 このプロットが今まで稼いだ資源ポイントの合計（全作物の合計）。
 
+            get_points("wheat")
+                指定した作物1種類だけの資源ポイント（今のところ作物はwheatのみ）。
+
             ■ ログに出力する
             print(値)
                 このGUIのログ欄に1行追記する。数値・文字列・真偽値を渡せる。
@@ -59,10 +62,12 @@ public final class CommandsHelpDoc {
             スクリプトはワールドごとに <world>/micradrone/scripts/<コントローラの座標>/
             フォルダの中に .mdrone ファイルとして保存される（「Open Scripts Folder」
             ボタンで開ける）。1つのコントローラにつき複数のスクリプトを置けて、DroneScreen
-            下部の「Script: ...」ボタンをクリックすると次のスクリプトに切り替わり、その状態で
-            Runを押すと選択中のスクリプトが実行される。main.mdrone のほかに、動作見本として
-            move_square.mdrone（移動のみ）・till_and_plant.mdrone（畑を耕して植える）・
-            harvest_when_ready.mdrone（育った作物を収穫する）が最初から入っている。
+            のリストから選んでRunを押すと、選択中のスクリプトが実行される。リストにはファイル名
+            ではなく、そのスクリプトの先頭に書いた # コメントが説明として表示される
+            （例: 1行目が「# 畑を耕して植える」なら、リストにはその文がそのまま出る）。
+            main.mdrone のほかに、動作見本として move_square.mdrone（移動のみ）・
+            till_and_plant.mdrone（畑を耕して植える）・harvest_when_ready.mdrone
+            （育った作物を収穫する）が最初から入っている。
             """;
 
     private CommandsHelpDoc() {

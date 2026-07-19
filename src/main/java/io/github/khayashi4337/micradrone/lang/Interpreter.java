@@ -206,8 +206,14 @@ public final class Interpreter {
                 yield api.getWorldSize();
             }
             case "get_points" -> {
-                requireArgCount(call, 0);
-                yield api.getPoints();
+                if (args.isEmpty()) {
+                    yield api.getPoints();
+                } else if (args.size() == 1) {
+                    yield api.getPoints(asString(argAt(call, 0), call.line()));
+                } else {
+                    throw new MicraLangException(call.line(),
+                            "get_points() takes 0 or 1 argument(s) but got " + args.size());
+                }
             }
             case "print" -> {
                 requireArgCount(call, 1);

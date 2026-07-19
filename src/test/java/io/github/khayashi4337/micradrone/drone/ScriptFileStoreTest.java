@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -86,5 +87,43 @@ class ScriptFileStoreTest {
     void listScriptsReturnsEmptyListForAMissingFolder() throws IOException {
         List<String> names = ScriptFileStore.listScripts(tempDir.resolve("does_not_exist"));
         assertEquals(List.of(), names);
+    }
+
+    @Test
+    void describeScriptUsesTheFirstNonEmptyCommentLine() {
+        String content = """
+                # Tills and plants wheat across the whole plot.
+                size = get_world_size()
+                """;
+        assertEquals("Tills and plants wheat across the whole plot.", ScriptFileStore.describeScript(content, "fallback.mdrone"));
+    }
+
+    @Test
+    void describeScriptSkipsLeadingBlankLinesBeforeTheComment() {
+        String content = "\n\n  # after some blank lines\nmove(\"east\")\n";
+        assertEquals("after some blank lines", ScriptFileStore.describeScript(content, "fallback.mdrone"));
+    }
+
+    @Test
+    void describeScriptFallsBackToTheFileNameWhenThereIsNoLeadingComment() {
+        assertEquals("fallback.mdrone", ScriptFileStore.describeScript("move(\"east\")\n", "fallback.mdrone"));
+    }
+
+    @Test
+    void describeScriptFallsBackWhenTheOnlyCommentLineIsEmpty() {
+        assertEquals("fallback.mdrone", ScriptFileStore.describeScript("#\nmove(\"east\")\n", "fallback.mdrone"));
+    }
+
+    @Test
+    void listScriptsWithDescriptionsPairsEveryFileWithItsDescription() throws IOException {
+        Path scriptsDir = tempDir.resolve("scripts");
+        Path folder = ScriptFileStore.ensureControllerFolder(scriptsDir, 0, 0, 0);
+
+        Map<String, String> described = ScriptFileStore.listScriptsWithDescriptions(folder);
+
+        assertEquals(SampleScripts.ALL.size(), described.size());
+        assertEquals(
+                ScriptFileStore.describeScript(SampleScripts.MAIN, ScriptFileStore.DEFAULT_SCRIPT_NAME),
+                described.get(ScriptFileStore.DEFAULT_SCRIPT_NAME));
     }
 }

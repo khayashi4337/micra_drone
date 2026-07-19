@@ -9,6 +9,5 @@
   "gui.micradrone.drone_screen.open_scripts_folder": "Open Scripts Folder",
   "gui.micradrone.drone_screen.help": "Help",
   "gui.micradrone.drone_screen.alias": "Alias (e.g. North Farm)",
-  "gui.micradrone.drone_screen.set_alias": "Set",
-  "gui.micradrone.drone_screen.script": "Script: %s"
+  "gui.micradrone.drone_screen.set_alias": "Set"
 }

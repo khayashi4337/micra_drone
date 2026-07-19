@@ -103,6 +103,13 @@ final class FakeDroneApi implements DroneApi {
     }
 
     @Override
+    public double getPoints(String crop) {
+        // The fake only ever deals in one implicit crop ("wheat"), matching the real game's current
+        // (wheat-only) state - see LiveFarmBlockAccess.POINTS_PER_WHEAT_HARVEST.
+        return "wheat".equals(crop) ? points : 0;
+    }
+
+    @Override
     public void print(String text) {
         printed.add(text);
     }

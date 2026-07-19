@@ -71,8 +71,10 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private volatile String alias = "";
     private volatile String selectedScript = ScriptFileStore.DEFAULT_SCRIPT_NAME;
     // Refreshed from disk in sendLogSnapshotTo (screen open); reused as-is by every other push so
-    // routine log/points updates don't hit the filesystem.
-    private volatile List<String> availableScripts = List.of(ScriptFileStore.DEFAULT_SCRIPT_NAME);
+    // routine log/points updates don't hit the filesystem. File name -> description (see
+    // ScriptFileStore#describeScript).
+    private volatile Map<String, String> scriptDescriptions =
+            Map.of(ScriptFileStore.DEFAULT_SCRIPT_NAME, ScriptFileStore.DEFAULT_SCRIPT_NAME);
 
     private DroneScriptRunner scriptRunner;
     /** The visible {@link DroneEntity} tracked by UUID (entities aren't safe to hold direct references to across reloads). */
@@ -276,11 +278,11 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private void refreshAvailableScripts(ServerLevel level) {
         try {
             Path folder = controllerScriptFolder(level);
-            List<String> names = ScriptFileStore.listScripts(folder);
-            if (!names.isEmpty()) {
-                availableScripts = List.copyOf(names);
-                if (!names.contains(selectedScript)) {
-                    selectedScript = names.get(0);
+            Map<String, String> described = ScriptFileStore.listScriptsWithDescriptions(folder);
+            if (!described.isEmpty()) {
+                scriptDescriptions = described;
+                if (!described.containsKey(selectedScript)) {
+                    selectedScript = described.keySet().iterator().next();
                 }
             }
         } catch (IOException e) {
@@ -318,7 +320,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
     private void pushLogSnapshotTo(ServerPlayer player) {
         PacketDistributor.sendToPlayer(player, new DroneLogPayload(
-                getBlockPos(), List.copyOf(logBuffer), pointsByCrop(), availableScripts, selectedScript, alias));
+                getBlockPos(), List.copyOf(logBuffer), pointsByCrop(), scriptDescriptions, selectedScript, alias));
     }
 
     /** Registered as this block's {@link net.minecraft.world.level.block.entity.BlockEntityTicker}; server-side only. */

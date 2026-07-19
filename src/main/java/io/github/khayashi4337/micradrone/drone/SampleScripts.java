@@ -66,8 +66,8 @@ public final class SampleScripts {
                 row = row + 1
             print("harvested cells:")
             print(harvested)
-            print("total points:")
-            print(get_points())
+            print("Wheat:")
+            print(get_points("wheat"))
             """;
 
     public static final String MOVE_SQUARE = """

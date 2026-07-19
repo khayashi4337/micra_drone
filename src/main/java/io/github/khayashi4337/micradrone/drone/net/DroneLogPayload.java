@@ -15,14 +15,14 @@ import net.minecraft.resources.ResourceLocation;
 
 /**
  * S2C: the controller at {@code pos}'s full current state snapshot (log buffer, points-per-crop,
- * available scripts, the currently selected one, and its alias), replacing whatever the client had
- * shown.
+ * available scripts keyed by file name with a description each, the currently selected one, and its
+ * alias), replacing whatever the client had shown.
  */
 public record DroneLogPayload(
         BlockPos pos,
         List<String> lines,
         Map<String, Long> pointsByCrop,
-        List<String> availableScripts,
+        Map<String, String> scriptDescriptions,
         String selectedScript,
         String alias) implements CustomPacketPayload {
     public static final Type<DroneLogPayload> TYPE =
@@ -31,7 +31,7 @@ public record DroneLogPayload(
             BlockPos.STREAM_CODEC, DroneLogPayload::pos,
             ByteBufCodecs.collection(ArrayList::new, ByteBufCodecs.STRING_UTF8), DroneLogPayload::lines,
             ByteBufCodecs.map(HashMap::new, ByteBufCodecs.STRING_UTF8, ByteBufCodecs.VAR_LONG), DroneLogPayload::pointsByCrop,
-            ByteBufCodecs.collection(ArrayList::new, ByteBufCodecs.STRING_UTF8), DroneLogPayload::availableScripts,
+            ByteBufCodecs.map(HashMap::new, ByteBufCodecs.STRING_UTF8, ByteBufCodecs.STRING_UTF8), DroneLogPayload::scriptDescriptions,
             ByteBufCodecs.STRING_UTF8, DroneLogPayload::selectedScript,
             ByteBufCodecs.STRING_UTF8, DroneLogPayload::alias,
             DroneLogPayload::new);

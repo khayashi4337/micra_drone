@@ -115,6 +115,19 @@ class InterpreterTest {
     }
 
     @Test
+    void getPointsAcceptsACropNameArgument() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        api.setCropAge(0, 0, 3);
+        List<io.github.khayashi4337.micradrone.lang.ast.Stmt> program = new Parser(new Lexer("""
+                harvest()
+                print(get_points("wheat"))
+                print(get_points("pumpkin"))
+                """).scan()).parseProgram();
+        new Interpreter(api).run(program);
+        assertEquals(List.of("1", "0"), api.printed);
+    }
+
+    @Test
     void booleanLogicShortCircuitsAndNot() {
         FakeDroneApi api = run("""
                 print(not False)
