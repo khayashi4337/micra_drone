@@ -1,0 +1,93 @@
+package io.github.khayashi4337.micradrone.client;
+
+import io.github.khayashi4337.micradrone.drone.DroneEntity;
+import net.minecraft.client.model.HierarchicalModel;
+import net.minecraft.client.model.geom.ModelPart;
+import net.minecraft.client.model.geom.PartPose;
+import net.minecraft.client.model.geom.builders.CubeDeformation;
+import net.minecraft.client.model.geom.builders.CubeListBuilder;
+import net.minecraft.client.model.geom.builders.LayerDefinition;
+import net.minecraft.client.model.geom.builders.MeshDefinition;
+import net.minecraft.client.model.geom.builders.PartDefinition;
+import net.minecraft.util.Mth;
+
+/**
+ * Custom look for {@link DroneEntity} (a plain Allay subclass server-side - see that class - reused
+ * only for its behavior, not its visuals): a small hovering cube-headed robot with two side-mounted
+ * rotors, designed to match the logo artwork the player commissioned (see
+ * {@code explain/micar_drone_logo.png} and the back/bottom reference renders in the same folder).
+ * Geometry follows {@code AllayModel}'s coordinate conventions closely (same root offset, same overall
+ * scale) since {@link DroneEntity} keeps Allay's exact hitbox - this is a from-scratch model, not a
+ * retexture, so there's no in-engine visual feedback loop while authoring it; expect the proportions
+ * to need a manual touch-up pass once seen in-game.
+ */
+public class DroneModel extends HierarchicalModel<DroneEntity> {
+    private final ModelPart root;
+    private final ModelPart body;
+    private final ModelPart rightArm;
+    private final ModelPart leftArm;
+    private final ModelPart rightRotor;
+    private final ModelPart leftRotor;
+
+    public DroneModel(ModelPart root) {
+        this.root = root.getChild("root");
+        this.body = this.root.getChild("body");
+        this.rightArm = this.body.getChild("right_arm");
+        this.leftArm = this.body.getChild("left_arm");
+        this.rightRotor = this.rightArm.getChild("right_rotor");
+        this.leftRotor = this.leftArm.getChild("left_rotor");
+    }
+
+    @Override
+    public ModelPart root() {
+        return this.root;
+    }
+
+    public static LayerDefinition createBodyLayer() {
+        MeshDefinition mesh = new MeshDefinition();
+        PartDefinition root = mesh.getRoot().addOrReplaceChild("root", CubeListBuilder.create(), PartPose.offset(0.0F, 23.5F, 0.0F));
+
+        PartDefinition body = root.addOrReplaceChild(
+                "body",
+                CubeListBuilder.create().texOffs(0, 0).addBox(-3.5F, -7.0F, -3.5F, 7.0F, 7.0F, 7.0F, CubeDeformation.NONE),
+                PartPose.offset(0.0F, -2.5F, 0.0F));
+
+        body.addOrReplaceChild(
+                "chin_light",
+                CubeListBuilder.create().texOffs(0, 40).addBox(-1.0F, 0.0F, -3.9F, 2.0F, 1.0F, 1.0F, CubeDeformation.NONE),
+                PartPose.offset(0.0F, 0.0F, 0.0F));
+
+        body.addOrReplaceChild(
+                "top_hatch",
+                CubeListBuilder.create().texOffs(0, 44).addBox(-1.5F, -0.5F, -1.0F, 3.0F, 1.0F, 2.0F, CubeDeformation.NONE),
+                PartPose.offset(0.0F, -7.0F, 0.0F));
+
+        PartDefinition rightArm = body.addOrReplaceChild(
+                "right_arm",
+                CubeListBuilder.create().texOffs(0, 16).addBox(-4.0F, -0.5F, -0.5F, 4.0F, 1.0F, 1.0F, CubeDeformation.NONE),
+                PartPose.offset(-3.5F, -3.5F, 0.0F));
+        rightArm.addOrReplaceChild(
+                "right_rotor",
+                CubeListBuilder.create().texOffs(0, 24).addBox(-3.0F, -0.5F, -3.0F, 6.0F, 1.0F, 6.0F, CubeDeformation.NONE),
+                PartPose.offset(-4.0F, 0.0F, 0.0F));
+
+        PartDefinition leftArm = body.addOrReplaceChild(
+                "left_arm",
+                CubeListBuilder.create().texOffs(0, 20).addBox(0.0F, -0.5F, -0.5F, 4.0F, 1.0F, 1.0F, CubeDeformation.NONE),
+                PartPose.offset(3.5F, -3.5F, 0.0F));
+        leftArm.addOrReplaceChild(
+                "left_rotor",
+                CubeListBuilder.create().texOffs(0, 32).addBox(-3.0F, -0.5F, -3.0F, 6.0F, 1.0F, 6.0F, CubeDeformation.NONE),
+                PartPose.offset(4.0F, 0.0F, 0.0F));
+
+        return LayerDefinition.create(mesh, 64, 64);
+    }
+
+    @Override
+    public void setupAnim(DroneEntity entity, float limbSwing, float limbSwingAmount, float ageInTicks, float netHeadYaw, float headPitch) {
+        this.root().getAllParts().forEach(ModelPart::resetPose);
+        this.root.y += Mth.cos(ageInTicks * 0.1F) * 0.6F;
+        this.rightRotor.yRot = ageInTicks * 3.5F;
+        this.leftRotor.yRot = -ageInTicks * 3.5F;
+    }
+}

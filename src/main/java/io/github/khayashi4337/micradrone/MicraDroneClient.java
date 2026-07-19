@@ -5,15 +5,18 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import io.github.khayashi4337.micradrone.client.CommandsHelpDoc;
+import io.github.khayashi4337.micradrone.client.DroneModel;
+import io.github.khayashi4337.micradrone.client.DroneRenderer;
 import io.github.khayashi4337.micradrone.client.DroneScreen;
 import io.github.khayashi4337.micradrone.client.ShopScreen;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.entity.AllayRenderer;
+import net.minecraft.client.model.geom.ModelLayerLocation;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.storage.LevelResource;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -27,6 +30,10 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 @Mod(value = MicraDrone.MODID, dist = Dist.CLIENT)
 @EventBusSubscriber(modid = MicraDrone.MODID, value = Dist.CLIENT)
 public class MicraDroneClient {
+    /** Registered in {@link #registerLayerDefinitions}, baked in {@link DroneRenderer}'s constructor. */
+    public static final ModelLayerLocation DRONE_MODEL_LAYER =
+            new ModelLayerLocation(ResourceLocation.fromNamespaceAndPath(MicraDrone.MODID, "drone"), "main");
+
     public MicraDroneClient() {
     }
 
@@ -36,10 +43,15 @@ public class MicraDroneClient {
     }
 
     @SubscribeEvent
+    static void registerLayerDefinitions(EntityRenderersEvent.RegisterLayerDefinitions event) {
+        event.registerLayerDefinition(DRONE_MODEL_LAYER, DroneModel::createBodyLayer);
+    }
+
+    @SubscribeEvent
     static void registerRenderers(EntityRenderersEvent.RegisterRenderers event) {
-        // DroneEntity is a plain Allay subclass (see DroneEntity) purely to reuse AllayRenderer/
-        // AllayModel, which are generically bound to Allay.
-        event.registerEntityRenderer(MicraDrone.DRONE_ENTITY.get(), AllayRenderer::new);
+        // DroneEntity is a plain Allay subclass server-side (see DroneEntity) purely to reuse Allay's
+        // behavior/hitbox; its look is fully custom (see DroneModel/DroneRenderer).
+        event.registerEntityRenderer(MicraDrone.DRONE_ENTITY.get(), DroneRenderer::new);
     }
 
     /** Called from DroneControllerBlock's client-side useWithoutItem branch. */

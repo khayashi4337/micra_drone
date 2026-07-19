@@ -11,13 +11,12 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 
 /**
- * Visible drone: a plain {@link Allay} subclass so it can reuse the vanilla Allay model/renderer/
- * texture/animations as-is (AllayRenderer/AllayModel are generically bound to Allay, so this is the
- * only way to reuse them without hand-copying the model). All of Allay's own behavior is suppressed -
- * {@link #makeBrain} skips AllayAi's activity wiring entirely (no wandering, no note-block duplication,
- * no item pickup), and {@link #mobInteract} disables the vanilla "give it an item" interaction. Its
- * position is driven entirely by {@link DroneControllerBlockEntity}, in lockstep with the drone's grid
- * position.
+ * Visible drone: a plain {@link Allay} subclass, reused purely for its physics/hitbox/save-format
+ * plumbing - not for its looks. Its look is fully custom (see the client-only {@code DroneModel}/
+ * {@code DroneRenderer}). All of Allay's own behavior is suppressed - {@link #makeBrain} skips
+ * AllayAi's activity wiring entirely (no wandering, no note-block duplication, no item pickup), and
+ * {@link #mobInteract} disables the vanilla "give it an item" interaction. Its position is driven
+ * entirely by {@link DroneControllerBlockEntity}, in lockstep with the drone's grid position.
  */
 public class DroneEntity extends Allay {
     public DroneEntity(EntityType<? extends Allay> entityType, Level level) {
