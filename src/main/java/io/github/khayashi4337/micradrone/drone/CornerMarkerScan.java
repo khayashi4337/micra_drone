@@ -14,7 +14,8 @@ final class CornerMarkerScan {
             {-1, -1}, // north-west (-X, -Z)
     };
 
-    record PlotBounds(int worldSize, int dirX, int dirZ) {}
+    /** {@code markerFound} is false only when no marker was found and {@code defaultSize} was used. */
+    record PlotBounds(int worldSize, int dirX, int dirZ, boolean markerFound) {}
 
     @FunctionalInterface
     interface MarkerLookup {
@@ -40,11 +41,11 @@ final class CornerMarkerScan {
             for (int[] dir : DIAGONAL_DIRECTIONS) {
                 for (int dy = -yTolerance; dy <= yTolerance; dy++) {
                     if (lookup.isMarkerAt(dir[0] * i, dy, dir[1] * i)) {
-                        return new PlotBounds(Math.max(0, i - 1), dir[0], dir[1]);
+                        return new PlotBounds(Math.max(0, i - 1), dir[0], dir[1], true);
                     }
                 }
             }
         }
-        return new PlotBounds(defaultSize, 1, 1);
+        return new PlotBounds(defaultSize, 1, 1, false);
     }
 }

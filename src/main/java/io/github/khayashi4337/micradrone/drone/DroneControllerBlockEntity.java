@@ -57,6 +57,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private volatile int worldSize = DEFAULT_WORLD_SIZE;
     private volatile int dirX = 1;
     private volatile int dirZ = 1;
+    // True only once scanForCornerMarker has actually found a paired corner marker - see its use in
+    // serverTick, which must not ambient-boost growth in the size-5-toward-SE guess used otherwise.
+    private volatile boolean plotConfirmed = false;
     // Belongs to this controller, not the plot's geometry: survives corner-marker re-scans on purpose.
     private volatile long points = 0;
 
@@ -175,6 +178,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         worldSize = bounds.worldSize();
         dirX = bounds.dirX();
         dirZ = bounds.dirZ();
+        // Ambient effects like the growth boost must never apply to the size-5-toward-SE guess used
+        // when no marker has actually been placed/found - only to a plot the player explicitly marked.
+        plotConfirmed = bounds.markerFound();
     }
 
     /**
@@ -266,7 +272,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     public static void serverTick(Level level, BlockPos pos, BlockState state, DroneControllerBlockEntity be) {
         int tick = level.getServer().getTickCount();
         be.pacedActionQueue.tick(tick);
-        if (tick % GROWTH_BOOST_INTERVAL_TICKS == 0) {
+        if (be.plotConfirmed && tick % GROWTH_BOOST_INTERVAL_TICKS == 0) {
             new LiveFarmBlockAccess(level, pos, be).boostGrowth();
         }
     }

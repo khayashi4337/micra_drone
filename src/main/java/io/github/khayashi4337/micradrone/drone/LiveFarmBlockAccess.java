@@ -122,14 +122,20 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     }
 
     /**
-     * Ages up every immature crop in the plot by one bonemeal-style jump (the same
-     * {@link CropBlock#growCrops} vanilla bonemeal itself uses). Called periodically from
-     * {@link DroneControllerBlockEntity#serverTick} to make the claimed plot grow faster than
-     * vanilla, independent of whether a script is currently running.
+     * Ages up every immature crop standing on actual farmland within the plot by one bonemeal-style
+     * jump (the same {@link CropBlock#growCrops} vanilla bonemeal itself uses). Called periodically
+     * from {@link DroneControllerBlockEntity#serverTick} - only once a corner marker has confirmed the
+     * plot (see {@code plotConfirmed} there) - to make the claimed area grow faster than vanilla,
+     * independent of whether a script is currently running. The farmland check keeps this strictly to
+     * cells the drone actually tilled, not just anything sitting inside the plot's bounding square.
      */
     public void boostGrowth() {
         for (int[] offset : allGroundOffsets(grid.dirX(), grid.dirZ(), grid.worldSize())) {
-            BlockPos above = origin.offset(offset[0], 1, offset[1]);
+            BlockPos ground = origin.offset(offset[0], 0, offset[1]);
+            if (!level.getBlockState(ground).is(Blocks.FARMLAND)) {
+                continue;
+            }
+            BlockPos above = ground.above();
             BlockState state = level.getBlockState(above);
             if (state.getBlock() instanceof CropBlock crop && !crop.isMaxAge(state)) {
                 crop.growCrops(level, above, state);
