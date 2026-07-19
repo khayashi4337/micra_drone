@@ -1,0 +1,23 @@
+{
+  "parent": "micradrone:unlock_carrot",
+  "display": {
+    "icon": {
+      "id": "minecraft:pumpkin"
+    },
+    "title": {
+      "translate": "advancements.micradrone.unlock_pumpkin.title"
+    },
+    "description": {
+      "translate": "advancements.micradrone.unlock_pumpkin.description"
+    },
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": false,
+    "hidden": false
+  },
+  "criteria": {
+    "code_triggered": {
+      "trigger": "minecraft:impossible"
+    }
+  }
+}

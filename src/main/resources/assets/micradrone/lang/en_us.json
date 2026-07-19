@@ -15,5 +15,11 @@
   "gui.micradrone.shop_screen.title": "Unlock Shop",
   "gui.micradrone.shop_screen.connecting": "Connecting to paired Drone Controller...",
   "gui.micradrone.shop_screen.owned": "%s: Unlocked",
-  "gui.micradrone.shop_screen.buy": "Buy %s (%s)"
+  "gui.micradrone.shop_screen.buy": "Buy %s (%s)",
+  "advancements.micradrone.root.title": "Micra Drone",
+  "advancements.micradrone.root.description": "Obtain a Drone Controller",
+  "advancements.micradrone.unlock_carrot.title": "Root Vegetables",
+  "advancements.micradrone.unlock_carrot.description": "Unlock carrot in the Corner Marker shop",
+  "advancements.micradrone.unlock_pumpkin.title": "Vine Ripened",
+  "advancements.micradrone.unlock_pumpkin.description": "Unlock pumpkin in the Corner Marker shop"
 }

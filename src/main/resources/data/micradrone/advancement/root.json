@@ -1,0 +1,30 @@
+{
+  "display": {
+    "icon": {
+      "id": "micradrone:drone_controller"
+    },
+    "title": {
+      "translate": "advancements.micradrone.root.title"
+    },
+    "description": {
+      "translate": "advancements.micradrone.root.description"
+    },
+    "background": "minecraft:textures/gui/advancements/backgrounds/husbandry.png",
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": false,
+    "hidden": false
+  },
+  "criteria": {
+    "obtained_controller": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [
+          {
+            "items": "micradrone:drone_controller"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -218,6 +218,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             unlockedCrops.add(unlockId);
             setChanged();
             requester.sendSystemMessage(Component.literal("[shop] unlocked " + unlockId));
+            MicraDroneAdvancements.awardUnlock(requester, unlockId);
         }
         sendShopStateTo(requester);
     }
