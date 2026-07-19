@@ -66,6 +66,20 @@ class SampleScriptsTest {
     }
 
     @Test
+    void carrotFarmTillsHarvestsAndReplantsEveryCell() {
+        FakeDroneApi api = new FakeDroneApi(3);
+        api.setCropAge(0, 0, 3); // mature, ready to harvest
+
+        new Interpreter(api).run(parse(SampleScripts.CARROT_FARM));
+
+        long harvestCount = api.calls.stream().filter("harvest"::equals).count();
+        long plantCount = api.calls.stream().filter("plant:carrot"::equals).count();
+        assertEquals(1, harvestCount, "expected the one mature cell to be harvested");
+        assertEquals(9, plantCount, "expected a plant(\"carrot\") attempt on every one of the 9 cells");
+        assertEquals(List.of("carrots harvested:", "1", "Carrot points:", "0"), api.printed);
+    }
+
+    @Test
     void pumpkinSmartHarvestSkipsWastedHarvestCallsOnRottenCells() {
         FakeDroneApi api = new FakeDroneApi(3);
         api.setCropAge(0, 0, 3); // mature, ready to harvest normally

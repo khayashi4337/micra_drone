@@ -104,9 +104,11 @@ public final class CommandsHelpDoc {
             （例: 1行目が「# 畑を耕して植える」なら、リストにはその文がそのまま出る）。
             main.mdrone のほかに、動作見本として move_square.mdrone（移動のみ）・
             till_and_plant.mdrone（畑を耕して植える）・harvest_when_ready.mdrone
-            （育った作物を収穫する）・pumpkin_smart_harvest.mdrone（pumpkinを植え、
-            is_rotten()で腐ったマスを見分けて無駄なharvest()を避けながら収穫する見本。
-            pumpkinのアンロック後、繰り返しRunして使う）が最初から入っている。
+            （育った作物を収穫する）・carrot_farm.mdrone（carrotを耕して植えて
+            収穫を繰り返す。carrotのアンロック後、繰り返しRunして使う）・
+            pumpkin_smart_harvest.mdrone（pumpkinを植え、is_rotten()で腐ったマスを
+            見分けて無駄なharvest()を避けながら収穫する見本。pumpkinのアンロック後、
+            繰り返しRunして使う）が最初から入っている。
             """;
 
     private CommandsHelpDoc() {

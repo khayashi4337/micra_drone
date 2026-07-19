@@ -97,6 +97,42 @@ public final class SampleScripts {
             print("back near the start")
             """;
 
+    public static final String CARROT_FARM = """
+            # Tills, harvests any mature carrot, and replants across the whole plot - unlock carrot
+            # first via the Corner Marker shop, then re-run this any time (it's safe to run before
+            # anything is grown yet, and safe to run again after harvesting).
+            size = get_world_size()
+            going_east = True
+            row = 0
+            harvested = 0
+            while row < size:
+                col = 0
+                while col < size - 1:
+                    till()
+                    if can_harvest():
+                        if harvest():
+                            harvested = harvested + 1
+                    plant("carrot")
+                    if going_east:
+                        move("east")
+                    else:
+                        move("west")
+                    col = col + 1
+                till()
+                if can_harvest():
+                    if harvest():
+                        harvested = harvested + 1
+                plant("carrot")
+                if row < size - 1:
+                    move("south")
+                going_east = not going_east
+                row = row + 1
+            print("carrots harvested:")
+            print(harvested)
+            print("Carrot points:")
+            print(get_points("carrot"))
+            """;
+
     public static final String PUMPKIN_SMART_HARVEST = """
             # Verification script for the Phase 3 rework: plants pumpkin across the plot (unlock it
             # first via the Corner Marker shop) and, every time you Run it, checks is_rotten() before
@@ -151,6 +187,7 @@ public final class SampleScripts {
         all.put("move_square.mdrone", MOVE_SQUARE);
         all.put("till_and_plant.mdrone", TILL_AND_PLANT);
         all.put("harvest_when_ready.mdrone", HARVEST_WHEN_READY);
+        all.put("carrot_farm.mdrone", CARROT_FARM);
         all.put("pumpkin_smart_harvest.mdrone", PUMPKIN_SMART_HARVEST);
         return Map.copyOf(all);
     }
