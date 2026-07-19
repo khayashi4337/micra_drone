@@ -1,5 +1,8 @@
 package io.github.khayashi4337.micradrone.drone;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import net.minecraft.core.BlockPos;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.Level;
@@ -38,6 +41,21 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
      */
     static int[] groundOffset(int dirX, int dirZ, int gx, int gy) {
         return new int[]{dirX * (1 + gx), dirZ * (1 + gy)};
+    }
+
+    /**
+     * Pure coordinate math: every {dx, dz} ground offset in a worldSize x worldSize plot, in no
+     * particular order. Used to sweep the whole plot at once (see {@link #boostGrowth()}) rather
+     * than just the drone's current cell.
+     */
+    static List<int[]> allGroundOffsets(int dirX, int dirZ, int worldSize) {
+        List<int[]> offsets = new ArrayList<>(worldSize * worldSize);
+        for (int gx = 0; gx < worldSize; gx++) {
+            for (int gy = 0; gy < worldSize; gy++) {
+                offsets.add(groundOffset(dirX, dirZ, gx, gy));
+            }
+        }
+        return offsets;
     }
 
     private BlockPos groundPos() {
@@ -101,5 +119,21 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
 
     private static boolean isMatureCrop(BlockState state) {
         return state.getBlock() instanceof CropBlock crop && crop.isMaxAge(state);
+    }
+
+    /**
+     * Ages up every immature crop in the plot by one bonemeal-style jump (the same
+     * {@link CropBlock#growCrops} vanilla bonemeal itself uses). Called periodically from
+     * {@link DroneControllerBlockEntity#serverTick} to make the claimed plot grow faster than
+     * vanilla, independent of whether a script is currently running.
+     */
+    public void boostGrowth() {
+        for (int[] offset : allGroundOffsets(grid.dirX(), grid.dirZ(), grid.worldSize())) {
+            BlockPos above = origin.offset(offset[0], 1, offset[1]);
+            BlockState state = level.getBlockState(above);
+            if (state.getBlock() instanceof CropBlock crop && !crop.isMaxAge(state)) {
+                crop.growCrops(level, above, state);
+            }
+        }
     }
 }

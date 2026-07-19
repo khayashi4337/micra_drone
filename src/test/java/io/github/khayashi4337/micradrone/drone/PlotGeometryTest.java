@@ -3,6 +3,7 @@ package io.github.khayashi4337.micradrone.drone;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 
@@ -72,6 +73,23 @@ class PlotGeometryTest {
             CornerMarkerScan.MarkerLookup lookup = (dx, dy, dz) -> dx == c.markerDx() && dy == 0 && dz == c.markerDz();
             PlotBounds bounds = CornerMarkerScan.scan(lookup, 10, 4, 5);
             assertEquals(3, bounds.worldSize(), c.label());
+        }
+    }
+
+    @Test
+    void allGroundOffsetsCoversEveryCellExactlyOnceMatchingGroundOffset() {
+        int worldSize = 3;
+        int dirX = 1;
+        int dirZ = -1;
+        List<int[]> all = LiveFarmBlockAccess.allGroundOffsets(dirX, dirZ, worldSize);
+
+        assertEquals(worldSize * worldSize, all.size());
+        for (int gx = 0; gx < worldSize; gx++) {
+            for (int gy = 0; gy < worldSize; gy++) {
+                int[] expected = LiveFarmBlockAccess.groundOffset(dirX, dirZ, gx, gy);
+                boolean found = all.stream().anyMatch(o -> o[0] == expected[0] && o[1] == expected[1]);
+                assertTrue(found, "missing offset for cell (" + gx + "," + gy + ")");
+            }
         }
     }
 }

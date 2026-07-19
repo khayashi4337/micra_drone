@@ -38,6 +38,12 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private static final int MAX_MARKER_SCAN_Y_TOLERANCE = 4;
     /** Bounds how much log history is kept/sent; older lines are dropped as new ones arrive. */
     private static final int LOG_BUFFER_CAPACITY = 100;
+    /**
+     * How often the claimed plot's crops get an extra bonemeal-style growth jump (see
+     * {@link LiveFarmBlockAccess#boostGrowth()}), making the plot grow noticeably faster than
+     * vanilla farmland. 100 ticks = 5 seconds.
+     */
+    private static final int GROWTH_BOOST_INTERVAL_TICKS = 100;
 
     private final PacedActionQueue pacedActionQueue = new PacedActionQueue();
     private final Deque<String> logBuffer = new ArrayDeque<>();
@@ -258,7 +264,11 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
     /** Registered as this block's {@link net.minecraft.world.level.block.entity.BlockEntityTicker}; server-side only. */
     public static void serverTick(Level level, BlockPos pos, BlockState state, DroneControllerBlockEntity be) {
-        be.pacedActionQueue.tick(level.getServer().getTickCount());
+        int tick = level.getServer().getTickCount();
+        be.pacedActionQueue.tick(tick);
+        if (tick % GROWTH_BOOST_INTERVAL_TICKS == 0) {
+            new LiveFarmBlockAccess(level, pos, be).boostGrowth();
+        }
     }
 
     @Override
