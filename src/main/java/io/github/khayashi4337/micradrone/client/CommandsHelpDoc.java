@@ -19,6 +19,14 @@ public final class CommandsHelpDoc {
                 耕地にニンジンを植える。ショップでcarrotをアンロックするまでは
                 常にfalseになる（DroneScreenの「Shop」タブから購入できる）。
 
+            plant("pumpkin")
+                耕地にカボチャの苗（つる）を植える。育ちきると本家vanillaの
+                仕組みでとなりの空いたマスに実(カボチャ本体)が生える
+                （どのマスに生えるかはランダムなので、苗の周りは空けておく
+                といい）。harvest()は実が生えたマスで呼ぶ必要がある
+                （苗のマスでは常に失敗する）。ショップでpumpkinをアンロック
+                するまでは常にfalseになる。
+
             harvest()
                 育ちきった作物を収穫する。戻り値: 成功したら true。
 

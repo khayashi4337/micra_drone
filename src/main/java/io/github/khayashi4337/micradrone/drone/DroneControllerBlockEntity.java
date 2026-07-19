@@ -121,7 +121,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
     /** Moves the visible {@link DroneEntity} to match the current grid position, spawning it if needed. */
     private void syncDronePosition(ServerLevel level) {
-        int[] offset = LiveFarmBlockAccess.groundOffset(dirX, dirZ, gridX, gridY);
+        int[] offset = PlotGeometry.groundOffset(dirX, dirZ, gridX, gridY);
         double x = getBlockPos().getX() + offset[0] + 0.5;
         double y = getBlockPos().getY() + 1.0;
         double z = getBlockPos().getZ() + offset[1] + 0.5;

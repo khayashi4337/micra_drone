@@ -1,12 +1,11 @@
 package io.github.khayashi4337.micradrone.drone;
 
-import java.util.ArrayList;
-import java.util.List;
-
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.BonemealableBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CropBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -35,31 +34,8 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         this.grid = grid;
     }
 
-    /**
-     * Pure coordinate math (no Minecraft types), so it can be unit tested without a real world.
-     * Returns {dx, dz}: the offset from the controller to grid cell (gx, gy).
-     */
-    static int[] groundOffset(int dirX, int dirZ, int gx, int gy) {
-        return new int[]{dirX * (1 + gx), dirZ * (1 + gy)};
-    }
-
-    /**
-     * Pure coordinate math: every {dx, dz} ground offset in a worldSize x worldSize plot, in no
-     * particular order. Used to sweep the whole plot at once (see {@link #boostGrowth()}) rather
-     * than just the drone's current cell.
-     */
-    static List<int[]> allGroundOffsets(int dirX, int dirZ, int worldSize) {
-        List<int[]> offsets = new ArrayList<>(worldSize * worldSize);
-        for (int gx = 0; gx < worldSize; gx++) {
-            for (int gy = 0; gy < worldSize; gy++) {
-                offsets.add(groundOffset(dirX, dirZ, gx, gy));
-            }
-        }
-        return offsets;
-    }
-
     private BlockPos groundPos() {
-        int[] offset = groundOffset(grid.dirX(), grid.dirZ(), grid.gridX(), grid.gridY());
+        int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), grid.gridX(), grid.gridY());
         return origin.offset(offset[0], 0, offset[1]);
     }
 
@@ -98,18 +74,21 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     }
 
     /**
-     * Crops whose block-placement is a plain "set the block to its default (age 0) state" - wheat and
-     * carrot both work exactly like this. Pumpkin deliberately isn't here: vanilla pumpkins grow via
-     * PumpkinStemBlock (a vine that pops out a separate Pumpkin block), a different mechanic entirely,
-     * so plant("pumpkin") intentionally fails until that's wired up separately. Deliberately a method,
-     * not a static field: a field initializer touching Minecraft classes would run at class-load time,
-     * which breaks calling this class's Minecraft-free static methods (groundOffset/allGroundOffsets)
-     * from the test sourceSet, which has no net.minecraft.* on its classpath.
+     * Crops whose block-placement is a plain "set the block to its default (age 0) state" - this
+     * covers wheat and carrot (a CropBlock placed directly) and, just as simply, pumpkin: vanilla
+     * plants a PumpkinStemBlock (AGE 0-7, same shape as CropBlock) on the cell, which - once fully
+     * grown via boostGrowth()'s generic BonemealableBlock handling below - pops an actual Pumpkin
+     * block onto a free adjacent farmland/dirt cell on its own, using vanilla's own StemBlock logic
+     * (verified in decompiled sources; not reimplemented here). Deliberately a method, not a static
+     * field: eagerly initializing a Minecraft-typed static field (or even referencing certain
+     * Minecraft interfaces via instanceof) can break this class's verification on the test sourceSet
+     * - see PlotGeometry, which exists specifically to stay unaffected by that.
      */
     private static Block simpleCropBlockFor(String crop) {
         return switch (crop) {
             case "wheat" -> Blocks.WHEAT;
             case "carrot" -> Blocks.CARROTS;
+            case "pumpkin" -> Blocks.PUMPKIN_STEM;
             default -> null;
         };
     }
@@ -134,6 +113,9 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         if (block == Blocks.CARROTS) {
             return "carrot";
         }
+        if (block == Blocks.PUMPKIN) {
+            return "pumpkin";
+        }
         return "wheat"; // covers Blocks.WHEAT and, defensively, anything unexpected
     }
 
@@ -143,28 +125,44 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         return FarmCellRules.canHarvest(readFacts(ground, cropPos()));
     }
 
+    /**
+     * A cell counts as harvestable once its CropBlock (wheat/carrot) reaches max age, or - for
+     * pumpkin - once an actual Pumpkin block exists there at all (the fruit itself has no growth
+     * stages; only the stem that spawned it did).
+     */
     private static boolean isMatureCrop(BlockState state) {
-        return state.getBlock() instanceof CropBlock crop && crop.isMaxAge(state);
+        if (state.getBlock() instanceof CropBlock crop) {
+            return crop.isMaxAge(state);
+        }
+        return state.is(Blocks.PUMPKIN);
     }
 
     /**
      * Ages up every immature crop standing on actual farmland within the plot by one bonemeal-style
-     * jump (the same {@link CropBlock#growCrops} vanilla bonemeal itself uses). Called periodically
-     * from {@link DroneControllerBlockEntity#serverTick} - only once a corner marker has confirmed the
-     * plot (see {@code plotConfirmed} there) - to make the claimed area grow faster than vanilla,
-     * independent of whether a script is currently running. The farmland check keeps this strictly to
-     * cells the drone actually tilled, not just anything sitting inside the plot's bounding square.
+     * jump, via the generic {@link BonemealableBlock} interface both CropBlock (wheat/carrot) and
+     * StemBlock (pumpkin) implement - so this needs no per-crop-type special casing, and for pumpkin
+     * specifically, reaching max age through this same call is what makes vanilla's own StemBlock
+     * logic pop an actual Pumpkin block onto a free neighboring cell (see simpleCropBlockFor's note).
+     * Called periodically from {@link DroneControllerBlockEntity#serverTick} - only once a corner
+     * marker has confirmed the plot (see {@code plotConfirmed} there) - to make the claimed area grow
+     * faster than vanilla, independent of whether a script is currently running. The farmland check
+     * keeps this strictly to cells the drone actually tilled, not just anything sitting inside the
+     * plot's bounding square.
      */
     public void boostGrowth() {
-        for (int[] offset : allGroundOffsets(grid.dirX(), grid.dirZ(), grid.worldSize())) {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        for (int[] offset : PlotGeometry.allGroundOffsets(grid.dirX(), grid.dirZ(), grid.worldSize())) {
             BlockPos ground = origin.offset(offset[0], 0, offset[1]);
             if (!level.getBlockState(ground).is(Blocks.FARMLAND)) {
                 continue;
             }
             BlockPos above = ground.above();
             BlockState state = level.getBlockState(above);
-            if (state.getBlock() instanceof CropBlock crop && !crop.isMaxAge(state)) {
-                crop.growCrops(level, above, state);
+            if (state.getBlock() instanceof BonemealableBlock bonemealable
+                    && bonemealable.isValidBonemealTarget(level, above, state)) {
+                bonemealable.performBonemeal(serverLevel, serverLevel.getRandom(), above, state);
             }
         }
     }

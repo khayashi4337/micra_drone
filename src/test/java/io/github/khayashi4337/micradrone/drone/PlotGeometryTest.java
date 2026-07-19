@@ -13,7 +13,7 @@ import io.github.khayashi4337.micradrone.drone.CornerMarkerScan.PlotBounds;
 
 /**
  * End-to-end geometry: CornerMarkerScan (decides plot size/direction) combined with
- * LiveFarmBlockAccess.groundOffset (maps a grid cell to an offset from the controller), checked
+ * PlotGeometry.groundOffset (maps a grid cell to an offset from the controller), checked
  * against 林さん's exact reported scenario for all 4 diagonal directions - not just south-east.
  * Deliberately Minecraft-free (plain int offsets, no BlockPos): the test sourceSet has no access to
  * net.minecraft.* classes in this project's Gradle setup.
@@ -40,7 +40,7 @@ class PlotGeometryTest {
             assertEquals(c.markerDx() > 0 ? 1 : -1, bounds.dirX(), c.label() + ": wrong dirX");
             assertEquals(c.markerDz() > 0 ? 1 : -1, bounds.dirZ(), c.label() + ": wrong dirZ");
 
-            int[] onlyCellOffset = LiveFarmBlockAccess.groundOffset(bounds.dirX(), bounds.dirZ(), 0, 0);
+            int[] onlyCellOffset = PlotGeometry.groundOffset(bounds.dirX(), bounds.dirZ(), 0, 0);
             int[] expectedOffset = {c.markerDx() > 0 ? 1 : -1, c.markerDz() > 0 ? 1 : -1};
             assertArrayEquals(expectedOffset, onlyCellOffset, c.label() + ": wrong offset for the only farmable cell");
         }
@@ -54,7 +54,7 @@ class PlotGeometryTest {
 
             for (int gx = 0; gx < bounds.worldSize(); gx++) {
                 for (int gy = 0; gy < bounds.worldSize(); gy++) {
-                    int[] cell = LiveFarmBlockAccess.groundOffset(bounds.dirX(), bounds.dirZ(), gx, gy);
+                    int[] cell = PlotGeometry.groundOffset(bounds.dirX(), bounds.dirZ(), gx, gy);
                     boolean isController = cell[0] == 0 && cell[1] == 0;
                     boolean isMarker = cell[0] == c.markerDx() && cell[1] == c.markerDz();
                     boolean pastMarker = Math.abs(cell[0]) > Math.abs(c.markerDx()) || Math.abs(cell[1]) > Math.abs(c.markerDz());
@@ -81,12 +81,12 @@ class PlotGeometryTest {
         int worldSize = 3;
         int dirX = 1;
         int dirZ = -1;
-        List<int[]> all = LiveFarmBlockAccess.allGroundOffsets(dirX, dirZ, worldSize);
+        List<int[]> all = PlotGeometry.allGroundOffsets(dirX, dirZ, worldSize);
 
         assertEquals(worldSize * worldSize, all.size());
         for (int gx = 0; gx < worldSize; gx++) {
             for (int gy = 0; gy < worldSize; gy++) {
-                int[] expected = LiveFarmBlockAccess.groundOffset(dirX, dirZ, gx, gy);
+                int[] expected = PlotGeometry.groundOffset(dirX, dirZ, gx, gy);
                 boolean found = all.stream().anyMatch(o -> o[0] == expected[0] && o[1] == expected[1]);
                 assertTrue(found, "missing offset for cell (" + gx + "," + gy + ")");
             }
