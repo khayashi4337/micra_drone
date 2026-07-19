@@ -18,6 +18,10 @@ import io.github.khayashi4337.micradrone.drone.FarmCellRules.CellFacts;
  * leaves the actual till/plant/harvest decisions to {@link FarmCellRules}.
  */
 public final class LiveFarmBlockAccess implements FarmBlockAccess {
+    // Only "wheat" exists right now, so a flat rate covers it; a per-crop table can replace this
+    // once a second crop is added.
+    private static final long POINTS_PER_WHEAT_HARVEST = 1;
+
     private final Level level;
     private final BlockPos origin;
     private final DroneGridState grid;
@@ -81,7 +85,12 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         if (!FarmCellRules.canHarvest(readFacts(ground, above))) {
             return Attempt.failure();
         }
-        return new Attempt(true, () -> level.setBlockAndUpdate(above, Blocks.AIR.defaultBlockState()));
+        // Runs on the main thread (via the paced action queue), same as every other grid-state
+        // mutation here - see DroneGridState's other writers for why that matters.
+        return new Attempt(true, () -> {
+            level.setBlockAndUpdate(above, Blocks.AIR.defaultBlockState());
+            grid.addPoints(POINTS_PER_WHEAT_HARVEST);
+        });
     }
 
     @Override
