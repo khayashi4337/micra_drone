@@ -18,6 +18,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.BonemealableBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CropBlock;
+import net.minecraft.world.level.block.FarmBlock;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -27,8 +28,11 @@ import io.github.khayashi4337.micradrone.drone.GiantPatchDetector.Patch;
 
 /**
  * Maps the drone's grid cell onto real world blocks, reusing vanilla farmland/crop mechanics
- * (moisture, random-tick growth) instead of a bespoke crop simulation. The plot is a square area
- * starting one block diagonally from the controller, extending toward whichever diagonal quadrant
+ * (random-tick growth via bonemeal) instead of a bespoke crop simulation. Moisture is the one
+ * exception - see boostGrowth() - since requiring a real water source next to every plot (vanilla's
+ * normal way of keeping farmland hydrated) was pure friction with no gameplay upside for a mod
+ * that's already boosting growth speed unconditionally. The plot is a square area starting one block
+ * diagonally from the controller, extending toward whichever diagonal quadrant
  * {@link DroneGridState#dirX()}/{@link DroneGridState#dirZ()} points at (see
  * DroneControllerBlockEntity#scanForCornerMarker). Reads the real blocks into {@link CellFacts} and
  * leaves the actual till/plant/harvest decisions to {@link FarmCellRules}.
@@ -225,7 +229,11 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
      * marker has confirmed the plot (see {@code plotConfirmed} there) - to make the claimed area grow
      * faster than vanilla, independent of whether a script is currently running. The farmland check
      * keeps this strictly to cells the drone actually tilled, not just anything sitting inside the
-     * plot's bounding square.
+     * plot's bounding square. Also keeps that same farmland at maximum moisture every pass (see
+     * waterPlot) - a real vanilla plot needs a water source within 4 blocks to ever get there, and
+     * without one, farmland just as easily dries out and reverts to dirt (FarmBlock#randomTick) as it
+     * grows crops faster. Forcing moisture sidesteps that trap entirely, plot-wide, with no water
+     * block required.
      */
     public void boostGrowth() {
         if (!(level instanceof ServerLevel serverLevel)) {
@@ -237,9 +245,11 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
             for (int gy = 0; gy < worldSize; gy++) {
                 int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), gx, gy);
                 BlockPos ground = origin.offset(offset[0], 0, offset[1]);
-                if (!level.getBlockState(ground).is(Blocks.FARMLAND)) {
+                BlockState groundState = level.getBlockState(ground);
+                if (!groundState.is(Blocks.FARMLAND)) {
                     continue;
                 }
+                waterPlot(ground, groundState);
                 BlockPos above = ground.above();
                 BlockState state = level.getBlockState(above);
                 if (state.getBlock() instanceof BonemealableBlock bonemealable
@@ -252,6 +262,18 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
             }
         }
         applyGiantPumpkinPatch(maturePumpkin);
+    }
+
+    /**
+     * Forces a plot cell's farmland straight to {@link FarmBlock#MAX_MOISTURE}, standing in for the
+     * "water source within 4 blocks" vanilla normally requires (see FarmBlock#isNearWater) - the
+     * player building a whole irrigation network around a small drone plot would be pure friction with
+     * no real payoff. No-op once already at max, so this doesn't spam block updates every pass.
+     */
+    private void waterPlot(BlockPos ground, BlockState groundState) {
+        if (groundState.getValue(FarmBlock.MOISTURE) < FarmBlock.MAX_MOISTURE) {
+            level.setBlock(ground, groundState.setValue(FarmBlock.MOISTURE, FarmBlock.MAX_MOISTURE), 2);
+        }
     }
 
     /**
