@@ -1,0 +1,13 @@
+{
+  "variants": {
+    "position=0": { "model": "micradrone:block/giant_pumpkin" },
+    "position=1": { "model": "micradrone:block/giant_pumpkin" },
+    "position=2": { "model": "micradrone:block/giant_pumpkin" },
+    "position=3": { "model": "micradrone:block/giant_pumpkin" },
+    "position=4": { "model": "micradrone:block/giant_pumpkin" },
+    "position=5": { "model": "micradrone:block/giant_pumpkin" },
+    "position=6": { "model": "micradrone:block/giant_pumpkin" },
+    "position=7": { "model": "micradrone:block/giant_pumpkin" },
+    "position=8": { "model": "micradrone:block/giant_pumpkin" }
+  }
+}

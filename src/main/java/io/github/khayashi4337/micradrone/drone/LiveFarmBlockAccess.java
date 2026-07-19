@@ -1,6 +1,15 @@
 package io.github.khayashi4337.micradrone.drone;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.Level;
@@ -10,7 +19,9 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CropBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
+import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.drone.FarmCellRules.CellFacts;
+import io.github.khayashi4337.micradrone.drone.GiantPatchDetector.Patch;
 
 /**
  * Maps the drone's grid cell onto real world blocks, reusing vanilla farmland/crop mechanics
@@ -97,16 +108,58 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     public Attempt attemptHarvest() {
         BlockPos ground = groundPos();
         BlockPos above = cropPos();
+        BlockState aboveState = level.getBlockState(above);
+        if (aboveState.is(MicraDrone.GIANT_PUMPKIN_BLOCK.get())) {
+            return attemptGiantPumpkinHarvest(above);
+        }
         if (!FarmCellRules.canHarvest(readFacts(ground, above))) {
             return Attempt.failure();
         }
-        String cropName = cropNameOf(level.getBlockState(above).getBlock());
+        String cropName = cropNameOf(aboveState.getBlock());
         // Runs on the main thread (via the paced action queue), same as every other grid-state
         // mutation here - see DroneGridState's other writers for why that matters.
         return new Attempt(true, () -> {
             level.setBlockAndUpdate(above, Blocks.AIR.defaultBlockState());
             grid.addPoints(cropName, POINTS_PER_HARVEST);
         });
+    }
+
+    /**
+     * A giant-pumpkin patch is harvested as a whole: flood-fill every connected giant_pumpkin cell
+     * from wherever the drone called harvest() (the patch is always an axis-aligned square by
+     * construction, but flood-fill needs no assumption about that), clear it all to air, and award
+     * one lump-sum bonus (see GiantPatchDetector#bonusPoints) instead of the normal per-cell rate.
+     */
+    private Attempt attemptGiantPumpkinHarvest(BlockPos anyCellInPatch) {
+        List<BlockPos> patchCells = floodFillGiantPumpkin(anyCellInPatch);
+        int side = (int) Math.round(Math.sqrt(patchCells.size()));
+        long bonus = GiantPatchDetector.bonusPoints(side);
+        return new Attempt(true, () -> {
+            for (BlockPos cell : patchCells) {
+                level.setBlockAndUpdate(cell, Blocks.AIR.defaultBlockState());
+            }
+            grid.addPoints("pumpkin", bonus);
+        });
+    }
+
+    private List<BlockPos> floodFillGiantPumpkin(BlockPos start) {
+        List<BlockPos> found = new ArrayList<>();
+        Set<BlockPos> seen = new HashSet<>();
+        Deque<BlockPos> queue = new ArrayDeque<>();
+        seen.add(start);
+        queue.add(start);
+        Block giantPumpkin = MicraDrone.GIANT_PUMPKIN_BLOCK.get();
+        while (!queue.isEmpty()) {
+            BlockPos pos = queue.poll();
+            found.add(pos);
+            for (Direction direction : Direction.Plane.HORIZONTAL) {
+                BlockPos next = pos.relative(direction);
+                if (seen.add(next) && level.getBlockState(next).is(giantPumpkin)) {
+                    queue.add(next);
+                }
+            }
+        }
+        return found;
     }
 
     private static String cropNameOf(Block block) {
@@ -128,13 +181,13 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     /**
      * A cell counts as harvestable once its CropBlock (wheat/carrot) reaches max age, or - for
      * pumpkin - once an actual Pumpkin block exists there at all (the fruit itself has no growth
-     * stages; only the stem that spawned it did).
+     * stages; only the stem that spawned it did), or once it's part of a giant-pumpkin patch.
      */
     private static boolean isMatureCrop(BlockState state) {
         if (state.getBlock() instanceof CropBlock crop) {
             return crop.isMaxAge(state);
         }
-        return state.is(Blocks.PUMPKIN);
+        return state.is(Blocks.PUMPKIN) || state.is(MicraDrone.GIANT_PUMPKIN_BLOCK.get());
     }
 
     /**
@@ -153,16 +206,51 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         if (!(level instanceof ServerLevel serverLevel)) {
             return;
         }
-        for (int[] offset : PlotGeometry.allGroundOffsets(grid.dirX(), grid.dirZ(), grid.worldSize())) {
-            BlockPos ground = origin.offset(offset[0], 0, offset[1]);
-            if (!level.getBlockState(ground).is(Blocks.FARMLAND)) {
-                continue;
+        int worldSize = grid.worldSize();
+        boolean[][] maturePumpkin = new boolean[worldSize][worldSize];
+        for (int gx = 0; gx < worldSize; gx++) {
+            for (int gy = 0; gy < worldSize; gy++) {
+                int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), gx, gy);
+                BlockPos ground = origin.offset(offset[0], 0, offset[1]);
+                if (!level.getBlockState(ground).is(Blocks.FARMLAND)) {
+                    continue;
+                }
+                BlockPos above = ground.above();
+                BlockState state = level.getBlockState(above);
+                if (state.getBlock() instanceof BonemealableBlock bonemealable
+                        && bonemealable.isValidBonemealTarget(level, above, state)) {
+                    bonemealable.performBonemeal(serverLevel, serverLevel.getRandom(), above, state);
+                    state = level.getBlockState(above); // may have just matured into a fruit
+                }
+                maturePumpkin[gx][gy] = state.is(Blocks.PUMPKIN);
             }
-            BlockPos above = ground.above();
-            BlockState state = level.getBlockState(above);
-            if (state.getBlock() instanceof BonemealableBlock bonemealable
-                    && bonemealable.isValidBonemealTarget(level, above, state)) {
-                bonemealable.performBonemeal(serverLevel, serverLevel.getRandom(), above, state);
+        }
+        applyGiantPumpkinPatch(maturePumpkin);
+    }
+
+    /**
+     * Reskins the largest square of simultaneously-mature pumpkins (if any, see GiantPatchDetector)
+     * with {@link MicraDrone#GIANT_PUMPKIN_BLOCK} so it reads as one fused patch. Deliberately a
+     * simplification of the original game's "grew together with zero deaths" rule: this only checks
+     * which cells are mature right now, not growth history (see LiveFarmBlockAccess's Phase 3 commit
+     * for why). Only ever called from boostGrowth(), which is itself only active once a corner marker
+     * has confirmed the plot - so this can't affect anything outside the claimed farming area.
+     */
+    private void applyGiantPumpkinPatch(boolean[][] maturePumpkin) {
+        Optional<Patch> found = GiantPatchDetector.findLargestSquare(maturePumpkin);
+        if (found.isEmpty()) {
+            return;
+        }
+        Patch patch = found.get();
+        BlockState giantPumpkin = MicraDrone.GIANT_PUMPKIN_BLOCK.get().defaultBlockState();
+        for (int lx = 0; lx < patch.side(); lx++) {
+            for (int ly = 0; ly < patch.side(); ly++) {
+                int gx = patch.originGx() + lx;
+                int gy = patch.originGy() + ly;
+                int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), gx, gy);
+                BlockPos above = origin.offset(offset[0], 1, offset[1]);
+                int position = GiantPatchDetector.classifyPosition(lx, ly, patch.side());
+                level.setBlockAndUpdate(above, giantPumpkin.setValue(GiantPumpkinBlock.POSITION, position));
             }
         }
     }

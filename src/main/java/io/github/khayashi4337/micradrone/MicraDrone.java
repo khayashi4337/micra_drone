@@ -7,6 +7,7 @@ import com.mojang.logging.LogUtils;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlock;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
 import io.github.khayashi4337.micradrone.drone.DroneEntity;
+import io.github.khayashi4337.micradrone.drone.GiantPumpkinBlock;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.PurchaseUnlockPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
@@ -74,6 +75,12 @@ public class MicraDrone {
             BLOCKS.registerSimpleBlock("corner_marker", BlockBehaviour.Properties.of().mapColor(MapColor.GOLD).strength(2.0f));
     public static final DeferredItem<BlockItem> CORNER_MARKER_ITEM =
             ITEMS.registerSimpleBlockItem("corner_marker", CORNER_MARKER_BLOCK);
+
+    // Purely decorative reskin for a giant-pumpkin fusion patch (see LiveFarmBlockAccess). The mod
+    // places/clears it itself; no BlockItem/recipe, players never obtain it directly.
+    public static final DeferredBlock<GiantPumpkinBlock> GIANT_PUMPKIN_BLOCK = BLOCKS.registerBlock(
+            "giant_pumpkin", GiantPumpkinBlock::new,
+            BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_ORANGE).strength(1.0f));
 
     // Create a Deferred Register to hold EntityTypes which will all be registered under the "micradrone" namespace
     public static final DeferredRegister<EntityType<?>> ENTITY_TYPES = DeferredRegister.create(Registries.ENTITY_TYPE, MODID);
