@@ -1,10 +1,13 @@
 package io.github.khayashi4337.micradrone.drone;
 
+import java.util.HashMap;
+import java.util.Map;
+
 final class FakeGridState implements DroneGridState {
     private int x;
     private int y;
     private final int size;
-    private long points;
+    private final Map<String, Long> pointsByCrop = new HashMap<>();
 
     FakeGridState(int size) {
         this.size = size;
@@ -42,12 +45,17 @@ final class FakeGridState implements DroneGridState {
     }
 
     @Override
-    public long getPoints() {
-        return points;
+    public long getPoints(String crop) {
+        return pointsByCrop.getOrDefault(crop, 0L);
     }
 
     @Override
-    public void addPoints(long delta) {
-        points += delta;
+    public void addPoints(String crop, long delta) {
+        pointsByCrop.merge(crop, delta, Long::sum);
+    }
+
+    @Override
+    public Map<String, Long> pointsByCrop() {
+        return Map.copyOf(pointsByCrop);
     }
 }

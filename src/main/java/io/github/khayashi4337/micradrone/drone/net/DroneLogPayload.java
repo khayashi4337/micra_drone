@@ -1,7 +1,9 @@
 package io.github.khayashi4337.micradrone.drone.net;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.netty.buffer.ByteBuf;
@@ -12,16 +14,16 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 
 /**
- * S2C: the controller at {@code pos}'s full current state snapshot (log buffer + points),
+ * S2C: the controller at {@code pos}'s full current state snapshot (log buffer + points-per-crop),
  * replacing whatever the client had shown.
  */
-public record DroneLogPayload(BlockPos pos, List<String> lines, long points) implements CustomPacketPayload {
+public record DroneLogPayload(BlockPos pos, List<String> lines, Map<String, Long> pointsByCrop) implements CustomPacketPayload {
     public static final Type<DroneLogPayload> TYPE =
             new Type<>(ResourceLocation.fromNamespaceAndPath(MicraDrone.MODID, "drone_log"));
     public static final StreamCodec<ByteBuf, DroneLogPayload> STREAM_CODEC = StreamCodec.composite(
             BlockPos.STREAM_CODEC, DroneLogPayload::pos,
             ByteBufCodecs.collection(ArrayList::new, ByteBufCodecs.STRING_UTF8), DroneLogPayload::lines,
-            ByteBufCodecs.VAR_LONG, DroneLogPayload::points,
+            ByteBufCodecs.map(HashMap::new, ByteBufCodecs.STRING_UTF8, ByteBufCodecs.VAR_LONG), DroneLogPayload::pointsByCrop,
             DroneLogPayload::new);
 
     @Override

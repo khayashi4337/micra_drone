@@ -1,6 +1,10 @@
 package io.github.khayashi4337.micradrone.client;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
 
 import io.github.khayashi4337.micradrone.MicraDroneClient;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
@@ -25,7 +29,7 @@ public class DroneScreen extends Screen {
 
     private final BlockPos pos;
     private MultiLineEditBox logBox;
-    private Component pointsText = Component.translatable("gui.micradrone.drone_screen.points", 0);
+    private List<Component> pointsLines = List.of();
 
     public DroneScreen(BlockPos pos) {
         super(Component.translatable("gui.micradrone.drone_screen.title"));
@@ -68,18 +72,30 @@ public class DroneScreen extends Screen {
     }
 
     /** Called from {@code MicraDroneClient} when a DroneLogPayload arrives for this controller. */
-    public void updateLog(BlockPos sourcePos, List<String> lines, long points) {
+    public void updateLog(BlockPos sourcePos, List<String> lines, Map<String, Long> pointsByCrop) {
         if (!sourcePos.equals(this.pos)) {
             return;
         }
         logBox.setValue(String.join("\n", lines));
-        pointsText = Component.translatable("gui.micradrone.drone_screen.points", points);
+
+        List<Component> newLines = new ArrayList<>();
+        for (Map.Entry<String, Long> entry : new TreeMap<>(pointsByCrop).entrySet()) {
+            String cropName = entry.getKey();
+            String label = cropName.isEmpty() ? cropName
+                    : Character.toUpperCase(cropName.charAt(0)) + cropName.substring(1).toLowerCase(Locale.ROOT);
+            newLines.add(Component.literal(label + ": " + entry.getValue()));
+        }
+        pointsLines = newLines;
     }
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
-        guiGraphics.drawCenteredString(this.font, pointsText, this.width / 2, 28, 0xFFFFFF);
+        int y = 16;
+        for (Component line : pointsLines) {
+            guiGraphics.drawCenteredString(this.font, line, this.width / 2, y, 0xFFFFFF);
+            y += 10;
+        }
     }
 
     @Override

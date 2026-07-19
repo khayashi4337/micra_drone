@@ -5,7 +5,9 @@ import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
@@ -61,7 +63,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     // serverTick, which must not ambient-boost growth in the size-5-toward-SE guess used otherwise.
     private volatile boolean plotConfirmed = false;
     // Belongs to this controller, not the plot's geometry: survives corner-marker re-scans on purpose.
-    private volatile long points = 0;
+    // Keyed by crop name (e.g. "wheat"); written on the main thread, read from the network/GUI push
+    // path too, hence a concurrent map rather than a plain HashMap.
+    private final Map<String, Long> pointsByCrop = new ConcurrentHashMap<>();
 
     private DroneScriptRunner scriptRunner;
     /** The visible {@link DroneEntity} tracked by UUID (entities aren't safe to hold direct references to across reloads). */
@@ -152,15 +156,20 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     @Override
-    public long getPoints() {
-        return points;
+    public long getPoints(String crop) {
+        return pointsByCrop.getOrDefault(crop, 0L);
     }
 
     @Override
-    public void addPoints(long delta) {
-        points += delta;
+    public void addPoints(String crop, long delta) {
+        pointsByCrop.merge(crop, delta, Long::sum);
         setChanged();
         pushLogSnapshot();
+    }
+
+    @Override
+    public Map<String, Long> pointsByCrop() {
+        return Map.copyOf(pointsByCrop);
     }
 
     /**
@@ -265,7 +274,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     private void pushLogSnapshotTo(ServerPlayer player) {
-        PacketDistributor.sendToPlayer(player, new DroneLogPayload(getBlockPos(), List.copyOf(logBuffer), points));
+        PacketDistributor.sendToPlayer(player, new DroneLogPayload(getBlockPos(), List.copyOf(logBuffer), pointsByCrop()));
     }
 
     /** Registered as this block's {@link net.minecraft.world.level.block.entity.BlockEntityTicker}; server-side only. */
@@ -282,7 +291,11 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         super.loadAdditional(tag, registries);
         gridX = tag.getInt("GridX");
         gridY = tag.getInt("GridY");
-        points = tag.getLong("Points");
+        pointsByCrop.clear();
+        CompoundTag pointsTag = tag.getCompound("PointsByCrop");
+        for (String crop : pointsTag.getAllKeys()) {
+            pointsByCrop.put(crop, pointsTag.getLong(crop));
+        }
         droneEntityUuid = tag.hasUUID("DroneEntityUuid") ? tag.getUUID("DroneEntityUuid") : null;
     }
 
@@ -291,7 +304,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         super.saveAdditional(tag, registries);
         tag.putInt("GridX", gridX);
         tag.putInt("GridY", gridY);
-        tag.putLong("Points", points);
+        CompoundTag pointsTag = new CompoundTag();
+        pointsByCrop.forEach(pointsTag::putLong);
+        tag.put("PointsByCrop", pointsTag);
         if (droneEntityUuid != null) {
             tag.putUUID("DroneEntityUuid", droneEntityUuid);
         }

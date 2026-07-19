@@ -1,5 +1,7 @@
 package io.github.khayashi4337.micradrone.drone;
 
+import java.util.Map;
+
 /** Narrow read/write view of a drone's position on its farm grid, kept separate from BlockEntity for testability. */
 public interface DroneGridState {
     int gridX();
@@ -17,9 +19,12 @@ public interface DroneGridState {
     /** +1 or -1: which world Z direction grid row 0 starts in, relative to the controller. */
     int dirZ();
 
-    /** This plot's resource point balance. One pool per controller; never resets on its own. */
-    long getPoints();
+    /** This plot's point balance for one crop type (0 if it has never earned any). Never resets on its own. */
+    long getPoints(String crop);
 
-    /** Adds (or, with a negative delta, removes) points from this plot's pool. */
-    void addPoints(long delta);
+    /** Adds (or, with a negative delta, removes) points earned from {@code crop}. */
+    void addPoints(String crop, long delta);
+
+    /** Crop type -> point balance, for every crop type this plot has ever earned points from. */
+    Map<String, Long> pointsByCrop();
 }

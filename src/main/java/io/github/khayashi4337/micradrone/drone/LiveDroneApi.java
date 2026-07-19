@@ -91,7 +91,7 @@ public final class LiveDroneApi implements DroneApi {
 
     @Override
     public double getPoints() {
-        return grid.getPoints();
+        return grid.pointsByCrop().values().stream().mapToLong(Long::longValue).sum();
     }
 
     @Override

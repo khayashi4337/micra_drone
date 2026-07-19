@@ -107,7 +107,7 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         // mutation here - see DroneGridState's other writers for why that matters.
         return new Attempt(true, () -> {
             level.setBlockAndUpdate(above, Blocks.AIR.defaultBlockState());
-            grid.addPoints(POINTS_PER_WHEAT_HARVEST);
+            grid.addPoints("wheat", POINTS_PER_WHEAT_HARVEST);
         });
     }
 
