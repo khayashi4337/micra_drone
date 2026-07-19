@@ -6,7 +6,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
@@ -18,6 +21,12 @@ import java.util.stream.Stream;
 public final class ScriptFileStore {
     public static final String DEFAULT_SCRIPT_NAME = "main.mdrone";
 
+    private static final Pattern INVALID_FOLDER_CHARS = Pattern.compile("[<>:\"/\\\\|?*\\x00-\\x1F]");
+    private static final Set<String> RESERVED_WINDOWS_NAMES = Set.of(
+            "CON", "PRN", "AUX", "NUL",
+            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9");
+
     private ScriptFileStore() {
     }
 
@@ -27,13 +36,51 @@ public final class ScriptFileStore {
     }
 
     /**
+     * The per-controller folder name when an alias (see {@code DroneControllerBlockEntity#setAlias})
+     * is set: the sanitized alias with the coordinate name appended, so renaming stays collision-free
+     * even if two controllers end up with the same alias (coordinates are always unique) while still
+     * making the folder recognizable at a glance. Falls back to the bare coordinate name - unchanged
+     * from before aliases existed - once {@code alias} is blank or sanitizes down to nothing.
+     */
+    public static String folderName(String alias, int x, int y, int z) {
+        String sanitized = sanitizeForFolderName(alias);
+        String coordinateName = folderName(x, y, z);
+        return sanitized.isEmpty() ? coordinateName : sanitized + "_" + coordinateName;
+    }
+
+    /**
+     * Strips characters that are invalid in a Windows or POSIX folder name (reserved punctuation,
+     * control characters), trims the trailing dots/spaces Windows also rejects, and dodges Windows'
+     * reserved device names (CON, PRN, COM1, ...) - all case-insensitively, since a player-typed
+     * alias could be anything. Unicode (e.g. Japanese aliases) is left untouched; only the
+     * structurally invalid characters are removed. An alias made up entirely of invalid characters
+     * collapses to an empty string, which {@link #folderName(String, int, int, int)} treats the same
+     * as no alias at all.
+     */
+    private static String sanitizeForFolderName(String raw) {
+        String cleaned = INVALID_FOLDER_CHARS.matcher(raw).replaceAll("").strip();
+        while (cleaned.endsWith(".") || cleaned.endsWith(" ")) {
+            cleaned = cleaned.substring(0, cleaned.length() - 1);
+        }
+        if (RESERVED_WINDOWS_NAMES.contains(cleaned.toUpperCase(Locale.ROOT))) {
+            cleaned = cleaned + "_";
+        }
+        return cleaned;
+    }
+
+    /**
      * Resolves this controller's script folder under scriptsDir, creating it if missing and
      * (re-)seeding any of {@link SampleScripts#ALL} that aren't currently present - so the sample
      * scripts act as a permanent reference library that reappears even if deleted. A sample the
      * player has edited in place is left untouched (it still "exists", so it's never overwritten).
      */
     public static Path ensureControllerFolder(Path scriptsDir, int x, int y, int z) throws IOException {
-        Path dir = scriptsDir.resolve(folderName(x, y, z));
+        return ensureControllerFolder(scriptsDir, "", x, y, z);
+    }
+
+    /** {@link #ensureControllerFolder(Path, int, int, int)}, but named after {@code alias} (see {@link #folderName(String, int, int, int)}) when one is set. */
+    public static Path ensureControllerFolder(Path scriptsDir, String alias, int x, int y, int z) throws IOException {
+        Path dir = scriptsDir.resolve(folderName(alias, x, y, z));
         Files.createDirectories(dir);
         for (var entry : SampleScripts.ALL.entrySet()) {
             Path file = dir.resolve(entry.getKey());
@@ -42,6 +89,27 @@ public final class ScriptFileStore {
             }
         }
         return dir;
+    }
+
+    /**
+     * Moves a controller's script folder from its old alias-derived name to its new one (see
+     * {@code DroneControllerBlockEntity#setAlias}) so existing scripts follow the rename instead of
+     * silently being orphaned under the old folder. No-op if the name didn't actually change, if
+     * there's no old folder to move (e.g. no script has ever been run there yet - it'll simply get
+     * created under the new name on first use), or - defensively, though the coordinate suffix makes
+     * this unreachable in practice - if a folder already sits at the destination.
+     */
+    public static void renameControllerFolder(Path scriptsDir, String oldAlias, String newAlias, int x, int y, int z) throws IOException {
+        String oldName = folderName(oldAlias, x, y, z);
+        String newName = folderName(newAlias, x, y, z);
+        if (oldName.equals(newName)) {
+            return;
+        }
+        Path oldDir = scriptsDir.resolve(oldName);
+        Path newDir = scriptsDir.resolve(newName);
+        if (Files.isDirectory(oldDir) && !Files.exists(newDir)) {
+            Files.move(oldDir, newDir);
+        }
     }
 
     public static String load(Path scriptFile) throws IOException {

@@ -77,8 +77,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     // (see purchaseUnlock). Written on the main thread only (purchaseUnlock runs from the network
     // handler, which is main-thread per PayloadRegistrar's default).
     private final Set<String> unlockedCrops = ConcurrentHashMap.newKeySet();
-    // Human-readable label a player can set - coordinates alone are hard to tell apart. Display only;
-    // the script folder on disk stays coordinate-named regardless (see ScriptFileStore).
+    // Human-readable label a player can set - coordinates alone are hard to tell apart. The script
+    // folder on disk is named after this (falling back to coordinates when blank) and gets renamed
+    // in place when it changes - see setAlias and ScriptFileStore#folderName(String, int, int, int).
     private volatile String alias = "";
     private volatile String selectedScript = ScriptFileStore.DEFAULT_SCRIPT_NAME;
     // Refreshed from disk in sendLogSnapshotTo (screen open); reused as-is by every other push so
@@ -320,8 +321,21 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         appendLog("[stop] stop requested");
     }
 
-    /** DroneScreen's alias field: a display-only label, so e.g. "North Farm" beats a bare coordinate. */
+    /**
+     * DroneScreen's alias field: a human-readable label, so e.g. "North Farm" beats a bare
+     * coordinate. Also renames the script folder on disk to match (see
+     * ScriptFileStore#renameControllerFolder) so the saved scripts follow the new name instead of
+     * being left behind under the old one.
+     */
     public void setAlias(String alias) {
+        if (level instanceof ServerLevel serverLevel && !alias.equals(this.alias)) {
+            BlockPos pos = getBlockPos();
+            try {
+                ScriptFileStore.renameControllerFolder(scriptsDir(serverLevel), this.alias, alias, pos.getX(), pos.getY(), pos.getZ());
+            } catch (IOException e) {
+                MicraDrone.LOGGER.error("could not rename script folder for {}", pos, e);
+            }
+        }
         this.alias = alias;
         setChanged();
         pushLogSnapshot();
@@ -356,7 +370,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
     private Path controllerScriptFolder(ServerLevel level) throws IOException {
         BlockPos pos = getBlockPos();
-        return ScriptFileStore.ensureControllerFolder(scriptsDir(level), pos.getX(), pos.getY(), pos.getZ());
+        return ScriptFileStore.ensureControllerFolder(scriptsDir(level), alias, pos.getX(), pos.getY(), pos.getZ());
     }
 
     private static Path scriptsDir(ServerLevel level) {

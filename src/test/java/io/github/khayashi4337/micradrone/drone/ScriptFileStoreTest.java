@@ -23,6 +23,46 @@ class ScriptFileStoreTest {
     }
 
     @Test
+    void aliasFolderNameFallsBackToCoordinatesWhenBlank() {
+        assertEquals("1_-2_3", ScriptFileStore.folderName("", 1, -2, 3));
+        assertEquals("1_-2_3", ScriptFileStore.folderName("   ", 1, -2, 3));
+    }
+
+    @Test
+    void aliasFolderNameIsTheAliasWithTheCoordinateSuffixAppended() {
+        assertEquals("North Farm_1_-2_3", ScriptFileStore.folderName("North Farm", 1, -2, 3));
+    }
+
+    @Test
+    void aliasFolderNameSanitizesFilesystemInvalidCharacters() {
+        // < > : " / \ | ? * are all invalid in a Windows folder name.
+        assertEquals("abcdefgh_1_2_3", ScriptFileStore.folderName("a<b>c:d\"e/f\\g|h?*", 1, 2, 3));
+    }
+
+    @Test
+    void aliasFolderNameSanitizesUnicodeAliasesUntouched() {
+        // Japanese text isn't filesystem-invalid, so it should survive as-is (aliases are player-typed).
+        assertEquals("北の畑_1_2_3", ScriptFileStore.folderName("北の畑", 1, 2, 3));
+    }
+
+    @Test
+    void aliasFolderNameStripsTrailingDotsAndSpaces() {
+        // Windows folder names can't end in a dot or a space.
+        assertEquals("North Farm_1_2_3", ScriptFileStore.folderName("North Farm. . ", 1, 2, 3));
+    }
+
+    @Test
+    void aliasFolderNameEscapesReservedWindowsDeviceNames() {
+        assertEquals("CON__1_2_3", ScriptFileStore.folderName("CON", 1, 2, 3));
+        assertEquals("com1__1_2_3", ScriptFileStore.folderName("com1", 1, 2, 3));
+    }
+
+    @Test
+    void aliasFolderNameFallsBackToCoordinatesWhenSanitizingLeavesNothing() {
+        assertEquals("1_2_3", ScriptFileStore.folderName("///", 1, 2, 3));
+    }
+
+    @Test
     void ensureControllerFolderSeedsEverySampleScriptWhenMissing() throws IOException {
         Path scriptsDir = tempDir.resolve("scripts");
 
@@ -70,6 +110,50 @@ class ScriptFileStoreTest {
         ScriptFileStore.ensureControllerFolder(scriptsDir, 1, 2, 3);
 
         assertEquals("print(\"edited\")\n", ScriptFileStore.load(folder.resolve("move_square.mdrone")));
+    }
+
+    @Test
+    void ensureControllerFolderWithAliasSeedsUnderTheAliasNamedFolder() throws IOException {
+        Path scriptsDir = tempDir.resolve("scripts");
+
+        Path folder = ScriptFileStore.ensureControllerFolder(scriptsDir, "North Farm", 5, 64, -5);
+
+        assertEquals(scriptsDir.resolve("North Farm_5_64_-5"), folder);
+        assertTrue(Files.exists(folder.resolve(ScriptFileStore.DEFAULT_SCRIPT_NAME)));
+    }
+
+    @Test
+    void renameControllerFolderMovesExistingScriptsToTheNewAliasName() throws IOException {
+        Path scriptsDir = tempDir.resolve("scripts");
+        Path oldFolder = ScriptFileStore.ensureControllerFolder(scriptsDir, "", 1, 2, 3);
+        Files.writeString(oldFolder.resolve(ScriptFileStore.DEFAULT_SCRIPT_NAME), "print(\"mine\")\n");
+
+        ScriptFileStore.renameControllerFolder(scriptsDir, "", "North Farm", 1, 2, 3);
+
+        Path newFolder = scriptsDir.resolve("North Farm_1_2_3");
+        assertTrue(Files.isDirectory(newFolder), "renamed folder should exist");
+        assertEquals("print(\"mine\")\n", ScriptFileStore.load(newFolder.resolve(ScriptFileStore.DEFAULT_SCRIPT_NAME)));
+        assertTrue(Files.notExists(oldFolder), "old folder should no longer exist after the rename");
+    }
+
+    @Test
+    void renameControllerFolderIsANoOpWhenTheAliasDidNotActuallyChange() throws IOException {
+        Path scriptsDir = tempDir.resolve("scripts");
+        ScriptFileStore.ensureControllerFolder(scriptsDir, "North Farm", 1, 2, 3);
+
+        ScriptFileStore.renameControllerFolder(scriptsDir, "North Farm", "North Farm", 1, 2, 3);
+
+        assertTrue(Files.isDirectory(scriptsDir.resolve("North Farm_1_2_3")));
+    }
+
+    @Test
+    void renameControllerFolderIsANoOpWhenThereIsNoOldFolderToMove() throws IOException {
+        Path scriptsDir = tempDir.resolve("scripts");
+
+        ScriptFileStore.renameControllerFolder(scriptsDir, "", "North Farm", 1, 2, 3);
+
+        assertTrue(Files.notExists(scriptsDir.resolve("North Farm_1_2_3")),
+                "nothing should have been created - the folder is created lazily on first real use");
     }
 
     @Test
