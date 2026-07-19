@@ -12,6 +12,8 @@
   "gui.micradrone.drone_screen.help": "Help",
   "gui.micradrone.drone_screen.alias": "Alias (e.g. North Farm)",
   "gui.micradrone.drone_screen.set_alias": "Set",
+  "gui.micradrone.drone_screen.script_description": "Description",
+  "gui.micradrone.drone_screen.script_description_placeholder": "Select a script to see its description",
   "gui.micradrone.shop_screen.title": "Unlock Shop",
   "gui.micradrone.shop_screen.connecting": "Connecting to paired Drone Controller...",
   "gui.micradrone.shop_screen.owned": "%s: Unlocked",

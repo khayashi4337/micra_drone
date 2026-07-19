@@ -36,17 +36,21 @@ public class DroneScreen extends Screen {
     private static final int LOG_WIDTH = 240;
     private static final int LOG_HEIGHT = 110;
     private static final int SCRIPT_LIST_HEIGHT = 64;
+    private static final int DESCRIPTION_HEIGHT = 28;
     private static final String DEFAULT_SCRIPT_NAME = "main.mdrone";
     private static final int ALIAS_ROW_Y = 4;
     private static final int ALIAS_ROW_HEIGHT = 18;
     // Alias row occupies [4, 22). Points lines start at 24 (2px gap) and are 9px tall each; with up
-    // to 2 crops shown that's [24, 42). Script list starts at 46, a further 4px clear of that.
+    // to 2 crops shown that's [24, 42). Script list starts at 46, a further 4px clear of that; the
+    // description box for whichever script is selected sits right below it.
     private static final int POINTS_LINES_Y = 24;
     private static final int SCRIPT_LIST_Y = 46;
+    private static final int DESCRIPTION_Y = SCRIPT_LIST_Y + SCRIPT_LIST_HEIGHT + 6;
 
     private final BlockPos pos;
 
     private MultiLineEditBox logBox;
+    private MultiLineEditBox descriptionBox;
     private EditBox aliasBox;
     private ScriptListWidget scriptList;
     private List<Component> pointsLines = List.of();
@@ -69,12 +73,21 @@ public class DroneScreen extends Screen {
                 .bounds(left + LOG_WIDTH - 76, ALIAS_ROW_Y, 76, ALIAS_ROW_HEIGHT)
                 .build());
 
+        // Created before scriptList so its overridden setSelected (triggered by replaceEntries below,
+        // even for this very first population) always has somewhere to write the description to.
+        // MultiLineEditBox has no read-only mode (same as logBox below) - it's technically editable,
+        // but nothing ever reads player-typed text back out of it, so it's harmless as a display-only box.
+        descriptionBox = new MultiLineEditBox(this.font, left, DESCRIPTION_Y, LOG_WIDTH, DESCRIPTION_HEIGHT,
+                Component.translatable("gui.micradrone.drone_screen.script_description_placeholder"),
+                Component.translatable("gui.micradrone.drone_screen.script_description"));
+        addRenderableWidget(descriptionBox);
+
         scriptList = new ScriptListWidget(Minecraft.getInstance(), LOG_WIDTH, SCRIPT_LIST_HEIGHT, SCRIPT_LIST_Y, 16);
         scriptList.setX(left);
         scriptList.replaceEntries(Map.of(DEFAULT_SCRIPT_NAME, DEFAULT_SCRIPT_NAME));
         addRenderableWidget(scriptList);
 
-        int top = SCRIPT_LIST_Y + SCRIPT_LIST_HEIGHT + 6;
+        int top = DESCRIPTION_Y + DESCRIPTION_HEIGHT + 6;
         logBox = new MultiLineEditBox(this.font, left, top, LOG_WIDTH, LOG_HEIGHT,
                 Component.translatable("gui.micradrone.drone_screen.log_placeholder"),
                 Component.translatable("gui.micradrone.drone_screen.log"));
@@ -153,7 +166,11 @@ public class DroneScreen extends Screen {
         return false;
     }
 
-    /** Scrollable list of this controller's available scripts, showing each one's description (see ScriptFileStore#describeScript). */
+    /**
+     * Scrollable list of this controller's available scripts. Each row shows the raw file name -
+     * the description (see ScriptFileStore#describeScript) is shown separately, in descriptionBox,
+     * for whichever entry is currently selected (see the overridden setSelected below).
+     */
     private final class ScriptListWidget extends ObjectSelectionList<ScriptListWidget.ScriptEntry> {
         ScriptListWidget(Minecraft minecraft, int width, int height, int y, int itemHeight) {
             super(minecraft, width, height, y, itemHeight);
@@ -184,6 +201,13 @@ public class DroneScreen extends Screen {
             return selected != null ? selected.fileName : DEFAULT_SCRIPT_NAME;
         }
 
+        /** Single hook point for every way the selection can change: clicks, arrow keys, and the programmatic calls above. */
+        @Override
+        public void setSelected(ScriptEntry selected) {
+            super.setSelected(selected);
+            descriptionBox.setValue(selected != null ? selected.description : "");
+        }
+
         @Override
         public int getRowWidth() {
             return this.width - 10;
@@ -191,22 +215,24 @@ public class DroneScreen extends Screen {
 
         final class ScriptEntry extends ObjectSelectionList.Entry<ScriptEntry> {
             private final String fileName;
-            private final Component label;
+            private final String description;
+            private final Component fileNameLabel;
 
             ScriptEntry(String fileName, String description) {
                 this.fileName = fileName;
-                this.label = Component.literal(description);
+                this.description = description;
+                this.fileNameLabel = Component.literal(fileName);
             }
 
             @Override
             public Component getNarration() {
-                return label;
+                return Component.literal(fileName + ": " + description);
             }
 
             @Override
             public void render(GuiGraphics guiGraphics, int index, int top, int left, int width, int height,
                     int mouseX, int mouseY, boolean hovering, float partialTick) {
-                guiGraphics.drawString(DroneScreen.this.font, label, left + 2, top + (height - 8) / 2, 0xFFFFFF);
+                guiGraphics.drawString(DroneScreen.this.font, fileNameLabel, left + 2, top + (height - 8) / 2, 0xFFFFFF);
             }
 
             @Override
