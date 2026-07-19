@@ -12,6 +12,7 @@ final class FakeDroneApi implements DroneApi {
     /** -1 = no crop, otherwise the crop's "age"; matureAge or higher can be harvested. */
     private final int[][] cropAge;
     private final int matureAge = 3;
+    private long points = 0;
 
     final List<String> calls = new ArrayList<>();
     final List<String> printed = new ArrayList<>();
@@ -69,6 +70,7 @@ final class FakeDroneApi implements DroneApi {
         calls.add("harvest");
         if (cropAge[x][y] >= matureAge) {
             cropAge[x][y] = -1;
+            points += 1;
             return true;
         }
         return false;
@@ -93,6 +95,11 @@ final class FakeDroneApi implements DroneApi {
     @Override
     public double getWorldSize() {
         return size;
+    }
+
+    @Override
+    public double getPoints() {
+        return points;
     }
 
     @Override

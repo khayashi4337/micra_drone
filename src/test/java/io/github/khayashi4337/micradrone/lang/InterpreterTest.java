@@ -102,6 +102,19 @@ class InterpreterTest {
     }
 
     @Test
+    void getPointsReflectsSuccessfulHarvests() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        api.setCropAge(0, 0, 3); // mature at the drone's starting cell
+        List<io.github.khayashi4337.micradrone.lang.ast.Stmt> program = new Parser(new Lexer("""
+                print(get_points())
+                harvest()
+                print(get_points())
+                """).scan()).parseProgram();
+        new Interpreter(api).run(program);
+        assertEquals(List.of("0", "1"), api.printed);
+    }
+
+    @Test
     void booleanLogicShortCircuitsAndNot() {
         FakeDroneApi api = run("""
                 print(not False)

@@ -28,6 +28,9 @@ public interface DroneApi {
 
     double getWorldSize();
 
+    /** Read-only: this plot's current resource point balance. */
+    double getPoints();
+
     /** Appends text to the script's log panel. */
     void print(String text);
 }
