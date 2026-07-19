@@ -86,6 +86,12 @@ public class MicraDrone {
             "giant_pumpkin", GiantPumpkinBlock::new,
             BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_ORANGE).strength(1.0f));
 
+    // Stands in for a pumpkin that grew defective (~20% chance, matching the original game - see
+    // LiveFarmBlockAccess). Plain block like CORNER_MARKER_BLOCK: no custom class needed. The mod
+    // places/clears it itself; no BlockItem/recipe.
+    public static final DeferredBlock<net.minecraft.world.level.block.Block> ROTTEN_PUMPKIN_BLOCK =
+            BLOCKS.registerSimpleBlock("rotten_pumpkin", BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_BROWN).strength(1.0f));
+
     // Create a Deferred Register to hold EntityTypes which will all be registered under the "micradrone" namespace
     public static final DeferredRegister<EntityType<?>> ENTITY_TYPES = DeferredRegister.create(Registries.ENTITY_TYPE, MODID);
     // Visible drone entity: an Allay subclass with all its AI stripped, see DroneEntity. Same size as

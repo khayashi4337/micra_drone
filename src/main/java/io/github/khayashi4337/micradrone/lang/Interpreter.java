@@ -193,6 +193,10 @@ public final class Interpreter {
                 requireArgCount(call, 0);
                 yield api.canHarvest();
             }
+            case "is_rotten" -> {
+                requireArgCount(call, 0);
+                yield api.isRotten();
+            }
             case "get_pos_x" -> {
                 requireArgCount(call, 0);
                 yield api.getPosX();

@@ -12,4 +12,7 @@ public interface FarmBlockAccess {
     Attempt attemptHarvest();
 
     boolean canHarvest();
+
+    /** True if the cell under the drone holds a defective ("rotten") pumpkin - see LiveFarmBlockAccess. */
+    boolean isRotten();
 }

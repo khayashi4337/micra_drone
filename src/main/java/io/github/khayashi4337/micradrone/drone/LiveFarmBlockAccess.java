@@ -12,11 +12,13 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.BonemealableBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CropBlock;
+import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
@@ -34,6 +36,12 @@ import io.github.khayashi4337.micradrone.drone.GiantPatchDetector.Patch;
 public final class LiveFarmBlockAccess implements FarmBlockAccess {
     /** Flat rate for every crop for now; a per-crop table can replace this if crops need to differ. */
     private static final long POINTS_PER_HARVEST = 1;
+    /**
+     * Matches the original game: "about 1 in 5 (~20%) pumpkins die right as they finish growing"
+     * (thefarmerwasreplaced.wiki.gg/wiki/Pumpkins, confirmed via live web research). See
+     * {@link #maybeRotAFreshPumpkin}.
+     */
+    private static final float PUMPKIN_ROT_CHANCE = 0.2f;
 
     private final Level level;
     private final BlockPos origin;
@@ -57,11 +65,20 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     private CellFacts readFacts(BlockPos ground, BlockPos above) {
         BlockState groundState = level.getBlockState(ground);
         BlockState aboveState = level.getBlockState(above);
+        // A rotten pumpkin counts as "empty" for planting purposes: per the original game, "planting
+        // a new plant in its place automatically removes the dead pumpkin, so there is no need to
+        // harvest it" - no separate clear step, plant() just overwrites it.
+        boolean clearable = aboveState.isAir() || aboveState.is(MicraDrone.ROTTEN_PUMPKIN_BLOCK.get());
         return new CellFacts(
                 groundState.is(BlockTags.DIRT),
                 groundState.is(Blocks.FARMLAND),
-                aboveState.isAir(),
+                clearable,
                 isMatureCrop(aboveState));
+    }
+
+    @Override
+    public boolean isRotten() {
+        return level.getBlockState(cropPos()).is(MicraDrone.ROTTEN_PUMPKIN_BLOCK.get());
     }
 
     @Override
@@ -114,6 +131,11 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         }
         if (!FarmCellRules.canHarvest(readFacts(ground, above))) {
             return Attempt.failure();
+        }
+        // Matches the original game: a dead pumpkin can be harvested (the attempt succeeds) but
+        // "won't drop anything when harvested" - no points, just clear the cell.
+        if (aboveState.is(MicraDrone.ROTTEN_PUMPKIN_BLOCK.get())) {
+            return new Attempt(true, () -> level.setBlockAndUpdate(above, Blocks.AIR.defaultBlockState()));
         }
         String cropName = cropNameOf(aboveState.getBlock());
         // Runs on the main thread (via the paced action queue), same as every other grid-state
@@ -181,13 +203,16 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     /**
      * A cell counts as harvestable once its CropBlock (wheat/carrot) reaches max age, or - for
      * pumpkin - once an actual Pumpkin block exists there at all (the fruit itself has no growth
-     * stages; only the stem that spawned it did), or once it's part of a giant-pumpkin patch.
+     * stages; only the stem that spawned it did), or once it's part of a giant-pumpkin patch, or -
+     * matching the original game - once it's a rotten pumpkin (harvestable, just yields nothing; see
+     * attemptHarvest).
      */
     private static boolean isMatureCrop(BlockState state) {
         if (state.getBlock() instanceof CropBlock crop) {
             return crop.isMaxAge(state);
         }
-        return state.is(Blocks.PUMPKIN) || state.is(MicraDrone.GIANT_PUMPKIN_BLOCK.get());
+        return state.is(Blocks.PUMPKIN) || state.is(MicraDrone.GIANT_PUMPKIN_BLOCK.get())
+                || state.is(MicraDrone.ROTTEN_PUMPKIN_BLOCK.get());
     }
 
     /**
@@ -220,12 +245,33 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
                 if (state.getBlock() instanceof BonemealableBlock bonemealable
                         && bonemealable.isValidBonemealTarget(level, above, state)) {
                     bonemealable.performBonemeal(serverLevel, serverLevel.getRandom(), above, state);
-                    state = level.getBlockState(above); // may have just matured into a fruit
+                    maybeRotAFreshPumpkin(above, serverLevel.getRandom());
+                    state = level.getBlockState(above); // may have just matured into a fruit (or rotted)
                 }
                 maturePumpkin[gx][gy] = state.is(Blocks.PUMPKIN);
             }
         }
         applyGiantPumpkinPatch(maturePumpkin);
+    }
+
+    /**
+     * If {@code stemPos} just turned into an ATTACHED_PUMPKIN_STEM (vanilla's own sign that its
+     * StemBlock just popped a fresh Pumpkin onto the neighboring cell its FACING points at - see
+     * StemBlock.randomTick, not reimplemented here), rolls the original game's ~20% "grew defective"
+     * chance and, on a hit, swaps that fresh Pumpkin for {@link MicraDrone#ROTTEN_PUMPKIN_BLOCK}
+     * instead. Matches the original: dying only ever happens right as a pumpkin finishes growing,
+     * never before.
+     */
+    private void maybeRotAFreshPumpkin(BlockPos stemPos, RandomSource random) {
+        BlockState stemNowState = level.getBlockState(stemPos);
+        if (!stemNowState.is(Blocks.ATTACHED_PUMPKIN_STEM)) {
+            return;
+        }
+        Direction facing = stemNowState.getValue(HorizontalDirectionalBlock.FACING);
+        BlockPos fruitPos = stemPos.relative(facing);
+        if (level.getBlockState(fruitPos).is(Blocks.PUMPKIN) && random.nextFloat() < PUMPKIN_ROT_CHANCE) {
+            level.setBlockAndUpdate(fruitPos, MicraDrone.ROTTEN_PUMPKIN_BLOCK.get().defaultBlockState());
+        }
     }
 
     /**

@@ -1,6 +1,8 @@
 {
   "block.micradrone.drone_controller": "Drone Controller",
   "block.micradrone.corner_marker": "Corner Marker",
+  "block.micradrone.giant_pumpkin": "Giant Pumpkin",
+  "block.micradrone.rotten_pumpkin": "Rotten Pumpkin",
   "gui.micradrone.drone_screen.title": "Drone Controller",
   "gui.micradrone.drone_screen.log": "Log",
   "gui.micradrone.drone_screen.log_placeholder": "Script output will appear here",

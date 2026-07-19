@@ -22,6 +22,9 @@ public interface DroneApi {
     /** Read-only: true if the crop under the drone is ready to harvest. */
     boolean canHarvest();
 
+    /** Read-only: true if the cell under the drone holds a defective ("rotten") pumpkin. */
+    boolean isRotten();
+
     double getPosX();
 
     double getPosY();

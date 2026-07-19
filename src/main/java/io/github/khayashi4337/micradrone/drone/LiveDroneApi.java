@@ -75,6 +75,11 @@ public final class LiveDroneApi implements DroneApi {
     }
 
     @Override
+    public boolean isRotten() {
+        return queryMainThread(farm::isRotten);
+    }
+
+    @Override
     public double getPosX() {
         return grid.gridX();
     }

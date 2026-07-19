@@ -5,9 +5,14 @@ final class FakeFarmBlockAccess implements FarmBlockAccess {
     private boolean tilled = false;
     private String plantedCrop = null;
     private boolean mature = false;
+    private boolean rotten = false;
 
     void setMature(boolean mature) {
         this.mature = mature;
+    }
+
+    void setRotten(boolean rotten) {
+        this.rotten = rotten;
     }
 
     boolean isTilled() {
@@ -48,5 +53,10 @@ final class FakeFarmBlockAccess implements FarmBlockAccess {
     @Override
     public boolean canHarvest() {
         return plantedCrop != null && mature;
+    }
+
+    @Override
+    public boolean isRotten() {
+        return rotten;
     }
 }

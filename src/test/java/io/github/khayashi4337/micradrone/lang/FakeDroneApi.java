@@ -12,6 +12,7 @@ final class FakeDroneApi implements DroneApi {
     /** -1 = no crop, otherwise the crop's "age"; matureAge or higher can be harvested. */
     private final int[][] cropAge;
     private final int matureAge = 3;
+    private final boolean[][] rotten;
     private long points = 0;
 
     final List<String> calls = new ArrayList<>();
@@ -21,11 +22,16 @@ final class FakeDroneApi implements DroneApi {
         this.size = size;
         this.tilled = new boolean[size][size];
         this.cropAge = new int[size][size];
+        this.rotten = new boolean[size][size];
         for (int[] row : cropAge) java.util.Arrays.fill(row, -1);
     }
 
     void setCropAge(int atX, int atY, int age) {
         cropAge[atX][atY] = age;
+    }
+
+    void setRotten(int atX, int atY, boolean isRotten) {
+        rotten[atX][atY] = isRotten;
     }
 
     int posXInt() { return x; }
@@ -58,8 +64,9 @@ final class FakeDroneApi implements DroneApi {
     @Override
     public boolean plant(String crop) {
         calls.add("plant:" + crop);
-        if (tilled[x][y] && cropAge[x][y] == -1) {
+        if (tilled[x][y] && (cropAge[x][y] == -1 || rotten[x][y])) {
             cropAge[x][y] = 0;
+            rotten[x][y] = false;
             return true;
         }
         return false;
@@ -68,6 +75,13 @@ final class FakeDroneApi implements DroneApi {
     @Override
     public boolean harvest() {
         calls.add("harvest");
+        // Matches the original game: a rotten pumpkin can be harvested (the attempt succeeds and
+        // clears the cell) but yields no points - see LiveFarmBlockAccess#attemptHarvest.
+        if (rotten[x][y]) {
+            cropAge[x][y] = -1;
+            rotten[x][y] = false;
+            return true;
+        }
         if (cropAge[x][y] >= matureAge) {
             cropAge[x][y] = -1;
             points += 1;
@@ -80,6 +94,12 @@ final class FakeDroneApi implements DroneApi {
     public boolean canHarvest() {
         calls.add("can_harvest");
         return cropAge[x][y] >= matureAge;
+    }
+
+    @Override
+    public boolean isRotten() {
+        calls.add("is_rotten");
+        return rotten[x][y];
     }
 
     @Override

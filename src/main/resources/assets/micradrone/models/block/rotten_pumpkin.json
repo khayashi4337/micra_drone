@@ -1,0 +1,7 @@
+{
+  "parent": "block/cube_column",
+  "textures": {
+    "end": "micradrone:block/rotten_pumpkin_top",
+    "side": "micradrone:block/rotten_pumpkin_side"
+  }
+}

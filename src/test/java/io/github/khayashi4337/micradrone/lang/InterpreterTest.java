@@ -128,6 +128,33 @@ class InterpreterTest {
     }
 
     @Test
+    void isRottenReflectsTheCurrentCellAndClearsOnReplant() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        api.setRotten(0, 0, true);
+        List<io.github.khayashi4337.micradrone.lang.ast.Stmt> program = new Parser(new Lexer("""
+                print(is_rotten())
+                till()
+                plant("wheat")
+                print(is_rotten())
+                """).scan()).parseProgram();
+        new Interpreter(api).run(program);
+        assertEquals(List.of("True", "False"), api.printed);
+    }
+
+    @Test
+    void harvestingARottenCellSucceedsWithoutAwardingPoints() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        api.setRotten(0, 0, true);
+        List<io.github.khayashi4337.micradrone.lang.ast.Stmt> program = new Parser(new Lexer("""
+                print(harvest())
+                print(get_points())
+                print(is_rotten())
+                """).scan()).parseProgram();
+        new Interpreter(api).run(program);
+        assertEquals(List.of("True", "0", "False"), api.printed);
+    }
+
+    @Test
     void booleanLogicShortCircuitsAndNot() {
         FakeDroneApi api = run("""
                 print(not False)
