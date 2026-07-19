@@ -7,6 +7,7 @@ import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
 import net.minecraft.core.BlockPos;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.client.gui.screens.Screen;
@@ -24,6 +25,7 @@ public class DroneScreen extends Screen {
 
     private final BlockPos pos;
     private MultiLineEditBox logBox;
+    private Component pointsText = Component.translatable("gui.micradrone.drone_screen.points", 0);
 
     public DroneScreen(BlockPos pos) {
         super(Component.translatable("gui.micradrone.drone_screen.title"));
@@ -66,11 +68,18 @@ public class DroneScreen extends Screen {
     }
 
     /** Called from {@code MicraDroneClient} when a DroneLogPayload arrives for this controller. */
-    public void updateLog(BlockPos sourcePos, List<String> lines) {
+    public void updateLog(BlockPos sourcePos, List<String> lines, long points) {
         if (!sourcePos.equals(this.pos)) {
             return;
         }
         logBox.setValue(String.join("\n", lines));
+        pointsText = Component.translatable("gui.micradrone.drone_screen.points", points);
+    }
+
+    @Override
+    public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        super.render(guiGraphics, mouseX, mouseY, partialTick);
+        guiGraphics.drawCenteredString(this.font, pointsText, this.width / 2, 28, 0xFFFFFF);
     }
 
     @Override

@@ -151,6 +151,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     public void addPoints(long delta) {
         points += delta;
         setChanged();
+        pushLogSnapshot();
     }
 
     /**
@@ -252,7 +253,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     private void pushLogSnapshotTo(ServerPlayer player) {
-        PacketDistributor.sendToPlayer(player, new DroneLogPayload(getBlockPos(), List.copyOf(logBuffer)));
+        PacketDistributor.sendToPlayer(player, new DroneLogPayload(getBlockPos(), List.copyOf(logBuffer), points));
     }
 
     /** Registered as this block's {@link net.minecraft.world.level.block.entity.BlockEntityTicker}; server-side only. */

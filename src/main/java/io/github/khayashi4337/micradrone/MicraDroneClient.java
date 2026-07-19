@@ -48,7 +48,7 @@ public class MicraDroneClient {
     /** Registered as the DroneLogPayload handler in MicraDrone's RegisterPayloadHandlersEvent listener. */
     public static void handleDroneLog(DroneLogPayload payload, IPayloadContext context) {
         if (Minecraft.getInstance().screen instanceof DroneScreen screen) {
-            screen.updateLog(payload.pos(), payload.lines());
+            screen.updateLog(payload.pos(), payload.lines(), payload.points());
         }
     }
 
