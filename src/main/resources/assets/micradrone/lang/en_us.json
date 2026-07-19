@@ -9,5 +9,9 @@
   "gui.micradrone.drone_screen.open_scripts_folder": "Open Scripts Folder",
   "gui.micradrone.drone_screen.help": "Help",
   "gui.micradrone.drone_screen.alias": "Alias (e.g. North Farm)",
-  "gui.micradrone.drone_screen.set_alias": "Set"
+  "gui.micradrone.drone_screen.set_alias": "Set",
+  "gui.micradrone.drone_screen.run_tab": "Run",
+  "gui.micradrone.drone_screen.shop_tab": "Shop",
+  "gui.micradrone.drone_screen.shop_owned": "%s: Unlocked",
+  "gui.micradrone.drone_screen.shop_buy": "Buy %s (%s)"
 }

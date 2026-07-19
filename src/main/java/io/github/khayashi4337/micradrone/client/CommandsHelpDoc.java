@@ -15,6 +15,10 @@ public final class CommandsHelpDoc {
             plant("wheat")
                 耕地に小麦を植える。戻り値: 成功したら true。
 
+            plant("carrot")
+                耕地にニンジンを植える。ショップでcarrotをアンロックするまでは
+                常にfalseになる（DroneScreenの「Shop」タブから購入できる）。
+
             harvest()
                 育ちきった作物を収穫する。戻り値: 成功したら true。
 
@@ -33,7 +37,12 @@ public final class CommandsHelpDoc {
                 このプロットが今まで稼いだ資源ポイントの合計（全作物の合計）。
 
             get_points("wheat")
-                指定した作物1種類だけの資源ポイント（今のところ作物はwheatのみ）。
+                指定した作物1種類だけの資源ポイント。
+
+            ■ アンロックショップ
+            DroneScreen上部の「Shop」タブで、稼いだポイントを使って新しい作物を
+            解放できる。今のところ carrot（wheat 20）・pumpkin（wheat 30 +
+            carrot 15）が購入可能。未購入の作物はplant()が常に失敗する。
 
             ■ ログに出力する
             print(値)

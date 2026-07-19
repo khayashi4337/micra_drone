@@ -40,23 +40,34 @@ class FarmCellRulesTest {
 
     @Test
     void plantWheatSucceedsOnFarmlandWithEmptyAbove() {
-        assertTrue(FarmCellRules.canPlant("wheat", facts(false, true, true, false)));
+        assertTrue(FarmCellRules.canPlant("wheat", true, facts(false, true, true, false)));
     }
 
     @Test
-    void plantFailsForUnsupportedCrops() {
-        assertFalse(FarmCellRules.canPlant("carrot", facts(false, true, true, false)));
-        assertFalse(FarmCellRules.canPlant("", facts(false, true, true, false)));
+    void plantFailsForUnknownCrops() {
+        assertFalse(FarmCellRules.canPlant("pineapple", true, facts(false, true, true, false)));
+        assertFalse(FarmCellRules.canPlant("", true, facts(false, true, true, false)));
+    }
+
+    @Test
+    void plantFailsForAKnownButNotYetUnlockedCrop() {
+        assertFalse(FarmCellRules.canPlant("carrot", false, facts(false, true, true, false)));
+    }
+
+    @Test
+    void plantSucceedsForAKnownAndUnlockedCrop() {
+        assertTrue(FarmCellRules.canPlant("carrot", true, facts(false, true, true, false)));
+        assertTrue(FarmCellRules.canPlant("pumpkin", true, facts(false, true, true, false)));
     }
 
     @Test
     void plantFailsWhenGroundIsNotFarmland() {
-        assertFalse(FarmCellRules.canPlant("wheat", facts(true, false, true, false)));
+        assertFalse(FarmCellRules.canPlant("wheat", true, facts(true, false, true, false)));
     }
 
     @Test
     void plantFailsWhenSomethingAlreadyOccupiesTheCellAbove() {
-        assertFalse(FarmCellRules.canPlant("wheat", facts(false, true, false, false)));
+        assertFalse(FarmCellRules.canPlant("wheat", true, facts(false, true, false, false)));
     }
 
     // ---- harvest() / can_harvest() ----

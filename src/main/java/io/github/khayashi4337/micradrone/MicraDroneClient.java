@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import io.github.khayashi4337.micradrone.client.CommandsHelpDoc;
 import io.github.khayashi4337.micradrone.client.DroneScreen;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
+import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.entity.AllayRenderer;
@@ -50,6 +51,13 @@ public class MicraDroneClient {
         if (Minecraft.getInstance().screen instanceof DroneScreen screen) {
             screen.updateLog(payload.pos(), payload.lines(), payload.pointsByCrop(),
                     payload.scriptDescriptions(), payload.selectedScript(), payload.alias());
+        }
+    }
+
+    /** Registered as the ShopStatePayload handler in MicraDrone's RegisterPayloadHandlersEvent listener. */
+    public static void handleShopState(ShopStatePayload payload, IPayloadContext context) {
+        if (Minecraft.getInstance().screen instanceof DroneScreen screen) {
+            screen.updateShopState(payload.pos(), payload.unlockedCrops());
         }
     }
 

@@ -1,16 +1,23 @@
 package io.github.khayashi4337.micradrone.drone;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 final class FakeGridState implements DroneGridState {
     private int x;
     private int y;
     private final int size;
     private final Map<String, Long> pointsByCrop = new HashMap<>();
+    private final Set<String> unlockedCrops = new HashSet<>(Set.of("wheat"));
 
     FakeGridState(int size) {
         this.size = size;
+    }
+
+    void unlock(String crop) {
+        unlockedCrops.add(crop);
     }
 
     @Override
@@ -57,5 +64,10 @@ final class FakeGridState implements DroneGridState {
     @Override
     public Map<String, Long> pointsByCrop() {
         return Map.copyOf(pointsByCrop);
+    }
+
+    @Override
+    public boolean isUnlocked(String crop) {
+        return unlockedCrops.contains(crop);
     }
 }

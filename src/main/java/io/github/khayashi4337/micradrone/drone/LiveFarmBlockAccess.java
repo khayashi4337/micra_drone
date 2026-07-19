@@ -6,6 +6,7 @@ import java.util.List;
 import net.minecraft.core.BlockPos;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CropBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -13,7 +14,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import io.github.khayashi4337.micradrone.drone.FarmCellRules.CellFacts;
 
 /**
- * Maps the drone's grid cell onto real world blocks, reusing vanilla farmland/wheat mechanics
+ * Maps the drone's grid cell onto real world blocks, reusing vanilla farmland/crop mechanics
  * (moisture, random-tick growth) instead of a bespoke crop simulation. The plot is a square area
  * starting one block diagonally from the controller, extending toward whichever diagonal quadrant
  * {@link DroneGridState#dirX()}/{@link DroneGridState#dirZ()} points at (see
@@ -21,9 +22,8 @@ import io.github.khayashi4337.micradrone.drone.FarmCellRules.CellFacts;
  * leaves the actual till/plant/harvest decisions to {@link FarmCellRules}.
  */
 public final class LiveFarmBlockAccess implements FarmBlockAccess {
-    // Only "wheat" exists right now, so a flat rate covers it; a per-crop table can replace this
-    // once a second crop is added.
-    private static final long POINTS_PER_WHEAT_HARVEST = 1;
+    /** Flat rate for every crop for now; a per-crop table can replace this if crops need to differ. */
+    private static final long POINTS_PER_HARVEST = 1;
 
     private final Level level;
     private final BlockPos origin;
@@ -90,10 +90,28 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     public Attempt attemptPlant(String crop) {
         BlockPos ground = groundPos();
         BlockPos above = cropPos();
-        if (!FarmCellRules.canPlant(crop, readFacts(ground, above))) {
+        Block cropBlock = simpleCropBlockFor(crop);
+        if (cropBlock == null || !FarmCellRules.canPlant(crop, grid.isUnlocked(crop), readFacts(ground, above))) {
             return Attempt.failure();
         }
-        return new Attempt(true, () -> level.setBlockAndUpdate(above, Blocks.WHEAT.defaultBlockState()));
+        return new Attempt(true, () -> level.setBlockAndUpdate(above, cropBlock.defaultBlockState()));
+    }
+
+    /**
+     * Crops whose block-placement is a plain "set the block to its default (age 0) state" - wheat and
+     * carrot both work exactly like this. Pumpkin deliberately isn't here: vanilla pumpkins grow via
+     * PumpkinStemBlock (a vine that pops out a separate Pumpkin block), a different mechanic entirely,
+     * so plant("pumpkin") intentionally fails until that's wired up separately. Deliberately a method,
+     * not a static field: a field initializer touching Minecraft classes would run at class-load time,
+     * which breaks calling this class's Minecraft-free static methods (groundOffset/allGroundOffsets)
+     * from the test sourceSet, which has no net.minecraft.* on its classpath.
+     */
+    private static Block simpleCropBlockFor(String crop) {
+        return switch (crop) {
+            case "wheat" -> Blocks.WHEAT;
+            case "carrot" -> Blocks.CARROTS;
+            default -> null;
+        };
     }
 
     @Override
@@ -103,12 +121,20 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         if (!FarmCellRules.canHarvest(readFacts(ground, above))) {
             return Attempt.failure();
         }
+        String cropName = cropNameOf(level.getBlockState(above).getBlock());
         // Runs on the main thread (via the paced action queue), same as every other grid-state
         // mutation here - see DroneGridState's other writers for why that matters.
         return new Attempt(true, () -> {
             level.setBlockAndUpdate(above, Blocks.AIR.defaultBlockState());
-            grid.addPoints("wheat", POINTS_PER_WHEAT_HARVEST);
+            grid.addPoints(cropName, POINTS_PER_HARVEST);
         });
+    }
+
+    private static String cropNameOf(Block block) {
+        if (block == Blocks.CARROTS) {
+            return "carrot";
+        }
+        return "wheat"; // covers Blocks.WHEAT and, defensively, anything unexpected
     }
 
     @Override

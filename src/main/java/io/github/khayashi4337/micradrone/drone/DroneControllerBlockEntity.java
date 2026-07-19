@@ -6,17 +6,23 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
+import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
 import io.github.khayashi4337.micradrone.lang.Lexer;
 import io.github.khayashi4337.micradrone.lang.Parser;
 import io.github.khayashi4337.micradrone.lang.ast.Stmt;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.StringTag;
+import net.minecraft.nbt.Tag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
@@ -66,6 +72,10 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     // Keyed by crop name (e.g. "wheat"); written on the main thread, read from the network/GUI push
     // path too, hence a concurrent map rather than a plain HashMap.
     private final Map<String, Long> pointsByCrop = new ConcurrentHashMap<>();
+    // "wheat" is always in here (every plot starts able to plant it); others are bought in the shop
+    // (see purchaseUnlock). Written on the main thread only (purchaseUnlock runs from the network
+    // handler, which is main-thread per PayloadRegistrar's default).
+    private final Set<String> unlockedCrops = ConcurrentHashMap.newKeySet();
     // Human-readable label a player can set - coordinates alone are hard to tell apart. Display only;
     // the script folder on disk stays coordinate-named regardless (see ScriptFileStore).
     private volatile String alias = "";
@@ -82,6 +92,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
     public DroneControllerBlockEntity(BlockPos pos, BlockState state) {
         super(MicraDrone.DRONE_CONTROLLER_BLOCK_ENTITY.get(), pos, state);
+        unlockedCrops.add("wheat");
     }
 
     public PacedActionQueue getPacedActionQueue() {
@@ -179,6 +190,37 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     @Override
     public Map<String, Long> pointsByCrop() {
         return Map.copyOf(pointsByCrop);
+    }
+
+    @Override
+    public boolean isUnlocked(String crop) {
+        return unlockedCrops.contains(crop);
+    }
+
+    /**
+     * Spends this plot's points on {@code unlockId} (see {@link UnlockShop#CATALOG}) if it exists,
+     * isn't already unlocked, and enough points are available - a no-op (besides a log line) otherwise.
+     */
+    public void purchaseUnlock(ServerPlayer requester, String unlockId) {
+        viewingPlayerUuid = requester.getUUID();
+        Optional<UnlockShop.Unlock> unlock = UnlockShop.find(unlockId);
+        if (unlock.isEmpty()) {
+            appendLog("[shop] unknown unlock '" + unlockId + "'");
+            return;
+        }
+        if (unlockedCrops.contains(unlockId)) {
+            appendLog("[shop] " + unlockId + " is already unlocked");
+            return;
+        }
+        Map<String, Long> cost = unlock.get().cost();
+        if (!UnlockShop.canAfford(pointsByCrop(), cost)) {
+            appendLog("[shop] not enough points to unlock " + unlockId);
+            return;
+        }
+        cost.forEach((crop, amount) -> pointsByCrop.merge(crop, -amount, Long::sum));
+        unlockedCrops.add(unlockId);
+        appendLog("[shop] unlocked " + unlockId);
+        setChanged();
     }
 
     /**
@@ -319,8 +361,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     private void pushLogSnapshotTo(ServerPlayer player) {
-        PacketDistributor.sendToPlayer(player, new DroneLogPayload(
-                getBlockPos(), List.copyOf(logBuffer), pointsByCrop(), scriptDescriptions, selectedScript, alias));
+        PacketDistributor.sendToPlayer(player,
+                new DroneLogPayload(getBlockPos(), List.copyOf(logBuffer), pointsByCrop(), scriptDescriptions, selectedScript, alias),
+                new ShopStatePayload(getBlockPos(), Set.copyOf(unlockedCrops)));
     }
 
     /** Registered as this block's {@link net.minecraft.world.level.block.entity.BlockEntityTicker}; server-side only. */
@@ -344,6 +387,12 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         }
         alias = tag.getString("Alias");
         selectedScript = tag.contains("SelectedScript") ? tag.getString("SelectedScript") : ScriptFileStore.DEFAULT_SCRIPT_NAME;
+        unlockedCrops.clear();
+        unlockedCrops.add("wheat");
+        ListTag unlockedTag = tag.getList("UnlockedCrops", Tag.TAG_STRING);
+        for (Tag t : unlockedTag) {
+            unlockedCrops.add(t.getAsString());
+        }
         droneEntityUuid = tag.hasUUID("DroneEntityUuid") ? tag.getUUID("DroneEntityUuid") : null;
     }
 
@@ -357,6 +406,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         tag.put("PointsByCrop", pointsTag);
         tag.putString("Alias", alias);
         tag.putString("SelectedScript", selectedScript);
+        ListTag unlockedTag = new ListTag();
+        unlockedCrops.forEach(crop -> unlockedTag.add(StringTag.valueOf(crop)));
+        tag.put("UnlockedCrops", unlockedTag);
         if (droneEntityUuid != null) {
             tag.putUUID("DroneEntityUuid", droneEntityUuid);
         }

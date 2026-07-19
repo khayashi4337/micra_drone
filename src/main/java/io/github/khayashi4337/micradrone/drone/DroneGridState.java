@@ -27,4 +27,7 @@ public interface DroneGridState {
 
     /** Crop type -> point balance, for every crop type this plot has ever earned points from. */
     Map<String, Long> pointsByCrop();
+
+    /** True if this plot may plant {@code crop} - "wheat" always is; others need buying in the shop. */
+    boolean isUnlocked(String crop);
 }
