@@ -29,9 +29,14 @@ public final class CommandsHelpDoc {
             get_world_size()
                 畑の一辺の長さ（マス数）。コントローラとコーナーマーカーの置き方で変わる。
 
+            get_points()
+                このプロットが今まで稼いだ資源ポイントの合計（全作物の合計）。
+
             ■ ログに出力する
             print(値)
                 このGUIのログ欄に1行追記する。数値・文字列・真偽値を渡せる。
+                注意: 文字列と数値を + で連結することはできない
+                (例: "points: " + get_points() はエラーになる。分けてprintする)。
 
             ■ 文法（インデント方式、Python風）
             - コメントは # から行末まで
@@ -49,6 +54,15 @@ public final class CommandsHelpDoc {
                 move("east")
                 till()
                 plant("wheat")
+
+            ■ スクリプトファイルについて
+            スクリプトはワールドごとに <world>/micradrone/scripts/<コントローラの座標>/
+            フォルダの中に .mdrone ファイルとして保存される（「Open Scripts Folder」
+            ボタンで開ける）。1つのコントローラにつき複数のスクリプトを置けて、DroneScreen
+            下部の「Script: ...」ボタンをクリックすると次のスクリプトに切り替わり、その状態で
+            Runを押すと選択中のスクリプトが実行される。main.mdrone のほかに、動作見本として
+            move_square.mdrone（移動のみ）・till_and_plant.mdrone（畑を耕して植える）・
+            harvest_when_ready.mdrone（育った作物を収穫する）が最初から入っている。
             """;
 
     private CommandsHelpDoc() {

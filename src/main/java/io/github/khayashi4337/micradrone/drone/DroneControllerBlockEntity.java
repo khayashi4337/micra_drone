@@ -66,6 +66,13 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     // Keyed by crop name (e.g. "wheat"); written on the main thread, read from the network/GUI push
     // path too, hence a concurrent map rather than a plain HashMap.
     private final Map<String, Long> pointsByCrop = new ConcurrentHashMap<>();
+    // Human-readable label a player can set - coordinates alone are hard to tell apart. Display only;
+    // the script folder on disk stays coordinate-named regardless (see ScriptFileStore).
+    private volatile String alias = "";
+    private volatile String selectedScript = ScriptFileStore.DEFAULT_SCRIPT_NAME;
+    // Refreshed from disk in sendLogSnapshotTo (screen open); reused as-is by every other push so
+    // routine log/points updates don't hit the filesystem.
+    private volatile List<String> availableScripts = List.of(ScriptFileStore.DEFAULT_SCRIPT_NAME);
 
     private DroneScriptRunner scriptRunner;
     /** The visible {@link DroneEntity} tracked by UUID (entities aren't safe to hold direct references to across reloads). */
@@ -193,10 +200,11 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     /**
-     * Loads this controller's script file (creating it with default content if missing) and runs it.
-     * No-op (besides a log line) if a script is already running.
+     * Loads {@code scriptName} from this controller's script folder (creating the folder and seeding
+     * it with {@link SampleScripts#ALL} if missing) and runs it. No-op (besides a log line) if a
+     * script is already running.
      */
-    public void startScript(ServerPlayer requester) {
+    public void startScript(ServerPlayer requester, String scriptName) {
         if (!(level instanceof ServerLevel serverLevel)) {
             return;
         }
@@ -206,13 +214,15 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             return;
         }
         logBuffer.clear();
+        selectedScript = scriptName;
+        setChanged();
 
         String source;
         try {
-            BlockPos pos = getBlockPos();
-            source = ScriptFileStore.loadOrCreateDefault(scriptsDir(serverLevel), pos.getX(), pos.getY(), pos.getZ());
+            Path folder = controllerScriptFolder(serverLevel);
+            source = ScriptFileStore.load(folder.resolve(scriptName));
         } catch (IOException e) {
-            appendLog("[error] could not read script file: " + e.getMessage());
+            appendLog("[error] could not read script '" + scriptName + "': " + e.getMessage());
             return;
         }
 
@@ -230,7 +240,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         FarmBlockAccess farm = new LiveFarmBlockAccess(serverLevel, getBlockPos(), this);
         LiveDroneApi api = new LiveDroneApi(gateway, pacedActionQueue, this, farm, this::appendLog);
         scriptRunner = new DroneScriptRunner(api, this::appendLog);
-        appendLog("[run] script started");
+        appendLog("[run] running " + scriptName);
         scriptRunner.start(program);
     }
 
@@ -244,10 +254,43 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         appendLog("[stop] stop requested");
     }
 
-    /** Sent when a {@code DroneScreen} opens, so it immediately shows log history instead of starting blank. */
+    /** DroneScreen's alias field: a display-only label, so e.g. "North Farm" beats a bare coordinate. */
+    public void setAlias(String alias) {
+        this.alias = alias;
+        setChanged();
+        pushLogSnapshot();
+    }
+
+    /**
+     * Sent when a {@code DroneScreen} opens, so it immediately shows log/points/alias history and an
+     * up-to-date script list instead of starting blank.
+     */
     public void sendLogSnapshotTo(ServerPlayer requester) {
         viewingPlayerUuid = requester.getUUID();
+        if (level instanceof ServerLevel serverLevel) {
+            refreshAvailableScripts(serverLevel);
+        }
         pushLogSnapshotTo(requester);
+    }
+
+    private void refreshAvailableScripts(ServerLevel level) {
+        try {
+            Path folder = controllerScriptFolder(level);
+            List<String> names = ScriptFileStore.listScripts(folder);
+            if (!names.isEmpty()) {
+                availableScripts = List.copyOf(names);
+                if (!names.contains(selectedScript)) {
+                    selectedScript = names.get(0);
+                }
+            }
+        } catch (IOException e) {
+            MicraDrone.LOGGER.error("could not list scripts for {}", getBlockPos(), e);
+        }
+    }
+
+    private Path controllerScriptFolder(ServerLevel level) throws IOException {
+        BlockPos pos = getBlockPos();
+        return ScriptFileStore.ensureControllerFolder(scriptsDir(level), pos.getX(), pos.getY(), pos.getZ());
     }
 
     private static Path scriptsDir(ServerLevel level) {
@@ -274,7 +317,8 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     private void pushLogSnapshotTo(ServerPlayer player) {
-        PacketDistributor.sendToPlayer(player, new DroneLogPayload(getBlockPos(), List.copyOf(logBuffer), pointsByCrop()));
+        PacketDistributor.sendToPlayer(player, new DroneLogPayload(
+                getBlockPos(), List.copyOf(logBuffer), pointsByCrop(), availableScripts, selectedScript, alias));
     }
 
     /** Registered as this block's {@link net.minecraft.world.level.block.entity.BlockEntityTicker}; server-side only. */
@@ -296,6 +340,8 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         for (String crop : pointsTag.getAllKeys()) {
             pointsByCrop.put(crop, pointsTag.getLong(crop));
         }
+        alias = tag.getString("Alias");
+        selectedScript = tag.contains("SelectedScript") ? tag.getString("SelectedScript") : ScriptFileStore.DEFAULT_SCRIPT_NAME;
         droneEntityUuid = tag.hasUUID("DroneEntityUuid") ? tag.getUUID("DroneEntityUuid") : null;
     }
 
@@ -307,6 +353,8 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         CompoundTag pointsTag = new CompoundTag();
         pointsByCrop.forEach(pointsTag::putLong);
         tag.put("PointsByCrop", pointsTag);
+        tag.putString("Alias", alias);
+        tag.putString("SelectedScript", selectedScript);
         if (droneEntityUuid != null) {
             tag.putUUID("DroneEntityUuid", droneEntityUuid);
         }

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -16,31 +17,74 @@ class ScriptFileStoreTest {
     Path tempDir;
 
     @Test
-    void fileNameEncodesGridPosition() {
-        assertEquals("1_-2_3.mdrone", ScriptFileStore.fileName(1, -2, 3));
+    void folderNameEncodesGridPosition() {
+        assertEquals("1_-2_3", ScriptFileStore.folderName(1, -2, 3));
     }
 
     @Test
-    void loadOrCreateDefaultWritesDefaultContentWhenMissing() throws IOException {
+    void ensureControllerFolderSeedsEverySampleScriptWhenMissing() throws IOException {
         Path scriptsDir = tempDir.resolve("scripts");
 
-        String loaded = ScriptFileStore.loadOrCreateDefault(scriptsDir, 5, 64, -5);
+        Path folder = ScriptFileStore.ensureControllerFolder(scriptsDir, 5, 64, -5);
 
-        assertTrue(loaded.contains("print(get_world_size())"));
-        Path expectedFile = scriptsDir.resolve("5_64_-5.mdrone");
-        assertTrue(Files.exists(expectedFile));
-        assertEquals(loaded, Files.readString(expectedFile));
+        assertEquals(scriptsDir.resolve("5_64_-5"), folder);
+        for (String name : SampleScripts.ALL.keySet()) {
+            assertTrue(Files.exists(folder.resolve(name)), name + " should have been seeded");
+        }
+        assertEquals(SampleScripts.MAIN, ScriptFileStore.load(folder.resolve(ScriptFileStore.DEFAULT_SCRIPT_NAME)));
     }
 
     @Test
-    void loadOrCreateDefaultReturnsExistingContentUnchanged() throws IOException {
+    void ensureControllerFolderNeverOverwritesAnExistingFile() throws IOException {
         Path scriptsDir = tempDir.resolve("scripts");
-        Files.createDirectories(scriptsDir);
-        Path file = scriptsDir.resolve(ScriptFileStore.fileName(0, 0, 0));
-        Files.writeString(file, "move(\"east\")\n");
+        Path folder = scriptsDir.resolve(ScriptFileStore.folderName(0, 0, 0));
+        Files.createDirectories(folder);
+        Files.writeString(folder.resolve(ScriptFileStore.DEFAULT_SCRIPT_NAME), "move(\"east\")\n");
 
-        String loaded = ScriptFileStore.loadOrCreateDefault(scriptsDir, 0, 0, 0);
+        ScriptFileStore.ensureControllerFolder(scriptsDir, 0, 0, 0);
 
-        assertEquals("move(\"east\")\n", loaded);
+        assertEquals("move(\"east\")\n", ScriptFileStore.load(folder.resolve(ScriptFileStore.DEFAULT_SCRIPT_NAME)));
+    }
+
+    @Test
+    void ensureControllerFolderRestoresADeletedSampleAsAPermanentReferenceLibrary() throws IOException {
+        Path scriptsDir = tempDir.resolve("scripts");
+        ScriptFileStore.ensureControllerFolder(scriptsDir, 1, 2, 3);
+        Path folder = scriptsDir.resolve(ScriptFileStore.folderName(1, 2, 3));
+        Files.delete(folder.resolve("move_square.mdrone"));
+
+        ScriptFileStore.ensureControllerFolder(scriptsDir, 1, 2, 3);
+
+        assertTrue(Files.exists(folder.resolve("move_square.mdrone")));
+        assertEquals(SampleScripts.MOVE_SQUARE, ScriptFileStore.load(folder.resolve("move_square.mdrone")));
+    }
+
+    @Test
+    void ensureControllerFolderKeepsAnEditedSampleAsIs() throws IOException {
+        Path scriptsDir = tempDir.resolve("scripts");
+        ScriptFileStore.ensureControllerFolder(scriptsDir, 1, 2, 3);
+        Path folder = scriptsDir.resolve(ScriptFileStore.folderName(1, 2, 3));
+        Files.writeString(folder.resolve("move_square.mdrone"), "print(\"edited\")\n");
+
+        ScriptFileStore.ensureControllerFolder(scriptsDir, 1, 2, 3);
+
+        assertEquals("print(\"edited\")\n", ScriptFileStore.load(folder.resolve("move_square.mdrone")));
+    }
+
+    @Test
+    void listScriptsReturnsOnlyMdroneFilesSorted() throws IOException {
+        Path scriptsDir = tempDir.resolve("scripts");
+        Path folder = ScriptFileStore.ensureControllerFolder(scriptsDir, 0, 0, 0);
+        Files.writeString(folder.resolve("notes.txt"), "not a script");
+
+        List<String> names = ScriptFileStore.listScripts(folder);
+
+        assertEquals(List.copyOf(SampleScripts.ALL.keySet()).stream().sorted().toList(), names);
+    }
+
+    @Test
+    void listScriptsReturnsEmptyListForAMissingFolder() throws IOException {
+        List<String> names = ScriptFileStore.listScripts(tempDir.resolve("does_not_exist"));
+        assertEquals(List.of(), names);
     }
 }
