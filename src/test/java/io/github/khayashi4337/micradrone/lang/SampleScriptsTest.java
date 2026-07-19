@@ -64,4 +64,23 @@ class SampleScriptsTest {
         assertEquals(0, api.posXInt());
         assertEquals(0, api.posYInt());
     }
+
+    @Test
+    void pumpkinSmartHarvestSkipsWastedHarvestCallsOnRottenCells() {
+        FakeDroneApi api = new FakeDroneApi(3);
+        api.setCropAge(0, 0, 3); // mature, ready to harvest normally
+        api.setRotten(1, 0, true); // rotten - must be replanted, never harvested
+
+        new Interpreter(api).run(parse(SampleScripts.PUMPKIN_SMART_HARVEST));
+
+        long harvestCount = api.calls.stream().filter("harvest"::equals).count();
+        long plantCount = api.calls.stream().filter("plant:pumpkin"::equals).count();
+        assertEquals(1, harvestCount, "the rotten cell must not trigger a wasted harvest() call");
+        assertEquals(9, plantCount, "expected a plant(\"pumpkin\") attempt on every one of the 9 cells");
+        assertEquals(List.of(
+                "good pumpkins harvested:", "1",
+                "rotten pumpkins skipped (replanted without wasting harvest):", "1",
+                "Pumpkin points:", "0"
+        ), api.printed);
+    }
 }

@@ -97,6 +97,51 @@ public final class SampleScripts {
             print("back near the start")
             """;
 
+    public static final String PUMPKIN_SMART_HARVEST = """
+            # Verification script for the Phase 3 rework: plants pumpkin across the plot (unlock it
+            # first via the Corner Marker shop) and, every time you Run it, checks is_rotten() before
+            # harvesting. About 1 in 5 pumpkins grow defective - harvesting one earns nothing, so
+            # skipping straight to plant() on a rotten cell (no wasted harvest() call) is the efficient
+            # move. Re-run this periodically as the plot grows to watch rotten_skipped tick up.
+            size = get_world_size()
+            going_east = True
+            row = 0
+            harvested = 0
+            rotten_skipped = 0
+            while row < size:
+                col = 0
+                while col < size - 1:
+                    till()
+                    if is_rotten():
+                        rotten_skipped = rotten_skipped + 1
+                    elif can_harvest():
+                        if harvest():
+                            harvested = harvested + 1
+                    plant("pumpkin")
+                    if going_east:
+                        move("east")
+                    else:
+                        move("west")
+                    col = col + 1
+                till()
+                if is_rotten():
+                    rotten_skipped = rotten_skipped + 1
+                elif can_harvest():
+                    if harvest():
+                        harvested = harvested + 1
+                plant("pumpkin")
+                if row < size - 1:
+                    move("south")
+                going_east = not going_east
+                row = row + 1
+            print("good pumpkins harvested:")
+            print(harvested)
+            print("rotten pumpkins skipped (replanted without wasting harvest):")
+            print(rotten_skipped)
+            print("Pumpkin points:")
+            print(get_points("pumpkin"))
+            """;
+
     /** File name (with extension) -> content, in the order they should appear in the picker. */
     public static final Map<String, String> ALL = buildAll();
 
@@ -106,6 +151,7 @@ public final class SampleScripts {
         all.put("move_square.mdrone", MOVE_SQUARE);
         all.put("till_and_plant.mdrone", TILL_AND_PLANT);
         all.put("harvest_when_ready.mdrone", HARVEST_WHEN_READY);
+        all.put("pumpkin_smart_harvest.mdrone", PUMPKIN_SMART_HARVEST);
         return Map.copyOf(all);
     }
 
