@@ -6,6 +6,7 @@ import java.nio.file.Path;
 
 import io.github.khayashi4337.micradrone.client.CommandsHelpDoc;
 import io.github.khayashi4337.micradrone.client.DroneScreen;
+import io.github.khayashi4337.micradrone.client.ShopScreen;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
 import net.minecraft.Util;
@@ -46,6 +47,11 @@ public class MicraDroneClient {
         Minecraft.getInstance().setScreen(new DroneScreen(pos));
     }
 
+    /** Called from CornerMarkerBlock's client-side useWithoutItem branch. pos is the marker, not a controller. */
+    public static void openShopScreen(BlockPos pos) {
+        Minecraft.getInstance().setScreen(new ShopScreen(pos));
+    }
+
     /** Registered as the DroneLogPayload handler in MicraDrone's RegisterPayloadHandlersEvent listener. */
     public static void handleDroneLog(DroneLogPayload payload, IPayloadContext context) {
         if (Minecraft.getInstance().screen instanceof DroneScreen screen) {
@@ -56,8 +62,8 @@ public class MicraDroneClient {
 
     /** Registered as the ShopStatePayload handler in MicraDrone's RegisterPayloadHandlersEvent listener. */
     public static void handleShopState(ShopStatePayload payload, IPayloadContext context) {
-        if (Minecraft.getInstance().screen instanceof DroneScreen screen) {
-            screen.updateShopState(payload.pos(), payload.unlockedCrops());
+        if (Minecraft.getInstance().screen instanceof ShopScreen screen) {
+            screen.updateShopState(payload.pos(), payload.unlockedCrops(), payload.pointsByCrop());
         }
     }
 

@@ -23,6 +23,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.StringTag;
 import net.minecraft.nbt.Tag;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
@@ -199,28 +200,29 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
     /**
      * Spends this plot's points on {@code unlockId} (see {@link UnlockShop#CATALOG}) if it exists,
-     * isn't already unlocked, and enough points are available - a no-op (besides a log line) otherwise.
+     * isn't already unlocked, and enough points are available - a no-op (besides a chat message)
+     * otherwise. Either way, sends the requester a fresh {@link ShopStatePayload} so the Shop screen
+     * reflects the outcome immediately.
      */
     public void purchaseUnlock(ServerPlayer requester, String unlockId) {
-        viewingPlayerUuid = requester.getUUID();
         Optional<UnlockShop.Unlock> unlock = UnlockShop.find(unlockId);
         if (unlock.isEmpty()) {
-            appendLog("[shop] unknown unlock '" + unlockId + "'");
-            return;
+            requester.sendSystemMessage(Component.literal("[shop] unknown unlock '" + unlockId + "'"));
+        } else if (unlockedCrops.contains(unlockId)) {
+            requester.sendSystemMessage(Component.literal("[shop] " + unlockId + " is already unlocked"));
+        } else if (!UnlockShop.canAfford(pointsByCrop(), unlock.get().cost())) {
+            requester.sendSystemMessage(Component.literal("[shop] not enough points to unlock " + unlockId));
+        } else {
+            unlock.get().cost().forEach((crop, amount) -> pointsByCrop.merge(crop, -amount, Long::sum));
+            unlockedCrops.add(unlockId);
+            setChanged();
+            requester.sendSystemMessage(Component.literal("[shop] unlocked " + unlockId));
         }
-        if (unlockedCrops.contains(unlockId)) {
-            appendLog("[shop] " + unlockId + " is already unlocked");
-            return;
-        }
-        Map<String, Long> cost = unlock.get().cost();
-        if (!UnlockShop.canAfford(pointsByCrop(), cost)) {
-            appendLog("[shop] not enough points to unlock " + unlockId);
-            return;
-        }
-        cost.forEach((crop, amount) -> pointsByCrop.merge(crop, -amount, Long::sum));
-        unlockedCrops.add(unlockId);
-        appendLog("[shop] unlocked " + unlockId);
-        setChanged();
+        sendShopStateTo(requester);
+    }
+
+    public void sendShopStateTo(ServerPlayer requester) {
+        PacketDistributor.sendToPlayer(requester, new ShopStatePayload(getBlockPos(), Set.copyOf(unlockedCrops), pointsByCrop()));
     }
 
     /**
@@ -241,6 +243,26 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         // Ambient effects like the growth boost must never apply to the size-5-toward-SE guess used
         // when no marker has actually been placed/found - only to a plot the player explicitly marked.
         plotConfirmed = bounds.markerFound();
+    }
+
+    /**
+     * Reverse lookup for the Shop screen (opened by right-clicking a corner marker, not a
+     * controller): given the marker's position, finds the paired controller's BlockEntity, if any is
+     * within scan range. Reuses the exact same diagonal-scan algorithm scanForCornerMarker uses, just
+     * searching for the opposite block type and starting point.
+     */
+    public static Optional<DroneControllerBlockEntity> findByCornerMarker(Level level, BlockPos markerPos) {
+        Optional<int[]> offset = CornerMarkerScan.findNearestMatch(
+                (dx, dy, dz) -> level.getBlockState(markerPos.offset(dx, dy, dz)).is(MicraDrone.DRONE_CONTROLLER_BLOCK.get()),
+                MAX_MARKER_SCAN_DISTANCE, MAX_MARKER_SCAN_Y_TOLERANCE);
+        if (offset.isEmpty()) {
+            return Optional.empty();
+        }
+        int[] o = offset.get();
+        BlockPos controllerPos = markerPos.offset(o[0], o[1], o[2]);
+        return level.getBlockEntity(controllerPos) instanceof DroneControllerBlockEntity be
+                ? Optional.of(be)
+                : Optional.empty();
     }
 
     /**
@@ -362,8 +384,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
     private void pushLogSnapshotTo(ServerPlayer player) {
         PacketDistributor.sendToPlayer(player,
-                new DroneLogPayload(getBlockPos(), List.copyOf(logBuffer), pointsByCrop(), scriptDescriptions, selectedScript, alias),
-                new ShopStatePayload(getBlockPos(), Set.copyOf(unlockedCrops)));
+                new DroneLogPayload(getBlockPos(), List.copyOf(logBuffer), pointsByCrop(), scriptDescriptions, selectedScript, alias));
     }
 
     /** Registered as this block's {@link net.minecraft.world.level.block.entity.BlockEntityTicker}; server-side only. */

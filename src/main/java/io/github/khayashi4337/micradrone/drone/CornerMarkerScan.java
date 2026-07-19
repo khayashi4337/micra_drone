@@ -1,5 +1,7 @@
 package io.github.khayashi4337.micradrone.drone;
 
+import java.util.Optional;
+
 /**
  * Pure geometry for {@link DroneControllerBlockEntity#scanForCornerMarker}, kept Minecraft-free so
  * the scanning algorithm itself (diagonal enumeration, Y tolerance, size/direction math) can be unit
@@ -47,5 +49,24 @@ final class CornerMarkerScan {
             }
         }
         return new PlotBounds(defaultSize, 1, 1, false);
+    }
+
+    /**
+     * Like {@link #scan}, but for the reverse lookup (given a corner marker, find its paired
+     * controller): returns the raw {@code {dx, dy, dz}} offset of the nearest match, or empty if
+     * nothing was found within range. Used by the Shop screen, opened by right-clicking a corner
+     * marker, to resolve which controller's points/unlocks it should operate on.
+     */
+    static Optional<int[]> findNearestMatch(MarkerLookup lookup, int maxDistance, int yTolerance) {
+        for (int i = 1; i <= maxDistance; i++) {
+            for (int[] dir : DIAGONAL_DIRECTIONS) {
+                for (int dy = -yTolerance; dy <= yTolerance; dy++) {
+                    if (lookup.isMarkerAt(dir[0] * i, dy, dir[1] * i)) {
+                        return Optional.of(new int[]{dir[0] * i, dy, dir[1] * i});
+                    }
+                }
+            }
+        }
+        return Optional.empty();
     }
 }

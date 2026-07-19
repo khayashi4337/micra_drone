@@ -1,6 +1,8 @@
 package io.github.khayashi4337.micradrone.drone;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -82,5 +84,17 @@ class CornerMarkerScanTest {
     void fallsBackToDefaultSizeSouthEastWhenNoMarkerFound() {
         PlotBounds bounds = CornerMarkerScan.scan((dx, dy, dz) -> false, 10, 4, 5);
         assertEquals(new PlotBounds(5, 1, 1, false), bounds);
+    }
+
+    @Test
+    void findNearestMatchReturnsTheRawOffsetOfTheNearestHit() {
+        var result = CornerMarkerScan.findNearestMatch(markersAt(new int[]{3, 0, 3}), 10, 4);
+        assertTrue(result.isPresent());
+        assertArrayEquals(new int[]{3, 0, 3}, result.get());
+    }
+
+    @Test
+    void findNearestMatchReturnsEmptyWhenNothingIsInRange() {
+        assertEquals(java.util.Optional.empty(), CornerMarkerScan.findNearestMatch((dx, dy, dz) -> false, 10, 4));
     }
 }

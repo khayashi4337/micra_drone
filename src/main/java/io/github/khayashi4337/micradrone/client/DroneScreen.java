@@ -4,12 +4,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.TreeMap;
 
 import io.github.khayashi4337.micradrone.MicraDroneClient;
-import io.github.khayashi4337.micradrone.drone.UnlockShop;
-import io.github.khayashi4337.micradrone.drone.net.PurchaseUnlockPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.SetAliasPayload;
@@ -26,29 +23,28 @@ import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
- * Opened by right-clicking a Drone Controller. Two tabs: "Run" (script picker/log, the previous
- * single-screen content) and "Shop" (spend points to unlock new crops). Run/Stop/Buy send commands to
- * the server; the log/points/shop panels show whatever snapshot the server last pushed for this
- * controller. Client-only, so no logic here is unit-testable - see MicraDroneClient's note on manual
- * verification.
+ * Opened by right-clicking a Drone Controller: alias, points-per-crop, script picker, log, Run/Stop.
+ * The unlock shop lives on the paired Corner Marker instead (see {@code ShopScreen}) - an earlier
+ * tab-based version of this screen packed both into one window, but the two tab buttons didn't read
+ * as real tabs and, worse, had a real layout bug (points text overlapping the alias box). Splitting
+ * across two single-purpose screens sidesteps both problems without needing vanilla's full
+ * TabNavigationBar/TabManager system, which is built for full-screen settings-style screens, not a
+ * small popup like this one.
+ * Client-only, so no logic here is unit-testable - see MicraDroneClient's note on manual verification.
  */
 public class DroneScreen extends Screen {
     private static final int LOG_WIDTH = 240;
     private static final int LOG_HEIGHT = 110;
     private static final int SCRIPT_LIST_HEIGHT = 64;
     private static final String DEFAULT_SCRIPT_NAME = "main.mdrone";
-    /** Below the shared tab buttons + alias row, both tabs' content starts here. */
-    private static final int TAB_CONTENT_TOP = 48;
+    private static final int ALIAS_ROW_Y = 4;
+    private static final int ALIAS_ROW_HEIGHT = 18;
+    // Alias row occupies [4, 22). Points lines start at 24 (2px gap) and are 9px tall each; with up
+    // to 2 crops shown that's [24, 42). Script list starts at 46, a further 4px clear of that.
+    private static final int POINTS_LINES_Y = 24;
+    private static final int SCRIPT_LIST_Y = 46;
 
     private final BlockPos pos;
-    private boolean shopTabActive = false;
-
-    // Cached server state, so rebuildDroneScreenWidgets() can redraw either tab from scratch without waiting on
-    // a fresh network round-trip.
-    private String lastKnownAlias = "";
-    private Map<String, String> lastKnownScriptDescriptions = Map.of(DEFAULT_SCRIPT_NAME, DEFAULT_SCRIPT_NAME);
-    private String lastKnownSelectedScript = DEFAULT_SCRIPT_NAME;
-    private Set<String> lastKnownUnlockedCrops = Set.of("wheat");
 
     private MultiLineEditBox logBox;
     private EditBox aliasBox;
@@ -62,54 +58,23 @@ public class DroneScreen extends Screen {
 
     @Override
     protected void init() {
-        rebuildDroneScreenWidgets();
-        PacketDistributor.sendToServer(new RequestLogPayload(pos));
-    }
-
-    private void rebuildDroneScreenWidgets() {
-        clearWidgets();
         int left = (this.width - LOG_WIDTH) / 2;
 
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.run_tab"),
-                b -> switchTab(false))
-                .bounds(left, 4, LOG_WIDTH / 2, 18)
-                .build());
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.shop_tab"),
-                b -> switchTab(true))
-                .bounds(left + LOG_WIDTH / 2, 4, LOG_WIDTH / 2, 18)
-                .build());
-
-        aliasBox = new EditBox(this.font, left, 26, LOG_WIDTH - 76 - 4, 18,
+        aliasBox = new EditBox(this.font, left, ALIAS_ROW_Y, LOG_WIDTH - 76 - 4, ALIAS_ROW_HEIGHT,
                 Component.translatable("gui.micradrone.drone_screen.alias"));
         aliasBox.setMaxLength(48);
-        aliasBox.setValue(lastKnownAlias);
         addRenderableWidget(aliasBox);
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.set_alias"),
                 b -> PacketDistributor.sendToServer(new SetAliasPayload(pos, aliasBox.getValue())))
-                .bounds(left + LOG_WIDTH - 76, 26, 76, 18)
+                .bounds(left + LOG_WIDTH - 76, ALIAS_ROW_Y, 76, ALIAS_ROW_HEIGHT)
                 .build());
 
-        if (shopTabActive) {
-            buildShopTab(left);
-        } else {
-            buildRunTab(left);
-        }
-    }
-
-    private void switchTab(boolean shop) {
-        shopTabActive = shop;
-        rebuildDroneScreenWidgets();
-    }
-
-    private void buildRunTab(int left) {
-        int scriptListY = TAB_CONTENT_TOP;
-        scriptList = new ScriptListWidget(Minecraft.getInstance(), LOG_WIDTH, SCRIPT_LIST_HEIGHT, scriptListY, 16);
+        scriptList = new ScriptListWidget(Minecraft.getInstance(), LOG_WIDTH, SCRIPT_LIST_HEIGHT, SCRIPT_LIST_Y, 16);
         scriptList.setX(left);
-        scriptList.replaceEntries(lastKnownScriptDescriptions);
-        scriptList.selectFileName(lastKnownSelectedScript);
+        scriptList.replaceEntries(Map.of(DEFAULT_SCRIPT_NAME, DEFAULT_SCRIPT_NAME));
         addRenderableWidget(scriptList);
 
-        int top = scriptListY + SCRIPT_LIST_HEIGHT + 6;
+        int top = SCRIPT_LIST_Y + SCRIPT_LIST_HEIGHT + 6;
         logBox = new MultiLineEditBox(this.font, left, top, LOG_WIDTH, LOG_HEIGHT,
                 Component.translatable("gui.micradrone.drone_screen.log_placeholder"),
                 Component.translatable("gui.micradrone.drone_screen.log"));
@@ -136,25 +101,8 @@ public class DroneScreen extends Screen {
                 b -> MicraDroneClient.openHelpFolder())
                 .bounds(left, helpY, LOG_WIDTH, 20)
                 .build());
-    }
 
-    private void buildShopTab(int left) {
-        int y = TAB_CONTENT_TOP;
-        for (UnlockShop.Unlock unlock : UnlockShop.CATALOG) {
-            boolean owned = lastKnownUnlockedCrops.contains(unlock.id());
-            String costText = unlock.cost().entrySet().stream()
-                    .map(e -> e.getValue() + " " + e.getKey())
-                    .reduce((a, b) -> a + ", " + b)
-                    .orElse("");
-            Component label = owned
-                    ? Component.translatable("gui.micradrone.drone_screen.shop_owned", displayName(unlock.id()))
-                    : Component.translatable("gui.micradrone.drone_screen.shop_buy", displayName(unlock.id()), costText);
-            addRenderableWidget(Button.builder(label,
-                    b -> PacketDistributor.sendToServer(new PurchaseUnlockPayload(pos, unlock.id())))
-                    .bounds(left, y, LOG_WIDTH, 20)
-                    .build());
-            y += 24;
-        }
+        PacketDistributor.sendToServer(new RequestLogPayload(pos));
     }
 
     private static String displayName(String cropName) {
@@ -168,13 +116,7 @@ public class DroneScreen extends Screen {
         if (!sourcePos.equals(this.pos)) {
             return;
         }
-        lastKnownScriptDescriptions = scriptDescriptions.isEmpty() ? lastKnownScriptDescriptions : scriptDescriptions;
-        lastKnownSelectedScript = selectedScript;
-        lastKnownAlias = alias;
-
-        if (logBox != null) {
-            logBox.setValue(String.join("\n", lines));
-        }
+        logBox.setValue(String.join("\n", lines));
 
         List<Component> newLines = new ArrayList<>();
         for (Map.Entry<String, Long> entry : new TreeMap<>(pointsByCrop).entrySet()) {
@@ -182,38 +124,27 @@ public class DroneScreen extends Screen {
         }
         pointsLines = newLines;
 
-        if (scriptList != null && !scriptDescriptions.isEmpty()) {
+        if (!scriptDescriptions.isEmpty()) {
             scriptList.replaceEntries(scriptDescriptions);
             scriptList.selectFileName(selectedScript);
         }
 
         // Don't clobber text the player is actively typing with a stale server echo.
-        if (aliasBox != null && !aliasBox.isFocused()) {
+        if (!aliasBox.isFocused()) {
             aliasBox.setValue(alias);
-        }
-    }
-
-    /** Called from {@code MicraDroneClient} when a ShopStatePayload arrives for this controller. */
-    public void updateShopState(BlockPos sourcePos, Set<String> unlockedCrops) {
-        if (!sourcePos.equals(this.pos)) {
-            return;
-        }
-        lastKnownUnlockedCrops = unlockedCrops;
-        if (shopTabActive) {
-            rebuildDroneScreenWidgets();
         }
     }
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
-        if (shopTabActive) {
-            return;
-        }
-        int y = TAB_CONTENT_TOP - 20;
+        // Between the alias row's bottom (ALIAS_ROW_Y + ALIAS_ROW_HEIGHT) and the script list's top
+        // (SCRIPT_LIST_Y) there's a fixed 18px gap; up to 2 point lines (9px each) fit without
+        // overlapping either neighbor.
+        int y = ALIAS_ROW_Y + ALIAS_ROW_HEIGHT + 1;
         for (Component line : pointsLines) {
             guiGraphics.drawCenteredString(this.font, line, this.width / 2, y, 0xFFFFFF);
-            y += 10;
+            y += 9;
         }
     }
 

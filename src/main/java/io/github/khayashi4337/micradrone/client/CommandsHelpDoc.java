@@ -17,7 +17,7 @@ public final class CommandsHelpDoc {
 
             plant("carrot")
                 耕地にニンジンを植える。ショップでcarrotをアンロックするまでは
-                常にfalseになる（DroneScreenの「Shop」タブから購入できる）。
+                常にfalseになる（アンロックの方法は下の「アンロックショップ」参照）。
 
             plant("pumpkin")
                 耕地にカボチャの苗（つる）を植える。育ちきると本家vanillaの
@@ -48,9 +48,10 @@ public final class CommandsHelpDoc {
                 指定した作物1種類だけの資源ポイント。
 
             ■ アンロックショップ
-            DroneScreen上部の「Shop」タブで、稼いだポイントを使って新しい作物を
-            解放できる。今のところ carrot（wheat 20）・pumpkin（wheat 30 +
-            carrot 15）が購入可能。未購入の作物はplant()が常に失敗する。
+            コーナーマーカーのブロックを右クリックすると専用のショップ画面が開き、
+            稼いだポイントを使って新しい作物を解放できる。今のところ
+            carrot（wheat 20）・pumpkin（wheat 30 + carrot 15）が購入可能。
+            未購入の作物はplant()が常に失敗する。
 
             ■ かぼちゃの巨大化融合
             耕作エリア内で同じ大きさの正方形(2x2以上)がすべて同時に実った状態に

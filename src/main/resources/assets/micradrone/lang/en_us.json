@@ -10,8 +10,8 @@
   "gui.micradrone.drone_screen.help": "Help",
   "gui.micradrone.drone_screen.alias": "Alias (e.g. North Farm)",
   "gui.micradrone.drone_screen.set_alias": "Set",
-  "gui.micradrone.drone_screen.run_tab": "Run",
-  "gui.micradrone.drone_screen.shop_tab": "Shop",
-  "gui.micradrone.drone_screen.shop_owned": "%s: Unlocked",
-  "gui.micradrone.drone_screen.shop_buy": "Buy %s (%s)"
+  "gui.micradrone.shop_screen.title": "Unlock Shop",
+  "gui.micradrone.shop_screen.connecting": "Connecting to paired Drone Controller...",
+  "gui.micradrone.shop_screen.owned": "%s: Unlocked",
+  "gui.micradrone.shop_screen.buy": "Buy %s (%s)"
 }

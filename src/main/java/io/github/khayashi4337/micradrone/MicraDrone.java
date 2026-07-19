@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 
 import com.mojang.logging.LogUtils;
 
+import io.github.khayashi4337.micradrone.drone.CornerMarkerBlock;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlock;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
 import io.github.khayashi4337.micradrone.drone.DroneEntity;
@@ -11,6 +12,7 @@ import io.github.khayashi4337.micradrone.drone.GiantPumpkinBlock;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.PurchaseUnlockPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
+import io.github.khayashi4337.micradrone.drone.net.RequestShopStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.SetAliasPayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
@@ -68,11 +70,13 @@ public class MicraDrone {
             BLOCK_ENTITY_TYPES.register("drone_controller", () -> BlockEntityType.Builder.of(
                     DroneControllerBlockEntity::new, DRONE_CONTROLLER_BLOCK.get()).build(null));
 
-    // Placed at the opposite diagonal corner from a drone_controller to size its (square) plot.
-    // Plain block, no BlockEntity: the controller scans the 4 diagonals for it, see
-    // DroneControllerBlockEntity#scanForCornerMarker.
-    public static final DeferredBlock<net.minecraft.world.level.block.Block> CORNER_MARKER_BLOCK =
-            BLOCKS.registerSimpleBlock("corner_marker", BlockBehaviour.Properties.of().mapColor(MapColor.GOLD).strength(2.0f));
+    // Placed at the opposite diagonal corner from a drone_controller to size its (square) plot, and
+    // doubles as the unlock shop's entry point (right-click, see CornerMarkerBlock). No BlockEntity:
+    // the controller scans the 4 diagonals for it (and vice versa for the shop), see
+    // DroneControllerBlockEntity#scanForCornerMarker/#findByCornerMarker.
+    public static final DeferredBlock<CornerMarkerBlock> CORNER_MARKER_BLOCK = BLOCKS.registerBlock(
+            "corner_marker", CornerMarkerBlock::new,
+            BlockBehaviour.Properties.of().mapColor(MapColor.GOLD).strength(2.0f));
     public static final DeferredItem<BlockItem> CORNER_MARKER_ITEM =
             ITEMS.registerSimpleBlockItem("corner_marker", CORNER_MARKER_BLOCK);
 
@@ -144,6 +148,7 @@ public class MicraDrone {
         registrar.playToServer(RequestLogPayload.TYPE, RequestLogPayload.STREAM_CODEC, MicraDrone::handleRequestLog);
         registrar.playToServer(SetAliasPayload.TYPE, SetAliasPayload.STREAM_CODEC, MicraDrone::handleSetAlias);
         registrar.playToServer(PurchaseUnlockPayload.TYPE, PurchaseUnlockPayload.STREAM_CODEC, MicraDrone::handlePurchaseUnlock);
+        registrar.playToServer(RequestShopStatePayload.TYPE, RequestShopStatePayload.STREAM_CODEC, MicraDrone::handleRequestShopState);
         registrar.playToClient(DroneLogPayload.TYPE, DroneLogPayload.STREAM_CODEC, MicraDroneClient::handleDroneLog);
         registrar.playToClient(ShopStatePayload.TYPE, ShopStatePayload.STREAM_CODEC, MicraDroneClient::handleShopState);
     }
@@ -182,6 +187,15 @@ public class MicraDrone {
         if (context.player() instanceof ServerPlayer serverPlayer
                 && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
             be.purchaseUnlock(serverPlayer, payload.unlockId());
+        }
+    }
+
+    // payload.pos() here is the corner marker the player right-clicked, not a controller - see
+    // DroneControllerBlockEntity#findByCornerMarker for the reverse-scan that resolves it.
+    private static void handleRequestShopState(RequestShopStatePayload payload, IPayloadContext context) {
+        if (context.player() instanceof ServerPlayer serverPlayer) {
+            DroneControllerBlockEntity.findByCornerMarker(serverPlayer.level(), payload.pos())
+                    .ifPresent(be -> be.sendShopStateTo(serverPlayer));
         }
     }
 }
