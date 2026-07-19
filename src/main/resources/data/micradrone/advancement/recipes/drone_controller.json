@@ -1,0 +1,32 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_redstone": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [
+          {
+            "items": "minecraft:redstone"
+          }
+        ]
+      }
+    },
+    "has_the_recipe": {
+      "trigger": "minecraft:recipe_unlocked",
+      "conditions": {
+        "recipe": "micradrone:drone_controller"
+      }
+    }
+  },
+  "requirements": [
+    [
+      "has_the_recipe",
+      "has_redstone"
+    ]
+  ],
+  "rewards": {
+    "recipes": [
+      "micradrone:drone_controller"
+    ]
+  }
+}
