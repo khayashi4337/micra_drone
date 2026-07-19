@@ -1,8 +1,17 @@
 ### Gradle ###
 .gradle
-build/
+build/*
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/**/build/
+
+# Built mod jar: tracked on purpose so anyone can grab a ready-to-play jar
+# straight from the repo without setting up a build environment first. Git
+# can't re-include a file whose parent directory is itself ignored, hence
+# "build/*" (ignore each top-level entry individually) above instead of the
+# simpler "build/" (ignore the whole tree, no way back in).
+!build/libs/
+build/libs/*
+!build/libs/micradrone-*.jar
 
 ### IntelliJ IDEA ###
 .idea/
