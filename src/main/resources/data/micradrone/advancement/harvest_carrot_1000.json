@@ -1,0 +1,23 @@
+{
+  "parent": "micradrone:harvest_carrot_100",
+  "display": {
+    "icon": {
+      "id": "minecraft:carrot"
+    },
+    "title": {
+      "translate": "advancements.micradrone.harvest_carrot_1000.title"
+    },
+    "description": {
+      "translate": "advancements.micradrone.harvest_carrot_1000.description"
+    },
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": false,
+    "hidden": false
+  },
+  "criteria": {
+    "code_triggered": {
+      "trigger": "minecraft:impossible"
+    }
+  }
+}

@@ -184,9 +184,11 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
     @Override
     public void addPoints(String crop, long delta) {
-        pointsByCrop.merge(crop, delta, Long::sum);
+        long oldTotal = pointsByCrop.getOrDefault(crop, 0L);
+        long newTotal = pointsByCrop.merge(crop, delta, Long::sum);
         setChanged();
         pushLogSnapshot();
+        resolveViewingPlayer().ifPresent(player -> MicraDroneAdvancements.checkHarvestMilestones(player, crop, oldTotal, newTotal));
     }
 
     @Override
@@ -388,13 +390,15 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     private void pushLogSnapshot() {
+        resolveViewingPlayer().ifPresent(this::pushLogSnapshotTo);
+    }
+
+    /** The player who last clicked Run/Stop/opened the screen, if they're still online - see {@link #viewingPlayerUuid}. */
+    private Optional<ServerPlayer> resolveViewingPlayer() {
         if (!(level instanceof ServerLevel serverLevel) || viewingPlayerUuid == null) {
-            return;
+            return Optional.empty();
         }
-        ServerPlayer player = serverLevel.getServer().getPlayerList().getPlayer(viewingPlayerUuid);
-        if (player != null) {
-            pushLogSnapshotTo(player);
-        }
+        return Optional.ofNullable(serverLevel.getServer().getPlayerList().getPlayer(viewingPlayerUuid));
     }
 
     private void pushLogSnapshotTo(ServerPlayer player) {

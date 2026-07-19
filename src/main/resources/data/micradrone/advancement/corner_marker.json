@@ -1,0 +1,30 @@
+{
+  "parent": "micradrone:root",
+  "display": {
+    "icon": {
+      "id": "micradrone:corner_marker"
+    },
+    "title": {
+      "translate": "advancements.micradrone.corner_marker.title"
+    },
+    "description": {
+      "translate": "advancements.micradrone.corner_marker.description"
+    },
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": false,
+    "hidden": false
+  },
+  "criteria": {
+    "obtained_marker": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [
+          {
+            "items": "micradrone:corner_marker"
+          }
+        ]
+      }
+    }
+  }
+}
