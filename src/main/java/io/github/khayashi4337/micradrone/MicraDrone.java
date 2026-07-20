@@ -19,14 +19,15 @@ import io.github.khayashi4337.micradrone.drone.net.PurchaseUnlockPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestShopStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
+import io.github.khayashi4337.micradrone.drone.net.RunScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.SetAliasPayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.Filterable;
-import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.entity.animal.allay.Allay;
@@ -173,6 +174,7 @@ public class MicraDrone {
         registrar.playToServer(PurchaseUnlockPayload.TYPE, PurchaseUnlockPayload.STREAM_CODEC, MicraDrone::handlePurchaseUnlock);
         registrar.playToServer(RequestShopStatePayload.TYPE, RequestShopStatePayload.STREAM_CODEC, MicraDrone::handleRequestShopState);
         registrar.playToServer(FillScrollPayload.TYPE, FillScrollPayload.STREAM_CODEC, MicraDrone::handleFillScroll);
+        registrar.playToServer(RunScrollPayload.TYPE, RunScrollPayload.STREAM_CODEC, MicraDrone::handleRunScroll);
         registrar.playToClient(DroneLogPayload.TYPE, DroneLogPayload.STREAM_CODEC, MicraDroneClient::handleDroneLog);
         registrar.playToClient(ShopStatePayload.TYPE, ShopStatePayload.STREAM_CODEC, MicraDroneClient::handleShopState);
     }
@@ -223,23 +225,51 @@ public class MicraDrone {
         }
     }
 
-    // Sent by ScrollPickScreen (GitHub issue #1): writes scriptName's source onto the sender's held
-    // scroll. Re-checks the held item is still a blank-eligible ScriptScrollItem server-side, since
-    // the client can't be trusted (item could've been swapped/dropped since the screen opened).
+    // Sent by DroneScreen's "Copy Script -> Scroll" button (GitHub issue #1): writes scriptName's
+    // source onto the sender's held scroll. Always targets the main hand - see that button's design
+    // note on why this no longer offers an off-hand option. Reports failures to the player's chat
+    // (purchaseUnlock's existing pattern) since a silent no-op is exactly what caused the confusion
+    // that led to this redesign.
     private static void handleFillScroll(FillScrollPayload payload, IPayloadContext context) {
         if (!(context.player() instanceof ServerPlayer serverPlayer)) {
             return;
         }
-        InteractionHand hand = payload.mainHand() ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
-        ItemStack stack = serverPlayer.getItemInHand(hand);
-        if (!(stack.getItem() instanceof ScriptScrollItem)
-                || !(serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be)) {
+        ItemStack stack = serverPlayer.getMainHandItem();
+        if (!(stack.getItem() instanceof ScriptScrollItem)) {
+            serverPlayer.sendSystemMessage(Component.literal("[scroll] hold a script scroll in your main hand first"));
+            return;
+        }
+        if (!(serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be)) {
             return;
         }
         be.loadScriptSource(payload.scriptName()).ifPresent(source -> {
             List<Filterable<String>> pages = ScriptScrollContent.splitIntoPages(source, WritableBookContent.PAGE_EDIT_LENGTH)
                     .stream().map(Filterable::passThrough).toList();
             stack.set(DataComponents.WRITABLE_BOOK_CONTENT, new WritableBookContent(pages));
+            serverPlayer.sendSystemMessage(Component.literal("[scroll] copied '" + payload.scriptName() + "' onto your scroll"));
         });
+    }
+
+    // Sent by DroneScreen's "Run Scroll" button (GitHub issue #1): joins the held scroll's pages and
+    // runs them on the controller at payload.pos(), same as picking a saved script and hitting Run.
+    private static void handleRunScroll(RunScrollPayload payload, IPayloadContext context) {
+        if (!(context.player() instanceof ServerPlayer serverPlayer)) {
+            return;
+        }
+        ItemStack stack = serverPlayer.getMainHandItem();
+        if (!(stack.getItem() instanceof ScriptScrollItem)) {
+            serverPlayer.sendSystemMessage(Component.literal("[scroll] hold a script scroll in your main hand first"));
+            return;
+        }
+        WritableBookContent content = stack.getOrDefault(DataComponents.WRITABLE_BOOK_CONTENT, WritableBookContent.EMPTY);
+        List<String> pages = content.pages().stream().map(Filterable::raw).toList();
+        if (ScriptScrollContent.isBlank(pages)) {
+            serverPlayer.sendSystemMessage(Component.literal("[scroll] your scroll is blank - write something on it first"));
+            return;
+        }
+        if (!(serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be)) {
+            return;
+        }
+        be.applyScroll(serverPlayer, ScriptScrollContent.joinPages(pages));
     }
 }

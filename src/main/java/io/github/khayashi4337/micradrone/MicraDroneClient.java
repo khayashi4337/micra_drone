@@ -8,7 +8,6 @@ import io.github.khayashi4337.micradrone.client.CommandsHelpDoc;
 import io.github.khayashi4337.micradrone.client.DroneModel;
 import io.github.khayashi4337.micradrone.client.DroneRenderer;
 import io.github.khayashi4337.micradrone.client.DroneScreen;
-import io.github.khayashi4337.micradrone.client.ScrollPickScreen;
 import io.github.khayashi4337.micradrone.client.ShopScreen;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
@@ -17,7 +16,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.geom.ModelLayerLocation;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.InteractionHand;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.storage.LevelResource;
 import net.neoforged.api.distmarker.Dist;
@@ -66,18 +64,11 @@ public class MicraDroneClient {
         Minecraft.getInstance().setScreen(new ShopScreen(pos));
     }
 
-    /** Called from ScriptScrollItem's client-side useOn branch when the held scroll is blank. */
-    public static void openScrollPickScreen(BlockPos pos, InteractionHand hand) {
-        Minecraft.getInstance().setScreen(new ScrollPickScreen(pos, hand == InteractionHand.MAIN_HAND));
-    }
-
     /** Registered as the DroneLogPayload handler in MicraDrone's RegisterPayloadHandlersEvent listener. */
     public static void handleDroneLog(DroneLogPayload payload, IPayloadContext context) {
         if (Minecraft.getInstance().screen instanceof DroneScreen screen) {
             screen.updateLog(payload.pos(), payload.lines(), payload.pointsByCrop(),
                     payload.scriptDescriptions(), payload.selectedScript(), payload.alias());
-        } else if (Minecraft.getInstance().screen instanceof ScrollPickScreen screen) {
-            screen.updateScriptList(payload.pos(), payload.scriptDescriptions());
         }
     }
 

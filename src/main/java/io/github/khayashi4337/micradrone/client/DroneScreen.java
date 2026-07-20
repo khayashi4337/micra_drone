@@ -7,8 +7,10 @@ import java.util.Map;
 import java.util.TreeMap;
 
 import io.github.khayashi4337.micradrone.MicraDroneClient;
+import io.github.khayashi4337.micradrone.drone.net.FillScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
+import io.github.khayashi4337.micradrone.drone.net.RunScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.SetAliasPayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
 import net.minecraft.client.Minecraft;
@@ -113,6 +115,21 @@ public class DroneScreen extends Screen {
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.help"),
                 b -> MicraDroneClient.openHelpFolder())
                 .bounds(left, helpY, LOG_WIDTH, 20)
+                .build());
+
+        // Scroll import/export (GitHub issue #1): explicit buttons instead of overloading the
+        // controller's own right-click with hidden modifiers (sneak, held-item checks) - that design
+        // broke twice against vanilla's Item/Block interaction dispatch order in real-machine testing.
+        // Both act on whatever ScriptScrollItem is in the player's main hand; the server reports why
+        // nothing happened (not holding a scroll, scroll is blank) via chat if the action can't apply.
+        int scrollRowY = helpY + 24;
+        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.copy_to_scroll"),
+                b -> PacketDistributor.sendToServer(new FillScrollPayload(pos, scriptList.selectedFileName())))
+                .bounds(left, scrollRowY, (LOG_WIDTH - 4) / 2, 20)
+                .build());
+        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.run_scroll"),
+                b -> PacketDistributor.sendToServer(new RunScrollPayload(pos)))
+                .bounds(left + (LOG_WIDTH - 4) / 2 + 4, scrollRowY, (LOG_WIDTH - 4) / 2, 20)
                 .build());
 
         PacketDistributor.sendToServer(new RequestLogPayload(pos));
