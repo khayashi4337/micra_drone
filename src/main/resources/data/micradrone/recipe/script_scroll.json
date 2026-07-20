@@ -1,0 +1,24 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "F": {
+      "item": "minecraft:feather"
+    },
+    "P": {
+      "item": "minecraft:paper"
+    },
+    "I": {
+      "item": "minecraft:ink_sac"
+    }
+  },
+  "pattern": [
+    " F ",
+    "PPP",
+    " I "
+  ],
+  "result": {
+    "count": 1,
+    "id": "micradrone:script_scroll"
+  }
+}
