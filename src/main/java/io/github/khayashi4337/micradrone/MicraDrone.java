@@ -1,5 +1,7 @@
 package io.github.khayashi4337.micradrone;
 
+import java.util.List;
+
 import org.slf4j.Logger;
 
 import com.mojang.logging.LogUtils;
@@ -9,7 +11,10 @@ import io.github.khayashi4337.micradrone.drone.DroneControllerBlock;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
 import io.github.khayashi4337.micradrone.drone.DroneEntity;
 import io.github.khayashi4337.micradrone.drone.GiantPumpkinBlock;
+import io.github.khayashi4337.micradrone.drone.ScriptScrollContent;
+import io.github.khayashi4337.micradrone.drone.ScriptScrollItem;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
+import io.github.khayashi4337.micradrone.drone.net.FillScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.PurchaseUnlockPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestShopStatePayload;
@@ -17,14 +22,20 @@ import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.SetAliasPayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.network.Filterable;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.entity.animal.allay.Allay;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.CreativeModeTabs;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.WritableBookContent;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.material.MapColor;
@@ -79,6 +90,11 @@ public class MicraDrone {
             BlockBehaviour.Properties.of().mapColor(MapColor.GOLD).strength(2.0f));
     public static final DeferredItem<BlockItem> CORNER_MARKER_ITEM =
             ITEMS.registerSimpleBlockItem("corner_marker", CORNER_MARKER_BLOCK);
+
+    // A portable, freely-rewritable script carrier (GitHub issue #1) - see ScriptScrollItem. Stacks
+    // to 1, matching vanilla's own WritableBookItem (Items.WRITABLE_BOOK).
+    public static final DeferredItem<ScriptScrollItem> SCRIPT_SCROLL_ITEM =
+            ITEMS.registerItem("script_scroll", ScriptScrollItem::new, new Item.Properties().stacksTo(1));
 
     // Purely decorative reskin for a giant-pumpkin fusion patch (see LiveFarmBlockAccess). The mod
     // places/clears it itself; no BlockItem/recipe, players never obtain it directly.
@@ -139,6 +155,7 @@ public class MicraDrone {
         if (event.getTabKey() == CreativeModeTabs.FUNCTIONAL_BLOCKS) {
             event.accept(DRONE_CONTROLLER_ITEM);
             event.accept(CORNER_MARKER_ITEM);
+            event.accept(SCRIPT_SCROLL_ITEM);
         }
     }
 
@@ -155,6 +172,7 @@ public class MicraDrone {
         registrar.playToServer(SetAliasPayload.TYPE, SetAliasPayload.STREAM_CODEC, MicraDrone::handleSetAlias);
         registrar.playToServer(PurchaseUnlockPayload.TYPE, PurchaseUnlockPayload.STREAM_CODEC, MicraDrone::handlePurchaseUnlock);
         registrar.playToServer(RequestShopStatePayload.TYPE, RequestShopStatePayload.STREAM_CODEC, MicraDrone::handleRequestShopState);
+        registrar.playToServer(FillScrollPayload.TYPE, FillScrollPayload.STREAM_CODEC, MicraDrone::handleFillScroll);
         registrar.playToClient(DroneLogPayload.TYPE, DroneLogPayload.STREAM_CODEC, MicraDroneClient::handleDroneLog);
         registrar.playToClient(ShopStatePayload.TYPE, ShopStatePayload.STREAM_CODEC, MicraDroneClient::handleShopState);
     }
@@ -203,5 +221,25 @@ public class MicraDrone {
             DroneControllerBlockEntity.findByCornerMarker(serverPlayer.level(), payload.pos())
                     .ifPresent(be -> be.sendShopStateTo(serverPlayer));
         }
+    }
+
+    // Sent by ScrollPickScreen (GitHub issue #1): writes scriptName's source onto the sender's held
+    // scroll. Re-checks the held item is still a blank-eligible ScriptScrollItem server-side, since
+    // the client can't be trusted (item could've been swapped/dropped since the screen opened).
+    private static void handleFillScroll(FillScrollPayload payload, IPayloadContext context) {
+        if (!(context.player() instanceof ServerPlayer serverPlayer)) {
+            return;
+        }
+        InteractionHand hand = payload.mainHand() ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
+        ItemStack stack = serverPlayer.getItemInHand(hand);
+        if (!(stack.getItem() instanceof ScriptScrollItem)
+                || !(serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be)) {
+            return;
+        }
+        be.loadScriptSource(payload.scriptName()).ifPresent(source -> {
+            List<Filterable<String>> pages = ScriptScrollContent.splitIntoPages(source, WritableBookContent.PAGE_EDIT_LENGTH)
+                    .stream().map(Filterable::passThrough).toList();
+            stack.set(DataComponents.WRITABLE_BOOK_CONTENT, new WritableBookContent(pages));
+        });
     }
 }

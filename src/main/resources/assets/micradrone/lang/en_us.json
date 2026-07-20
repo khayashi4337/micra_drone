@@ -18,6 +18,7 @@
   "gui.micradrone.shop_screen.connecting": "Connecting to paired Drone Controller...",
   "gui.micradrone.shop_screen.owned": "%s: Unlocked",
   "gui.micradrone.shop_screen.buy": "Buy %s (%s)",
+  "gui.micradrone.scroll_pick_screen.title": "Fill Scroll From Script",
   "advancements.micradrone.root.title": "Micra Drone",
   "advancements.micradrone.root.description": "Obtain a Drone Controller and put a machine to work",
   "advancements.micradrone.corner_marker.title": "Marking Territory",

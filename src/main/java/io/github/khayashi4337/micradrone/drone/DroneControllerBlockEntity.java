@@ -1,6 +1,7 @@
 package io.github.khayashi4337.micradrone.drone;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -266,6 +267,44 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         return level.getBlockEntity(controllerPos) instanceof DroneControllerBlockEntity be
                 ? Optional.of(be)
                 : Optional.empty();
+    }
+
+    /**
+     * Reads {@code scriptName}'s source from this controller's script folder (creating the folder and
+     * seeding it with {@link SampleScripts#ALL} if missing) without running it - used to fill a blank
+     * {@code ScriptScrollItem} (GitHub issue #1) so a player can carry/hand off a known-good script
+     * without typing one by hand first. Empty on any I/O error (logged); the caller is a network
+     * payload handler with no player-facing error channel besides the log.
+     */
+    public Optional<String> loadScriptSource(String scriptName) {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(ScriptFileStore.load(controllerScriptFolder(serverLevel).resolve(scriptName)));
+        } catch (IOException e) {
+            MicraDrone.LOGGER.error("could not read script '{}' for scroll fill at {}", scriptName, getBlockPos(), e);
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Saves {@code scriptSource} (a written {@code ScriptScrollItem}'s joined pages - GitHub issue #1)
+     * as this controller's {@link ScriptScrollContent#SCROLL_SCRIPT_NAME} script and runs it
+     * immediately, exactly as if the player had picked and run a saved script through
+     * {@code DroneScreen}.
+     */
+    public void applyScroll(ServerPlayer requester, String scriptSource) {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        try {
+            Files.writeString(controllerScriptFolder(serverLevel).resolve(ScriptScrollContent.SCROLL_SCRIPT_NAME), scriptSource);
+        } catch (IOException e) {
+            appendLog("[error] could not save scroll content: " + e.getMessage());
+            return;
+        }
+        startScript(requester, ScriptScrollContent.SCROLL_SCRIPT_NAME);
     }
 
     /**
