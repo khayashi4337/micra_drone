@@ -150,6 +150,29 @@ tasks.named('test', Test) {
     useJUnitPlatform()
 }
 
+// Increments mod_version's patch number in gradle.properties (e.g. 0.0.3 -> 0.0.4), so a release
+// doesn't need a hand edit. Run it explicitly before the next build/CurseForge upload; it does not
+// run automatically as part of build/assemble, since a version bump should be a deliberate release
+// step, not something that happens on every compile.
+tasks.register('bumpVersion') {
+    group = 'micradrone'
+    description = "Increments mod_version's patch number in gradle.properties (e.g. 0.0.3 -> 0.0.4)."
+    // Resolved at configuration time (a plain File, not a live Project reference) so this task stays
+    // compatible with org.gradle.configuration-cache=true (see gradle.properties).
+    def propsFile = layout.projectDirectory.file('gradle.properties').asFile
+    doLast {
+        def text = propsFile.text
+        def matcher = text =~ /(?m)^mod_version=(\d+)\.(\d+)\.(\d+)$/
+        if (!matcher.find()) {
+            throw new GradleException("mod_version not found (or not in MAJOR.MINOR.PATCH form) in gradle.properties")
+        }
+        def oldVersion = "${matcher.group(1)}.${matcher.group(2)}.${matcher.group(3)}"
+        def newVersion = "${matcher.group(1)}.${matcher.group(2)}.${(matcher.group(3) as int) + 1}"
+        propsFile.text = text.replaceFirst(/(?m)^mod_version=\d+\.\d+\.\d+$/, "mod_version=${newVersion}")
+        println "mod_version: ${oldVersion} -> ${newVersion}"
+    }
+}
+
 // This block of code expands all declared replace properties in the specified resource targets.
 // A missing property will result in an error. Properties are expanded using ${} Groovy notation.
 var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {
