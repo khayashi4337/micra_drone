@@ -17,9 +17,12 @@ import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.FillScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.PurchaseUnlockPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
+import io.github.khayashi4337.micradrone.drone.net.RequestScriptSourcePayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestShopStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScrollPayload;
+import io.github.khayashi4337.micradrone.drone.net.SaveScriptPayload;
+import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
 import io.github.khayashi4337.micradrone.drone.net.SetAliasPayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
@@ -175,8 +178,11 @@ public class MicraDrone {
         registrar.playToServer(RequestShopStatePayload.TYPE, RequestShopStatePayload.STREAM_CODEC, MicraDrone::handleRequestShopState);
         registrar.playToServer(FillScrollPayload.TYPE, FillScrollPayload.STREAM_CODEC, MicraDrone::handleFillScroll);
         registrar.playToServer(RunScrollPayload.TYPE, RunScrollPayload.STREAM_CODEC, MicraDrone::handleRunScroll);
+        registrar.playToServer(RequestScriptSourcePayload.TYPE, RequestScriptSourcePayload.STREAM_CODEC, MicraDrone::handleRequestScriptSource);
+        registrar.playToServer(SaveScriptPayload.TYPE, SaveScriptPayload.STREAM_CODEC, MicraDrone::handleSaveScript);
         registrar.playToClient(DroneLogPayload.TYPE, DroneLogPayload.STREAM_CODEC, MicraDroneClient::handleDroneLog);
         registrar.playToClient(ShopStatePayload.TYPE, ShopStatePayload.STREAM_CODEC, MicraDroneClient::handleShopState);
+        registrar.playToClient(ScriptSourcePayload.TYPE, ScriptSourcePayload.STREAM_CODEC, MicraDroneClient::handleScriptSource);
     }
 
     // Payload handlers run on the main thread by default (PayloadRegistrar), so it's safe to touch
@@ -248,6 +254,22 @@ public class MicraDrone {
             stack.set(DataComponents.WRITABLE_BOOK_CONTENT, new WritableBookContent(pages));
             serverPlayer.sendSystemMessage(Component.literal("[scroll] copied '" + payload.scriptName() + "' onto your scroll"));
         });
+    }
+
+    // IdeScreen opening (issue #6): fetch the selected script's source for the editor.
+    private static void handleRequestScriptSource(RequestScriptSourcePayload payload, IPayloadContext context) {
+        if (context.player() instanceof ServerPlayer serverPlayer
+                && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
+            be.sendScriptSource(serverPlayer, payload.scriptName());
+        }
+    }
+
+    // IdeScreen's Save button (issue #6): write the edited source back to the script folder.
+    private static void handleSaveScript(SaveScriptPayload payload, IPayloadContext context) {
+        if (context.player() instanceof ServerPlayer serverPlayer
+                && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
+            be.saveScript(serverPlayer, payload.scriptName(), payload.source());
+        }
     }
 
     // Sent by DroneScreen's "Run Scroll" button (GitHub issue #1): joins the held scroll's pages and

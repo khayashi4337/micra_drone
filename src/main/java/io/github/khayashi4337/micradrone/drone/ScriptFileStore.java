@@ -116,6 +116,23 @@ public final class ScriptFileStore {
         return Files.readString(scriptFile);
     }
 
+    /**
+     * True if {@code name} is safe to resolve as a file directly inside a controller's script
+     * folder. Script names cross the network from the client (see SaveScriptPayload/
+     * RequestScriptSourcePayload), so anything that could escape the folder - path separators,
+     * parent-directory hops, drive-letter colons - is rejected, as is anything that isn't a
+     * non-empty {@code *.mdrone} name.
+     */
+    public static boolean isValidScriptName(String name) {
+        return name != null
+                && name.endsWith(".mdrone")
+                && name.length() > ".mdrone".length()
+                && !name.contains("/")
+                && !name.contains("\\")
+                && !name.contains("..")
+                && !name.contains(":");
+    }
+
     /** Every ".mdrone" file name (with extension) currently in a controller's folder, sorted. */
     public static List<String> listScripts(Path controllerFolder) throws IOException {
         if (!Files.isDirectory(controllerFolder)) {

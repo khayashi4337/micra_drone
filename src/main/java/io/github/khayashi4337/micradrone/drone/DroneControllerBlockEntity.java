@@ -14,6 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
+import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
 import io.github.khayashi4337.micradrone.lang.Lexer;
 import io.github.khayashi4337.micradrone.lang.Parser;
@@ -286,6 +287,58 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             MicraDrone.LOGGER.error("could not read script '{}' for scroll fill at {}", scriptName, getBlockPos(), e);
             return Optional.empty();
         }
+    }
+
+    /**
+     * Sends {@code scriptName}'s source to {@code requester} for editing in {@code IdeScreen}
+     * (issue #6). The name arrives over the network, so it's validated before touching the
+     * filesystem; failures (bad name, unreadable file) are reported to the player's chat rather
+     * than silently doing nothing.
+     */
+    public void sendScriptSource(ServerPlayer requester, String scriptName) {
+        viewingPlayerUuid = requester.getUUID();
+        if (!ScriptFileStore.isValidScriptName(scriptName)) {
+            requester.sendSystemMessage(Component.literal("[ide] invalid script name '" + scriptName + "'"));
+            return;
+        }
+        loadScriptSource(scriptName).ifPresentOrElse(
+                source -> PacketDistributor.sendToPlayer(requester, new ScriptSourcePayload(getBlockPos(), scriptName, source)),
+                () -> requester.sendSystemMessage(Component.literal("[ide] could not read '" + scriptName + "'")));
+    }
+
+    /** Longest script {@link #saveScript} accepts - keeps the payload comfortably inside STRING_UTF8's 32767-byte cap even for multibyte text. */
+    public static final int MAX_SCRIPT_CHARS = 10000;
+
+    /**
+     * Saves {@code source} as {@code scriptName} in this controller's script folder ({@code
+     * IdeScreen}'s Save button, issue #6), then refreshes the script list so DroneScreen's picker
+     * and description reflect the edit immediately. Validates the client-supplied name and length;
+     * every outcome, success included, is reported to the player's chat.
+     */
+    public void saveScript(ServerPlayer requester, String scriptName, String source) {
+        viewingPlayerUuid = requester.getUUID();
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        if (!ScriptFileStore.isValidScriptName(scriptName)) {
+            requester.sendSystemMessage(Component.literal("[ide] invalid script name '" + scriptName + "'"));
+            return;
+        }
+        if (source.length() > MAX_SCRIPT_CHARS) {
+            requester.sendSystemMessage(Component.literal("[ide] script too long (" + source.length() + " > " + MAX_SCRIPT_CHARS + " chars)"));
+            return;
+        }
+        try {
+            Files.writeString(controllerScriptFolder(serverLevel).resolve(scriptName), source);
+        } catch (IOException e) {
+            requester.sendSystemMessage(Component.literal("[ide] could not save '" + scriptName + "': " + e.getMessage()));
+            return;
+        }
+        selectedScript = scriptName;
+        setChanged();
+        refreshAvailableScripts(serverLevel);
+        pushLogSnapshotTo(requester);
+        requester.sendSystemMessage(Component.literal("[ide] saved " + scriptName));
     }
 
     /**

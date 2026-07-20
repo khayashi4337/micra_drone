@@ -1,6 +1,7 @@
 package io.github.khayashi4337.micradrone.drone;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -209,5 +210,29 @@ class ScriptFileStoreTest {
         assertEquals(
                 ScriptFileStore.describeScript(SampleScripts.MAIN, ScriptFileStore.DEFAULT_SCRIPT_NAME),
                 described.get(ScriptFileStore.DEFAULT_SCRIPT_NAME));
+    }
+
+    @Test
+    void isValidScriptNameAcceptsPlainMdroneNames() {
+        assertTrue(ScriptFileStore.isValidScriptName("main.mdrone"));
+        assertTrue(ScriptFileStore.isValidScriptName("my farm v2.mdrone"));
+    }
+
+    @Test
+    void isValidScriptNameRejectsPathEscapes() {
+        // These names arrive over the network from the client, so anything that could resolve
+        // outside the controller's script folder must be rejected.
+        assertFalse(ScriptFileStore.isValidScriptName("../main.mdrone"));
+        assertFalse(ScriptFileStore.isValidScriptName("sub/main.mdrone"));
+        assertFalse(ScriptFileStore.isValidScriptName("sub\\main.mdrone"));
+        assertFalse(ScriptFileStore.isValidScriptName("C:evil.mdrone"));
+    }
+
+    @Test
+    void isValidScriptNameRejectsNonMdroneAndEmptyNames() {
+        assertFalse(ScriptFileStore.isValidScriptName(null));
+        assertFalse(ScriptFileStore.isValidScriptName(""));
+        assertFalse(ScriptFileStore.isValidScriptName(".mdrone"));
+        assertFalse(ScriptFileStore.isValidScriptName("notes.txt"));
     }
 }
