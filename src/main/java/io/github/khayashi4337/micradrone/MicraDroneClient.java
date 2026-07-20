@@ -8,6 +8,7 @@ import io.github.khayashi4337.micradrone.client.CommandsHelpDoc;
 import io.github.khayashi4337.micradrone.client.DroneModel;
 import io.github.khayashi4337.micradrone.client.DroneRenderer;
 import io.github.khayashi4337.micradrone.client.DroneScreen;
+import io.github.khayashi4337.micradrone.client.IdeScreen;
 import io.github.khayashi4337.micradrone.client.ShopScreen;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
@@ -80,12 +81,11 @@ public class MicraDroneClient {
         }
     }
 
-    /**
-     * Registered as the ScriptSourcePayload handler. Wired to {@code IdeScreen} (issue #6, next
-     * commit); until that screen exists an arriving payload has no consumer and is dropped.
-     */
+    /** Registered as the ScriptSourcePayload handler: loads the fetched source into the IDE's editor. */
     public static void handleScriptSource(ScriptSourcePayload payload, IPayloadContext context) {
-        // IdeScreen consumes this - see issue #6 task 3.
+        if (Minecraft.getInstance().screen instanceof IdeScreen screen) {
+            screen.updateSource(payload.pos(), payload.scriptName(), payload.source());
+        }
     }
 
     /** DroneScreen's "Open Scripts Folder" button: opens <world>/micradrone/scripts/ in the OS file browser. */
