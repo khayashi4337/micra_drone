@@ -5,9 +5,9 @@ import java.util.Optional;
 /**
  * Pure geometry for {@link DroneControllerBlockEntity#scanForCornerMarker}, kept Minecraft-free so
  * the scanning algorithm itself (diagonal enumeration, Y tolerance, size/direction math) can be unit
- * tested without a real world. Public (not package-private) because the IDE screen's live plot view
- * runs this same scan against the client-side level (blocks are synced, so it resolves the same
- * plot the server does, with no extra networking).
+ * tested without a real world. Public (not package-private) because the IDE screen runs this same
+ * scan against the client-side level to aim its overhead camera (blocks are synced, so it resolves
+ * the same plot the server does, with no extra networking).
  */
 public final class CornerMarkerScan {
     /** (dx, dz) unit steps for the 4 world-space diagonals: south-east, south-west, north-east, north-west. */

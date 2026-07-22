@@ -11,17 +11,17 @@ import java.util.List;
  * LiveFarmBlockAccess's history: first a static field, then an instanceof/interface-call pattern, each
  * broke calling this file's methods from tests until moved out here).
  */
-public final class PlotGeometry {
+final class PlotGeometry {
     private PlotGeometry() {
     }
 
     /** Returns {dx, dz}: the offset from the controller to grid cell (gx, gy). */
-    public static int[] groundOffset(int dirX, int dirZ, int gx, int gy) {
+    static int[] groundOffset(int dirX, int dirZ, int gx, int gy) {
         return new int[]{dirX * (1 + gx), dirZ * (1 + gy)};
     }
 
     /** Every {dx, dz} ground offset in a worldSize x worldSize plot, in no particular order. */
-    public static List<int[]> allGroundOffsets(int dirX, int dirZ, int worldSize) {
+    static List<int[]> allGroundOffsets(int dirX, int dirZ, int worldSize) {
         List<int[]> offsets = new ArrayList<>(worldSize * worldSize);
         for (int gx = 0; gx < worldSize; gx++) {
             for (int gy = 0; gy < worldSize; gy++) {
