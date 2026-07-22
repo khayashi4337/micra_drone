@@ -114,17 +114,22 @@ public class IdeScreen extends Screen {
                         b -> PacketDistributor.sendToServer(new StopScriptPayload(pos)))
                 .bounds(leftX + 3 * (debugW + ROW_GAP), debugRowY, debugW, BUTTON_HEIGHT).build());
 
-        int buttonW = (leftW - 2 * ROW_GAP) / 3;
+        int buttonW = (leftW - 3 * ROW_GAP) / 4;
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.save"), b -> save())
                 .bounds(leftX, saveRowY, buttonW, BUTTON_HEIGHT).build());
+        // Plain Run: runs the SAVED script without touching unsaved editor changes - handy when
+        // re-running a debug session repeatedly.
+        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.run"),
+                        b -> PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptName)))
+                .bounds(leftX + buttonW + ROW_GAP, saveRowY, buttonW, BUTTON_HEIGHT).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.save_run"), b -> {
                     save();
                     PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptName));
                 })
-                .bounds(leftX + buttonW + ROW_GAP, saveRowY, buttonW, BUTTON_HEIGHT).build());
+                .bounds(leftX + 2 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.back"),
                         b -> this.minecraft.setScreen(new DroneScreen(pos)))
-                .bounds(leftX + 2 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
+                .bounds(leftX + 3 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
 
         if (this.minecraft != null && this.minecraft.level != null) {
             rescanPlot();

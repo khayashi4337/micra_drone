@@ -20,6 +20,7 @@
   "gui.micradrone.ide_screen.editor": "Script editor",
   "gui.micradrone.ide_screen.editor_placeholder": "Write your script here",
   "gui.micradrone.ide_screen.save": "Save",
+  "gui.micradrone.ide_screen.run": "Run",
   "gui.micradrone.ide_screen.save_run": "Save & Run",
   "gui.micradrone.ide_screen.back": "Back",
   "gui.micradrone.ide_screen.debug_pause": "Pause",
