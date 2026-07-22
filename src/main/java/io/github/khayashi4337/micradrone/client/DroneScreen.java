@@ -11,6 +11,7 @@ import io.github.khayashi4337.micradrone.drone.net.FillScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScrollPayload;
+import io.github.khayashi4337.micradrone.drone.net.ScriptEntry;
 import io.github.khayashi4337.micradrone.drone.net.SetAliasPayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
 import net.minecraft.client.Minecraft;
@@ -86,7 +87,7 @@ public class DroneScreen extends Screen {
 
         scriptList = new ScriptListWidget(Minecraft.getInstance(), LOG_WIDTH, SCRIPT_LIST_HEIGHT, SCRIPT_LIST_Y, 16);
         scriptList.setX(left);
-        scriptList.replaceEntries(Map.of(DEFAULT_SCRIPT_NAME, DEFAULT_SCRIPT_NAME));
+        scriptList.replaceEntries(List.of(new ScriptEntry(DEFAULT_SCRIPT_NAME, DEFAULT_SCRIPT_NAME, DEFAULT_SCRIPT_NAME)));
         addRenderableWidget(scriptList);
 
         int top = DESCRIPTION_Y + DESCRIPTION_HEIGHT + 6;
@@ -97,7 +98,7 @@ public class DroneScreen extends Screen {
 
         int buttonY = top + LOG_HEIGHT + 8;
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.run"),
-                b -> PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptList.selectedFileName())))
+                b -> PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptList.selectedId())))
                 .bounds(left, buttonY, 80, 20)
                 .build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.stop"),
@@ -127,7 +128,7 @@ public class DroneScreen extends Screen {
         int scrollRowY = helpY + 24;
         int thirdW = (LOG_WIDTH - 8) / 3;
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.copy_to_scroll"),
-                b -> PacketDistributor.sendToServer(new FillScrollPayload(pos, scriptList.selectedFileName())))
+                b -> PacketDistributor.sendToServer(new FillScrollPayload(pos, scriptList.selectedId())))
                 .bounds(left, scrollRowY, thirdW, 20)
                 .build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.run_scroll"),
@@ -135,7 +136,7 @@ public class DroneScreen extends Screen {
                 .bounds(left + thirdW + 4, scrollRowY, thirdW, 20)
                 .build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.edit_script"),
-                b -> Minecraft.getInstance().setScreen(new IdeScreen(pos, scriptList.selectedFileName())))
+                b -> Minecraft.getInstance().setScreen(new IdeScreen(pos, scriptList.selectedId(), scriptList.selectedDisplayName())))
                 .bounds(left + 2 * (thirdW + 4), scrollRowY, thirdW, 20)
                 .build());
 
@@ -149,7 +150,7 @@ public class DroneScreen extends Screen {
 
     /** Called from {@code MicraDroneClient} when a DroneLogPayload arrives for this controller. */
     public void updateLog(BlockPos sourcePos, List<String> lines, Map<String, Long> pointsByCrop,
-            Map<String, String> scriptDescriptions, String selectedScript, String alias) {
+            List<ScriptEntry> scripts, String selectedScript, String alias) {
         if (!sourcePos.equals(this.pos)) {
             return;
         }
@@ -161,9 +162,9 @@ public class DroneScreen extends Screen {
         }
         pointsLines = newLines;
 
-        if (!scriptDescriptions.isEmpty()) {
-            scriptList.replaceEntries(scriptDescriptions);
-            scriptList.selectFileName(selectedScript);
+        if (!scripts.isEmpty()) {
+            scriptList.replaceEntries(scripts);
+            scriptList.selectId(selectedScript);
         }
 
         // Don't clobber text the player is actively typing with a stale server echo.
@@ -191,45 +192,52 @@ public class DroneScreen extends Screen {
     }
 
     /**
-     * Scrollable list of this controller's available scripts. Each row shows the raw file name -
-     * the description (see ScriptFileStore#describeScript) is shown separately, in descriptionBox,
-     * for whichever entry is currently selected (see the overridden setSelected below).
+     * Scrollable list of this controller's available scripts (on-disk files and chest scrolls
+     * alike - see {@link ScriptEntry}). Each row shows the entry's display name; the description
+     * is shown separately, in descriptionBox, for whichever entry is currently selected (see the
+     * overridden setSelected below). Server order is kept as-is: sorted files first, then chest
+     * scrolls in chest/slot order.
      */
-    private final class ScriptListWidget extends ObjectSelectionList<ScriptListWidget.ScriptEntry> {
+    private final class ScriptListWidget extends ObjectSelectionList<ScriptListWidget.Row> {
         ScriptListWidget(Minecraft minecraft, int width, int height, int y, int itemHeight) {
             super(minecraft, width, height, y, itemHeight);
         }
 
-        void replaceEntries(Map<String, String> descriptions) {
-            String previouslySelected = selectedFileName();
+        void replaceEntries(List<ScriptEntry> entries) {
+            String previouslySelected = selectedId();
             clearEntries();
-            new TreeMap<>(descriptions).forEach((fileName, description) -> addEntry(new ScriptEntry(fileName, description)));
-            selectFileName(previouslySelected);
+            entries.forEach(entry -> addEntry(new Row(entry)));
+            selectId(previouslySelected);
             if (getSelected() == null && getItemCount() > 0) {
                 setSelected(getEntry(0));
             }
         }
 
-        void selectFileName(String fileName) {
+        void selectId(String id) {
             for (int i = 0; i < getItemCount(); i++) {
-                ScriptEntry entry = getEntry(i);
-                if (entry.fileName.equals(fileName)) {
-                    setSelected(entry);
+                Row row = getEntry(i);
+                if (row.entry.id().equals(id)) {
+                    setSelected(row);
                     return;
                 }
             }
         }
 
-        String selectedFileName() {
-            ScriptEntry selected = getSelected();
-            return selected != null ? selected.fileName : DEFAULT_SCRIPT_NAME;
+        String selectedId() {
+            Row selected = getSelected();
+            return selected != null ? selected.entry.id() : DEFAULT_SCRIPT_NAME;
+        }
+
+        String selectedDisplayName() {
+            Row selected = getSelected();
+            return selected != null ? selected.entry.displayName() : DEFAULT_SCRIPT_NAME;
         }
 
         /** Single hook point for every way the selection can change: clicks, arrow keys, and the programmatic calls above. */
         @Override
-        public void setSelected(ScriptEntry selected) {
+        public void setSelected(Row selected) {
             super.setSelected(selected);
-            descriptionBox.setValue(selected != null ? selected.description : "");
+            descriptionBox.setValue(selected != null ? selected.entry.description() : "");
         }
 
         @Override
@@ -237,26 +245,26 @@ public class DroneScreen extends Screen {
             return this.width - 10;
         }
 
-        final class ScriptEntry extends ObjectSelectionList.Entry<ScriptEntry> {
-            private final String fileName;
-            private final String description;
-            private final Component fileNameLabel;
+        final class Row extends ObjectSelectionList.Entry<Row> {
+            private final ScriptEntry entry;
+            private final Component label;
 
-            ScriptEntry(String fileName, String description) {
-                this.fileName = fileName;
-                this.description = description;
-                this.fileNameLabel = Component.literal(fileName);
+            Row(ScriptEntry entry) {
+                this.entry = entry;
+                // Chest scrolls get a marker so they read differently from on-disk files.
+                this.label = Component.literal(entry.id().startsWith("scroll:")
+                        ? "⚑ " + entry.displayName() : entry.displayName());
             }
 
             @Override
             public Component getNarration() {
-                return Component.literal(fileName + ": " + description);
+                return Component.literal(entry.displayName() + ": " + entry.description());
             }
 
             @Override
             public void render(GuiGraphics guiGraphics, int index, int top, int left, int width, int height,
                     int mouseX, int mouseY, boolean hovering, float partialTick) {
-                guiGraphics.drawString(DroneScreen.this.font, fileNameLabel, left + 2, top + (height - 8) / 2, 0xFFFFFF);
+                guiGraphics.drawString(DroneScreen.this.font, label, left + 2, top + (height - 8) / 2, 0xFFFFFF);
             }
 
             @Override

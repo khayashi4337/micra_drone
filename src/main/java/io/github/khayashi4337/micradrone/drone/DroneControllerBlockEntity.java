@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +17,7 @@ import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.drone.net.DebugCommandPayload;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
+import io.github.khayashi4337.micradrone.drone.net.ScriptEntry;
 import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
 import io.github.khayashi4337.micradrone.lang.DebugController;
@@ -89,11 +91,10 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     // in place when it changes - see setAlias and ScriptFileStore#folderName(String, int, int, int).
     private volatile String alias = "";
     private volatile String selectedScript = ScriptFileStore.DEFAULT_SCRIPT_NAME;
-    // Refreshed from disk in sendLogSnapshotTo (screen open); reused as-is by every other push so
-    // routine log/points updates don't hit the filesystem. File name -> description (see
-    // ScriptFileStore#describeScript).
-    private volatile Map<String, String> scriptDescriptions =
-            Map.of(ScriptFileStore.DEFAULT_SCRIPT_NAME, ScriptFileStore.DEFAULT_SCRIPT_NAME);
+    // Refreshed from disk + library chests in sendLogSnapshotTo (screen open); reused as-is by
+    // every other push so routine log/points updates don't hit the filesystem or re-scan chests.
+    private volatile List<ScriptEntry> availableScripts = List.of(new ScriptEntry(
+            ScriptFileStore.DEFAULT_SCRIPT_NAME, ScriptFileStore.DEFAULT_SCRIPT_NAME, ScriptFileStore.DEFAULT_SCRIPT_NAME));
 
     private DroneScriptRunner scriptRunner;
     /** The visible {@link DroneEntity} tracked by UUID (entities aren't safe to hold direct references to across reloads). */
@@ -293,6 +294,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         if (!(level instanceof ServerLevel serverLevel)) {
             return Optional.empty();
         }
+        if (ScriptId.isScrollId(scriptName)) {
+            return ScriptChestLibrary.resolveScrollSource(serverLevel, getBlockPos(), scriptName);
+        }
         try {
             return Optional.of(ScriptFileStore.load(controllerScriptFolder(serverLevel).resolve(scriptName)));
         } catch (IOException e) {
@@ -309,8 +313,8 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      */
     public void sendScriptSource(ServerPlayer requester, String scriptName) {
         viewingPlayerUuid = requester.getUUID();
-        if (!ScriptFileStore.isValidScriptName(scriptName)) {
-            requester.sendSystemMessage(Component.literal("[ide] invalid script name '" + scriptName + "'"));
+        if (!ScriptId.isValidId(scriptName)) {
+            requester.sendSystemMessage(Component.literal("[ide] invalid script id '" + scriptName + "'"));
             return;
         }
         loadScriptSource(scriptName).ifPresentOrElse(
@@ -333,19 +337,28 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         if (!(level instanceof ServerLevel serverLevel)) {
             return;
         }
-        if (!ScriptFileStore.isValidScriptName(scriptName)) {
-            requester.sendSystemMessage(Component.literal("[ide] invalid script name '" + scriptName + "'"));
+        if (!ScriptId.isValidId(scriptName)) {
+            requester.sendSystemMessage(Component.literal("[ide] invalid script id '" + scriptName + "'"));
             return;
         }
         if (source.length() > MAX_SCRIPT_CHARS) {
             requester.sendSystemMessage(Component.literal("[ide] script too long (" + source.length() + " > " + MAX_SCRIPT_CHARS + " chars)"));
             return;
         }
-        try {
-            Files.writeString(controllerScriptFolder(serverLevel).resolve(scriptName), source);
-        } catch (IOException e) {
-            requester.sendSystemMessage(Component.literal("[ide] could not save '" + scriptName + "': " + e.getMessage()));
-            return;
+        if (ScriptId.isScrollId(scriptName)) {
+            // A chest scroll: write the edit back into the scroll item itself.
+            if (!ScriptChestLibrary.saveScrollSource(serverLevel, getBlockPos(), scriptName, source)) {
+                requester.sendSystemMessage(Component.literal(
+                        "[ide] scroll " + scriptName + " is no longer in a library chest - nothing saved"));
+                return;
+            }
+        } else {
+            try {
+                Files.writeString(controllerScriptFolder(serverLevel).resolve(scriptName), source);
+            } catch (IOException e) {
+                requester.sendSystemMessage(Component.literal("[ide] could not save '" + scriptName + "': " + e.getMessage()));
+                return;
+            }
         }
         selectedScript = scriptName;
         setChanged();
@@ -387,17 +400,30 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             appendLog("[run] a script is already running");
             return;
         }
+        if (!ScriptId.isValidId(scriptName)) {
+            appendLog("[error] invalid script id '" + scriptName + "'");
+            return;
+        }
         logBuffer.clear();
         selectedScript = scriptName;
         setChanged();
 
         String source;
-        try {
-            Path folder = controllerScriptFolder(serverLevel);
-            source = ScriptFileStore.load(folder.resolve(scriptName));
-        } catch (IOException e) {
-            appendLog("[error] could not read script '" + scriptName + "': " + e.getMessage());
-            return;
+        if (ScriptId.isScrollId(scriptName)) {
+            Optional<String> scroll = ScriptChestLibrary.resolveScrollSource(serverLevel, getBlockPos(), scriptName);
+            if (scroll.isEmpty()) {
+                appendLog("[error] scroll " + scriptName + " is no longer in a library chest - reopen the screen to refresh the list");
+                return;
+            }
+            source = scroll.get();
+        } else {
+            try {
+                Path folder = controllerScriptFolder(serverLevel);
+                source = ScriptFileStore.load(folder.resolve(scriptName));
+            } catch (IOException e) {
+                appendLog("[error] could not read script '" + scriptName + "': " + e.getMessage());
+                return;
+            }
         }
 
         List<Stmt> program;
@@ -527,11 +553,14 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private void refreshAvailableScripts(ServerLevel level) {
         try {
             Path folder = controllerScriptFolder(level);
-            Map<String, String> described = ScriptFileStore.listScriptsWithDescriptions(folder);
-            if (!described.isEmpty()) {
-                scriptDescriptions = described;
-                if (!described.containsKey(selectedScript)) {
-                    selectedScript = described.keySet().iterator().next();
+            List<ScriptEntry> entries = new ArrayList<>();
+            ScriptFileStore.listScriptsWithDescriptions(folder)
+                    .forEach((name, description) -> entries.add(new ScriptEntry(name, name, description)));
+            entries.addAll(ScriptChestLibrary.listScrolls(level, getBlockPos()));
+            if (!entries.isEmpty()) {
+                availableScripts = List.copyOf(entries);
+                if (availableScripts.stream().noneMatch(entry -> entry.id().equals(selectedScript))) {
+                    selectedScript = availableScripts.get(0).id();
                 }
             }
         } catch (IOException e) {
@@ -571,7 +600,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
     private void pushLogSnapshotTo(ServerPlayer player) {
         PacketDistributor.sendToPlayer(player,
-                new DroneLogPayload(getBlockPos(), List.copyOf(logBuffer), pointsByCrop(), scriptDescriptions, selectedScript, alias));
+                new DroneLogPayload(getBlockPos(), List.copyOf(logBuffer), pointsByCrop(), availableScripts, selectedScript, alias));
     }
 
     /** Registered as this block's {@link net.minecraft.world.level.block.entity.BlockEntityTicker}; server-side only. */

@@ -52,7 +52,9 @@ public class IdeScreen extends Screen {
     private static final int RESCAN_INTERVAL_TICKS = 20;
 
     private final BlockPos pos;
-    private final String scriptName;
+    private final String scriptId;
+    /** Human-facing name for the heading; for chest scrolls this is the item's (anvil-renamable) name. */
+    private final String displayName;
     private final IdeCameraController cameraController;
 
     private DebugEditBox editor;
@@ -74,10 +76,11 @@ public class IdeScreen extends Screen {
             DroneControllerBlockEntity.DEFAULT_WORLD_SIZE, 1, 1, false);
     private int tickCounter = 0;
 
-    public IdeScreen(BlockPos pos, String scriptName) {
+    public IdeScreen(BlockPos pos, String scriptId, String displayName) {
         super(Component.translatable("gui.micradrone.ide_screen.title"));
         this.pos = pos;
-        this.scriptName = scriptName;
+        this.scriptId = scriptId;
+        this.displayName = displayName;
         this.cameraController = new IdeCameraController(pos);
     }
 
@@ -120,11 +123,11 @@ public class IdeScreen extends Screen {
         // Plain Run: runs the SAVED script without touching unsaved editor changes - handy when
         // re-running a debug session repeatedly.
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.run"),
-                        b -> PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptName)))
+                        b -> PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptId)))
                 .bounds(leftX + buttonW + ROW_GAP, saveRowY, buttonW, BUTTON_HEIGHT).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.save_run"), b -> {
                     save();
-                    PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptName));
+                    PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptId));
                 })
                 .bounds(leftX + 2 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.back"),
@@ -138,7 +141,7 @@ public class IdeScreen extends Screen {
 
         if (!sourceRequested) {
             sourceRequested = true;
-            PacketDistributor.sendToServer(new RequestScriptSourcePayload(pos, scriptName));
+            PacketDistributor.sendToServer(new RequestScriptSourcePayload(pos, scriptId));
         }
     }
 
@@ -156,7 +159,7 @@ public class IdeScreen extends Screen {
 
     /** Called from {@code MicraDroneClient} when the requested script source arrives. */
     public void updateSource(BlockPos sourcePos, String sourceScriptName, String source) {
-        if (sourcePos.equals(this.pos) && sourceScriptName.equals(this.scriptName)) {
+        if (sourcePos.equals(this.pos) && sourceScriptName.equals(this.scriptId)) {
             editorText = source;
             editor.setValue(source);
         }
@@ -181,7 +184,7 @@ public class IdeScreen extends Screen {
     }
 
     private void save() {
-        PacketDistributor.sendToServer(new SaveScriptPayload(pos, scriptName, editorText));
+        PacketDistributor.sendToServer(new SaveScriptPayload(pos, scriptId, editorText));
     }
 
     private int lineCount() {
@@ -248,7 +251,7 @@ public class IdeScreen extends Screen {
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         guiGraphics.drawCenteredString(this.font,
-                Component.translatable("gui.micradrone.ide_screen.heading", scriptName),
+                Component.translatable("gui.micradrone.ide_screen.heading", displayName),
                 this.width / 2, MARGIN, 0xFFFFFF);
         renderGutter(guiGraphics);
     }
