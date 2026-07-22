@@ -1,6 +1,11 @@
 package io.github.khayashi4337.micradrone.client;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
+import io.github.khayashi4337.micradrone.drone.DroneEntity;
+import io.github.khayashi4337.micradrone.drone.PlotColorRules;
 import io.github.khayashi4337.micradrone.drone.net.RequestScriptSourcePayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.SaveScriptPayload;
@@ -9,6 +14,7 @@ import io.github.khayashi4337.micradrone.drone.sim.SimFrame;
 import io.github.khayashi4337.micradrone.drone.sim.SimLogLine;
 import io.github.khayashi4337.micradrone.drone.sim.SimTrace;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.client.gui.screens.Screen;
@@ -19,11 +25,17 @@ import net.neoforged.neoforge.network.PacketDistributor;
 /**
  * Fullscreen script IDE (issue #6), opened from DroneScreen's Edit button: the left half is a
  * {@link MultiLineEditBox} editor for one of the controller's scripts, the right half is a
- * bird's-eye preview of a dry-run simulation ({@link ScriptSimulator} - real interpreter, in-memory
- * plot, the actual farm is never touched) with playback controls and the script's print output.
- * North is up: grid y grows southward/downward exactly like the real plot's grid coordinates.
- * Client-only, so no logic here is unit-testable (the simulation itself is - see
- * ScriptSimulatorTest); the screen is verified manually in-game.
+ * bird's-eye view of the plot with two modes:
+ * <ul>
+ *   <li><b>Live (default)</b> - the REAL plot, sampled from client-synced block states every frame
+ *       ({@link LivePlotView}, minimap-style): actual farmland moisture, actual crop growth
+ *       stages, the actual drone's position. Hit Save &amp; Run and watch the real drone work.</li>
+ *   <li><b>Sim</b> - a dry-run preview ({@link ScriptSimulator} - real interpreter on an
+ *       in-memory plot; the actual farm is never touched) with playback controls.</li>
+ * </ul>
+ * North is up in both modes: grid y grows southward/downward exactly like the real plot's grid
+ * coordinates. Client-only, so no logic here is unit-testable (the simulation and the palette
+ * are - see ScriptSimulatorTest/PlotColorRulesTest); the screen is verified manually in-game.
  */
 public class IdeScreen extends Screen {
     private static final int MARGIN = 8;
@@ -36,31 +48,25 @@ public class IdeScreen extends Screen {
     private static final int MIN_PLOT = 3;
     private static final int MAX_PLOT = 9;
     private static final int DEFAULT_PLOT = 5;
-
-    /** Cell colors indexed by SimFrame.CELL_* (untilled, tilled, growing/mature per crop, rotten). */
-    private static final int[] CELL_COLORS = {
-            0xFF9B7653, // untilled: dry dirt
-            0xFF5C4033, // tilled: dark farmland
-            0xFF8FD16B, // wheat growing: young green
-            0xFFE0C34E, // wheat mature: golden
-            0xFF6FA84F, // carrot growing: leafy green
-            0xFFE08A2E, // carrot mature: orange
-            0xFF4E9E52, // pumpkin growing: vine green
-            0xFFC46210, // pumpkin mature: deep orange
-            0xFF6E7B5A, // pumpkin rotten: sickly gray-green
-    };
+    /** How often (client ticks) the live view re-resolves plot size/direction from the blocks. */
+    private static final int LIVE_RESCAN_INTERVAL_TICKS = 20;
 
     private final BlockPos pos;
     private final String scriptName;
+    private final LivePlotView livePlot;
 
     private MultiLineEditBox editor;
     private MultiLineEditBox simLogBox;
     private Button playPauseButton;
+    private Button viewToggleButton;
+    /** Everything that only makes sense while the sim view is showing - hidden in live view. */
+    private final List<AbstractWidget> simOnlyWidgets = new ArrayList<>();
 
     // Survive init() re-runs on window resize: the editor widget is rebuilt, its text is not.
     private String editorText = "";
     private boolean sourceRequested = false;
 
+    private boolean liveView = true;
     private SimTrace trace;
     private int frameIndex = 0;
     private boolean playing = false;
@@ -80,10 +86,13 @@ public class IdeScreen extends Screen {
         super(Component.translatable("gui.micradrone.ide_screen.title"));
         this.pos = pos;
         this.scriptName = scriptName;
+        this.livePlot = new LivePlotView(pos);
     }
 
     @Override
     protected void init() {
+        simOnlyWidgets.clear();
+
         int leftX = MARGIN;
         int leftW = this.width / 2 - MARGIN - ROW_GAP;
         int buttonRowY = this.height - MARGIN - BUTTON_HEIGHT;
@@ -120,31 +129,41 @@ public class IdeScreen extends Screen {
 
         int controls1Y = gridY + gridPanelSize + ROW_GAP;
         int quarterW = (rightW - 3 * ROW_GAP) / 4;
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.simulate"), b -> simulate())
+        viewToggleButton = addRenderableWidget(Button.builder(viewToggleLabel(), b -> {
+                    liveView = !liveView;
+                    applyViewVisibility();
+                })
                 .bounds(rightX, controls1Y, quarterW, BUTTON_HEIGHT).build());
-        playPauseButton = addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.play"), b -> togglePlay())
+        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.simulate"), b -> {
+                    liveView = false;
+                    applyViewVisibility();
+                    simulate();
+                })
                 .bounds(rightX + quarterW + ROW_GAP, controls1Y, quarterW, BUTTON_HEIGHT).build());
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.step"), b -> step())
+        playPauseButton = addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.play"), b -> togglePlay())
                 .bounds(rightX + 2 * (quarterW + ROW_GAP), controls1Y, quarterW, BUTTON_HEIGHT).build());
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.reset"), b -> {
+        simOnlyWidgets.add(playPauseButton);
+        simOnlyWidgets.add(addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.step"), b -> step())
+                .bounds(rightX + 3 * (quarterW + ROW_GAP), controls1Y, quarterW, BUTTON_HEIGHT).build()));
+
+        int controls2Y = controls1Y + BUTTON_HEIGHT + ROW_GAP;
+        int thirdW = (rightW - 2 * ROW_GAP) / 3;
+        simOnlyWidgets.add(addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.reset"), b -> {
                     frameIndex = 0;
                     playing = false;
                     updatePlayPauseLabel();
                 })
-                .bounds(rightX + 3 * (quarterW + ROW_GAP), controls1Y, quarterW, BUTTON_HEIGHT).build());
-
-        int controls2Y = controls1Y + BUTTON_HEIGHT + ROW_GAP;
-        int halfW = (rightW - ROW_GAP) / 2;
-        addRenderableWidget(Button.builder(speedLabel(), b -> {
+                .bounds(rightX, controls2Y, thirdW, BUTTON_HEIGHT).build()));
+        simOnlyWidgets.add(addRenderableWidget(Button.builder(speedLabel(), b -> {
                     speedIndex = (speedIndex + 1) % TICKS_PER_FRAME.length;
                     b.setMessage(speedLabel());
                 })
-                .bounds(rightX, controls2Y, halfW, BUTTON_HEIGHT).build());
-        addRenderableWidget(Button.builder(plotSizeLabel(), b -> {
+                .bounds(rightX + thirdW + ROW_GAP, controls2Y, thirdW, BUTTON_HEIGHT).build()));
+        simOnlyWidgets.add(addRenderableWidget(Button.builder(plotSizeLabel(), b -> {
                     plotSize = plotSize >= MAX_PLOT ? MIN_PLOT : plotSize + 1;
                     b.setMessage(plotSizeLabel());
                 })
-                .bounds(rightX + halfW + ROW_GAP, controls2Y, halfW, BUTTON_HEIGHT).build());
+                .bounds(rightX + 2 * (thirdW + ROW_GAP), controls2Y, thirdW, BUTTON_HEIGHT).build()));
 
         statusY = controls2Y + BUTTON_HEIGHT + ROW_GAP;
         int logTopY = statusY + 22;
@@ -153,12 +172,29 @@ public class IdeScreen extends Screen {
                 Component.translatable("gui.micradrone.ide_screen.sim_log_placeholder"),
                 Component.translatable("gui.micradrone.ide_screen.sim_log"));
         addRenderableWidget(simLogBox);
+        simOnlyWidgets.add(simLogBox);
         logRenderedForFrame = -1;
+
+        applyViewVisibility();
+        if (this.minecraft != null && this.minecraft.level != null) {
+            livePlot.rescan(this.minecraft.level);
+        }
 
         if (!sourceRequested) {
             sourceRequested = true;
             PacketDistributor.sendToServer(new RequestScriptSourcePayload(pos, scriptName));
         }
+    }
+
+    private void applyViewVisibility() {
+        for (AbstractWidget widget : simOnlyWidgets) {
+            widget.visible = !liveView;
+        }
+        viewToggleButton.setMessage(viewToggleLabel());
+    }
+
+    private Component viewToggleLabel() {
+        return Component.translatable(liveView ? "gui.micradrone.ide_screen.view_live" : "gui.micradrone.ide_screen.view_sim");
     }
 
     /** Called from {@code MicraDroneClient} when the requested script source arrives. */
@@ -218,10 +254,16 @@ public class IdeScreen extends Screen {
     @Override
     public void tick() {
         super.tick();
+        tickCounter++;
+        if (liveView) {
+            if (tickCounter % LIVE_RESCAN_INTERVAL_TICKS == 0 && this.minecraft != null && this.minecraft.level != null) {
+                livePlot.rescan(this.minecraft.level);
+            }
+            return;
+        }
         if (!playing || trace == null) {
             return;
         }
-        tickCounter++;
         if (tickCounter % TICKS_PER_FRAME[speedIndex] == 0) {
             if (frameIndex < trace.frames().size() - 1) {
                 frameIndex++;
@@ -238,12 +280,66 @@ public class IdeScreen extends Screen {
         guiGraphics.drawCenteredString(this.font,
                 Component.translatable("gui.micradrone.ide_screen.heading", scriptName),
                 this.width / 2, MARGIN, 0xFFFFFF);
-        renderGrid(guiGraphics);
-        renderStatus(guiGraphics);
-        refreshSimLogIfNeeded();
+        if (liveView) {
+            renderLiveGrid(guiGraphics);
+            renderLiveStatus(guiGraphics);
+        } else {
+            renderSimGrid(guiGraphics);
+            renderSimStatus(guiGraphics);
+            refreshSimLogIfNeeded();
+        }
     }
 
-    private void renderGrid(GuiGraphics guiGraphics) {
+    // ---- live view (the real plot) ----
+
+    private void renderLiveGrid(GuiGraphics guiGraphics) {
+        if (this.minecraft == null || this.minecraft.level == null) {
+            return;
+        }
+        guiGraphics.fill(gridX - 1, gridY - 1, gridX + gridPanelSize + 1, gridY + gridPanelSize + 1, 0xFF202020);
+
+        int size = livePlot.bounds().worldSize();
+        if (size <= 0) {
+            return; // a touching-diagonal marker leaves zero farmable cells - nothing to draw
+        }
+        int[] colors = livePlot.sampleColors(this.minecraft.level);
+        int cell = gridPanelSize / size;
+        for (int gy = 0; gy < size; gy++) {
+            for (int gx = 0; gx < size; gx++) {
+                int x0 = gridX + gx * cell;
+                int y0 = gridY + gy * cell;
+                guiGraphics.fill(x0 + 1, y0 + 1, x0 + cell - 1, y0 + cell - 1, colors[gy * size + gx]);
+            }
+        }
+
+        DroneEntity drone = livePlot.findDrone(this.minecraft.level);
+        if (drone != null) {
+            // The marker follows the drone's actual position (fractional cells), not a cell snap.
+            double fx = livePlot.gridXOf(drone.getX());
+            double fy = livePlot.gridYOf(drone.getZ());
+            int cx = gridX + (int) Math.round((fx + 0.5) * cell);
+            int cy = gridY + (int) Math.round((fy + 0.5) * cell);
+            int half = Math.max(2, cell / 4);
+            guiGraphics.fill(cx - half, cy - half, cx + half, cy + half, 0xFFFFFFFF);
+        }
+    }
+
+    private void renderLiveStatus(GuiGraphics guiGraphics) {
+        int rightX = this.width / 2 + ROW_GAP;
+        int size = livePlot.bounds().worldSize();
+        guiGraphics.drawString(this.font,
+                Component.translatable("gui.micradrone.ide_screen.status_live", size, size),
+                rightX, statusY, 0xFFFFFF);
+        if (!livePlot.bounds().markerFound()) {
+            guiGraphics.drawString(this.font,
+                    Component.translatable("gui.micradrone.ide_screen.status_live_default"),
+                    rightX, statusY + 11, 0xA0A0A0);
+        }
+    }
+
+    // ---- sim view (dry run) ----
+
+    private void renderSimGrid(GuiGraphics guiGraphics) {
         guiGraphics.fill(gridX - 1, gridY - 1, gridX + gridPanelSize + 1, gridY + gridPanelSize + 1, 0xFF202020);
 
         int size = trace != null ? trace.worldSize() : plotSize;
@@ -254,7 +350,7 @@ public class IdeScreen extends Screen {
                 byte state = frame != null ? frame.cells()[gy * size + gx] : SimFrame.CELL_UNTILLED;
                 int x0 = gridX + gx * cell;
                 int y0 = gridY + gy * cell;
-                guiGraphics.fill(x0 + 1, y0 + 1, x0 + cell - 1, y0 + cell - 1, CELL_COLORS[state]);
+                guiGraphics.fill(x0 + 1, y0 + 1, x0 + cell - 1, y0 + cell - 1, simCellColor(state));
             }
         }
 
@@ -267,7 +363,22 @@ public class IdeScreen extends Screen {
         }
     }
 
-    private void renderStatus(GuiGraphics guiGraphics) {
+    /** The sim only knows growing/mature, so "growing" renders as the halfway gradient color. */
+    private static int simCellColor(byte state) {
+        return switch (state) {
+            case SimFrame.CELL_TILLED -> PlotColorRules.farmland(true);
+            case SimFrame.CELL_WHEAT_GROWING -> PlotColorRules.wheat(0.5f);
+            case SimFrame.CELL_WHEAT_MATURE -> PlotColorRules.wheat(1.0f);
+            case SimFrame.CELL_CARROT_GROWING -> PlotColorRules.carrot(0.5f);
+            case SimFrame.CELL_CARROT_MATURE -> PlotColorRules.carrot(1.0f);
+            case SimFrame.CELL_PUMPKIN_GROWING -> PlotColorRules.pumpkinStem(0.5f);
+            case SimFrame.CELL_PUMPKIN_MATURE -> PlotColorRules.PUMPKIN_FRUIT;
+            case SimFrame.CELL_PUMPKIN_ROTTEN -> PlotColorRules.ROTTEN_PUMPKIN;
+            default -> PlotColorRules.UNTILLED;
+        };
+    }
+
+    private void renderSimStatus(GuiGraphics guiGraphics) {
         int rightX = this.width / 2 + ROW_GAP;
         if (trace == null) {
             guiGraphics.drawString(this.font,

@@ -42,11 +42,13 @@ import net.neoforged.neoforge.network.PacketDistributor;
  * only 4 rays need scanning instead of a general-area search.
  */
 public class DroneControllerBlockEntity extends BlockEntity implements DroneGridState {
+    // Public (not private): the IDE screen's live plot view re-runs the same corner-marker scan
+    // against the client-side level and must use identical parameters to resolve the same plot.
     /** Used when no corner marker is found (see {@link #scanForCornerMarker}). */
-    private static final int DEFAULT_WORLD_SIZE = 5;
-    private static final int MAX_MARKER_SCAN_DISTANCE = 64;
+    public static final int DEFAULT_WORLD_SIZE = 5;
+    public static final int MAX_MARKER_SCAN_DISTANCE = 64;
     /** Natural terrain is rarely perfectly flat, so the marker doesn't have to sit at the exact same Y. */
-    private static final int MAX_MARKER_SCAN_Y_TOLERANCE = 4;
+    public static final int MAX_MARKER_SCAN_Y_TOLERANCE = 4;
     /** Bounds how much log history is kept/sent; older lines are dropped as new ones arrive. */
     private static final int LOG_BUFFER_CAPACITY = 100;
     /**

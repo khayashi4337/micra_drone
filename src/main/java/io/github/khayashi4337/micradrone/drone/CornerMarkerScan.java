@@ -5,9 +5,11 @@ import java.util.Optional;
 /**
  * Pure geometry for {@link DroneControllerBlockEntity#scanForCornerMarker}, kept Minecraft-free so
  * the scanning algorithm itself (diagonal enumeration, Y tolerance, size/direction math) can be unit
- * tested without a real world.
+ * tested without a real world. Public (not package-private) because the IDE screen's live plot view
+ * runs this same scan against the client-side level (blocks are synced, so it resolves the same
+ * plot the server does, with no extra networking).
  */
-final class CornerMarkerScan {
+public final class CornerMarkerScan {
     /** (dx, dz) unit steps for the 4 world-space diagonals: south-east, south-west, north-east, north-west. */
     static final int[][] DIAGONAL_DIRECTIONS = {
             {1, 1},   // south-east (+X, +Z)
@@ -17,10 +19,10 @@ final class CornerMarkerScan {
     };
 
     /** {@code markerFound} is false only when no marker was found and {@code defaultSize} was used. */
-    record PlotBounds(int worldSize, int dirX, int dirZ, boolean markerFound) {}
+    public record PlotBounds(int worldSize, int dirX, int dirZ, boolean markerFound) {}
 
     @FunctionalInterface
-    interface MarkerLookup {
+    public interface MarkerLookup {
         /** True if a corner marker block sits at (dx, dy, dz) relative to the controller. */
         boolean isMarkerAt(int dx, int dy, int dz);
     }
@@ -38,7 +40,7 @@ final class CornerMarkerScan {
      * steps away (a 3x3 span including both corner cells) leaves only the single center cell farmable.
      * A marker only 1 step away (touching diagonally) leaves 0 farmable cells.
      */
-    static PlotBounds scan(MarkerLookup lookup, int maxDistance, int yTolerance, int defaultSize) {
+    public static PlotBounds scan(MarkerLookup lookup, int maxDistance, int yTolerance, int defaultSize) {
         for (int i = 1; i <= maxDistance; i++) {
             for (int[] dir : DIAGONAL_DIRECTIONS) {
                 for (int dy = -yTolerance; dy <= yTolerance; dy++) {
@@ -57,7 +59,7 @@ final class CornerMarkerScan {
      * nothing was found within range. Used by the Shop screen, opened by right-clicking a corner
      * marker, to resolve which controller's points/unlocks it should operate on.
      */
-    static Optional<int[]> findNearestMatch(MarkerLookup lookup, int maxDistance, int yTolerance) {
+    public static Optional<int[]> findNearestMatch(MarkerLookup lookup, int maxDistance, int yTolerance) {
         for (int i = 1; i <= maxDistance; i++) {
             for (int[] dir : DIAGONAL_DIRECTIONS) {
                 for (int dy = -yTolerance; dy <= yTolerance; dy++) {
