@@ -25,19 +25,26 @@ import net.neoforged.neoforge.network.PacketDistributor;
 /**
  * Fullscreen script IDE (issue #6), opened from DroneScreen's Edit button: the left half is a
  * {@link MultiLineEditBox} editor for one of the controller's scripts, the right half is a
- * bird's-eye view of the plot with two modes:
+ * bird's-eye view of the plot with three modes:
  * <ul>
- *   <li><b>Live (default)</b> - the REAL plot, sampled from client-synced block states every frame
- *       ({@link LivePlotView}, minimap-style): actual farmland moisture, actual crop growth
- *       stages, the actual drone's position. Hit Save &amp; Run and watch the real drone work.</li>
+ *   <li><b>3D (default)</b> - the game's own camera hovers straight above the REAL field
+ *       ({@link IdeCameraController}, 林さん's "float the viewpoint" proposal) and this screen's
+ *       background goes fully transparent, so the right half of the screen simply IS the world,
+ *       rendered normally: real blocks, real growth, the real drone flying. No second-view
+ *       framebuffer machinery involved.</li>
+ *   <li><b>2D</b> - minimap-style tiles sampled from client-synced block states every frame
+ *       ({@link LivePlotView}): still the real farm, as flat colored cells.</li>
  *   <li><b>Sim</b> - a dry-run preview ({@link ScriptSimulator} - real interpreter on an
  *       in-memory plot; the actual farm is never touched) with playback controls.</li>
  * </ul>
- * North is up in both modes: grid y grows southward/downward exactly like the real plot's grid
- * coordinates. Client-only, so no logic here is unit-testable (the simulation and the palette
- * are - see ScriptSimulatorTest/PlotColorRulesTest); the screen is verified manually in-game.
+ * North is up in every mode: grid y grows southward/downward exactly like the real plot's grid
+ * coordinates. Client-only, so no logic here is unit-testable (the simulation, palette, and
+ * camera math are - see ScriptSimulatorTest/PlotColorRulesTest/IdeCameraMathTest); the screen is
+ * verified manually in-game.
  */
 public class IdeScreen extends Screen {
+    private enum ViewMode { LIVE_3D, LIVE_2D, SIM }
+
     private static final int MARGIN = 8;
     private static final int TOP_Y = 24;
     private static final int BUTTON_HEIGHT = 20;
@@ -54,6 +61,7 @@ public class IdeScreen extends Screen {
     private final BlockPos pos;
     private final String scriptName;
     private final LivePlotView livePlot;
+    private final IdeCameraController cameraController;
 
     private MultiLineEditBox editor;
     private MultiLineEditBox simLogBox;
@@ -66,7 +74,7 @@ public class IdeScreen extends Screen {
     private String editorText = "";
     private boolean sourceRequested = false;
 
-    private boolean liveView = true;
+    private ViewMode mode = ViewMode.LIVE_3D;
     private SimTrace trace;
     private int frameIndex = 0;
     private boolean playing = false;
@@ -87,6 +95,7 @@ public class IdeScreen extends Screen {
         this.pos = pos;
         this.scriptName = scriptName;
         this.livePlot = new LivePlotView(pos);
+        this.cameraController = new IdeCameraController(pos);
     }
 
     @Override
@@ -129,14 +138,14 @@ public class IdeScreen extends Screen {
 
         int controls1Y = gridY + gridPanelSize + ROW_GAP;
         int quarterW = (rightW - 3 * ROW_GAP) / 4;
-        viewToggleButton = addRenderableWidget(Button.builder(viewToggleLabel(), b -> {
-                    liveView = !liveView;
-                    applyViewVisibility();
-                })
+        viewToggleButton = addRenderableWidget(Button.builder(viewToggleLabel(), b -> setMode(switch (mode) {
+                    case LIVE_3D -> ViewMode.LIVE_2D;
+                    case LIVE_2D -> ViewMode.SIM;
+                    case SIM -> ViewMode.LIVE_3D;
+                }))
                 .bounds(rightX, controls1Y, quarterW, BUTTON_HEIGHT).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.simulate"), b -> {
-                    liveView = false;
-                    applyViewVisibility();
+                    setMode(ViewMode.SIM);
                     simulate();
                 })
                 .bounds(rightX + quarterW + ROW_GAP, controls1Y, quarterW, BUTTON_HEIGHT).build());
@@ -178,6 +187,9 @@ public class IdeScreen extends Screen {
         applyViewVisibility();
         if (this.minecraft != null && this.minecraft.level != null) {
             livePlot.rescan(this.minecraft.level);
+            if (mode == ViewMode.LIVE_3D) {
+                cameraController.update(this.minecraft, livePlot.bounds()); // no first-frame flash from the player's own view
+            }
         }
 
         if (!sourceRequested) {
@@ -186,15 +198,47 @@ public class IdeScreen extends Screen {
         }
     }
 
+    private void setMode(ViewMode newMode) {
+        if (mode == ViewMode.LIVE_3D && newMode != ViewMode.LIVE_3D && this.minecraft != null) {
+            cameraController.restore(this.minecraft);
+        }
+        mode = newMode;
+        applyViewVisibility();
+    }
+
     private void applyViewVisibility() {
         for (AbstractWidget widget : simOnlyWidgets) {
-            widget.visible = !liveView;
+            widget.visible = mode == ViewMode.SIM;
         }
         viewToggleButton.setMessage(viewToggleLabel());
     }
 
     private Component viewToggleLabel() {
-        return Component.translatable(liveView ? "gui.micradrone.ide_screen.view_live" : "gui.micradrone.ide_screen.view_sim");
+        return Component.translatable(switch (mode) {
+            case LIVE_3D -> "gui.micradrone.ide_screen.view_3d";
+            case LIVE_2D -> "gui.micradrone.ide_screen.view_2d";
+            case SIM -> "gui.micradrone.ide_screen.view_sim";
+        });
+    }
+
+    /**
+     * In 3D mode the vanilla blur + dark overlay would hide the whole point of the view - skip
+     * them entirely so the world (rendered from the overhead camera) shows through crisply.
+     */
+    @Override
+    public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        if (mode != ViewMode.LIVE_3D) {
+            super.renderBackground(guiGraphics, mouseX, mouseY, partialTick);
+        }
+    }
+
+    /** Called when this screen is closed or replaced - the viewpoint must always come back. */
+    @Override
+    public void removed() {
+        if (this.minecraft != null) {
+            cameraController.restore(this.minecraft);
+        }
+        super.removed();
     }
 
     /** Called from {@code MicraDroneClient} when the requested script source arrives. */
@@ -255,9 +299,13 @@ public class IdeScreen extends Screen {
     public void tick() {
         super.tick();
         tickCounter++;
-        if (liveView) {
+        if (mode != ViewMode.SIM) {
             if (tickCounter % LIVE_RESCAN_INTERVAL_TICKS == 0 && this.minecraft != null && this.minecraft.level != null) {
                 livePlot.rescan(this.minecraft.level);
+            }
+            if (mode == ViewMode.LIVE_3D && this.minecraft != null) {
+                // Every tick: follows corner-marker changes, FOV changes, and window resizes.
+                cameraController.update(this.minecraft, livePlot.bounds());
             }
             return;
         }
@@ -280,13 +328,19 @@ public class IdeScreen extends Screen {
         guiGraphics.drawCenteredString(this.font,
                 Component.translatable("gui.micradrone.ide_screen.heading", scriptName),
                 this.width / 2, MARGIN, 0xFFFFFF);
-        if (liveView) {
-            renderLiveGrid(guiGraphics);
-            renderLiveStatus(guiGraphics);
-        } else {
-            renderSimGrid(guiGraphics);
-            renderSimStatus(guiGraphics);
-            refreshSimLogIfNeeded();
+        switch (mode) {
+            case LIVE_3D -> {
+                // The right half IS the world, seen from the overhead camera - draw nothing over it.
+            }
+            case LIVE_2D -> {
+                renderLiveGrid(guiGraphics);
+                renderLiveStatus(guiGraphics);
+            }
+            case SIM -> {
+                renderSimGrid(guiGraphics);
+                renderSimStatus(guiGraphics);
+                refreshSimLogIfNeeded();
+            }
         }
     }
 
