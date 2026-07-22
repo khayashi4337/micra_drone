@@ -10,6 +10,7 @@ import io.github.khayashi4337.micradrone.client.DroneRenderer;
 import io.github.khayashi4337.micradrone.client.DroneScreen;
 import io.github.khayashi4337.micradrone.client.IdeScreen;
 import io.github.khayashi4337.micradrone.client.ShopScreen;
+import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
@@ -85,6 +86,13 @@ public class MicraDroneClient {
     public static void handleScriptSource(ScriptSourcePayload payload, IPayloadContext context) {
         if (Minecraft.getInstance().screen instanceof IdeScreen screen) {
             screen.updateSource(payload.pos(), payload.scriptName(), payload.source());
+        }
+    }
+
+    /** Registered as the DebugStatePayload handler: drives the IDE's line highlight and debug buttons. */
+    public static void handleDebugState(DebugStatePayload payload, IPayloadContext context) {
+        if (Minecraft.getInstance().screen instanceof IdeScreen screen) {
+            screen.updateDebugState(payload.pos(), payload.state(), payload.currentLine(), payload.breakpoints());
         }
     }
 

@@ -13,9 +13,12 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
+import io.github.khayashi4337.micradrone.drone.net.DebugCommandPayload;
+import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
+import io.github.khayashi4337.micradrone.lang.DebugController;
 import io.github.khayashi4337.micradrone.lang.Lexer;
 import io.github.khayashi4337.micradrone.lang.Parser;
 import io.github.khayashi4337.micradrone.lang.ast.Stmt;
@@ -95,6 +98,13 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private DroneScriptRunner scriptRunner;
     /** The visible {@link DroneEntity} tracked by UUID (entities aren't safe to hold direct references to across reloads). */
     private UUID droneEntityUuid;
+
+    // IDE debugger (issue #6). Breakpoints are per-controller and session-only (deliberately not
+    // saved to NBT); the controller is recreated for every run with the current set applied.
+    private volatile Set<Integer> breakpoints = Set.of();
+    private volatile DebugController debugController;
+    /** The debug snapshot last pushed to the viewing player - see {@link #maybePushDebugState}. */
+    private DebugStatePayload lastPushedDebugState;
 
     public DroneControllerBlockEntity(BlockPos pos, BlockState state) {
         super(MicraDrone.DRONE_CONTROLLER_BLOCK_ENTITY.get(), pos, state);
@@ -306,6 +316,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         loadScriptSource(scriptName).ifPresentOrElse(
                 source -> PacketDistributor.sendToPlayer(requester, new ScriptSourcePayload(getBlockPos(), scriptName, source)),
                 () -> requester.sendSystemMessage(Component.literal("[ide] could not read '" + scriptName + "'")));
+        pushDebugStateTo(requester); // a (re)opened IDE learns the server-held breakpoints right away
     }
 
     /** Longest script {@link #saveScript} accepts - keeps the payload comfortably inside STRING_UTF8's 32767-byte cap even for multibyte text. */
@@ -402,7 +413,10 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         MainThreadGateway gateway = new ServerMainThreadGateway(serverLevel.getServer());
         FarmBlockAccess farm = new LiveFarmBlockAccess(serverLevel, getBlockPos(), this);
         LiveDroneApi api = new LiveDroneApi(gateway, pacedActionQueue, this, farm, this::appendLog);
-        scriptRunner = new DroneScriptRunner(api, this::appendLog);
+        DebugController debug = new DebugController();
+        debug.setBreakpoints(breakpoints);
+        debugController = debug;
+        scriptRunner = new DroneScriptRunner(api, this::appendLog, debug);
         appendLog("[run] running " + scriptName);
         scriptRunner.start(program);
     }
@@ -415,6 +429,67 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         }
         scriptRunner.stop();
         appendLog("[stop] stop requested");
+    }
+
+    /**
+     * Replaces this controller's debugger breakpoint set (IDE gutter clicks, issue #6). Applies to
+     * the running script immediately and to every later run; echoed straight back so the IDE shows
+     * the authoritative set.
+     */
+    public void setBreakpoints(ServerPlayer requester, Set<Integer> lines) {
+        viewingPlayerUuid = requester.getUUID();
+        breakpoints = Set.copyOf(lines);
+        DebugController debug = debugController;
+        if (debug != null) {
+            debug.setBreakpoints(breakpoints);
+        }
+        pushDebugStateTo(requester);
+    }
+
+    /** One debugger action (see DebugCommandPayload.COMMAND_*); silently ignored when nothing is running. */
+    public void debugCommand(ServerPlayer requester, int command) {
+        viewingPlayerUuid = requester.getUUID();
+        DebugController debug = debugController;
+        if (debug == null || scriptRunner == null || scriptRunner.getState() != DroneScriptRunner.State.RUNNING) {
+            return;
+        }
+        switch (command) {
+            case DebugCommandPayload.COMMAND_PAUSE -> debug.requestPause();
+            case DebugCommandPayload.COMMAND_RESUME -> debug.resume();
+            case DebugCommandPayload.COMMAND_STEP -> debug.step();
+            case DebugCommandPayload.COMMAND_STEP_OUT -> debug.stepOut();
+            default -> { }
+        }
+    }
+
+    private DebugStatePayload currentDebugState() {
+        DroneScriptRunner runner = scriptRunner;
+        DebugController debug = debugController;
+        boolean running = runner != null && debug != null && runner.getState() == DroneScriptRunner.State.RUNNING;
+        int state = !running ? DebugStatePayload.STATE_IDLE
+                : debug.isPaused() ? DebugStatePayload.STATE_PAUSED : DebugStatePayload.STATE_RUNNING;
+        int line = running ? debug.currentLine() : 0;
+        return new DebugStatePayload(getBlockPos(), state, line, breakpoints.stream().sorted().toList());
+    }
+
+    /** Unconditional push, e.g. when the IDE opens - the client learns the server-held breakpoints. */
+    public void pushDebugStateTo(ServerPlayer player) {
+        DebugStatePayload state = currentDebugState();
+        lastPushedDebugState = state;
+        PacketDistributor.sendToPlayer(player, state);
+    }
+
+    /**
+     * Called every server tick: pushes the debug snapshot to the viewing player only when it
+     * changed, so line tracking during a run costs at most one tiny packet per tick.
+     */
+    private void maybePushDebugState() {
+        DebugStatePayload state = currentDebugState();
+        if (state.equals(lastPushedDebugState)) {
+            return;
+        }
+        lastPushedDebugState = state;
+        resolveViewingPlayer().ifPresent(player -> PacketDistributor.sendToPlayer(player, state));
     }
 
     /**
@@ -503,6 +578,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     public static void serverTick(Level level, BlockPos pos, BlockState state, DroneControllerBlockEntity be) {
         int tick = level.getServer().getTickCount();
         be.pacedActionQueue.tick(tick);
+        be.maybePushDebugState();
         if (be.plotConfirmed && tick % GROWTH_BOOST_INTERVAL_TICKS == 0) {
             new LiveFarmBlockAccess(level, pos, be).boostGrowth();
         }

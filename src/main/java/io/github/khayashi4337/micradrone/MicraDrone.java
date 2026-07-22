@@ -1,6 +1,7 @@
 package io.github.khayashi4337.micradrone;
 
 import java.util.List;
+import java.util.Set;
 
 import org.slf4j.Logger;
 
@@ -13,6 +14,8 @@ import io.github.khayashi4337.micradrone.drone.DroneEntity;
 import io.github.khayashi4337.micradrone.drone.GiantPumpkinBlock;
 import io.github.khayashi4337.micradrone.drone.ScriptScrollContent;
 import io.github.khayashi4337.micradrone.drone.ScriptScrollItem;
+import io.github.khayashi4337.micradrone.drone.net.DebugCommandPayload;
+import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.FillScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.PurchaseUnlockPayload;
@@ -24,6 +27,7 @@ import io.github.khayashi4337.micradrone.drone.net.RunScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.SaveScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
 import io.github.khayashi4337.micradrone.drone.net.SetAliasPayload;
+import io.github.khayashi4337.micradrone.drone.net.SetBreakpointsPayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
 import net.minecraft.core.component.DataComponents;
@@ -180,9 +184,12 @@ public class MicraDrone {
         registrar.playToServer(RunScrollPayload.TYPE, RunScrollPayload.STREAM_CODEC, MicraDrone::handleRunScroll);
         registrar.playToServer(RequestScriptSourcePayload.TYPE, RequestScriptSourcePayload.STREAM_CODEC, MicraDrone::handleRequestScriptSource);
         registrar.playToServer(SaveScriptPayload.TYPE, SaveScriptPayload.STREAM_CODEC, MicraDrone::handleSaveScript);
+        registrar.playToServer(SetBreakpointsPayload.TYPE, SetBreakpointsPayload.STREAM_CODEC, MicraDrone::handleSetBreakpoints);
+        registrar.playToServer(DebugCommandPayload.TYPE, DebugCommandPayload.STREAM_CODEC, MicraDrone::handleDebugCommand);
         registrar.playToClient(DroneLogPayload.TYPE, DroneLogPayload.STREAM_CODEC, MicraDroneClient::handleDroneLog);
         registrar.playToClient(ShopStatePayload.TYPE, ShopStatePayload.STREAM_CODEC, MicraDroneClient::handleShopState);
         registrar.playToClient(ScriptSourcePayload.TYPE, ScriptSourcePayload.STREAM_CODEC, MicraDroneClient::handleScriptSource);
+        registrar.playToClient(DebugStatePayload.TYPE, DebugStatePayload.STREAM_CODEC, MicraDroneClient::handleDebugState);
     }
 
     // Payload handlers run on the main thread by default (PayloadRegistrar), so it's safe to touch
@@ -269,6 +276,22 @@ public class MicraDrone {
         if (context.player() instanceof ServerPlayer serverPlayer
                 && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
             be.saveScript(serverPlayer, payload.scriptName(), payload.source());
+        }
+    }
+
+    // IDE debugger (issue #6): gutter clicks replace the whole breakpoint set.
+    private static void handleSetBreakpoints(SetBreakpointsPayload payload, IPayloadContext context) {
+        if (context.player() instanceof ServerPlayer serverPlayer
+                && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
+            be.setBreakpoints(serverPlayer, Set.copyOf(payload.lines()));
+        }
+    }
+
+    // IDE debugger (issue #6): Pause/Resume/Step/Step Out buttons.
+    private static void handleDebugCommand(DebugCommandPayload payload, IPayloadContext context) {
+        if (context.player() instanceof ServerPlayer serverPlayer
+                && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
+            be.debugCommand(serverPlayer, payload.command());
         }
     }
 
