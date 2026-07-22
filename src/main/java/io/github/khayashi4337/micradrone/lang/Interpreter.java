@@ -16,11 +16,18 @@ public final class Interpreter {
     private static final long RUNAWAY_STATEMENT_THRESHOLD = 1_000_000;
 
     private final DroneApi api;
+    /** Optional debugger (breakpoints/pause/step - see DebugController); null = no debugging overhead. */
+    private final DebugController debug;
     private final Environment env = new Environment();
     private long statementsSinceApiCall = 0;
 
     public Interpreter(DroneApi api) {
+        this(api, null);
+    }
+
+    public Interpreter(DroneApi api, DebugController debug) {
         this.api = api;
+        this.debug = debug;
     }
 
     public void run(List<Stmt> program) {
@@ -37,6 +44,9 @@ public final class Interpreter {
 
     private void execStmt(Stmt stmt) {
         checkCancellation(stmt.line());
+        if (debug != null) {
+            debug.onStatement(stmt.line()); // may block here while paused at a breakpoint/step
+        }
         switch (stmt) {
             case Stmt.AssignStmt s -> env.set(s.name(), eval(s.value()));
             case Stmt.ExprStmt s -> eval(s.expr());
@@ -59,9 +69,14 @@ public final class Interpreter {
     }
 
     private void execWhile(Stmt.WhileStmt s) {
-        while (isTruthy(eval(s.condition()))) {
-            checkCancellation(s.line());
-            execBlock(s.block());
+        enterLoopForDebug();
+        try {
+            while (isTruthy(eval(s.condition()))) {
+                checkCancellation(s.line());
+                execBlock(s.block());
+            }
+        } finally {
+            exitLoopForDebug();
         }
     }
 
@@ -76,10 +91,28 @@ public final class Interpreter {
         if (step == 0) {
             throw new MicraLangException(call.line(), "range() step must not be 0");
         }
-        for (double i = start; step > 0 ? i < stop : i > stop; i += step) {
-            checkCancellation(s.line());
-            env.set(s.varName(), i);
-            execBlock(s.block());
+        enterLoopForDebug();
+        try {
+            for (double i = start; step > 0 ? i < stop : i > stop; i += step) {
+                checkCancellation(s.line());
+                env.set(s.varName(), i);
+                execBlock(s.block());
+            }
+        } finally {
+            exitLoopForDebug();
+        }
+    }
+
+    /** Loop-depth bookkeeping for the debugger's step-out - see {@link DebugController#stepOut}. */
+    private void enterLoopForDebug() {
+        if (debug != null) {
+            debug.enterLoop();
+        }
+    }
+
+    private void exitLoopForDebug() {
+        if (debug != null) {
+            debug.exitLoop();
         }
     }
 

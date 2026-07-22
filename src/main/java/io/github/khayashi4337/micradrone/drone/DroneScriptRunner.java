@@ -3,6 +3,7 @@ package io.github.khayashi4337.micradrone.drone;
 import java.util.List;
 import java.util.function.Consumer;
 
+import io.github.khayashi4337.micradrone.lang.DebugController;
 import io.github.khayashi4337.micradrone.lang.DroneApi;
 import io.github.khayashi4337.micradrone.lang.Interpreter;
 import io.github.khayashi4337.micradrone.lang.MicraLangException;
@@ -15,14 +16,21 @@ public final class DroneScriptRunner {
 
     private final DroneApi api;
     private final Consumer<String> logSink;
+    /** Null when running without a debugger (the pre-IDE code paths and most tests). */
+    private final DebugController debug;
 
     private volatile Thread worker;
     private volatile State state = State.IDLE;
     private volatile String lastError;
 
     public DroneScriptRunner(DroneApi api, Consumer<String> logSink) {
+        this(api, logSink, null);
+    }
+
+    public DroneScriptRunner(DroneApi api, Consumer<String> logSink, DebugController debug) {
         this.api = api;
         this.logSink = logSink;
+        this.debug = debug;
     }
 
     public synchronized void start(List<Stmt> program) {
@@ -54,7 +62,7 @@ public final class DroneScriptRunner {
 
     private void runProgram(List<Stmt> program) {
         try {
-            new Interpreter(api).run(program);
+            new Interpreter(api, debug).run(program);
             state = State.IDLE;
         } catch (ScriptStoppedException e) {
             state = State.STOPPED;
