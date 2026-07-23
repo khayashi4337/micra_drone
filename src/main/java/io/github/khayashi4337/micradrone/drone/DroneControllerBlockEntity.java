@@ -14,6 +14,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
+import io.github.khayashi4337.micradrone.MicraDroneConfig;
 import io.github.khayashi4337.micradrone.drone.net.DebugCommandPayload;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
@@ -39,7 +40,9 @@ import net.minecraft.world.Containers;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.ShulkerBoxBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.LevelResource;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -113,6 +116,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      * when the block is broken. Main-thread only.
      */
     private ItemStack slottedScroll = ItemStack.EMPTY;
+
+    /** One-shot flag (NBT): the sample-scroll shulker box has been auto-placed - see {@link #maybeSeedSampleLibrary}. */
+    private boolean sampleLibrarySeeded = false;
 
     // IDE debugger (issue #6). Breakpoints are per-controller and session-only (deliberately not
     // saved to NBT); the controller is recreated for every run with the current set applied.
@@ -671,9 +677,63 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         int tick = level.getServer().getTickCount();
         be.pacedActionQueue.tick(tick);
         be.maybePushDebugState();
+        if (!be.sampleLibrarySeeded && tick % GROWTH_BOOST_INTERVAL_TICKS == 0 && level instanceof ServerLevel serverLevel) {
+            be.maybeSeedSampleLibrary(serverLevel);
+        }
         if (be.plotConfirmed && tick % GROWTH_BOOST_INTERVAL_TICKS == 0) {
             new LiveFarmBlockAccess(level, pos, be).boostGrowth();
         }
+    }
+
+    /**
+     * Auto-places a shulker box full of sample script scrolls on a free corner of the plot square
+     * the first time this controller has a paired marker (issue #7; the in-game replacement for
+     * the retired sample .mdrone file seeding). Config-gated (see MicraDroneConfig); polls at the
+     * growth-boost cadence until the plot pairs. A corner that already holds a container counts as
+     * "the player built their own library" and completes the one-shot without placing anything.
+     */
+    private void maybeSeedSampleLibrary(ServerLevel level) {
+        if (!MicraDroneConfig.AUTO_PLACE_SAMPLE_LIBRARY.get()) {
+            return;
+        }
+        Optional<int[]> markerOffset = ScriptChestLibrary.findMarkerOffset(level, getBlockPos());
+        if (markerOffset.isEmpty()) {
+            return; // no marker paired yet - keep polling
+        }
+        for (int[] corner : PlotGeometry.remainingCornerOffsets(markerOffset.get()[0], markerOffset.get()[2])) {
+            BlockPos cornerPos = getBlockPos().offset(corner[0], 0, corner[1]);
+            if (level.getBlockEntity(cornerPos) instanceof net.minecraft.world.Container) {
+                sampleLibrarySeeded = true; // a library already stands there
+                setChanged();
+                return;
+            }
+            if (level.getBlockState(cornerPos).isAir()) {
+                level.setBlockAndUpdate(cornerPos, Blocks.SHULKER_BOX.defaultBlockState());
+                if (level.getBlockEntity(cornerPos) instanceof ShulkerBoxBlockEntity shulker) {
+                    int slot = 0;
+                    for (Map.Entry<String, String> sample : SampleScripts.ALL.entrySet()) {
+                        shulker.setItem(slot++, sampleScroll(sample.getKey(), sample.getValue()));
+                    }
+                    shulker.setChanged();
+                }
+                sampleLibrarySeeded = true;
+                setChanged();
+                appendLog("[library] sample script scrolls placed in a shulker box at " + cornerPos.toShortString());
+                return;
+            }
+        }
+        // Both corners are blocked by solid non-container blocks - try again later.
+    }
+
+    /** A ready-made sample as a scroll item, named after its old file name (minus the extension). */
+    private static ItemStack sampleScroll(String fileName, String source) {
+        ItemStack scroll = new ItemStack(MicraDrone.SCRIPT_SCROLL_ITEM.get());
+        ScriptChestLibrary.writeScrollSource(scroll, source);
+        String name = fileName.endsWith(".mdrone")
+                ? fileName.substring(0, fileName.length() - ".mdrone".length())
+                : fileName;
+        scroll.set(DataComponents.CUSTOM_NAME, Component.literal(name));
+        return scroll;
     }
 
     @Override
@@ -698,6 +758,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         slottedScroll = tag.contains("SlottedScroll")
                 ? ItemStack.parseOptional(registries, tag.getCompound("SlottedScroll"))
                 : ItemStack.EMPTY;
+        sampleLibrarySeeded = tag.getBoolean("SampleLibrarySeeded");
     }
 
     @Override
@@ -719,5 +780,6 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         if (!slottedScroll.isEmpty()) {
             tag.put("SlottedScroll", slottedScroll.save(registries));
         }
+        tag.putBoolean("SampleLibrarySeeded", sampleLibrarySeeded);
     }
 }

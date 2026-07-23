@@ -57,7 +57,8 @@ final class ScriptChestLibrary {
         return Optional.empty();
     }
 
-    private static Optional<int[]> findMarkerOffset(ServerLevel level, BlockPos controllerPos) {
+    /** Package-visible: the sample-library auto-placement (issue #7) reuses this to find the free corners. */
+    static Optional<int[]> findMarkerOffset(ServerLevel level, BlockPos controllerPos) {
         return CornerMarkerScan.findNearestMatch(
                 (dx, dy, dz) -> level.getBlockState(controllerPos.offset(dx, dy, dz))
                         .is(io.github.khayashi4337.micradrone.MicraDrone.CORNER_MARKER_BLOCK.get()),
