@@ -6,7 +6,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 
-import io.github.khayashi4337.micradrone.MicraDroneClient;
 import io.github.khayashi4337.micradrone.drone.ScriptId;
 import io.github.khayashi4337.micradrone.drone.net.EjectScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.FillScrollPayload;
@@ -26,7 +25,9 @@ import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
- * Opened by right-clicking a Drone Controller: alias, points-per-crop, script picker, log, Run/Stop.
+ * The controller's script list/log screen, opened from the IDE's Scripts button (issue #8 made
+ * the IDE itself the controller's default right-click screen): points-per-crop, script picker,
+ * log, Run/Stop.
  * The unlock shop lives on the paired Corner Marker instead (see {@code ShopScreen}) - an earlier
  * tab-based version of this screen packed both into one window, but the two tab buttons didn't read
  * as real tabs and, worse, had a real layout bug (points text overlapping the alias box). Splitting
@@ -99,26 +100,16 @@ public class DroneScreen extends Screen {
                 .bounds(left + 2 * (thirdBtnW + 4), buttonY, thirdBtnW, 20)
                 .build());
 
-        int scriptsFolderY = buttonY + 24;
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.open_scripts_folder"),
-                b -> MicraDroneClient.openScriptsFolder())
-                .bounds(left, scriptsFolderY, LOG_WIDTH, 20)
-                .build());
-
-        int helpY = scriptsFolderY + 24;
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.help"),
-                b -> MicraDroneClient.openHelpFolder())
-                .bounds(left, helpY, LOG_WIDTH, 20)
-                .build());
-
         // Scroll import/export (GitHub issue #1) + IDE editor (issue #6), one three-button row -
-        // the screen is already at its vertical limit at GUI scale 3, so no new rows fit. Explicit
-        // buttons instead of overloading the controller's own right-click with hidden modifiers
-        // (sneak, held-item checks) - that design broke twice against vanilla's Item/Block
-        // interaction dispatch order in real-machine testing. The scroll buttons act on whatever
-        // ScriptScrollItem is in the player's main hand; the server reports why nothing happened
-        // (not holding a scroll, scroll is blank) via chat if the action can't apply.
-        int scrollRowY = helpY + 24;
+        // explicit buttons instead of overloading the controller's own right-click with hidden
+        // modifiers (sneak, held-item checks) - that design broke twice against vanilla's
+        // Item/Block interaction dispatch order in real-machine testing. The scroll buttons act on
+        // whatever ScriptScrollItem is in the player's main hand; the server reports why nothing
+        // happened (not holding a scroll, scroll is blank) via chat if the action can't apply.
+        // (The Open Scripts Folder and Help rows that used to sit here left with issue #8: local
+        // files are gone from the list, and the command reference is now a help scroll from the
+        // enchanting table.)
+        int scrollRowY = buttonY + 24;
         int thirdW = (LOG_WIDTH - 8) / 3;
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.copy_to_scroll"),
                 b -> PacketDistributor.sendToServer(new FillScrollPayload(pos, scriptList.selectedId())))

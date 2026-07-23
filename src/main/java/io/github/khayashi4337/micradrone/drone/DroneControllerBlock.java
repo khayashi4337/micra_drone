@@ -58,12 +58,13 @@ public class DroneControllerBlock extends BaseEntityBlock {
         return createTickerHelper(type, MicraDrone.DRONE_CONTROLLER_BLOCK_ENTITY.get(), DroneControllerBlockEntity::serverTick);
     }
 
-    // Client-only: open the Run/Stop/log screen. The screen itself sends network payloads for
-    // everything that touches server state.
+    // Client-only: open the IDE straight away, editing the slotted scroll (issue #8 - the editor
+    // IS the controller's default screen; the list/log screen is behind its Scripts button). The
+    // screen itself sends network payloads for everything that touches server state.
     @Override
     protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hitResult) {
         if (level.isClientSide) {
-            MicraDroneClient.openDroneScreen(pos);
+            MicraDroneClient.openIdeScreen(pos);
         }
         return InteractionResult.sidedSuccess(level.isClientSide);
     }

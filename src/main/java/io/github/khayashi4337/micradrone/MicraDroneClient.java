@@ -1,28 +1,22 @@
 package io.github.khayashi4337.micradrone;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-
 import io.github.khayashi4337.micradrone.client.DroneModel;
 import io.github.khayashi4337.micradrone.client.DroneRenderer;
 import io.github.khayashi4337.micradrone.client.DroneScreen;
 import io.github.khayashi4337.micradrone.client.EnchantScrollScreen;
 import io.github.khayashi4337.micradrone.client.IdeScreen;
 import io.github.khayashi4337.micradrone.client.ShopScreen;
-import io.github.khayashi4337.micradrone.drone.CommandsHelpDoc;
+import io.github.khayashi4337.micradrone.drone.ScriptId;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
-import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.geom.ModelLayerLocation;
-import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.level.storage.LevelResource;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -59,9 +53,14 @@ public class MicraDroneClient {
         event.registerEntityRenderer(MicraDrone.DRONE_ENTITY.get(), DroneRenderer::new);
     }
 
-    /** Called from DroneControllerBlock's client-side useWithoutItem branch. */
-    public static void openDroneScreen(BlockPos pos) {
-        Minecraft.getInstance().setScreen(new DroneScreen(pos));
+    /**
+     * Called from DroneControllerBlock's client-side useWithoutItem branch (issue #8): the IDE,
+     * editing the slotted scroll, is the controller's default screen. The script list/log screen
+     * (DroneScreen) opens from the IDE's Scripts button.
+     */
+    public static void openIdeScreen(BlockPos pos) {
+        Minecraft.getInstance().setScreen(new IdeScreen(pos, ScriptId.CONTROLLER_ID,
+                Component.translatable("gui.micradrone.ide_screen.slotted_scroll").getString()));
     }
 
     /** Called from CornerMarkerBlock's client-side useWithoutItem branch. pos is the marker, not a controller. */
@@ -103,51 +102,4 @@ public class MicraDroneClient {
         }
     }
 
-    /** DroneScreen's "Open Scripts Folder" button: opens <world>/micradrone/scripts/ in the OS file browser. */
-    public static void openScriptsFolder() {
-        openMicradroneSubfolder("scripts");
-    }
-
-    /** DroneScreen's "Help" button: (re)writes the command reference doc, then opens its folder. */
-    public static void openHelpFolder() {
-        Path docsDir = micradroneSubfolder("docs");
-        if (docsDir == null) {
-            return;
-        }
-        try {
-            Files.createDirectories(docsDir);
-            Files.writeString(docsDir.resolve("commands.txt"), CommandsHelpDoc.CONTENT);
-        } catch (IOException e) {
-            MicraDrone.LOGGER.error("could not write commands.txt to {}", docsDir, e);
-            return;
-        }
-        Util.getPlatform().openPath(docsDir);
-    }
-
-    private static void openMicradroneSubfolder(String name) {
-        Path dir = micradroneSubfolder(name);
-        if (dir == null) {
-            return;
-        }
-        try {
-            Files.createDirectories(dir);
-        } catch (IOException e) {
-            MicraDrone.LOGGER.error("could not create {}", dir, e);
-            return;
-        }
-        Util.getPlatform().openPath(dir);
-    }
-
-    /**
-     * Resolves a subfolder under the current world's micradrone/ directory, or null if there is no
-     * local world to resolve it against (e.g. connected to a remote multiplayer server - this MVP is
-     * singleplayer/local-focused only, see the project's decision table).
-     */
-    private static Path micradroneSubfolder(String name) {
-        IntegratedServer server = Minecraft.getInstance().getSingleplayerServer();
-        if (server == null) {
-            return null;
-        }
-        return server.getWorldPath(LevelResource.ROOT).resolve("micradrone").resolve(name);
-    }
 }
