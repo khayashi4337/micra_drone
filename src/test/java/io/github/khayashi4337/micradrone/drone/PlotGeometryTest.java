@@ -92,4 +92,20 @@ class PlotGeometryTest {
             }
         }
     }
+
+    @Test
+    void remainingCornerOffsetsAreTheOtherTwoSquareVertices() {
+        // Controller at origin, marker at (6, 6): the square's other corners are (6,0) and (0,6).
+        int[][] corners = PlotGeometry.remainingCornerOffsets(6, 6);
+        assertArrayEquals(new int[]{6, 0}, corners[0]);
+        assertArrayEquals(new int[]{0, 6}, corners[1]);
+    }
+
+    @Test
+    void remainingCornerOffsetsFollowTheMarkerDirection() {
+        // A north-west marker (-4, -4) puts the free corners at (-4,0) and (0,-4).
+        int[][] corners = PlotGeometry.remainingCornerOffsets(-4, -4);
+        assertArrayEquals(new int[]{-4, 0}, corners[0]);
+        assertArrayEquals(new int[]{0, -4}, corners[1]);
+    }
 }

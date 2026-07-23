@@ -3,11 +3,9 @@ package io.github.khayashi4337.micradrone.drone;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.TreeMap;
 
 import io.github.khayashi4337.micradrone.drone.net.ScriptEntry;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.network.Filterable;
@@ -16,43 +14,55 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.WritableBookContent;
 
 /**
- * The controller's script library chests (issue #6): any container block touching one of the six
- * faces of the controller block or of its paired corner marker. Script scrolls inside them appear
- * in the script list alongside the on-disk files (see DroneControllerBlockEntity), named by their
- * hover name - so a vanilla anvil rename is the rename feature - and are re-resolved by
- * {@code scroll:<chestIndex>:<slot>} id at use time (see {@link ScriptId}), so a stale id after
- * items were moved fails loudly rather than touching the wrong slot. Chest order is deterministic
- * (position-sorted); a double chest is two block entities with 27 slots each, so enumerating block
- * entities covers every slot exactly once.
+ * The controller's script library containers (issue #7): the plot's controller and corner marker
+ * span a square, and any container block (chest, barrel, shulker box - a shulker box makes the
+ * library a PORTABLE package, contents and anvil-given name included) standing on one of the
+ * square's OTHER two vertices is the library. No marker paired = no library corners (the
+ * controller's own scroll slot covers that case). Script scrolls inside appear in the script list,
+ * named by their hover name - so a vanilla anvil rename is the rename feature - and are
+ * re-resolved by {@code scroll:<chestIndex>:<slot>} id at use time (see {@link ScriptId}), so a
+ * stale id after items were moved fails loudly rather than touching the wrong slot. Corner order
+ * (same-X-as-marker first, see PlotGeometry#remainingCornerOffsets) keeps ids deterministic; a
+ * double chest is two block entities with 27 slots each, so both halves enumerate exactly once.
  */
 final class ScriptChestLibrary {
     private ScriptChestLibrary() {
     }
 
-    /** All library containers, position-sorted so scroll ids stay stable while the chests stand still. */
+    /** The containers on the plot square's two free vertices (Y tolerance same as the marker scan), in corner order. */
     static List<Container> findChests(ServerLevel level, BlockPos controllerPos) {
-        TreeMap<Long, Container> byPosition = new TreeMap<>();
-        collectAdjacentContainers(level, controllerPos, byPosition);
-        findMarkerPos(level, controllerPos).ifPresent(markerPos -> collectAdjacentContainers(level, markerPos, byPosition));
-        return List.copyOf(byPosition.values());
+        Optional<int[]> markerOffset = findMarkerOffset(level, controllerPos);
+        if (markerOffset.isEmpty()) {
+            return List.of();
+        }
+        List<Container> containers = new ArrayList<>();
+        for (int[] corner : PlotGeometry.remainingCornerOffsets(markerOffset.get()[0], markerOffset.get()[2])) {
+            containerAtCorner(level, controllerPos, corner[0], corner[1]).ifPresent(containers::add);
+        }
+        return containers;
     }
 
-    private static void collectAdjacentContainers(ServerLevel level, BlockPos anchor, TreeMap<Long, Container> out) {
-        for (Direction direction : Direction.values()) {
-            BlockPos pos = anchor.relative(direction);
-            if (level.getBlockEntity(pos) instanceof Container container) {
-                out.putIfAbsent(pos.asLong(), container);
+    /**
+     * The first container at (dx, dz) from the controller, searching the same +-Y band the marker
+     * scan tolerates, nearest level first - deterministic even on uneven terrain.
+     */
+    private static Optional<Container> containerAtCorner(ServerLevel level, BlockPos controllerPos, int dx, int dz) {
+        for (int distance = 0; distance <= DroneControllerBlockEntity.MAX_MARKER_SCAN_Y_TOLERANCE; distance++) {
+            for (int dy : distance == 0 ? new int[]{0} : new int[]{distance, -distance}) {
+                if (level.getBlockEntity(controllerPos.offset(dx, dy, dz)) instanceof Container container) {
+                    return Optional.of(container);
+                }
             }
         }
+        return Optional.empty();
     }
 
-    private static Optional<BlockPos> findMarkerPos(ServerLevel level, BlockPos controllerPos) {
+    private static Optional<int[]> findMarkerOffset(ServerLevel level, BlockPos controllerPos) {
         return CornerMarkerScan.findNearestMatch(
-                        (dx, dy, dz) -> level.getBlockState(controllerPos.offset(dx, dy, dz))
-                                .is(io.github.khayashi4337.micradrone.MicraDrone.CORNER_MARKER_BLOCK.get()),
-                        DroneControllerBlockEntity.MAX_MARKER_SCAN_DISTANCE,
-                        DroneControllerBlockEntity.MAX_MARKER_SCAN_Y_TOLERANCE)
-                .map(offset -> controllerPos.offset(offset[0], offset[1], offset[2]));
+                (dx, dy, dz) -> level.getBlockState(controllerPos.offset(dx, dy, dz))
+                        .is(io.github.khayashi4337.micradrone.MicraDrone.CORNER_MARKER_BLOCK.get()),
+                DroneControllerBlockEntity.MAX_MARKER_SCAN_DISTANCE,
+                DroneControllerBlockEntity.MAX_MARKER_SCAN_Y_TOLERANCE);
     }
 
     /** Every non-blank scroll in the library, as list entries named by hover name (anvil renames show up). */

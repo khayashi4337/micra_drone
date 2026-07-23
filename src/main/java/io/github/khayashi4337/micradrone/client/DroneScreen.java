@@ -40,7 +40,6 @@ public class DroneScreen extends Screen {
     private static final int LOG_HEIGHT = 110;
     private static final int SCRIPT_LIST_HEIGHT = 64;
     private static final int DESCRIPTION_HEIGHT = 28;
-    private static final String DEFAULT_SCRIPT_NAME = "main.mdrone";
     // Points lines start at 6 and are 9px tall each; with up to 2 crops shown that's [6, 24).
     // Script list starts at 28, a further 4px clear of that; the description box for whichever
     // script is selected sits right below it. (An alias row used to sit on top - it was replaced
@@ -76,7 +75,7 @@ public class DroneScreen extends Screen {
 
         scriptList = new ScriptListWidget(Minecraft.getInstance(), LOG_WIDTH, SCRIPT_LIST_HEIGHT, SCRIPT_LIST_Y, 16);
         scriptList.setX(left);
-        scriptList.replaceEntries(List.of(new ScriptEntry(DEFAULT_SCRIPT_NAME, DEFAULT_SCRIPT_NAME, DEFAULT_SCRIPT_NAME)));
+        scriptList.replaceEntries(List.of()); // populated by the first DroneLogPayload
         addRenderableWidget(scriptList);
 
         int top = DESCRIPTION_Y + DESCRIPTION_HEIGHT + 6;
@@ -215,12 +214,12 @@ public class DroneScreen extends Screen {
 
         String selectedId() {
             Row selected = getSelected();
-            return selected != null ? selected.entry.id() : DEFAULT_SCRIPT_NAME;
+            return selected != null ? selected.entry.id() : ScriptId.CONTROLLER_ID;
         }
 
         String selectedDisplayName() {
             Row selected = getSelected();
-            return selected != null ? selected.entry.displayName() : DEFAULT_SCRIPT_NAME;
+            return selected != null ? selected.entry.displayName() : ScriptId.CONTROLLER_ID;
         }
 
         /** Single hook point for every way the selection can change: clicks, arrow keys, and the programmatic calls above. */

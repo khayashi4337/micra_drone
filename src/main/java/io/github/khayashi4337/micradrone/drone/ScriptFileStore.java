@@ -69,10 +69,10 @@ public final class ScriptFileStore {
     }
 
     /**
-     * Resolves this controller's script folder under scriptsDir, creating it if missing and
-     * (re-)seeding any of {@link SampleScripts#ALL} that aren't currently present - so the sample
-     * scripts act as a permanent reference library that reappears even if deleted. A sample the
-     * player has edited in place is left untouched (it still "exists", so it's never overwritten).
+     * Resolves this controller's script folder under scriptsDir, creating it if missing. Since the
+     * GUI-reduction rework (issue #7) this folder is internal plumbing only - e.g. Run Scroll's
+     * {@code scroll.mdrone} - and is no longer seeded with sample files; samples now arrive as
+     * scroll items in the auto-placed library container instead.
      */
     public static Path ensureControllerFolder(Path scriptsDir, int x, int y, int z) throws IOException {
         return ensureControllerFolder(scriptsDir, "", x, y, z);
@@ -82,12 +82,6 @@ public final class ScriptFileStore {
     public static Path ensureControllerFolder(Path scriptsDir, String alias, int x, int y, int z) throws IOException {
         Path dir = scriptsDir.resolve(folderName(alias, x, y, z));
         Files.createDirectories(dir);
-        for (var entry : SampleScripts.ALL.entrySet()) {
-            Path file = dir.resolve(entry.getKey());
-            if (!Files.exists(file)) {
-                Files.writeString(file, entry.getValue());
-            }
-        }
         return dir;
     }
 

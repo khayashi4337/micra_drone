@@ -96,11 +96,12 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     // applyImplicitComponents, the same route vanilla chests use); the script folder on disk is
     // named after it, falling back to coordinates when blank - see ScriptFileStore#folderName.
     private volatile String alias = "";
-    private volatile String selectedScript = ScriptFileStore.DEFAULT_SCRIPT_NAME;
-    // Refreshed from disk + library chests in sendLogSnapshotTo (screen open); reused as-is by
-    // every other push so routine log/points updates don't hit the filesystem or re-scan chests.
-    private volatile List<ScriptEntry> availableScripts = List.of(new ScriptEntry(
-            ScriptFileStore.DEFAULT_SCRIPT_NAME, ScriptFileStore.DEFAULT_SCRIPT_NAME, ScriptFileStore.DEFAULT_SCRIPT_NAME));
+    private volatile String selectedScript = ScriptId.CONTROLLER_ID;
+    // Refreshed from the slotted scroll + library containers in sendLogSnapshotTo (screen open);
+    // reused as-is by every other push so routine log/points updates don't re-scan anything.
+    // On-disk .mdrone files are no longer listed (GUI reduction, issue #7) - scripts live in
+    // items now; the file store remains as internal plumbing (e.g. Run Scroll's scroll.mdrone).
+    private volatile List<ScriptEntry> availableScripts = List.of();
 
     private DroneScriptRunner scriptRunner;
     /** The visible {@link DroneEntity} tracked by UUID (entities aren't safe to hold direct references to across reloads). */
@@ -618,24 +619,15 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     private void refreshAvailableScripts(ServerLevel level) {
-        try {
-            Path folder = controllerScriptFolder(level);
-            List<ScriptEntry> entries = new ArrayList<>();
-            ScriptChestLibrary.scrollSource(slottedScroll).ifPresent(source -> {
-                String name = slottedScroll.getHoverName().getString();
-                entries.add(new ScriptEntry(ScriptId.CONTROLLER_ID, name, ScriptFileStore.describeScript(source, name)));
-            });
-            ScriptFileStore.listScriptsWithDescriptions(folder)
-                    .forEach((name, description) -> entries.add(new ScriptEntry(name, name, description)));
-            entries.addAll(ScriptChestLibrary.listScrolls(level, getBlockPos()));
-            if (!entries.isEmpty()) {
-                availableScripts = List.copyOf(entries);
-                if (availableScripts.stream().noneMatch(entry -> entry.id().equals(selectedScript))) {
-                    selectedScript = availableScripts.get(0).id();
-                }
-            }
-        } catch (IOException e) {
-            MicraDrone.LOGGER.error("could not list scripts for {}", getBlockPos(), e);
+        List<ScriptEntry> entries = new ArrayList<>();
+        ScriptChestLibrary.scrollSource(slottedScroll).ifPresent(source -> {
+            String name = slottedScroll.getHoverName().getString();
+            entries.add(new ScriptEntry(ScriptId.CONTROLLER_ID, name, ScriptFileStore.describeScript(source, name)));
+        });
+        entries.addAll(ScriptChestLibrary.listScrolls(level, getBlockPos()));
+        availableScripts = List.copyOf(entries);
+        if (!entries.isEmpty() && entries.stream().noneMatch(entry -> entry.id().equals(selectedScript))) {
+            selectedScript = entries.get(0).id();
         }
     }
 
@@ -695,7 +687,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             pointsByCrop.put(crop, pointsTag.getLong(crop));
         }
         alias = tag.getString("Alias");
-        selectedScript = tag.contains("SelectedScript") ? tag.getString("SelectedScript") : ScriptFileStore.DEFAULT_SCRIPT_NAME;
+        selectedScript = tag.contains("SelectedScript") ? tag.getString("SelectedScript") : ScriptId.CONTROLLER_ID;
         unlockedCrops.clear();
         unlockedCrops.add("wheat");
         ListTag unlockedTag = tag.getList("UnlockedCrops", Tag.TAG_STRING);
