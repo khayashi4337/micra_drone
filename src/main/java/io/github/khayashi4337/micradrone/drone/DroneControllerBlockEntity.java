@@ -416,16 +416,41 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         startScript(requester, ScriptScrollContent.SCROLL_SCRIPT_NAME);
     }
 
+    private final RedstoneEdge redstoneEdge = new RedstoneEdge();
+
     /**
-     * Loads {@code scriptName} from this controller's script folder (creating the folder and seeding
-     * it with {@link SampleScripts#ALL} if missing) and runs it. No-op (besides a log line) if a
-     * script is already running.
+     * The GUI-free run path (issue #7): a rising redstone edge runs the scroll slotted in the
+     * controller, a falling edge stops the running script. Called from
+     * DroneControllerBlock#neighborChanged on the server.
+     */
+    public void onNeighborSignalChange(boolean powered) {
+        switch (redstoneEdge.update(powered)) {
+            case RISING -> {
+                appendLog("[redstone] signal on");
+                startScript(null, ScriptId.CONTROLLER_ID);
+            }
+            case FALLING -> {
+                if (scriptRunner != null) {
+                    scriptRunner.stop();
+                    appendLog("[redstone] signal off - stop requested");
+                }
+            }
+            case NONE -> { }
+        }
+    }
+
+    /**
+     * Resolves {@code scriptName} (controller slot, chest scroll, or file) and runs it. No-op
+     * (besides a log line) if a script is already running. {@code requester} may be null for the
+     * redstone path - log pushes then keep going to whoever viewed the screen last.
      */
     public void startScript(ServerPlayer requester, String scriptName) {
         if (!(level instanceof ServerLevel serverLevel)) {
             return;
         }
-        viewingPlayerUuid = requester.getUUID();
+        if (requester != null) {
+            viewingPlayerUuid = requester.getUUID();
+        }
         if (scriptRunner != null && scriptRunner.getState() == DroneScriptRunner.State.RUNNING) {
             appendLog("[run] a script is already running");
             return;

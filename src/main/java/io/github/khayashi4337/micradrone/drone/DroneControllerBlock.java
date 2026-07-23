@@ -14,6 +14,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseEntityBlock;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityTicker;
@@ -86,6 +87,17 @@ public class DroneControllerBlock extends BaseEntityBlock {
             be.insertScroll(player, stack);
         }
         return ItemInteractionResult.sidedSuccess(level.isClientSide);
+    }
+
+    // Redstone Run/Stop (issue #7): lever ON runs the slotted scroll, OFF stops it - the GUI-free
+    // control path. Edge detection lives in the BlockEntity (RedstoneEdge).
+    @Override
+    protected void neighborChanged(BlockState state, Level level, BlockPos pos, Block neighborBlock,
+            BlockPos neighborPos, boolean movedByPiston) {
+        super.neighborChanged(state, level, pos, neighborBlock, neighborPos, movedByPiston);
+        if (!level.isClientSide && level.getBlockEntity(pos) instanceof DroneControllerBlockEntity be) {
+            be.onNeighborSignalChange(level.hasNeighborSignal(pos));
+        }
     }
 
     // Clean up the visible DroneEntity so it doesn't linger after the controller that owns it is
