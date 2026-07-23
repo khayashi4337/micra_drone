@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import io.github.khayashi4337.micradrone.client.DroneModel;
 import io.github.khayashi4337.micradrone.client.DroneRenderer;
 import io.github.khayashi4337.micradrone.client.DroneScreen;
+import io.github.khayashi4337.micradrone.client.EnchantScrollScreen;
 import io.github.khayashi4337.micradrone.client.IdeScreen;
 import io.github.khayashi4337.micradrone.client.ShopScreen;
 import io.github.khayashi4337.micradrone.drone.CommandsHelpDoc;
@@ -20,6 +21,7 @@ import net.minecraft.client.model.geom.ModelLayerLocation;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.level.storage.LevelResource;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -65,6 +67,11 @@ public class MicraDroneClient {
     /** Called from CornerMarkerBlock's client-side useWithoutItem branch. pos is the marker, not a controller. */
     public static void openShopScreen(BlockPos pos) {
         Minecraft.getInstance().setScreen(new ShopScreen(pos));
+    }
+
+    /** Called from ScriptScrollItem's client-side onItemUseFirst branch (blank scroll on an enchanting table). */
+    public static void openEnchantScrollScreen(BlockPos tablePos, InteractionHand hand) {
+        Minecraft.getInstance().setScreen(new EnchantScrollScreen(tablePos, hand));
     }
 
     /** Registered as the DroneLogPayload handler in MicraDrone's RegisterPayloadHandlersEvent listener. */
