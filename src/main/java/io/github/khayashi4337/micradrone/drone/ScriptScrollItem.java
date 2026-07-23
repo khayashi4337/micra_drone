@@ -2,16 +2,11 @@ package io.github.khayashi4337.micradrone.drone;
 
 import java.util.List;
 
-import io.github.khayashi4337.micradrone.MicraDroneClient;
 import net.minecraft.network.chat.Component;
-import net.minecraft.world.InteractionResult;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.TooltipFlag;
 import net.minecraft.world.item.WritableBookItem;
-import net.minecraft.world.item.context.UseOnContext;
-import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.Blocks;
 
 /**
  * A portable, freely-rewritable carrier for a script (GitHub issue #1): unlike the {@code .mdrone}
@@ -21,35 +16,25 @@ import net.minecraft.world.level.block.Blocks;
  * exactly the behavior the issue asked for.
  * <p>
  * Block-facing behavior lives in two verified-dispatch-order places (see the issue-#1 saga for why
- * this matters): slotting into a controller is {@link DroneControllerBlock#useItemOn} (an
- * {@code Item#useOn} override here would never be reached), and the enchanting-table inscription
- * below uses {@code onItemUseFirst}, NeoForge's item hook that runs BEFORE any block interaction -
- * the only way to act before the table's own {@code useWithoutItem} opens the vanilla enchanting
- * screen. Used anywhere else (including empty air), this item behaves as a plain
- * {@code WritableBookItem}: right-clicking opens the book-and-quill edit screen.
+ * this matters): slotting into a controller is {@link DroneControllerBlock#useItemOn}, and the
+ * enchanting-table inscription (issue #8) is {@code MicraDrone#onRightClickBlock}, a
+ * {@code PlayerInteractEvent.RightClickBlock} handler that fires before vanilla's own
+ * hand-dispatch logic even starts - unlike a per-item {@code onItemUseFirst} override (this class's
+ * first attempt, real-machine-tested and found to miss the off-hand case: vanilla only tries a
+ * SINGLE hand's onItemUseFirst before the block's own useWithoutItem already consumes the click and
+ * opens the vanilla enchanting screen), that handler inspects both of the player's hands directly,
+ * so which hand holds the blank scroll doesn't matter. Used anywhere else (including empty air),
+ * this item behaves as a plain {@code WritableBookItem}: right-clicking opens the book-and-quill
+ * edit screen.
  */
 public class ScriptScrollItem extends WritableBookItem {
     public ScriptScrollItem(Properties properties) {
         super(properties);
     }
 
-    /**
-     * A BLANK scroll used on an enchanting table opens the sample picker (issue #8) instead of the
-     * vanilla enchanting screen; a written scroll passes through, so the table keeps working
-     * normally with it in hand. Runs on both sides: the client opens the screen, the server just
-     * consumes the click (returning PASS server-side would open the vanilla enchanting menu on top).
-     */
-    @Override
-    public InteractionResult onItemUseFirst(ItemStack stack, UseOnContext context) {
-        Level level = context.getLevel();
-        if (!level.getBlockState(context.getClickedPos()).is(Blocks.ENCHANTING_TABLE)
-                || ScriptChestLibrary.scrollSource(stack).isPresent()) {
-            return InteractionResult.PASS;
-        }
-        if (level.isClientSide) {
-            MicraDroneClient.openEnchantScrollScreen(context.getClickedPos(), context.getHand());
-        }
-        return InteractionResult.sidedSuccess(level.isClientSide);
+    /** True for a {@code ScriptScrollItem} with no written content yet - the enchanting table's trigger condition. */
+    public static boolean isBlank(ItemStack stack) {
+        return stack.getItem() instanceof ScriptScrollItem && ScriptChestLibrary.scrollSource(stack).isEmpty();
     }
 
     @Override
