@@ -104,15 +104,23 @@ final class ScriptChestLibrary {
         if (stack.isEmpty()) {
             return false;
         }
-        List<Filterable<String>> pages = ScriptScrollContent
-                .splitIntoPages(source, WritableBookContent.PAGE_EDIT_LENGTH)
-                .stream().map(Filterable::passThrough).toList();
-        stack.get().set(DataComponents.WRITABLE_BOOK_CONTENT, new WritableBookContent(pages));
+        writeScrollSource(stack.get(), source);
         return true;
     }
 
-    /** The joined script text of a written scroll; empty for non-scrolls and blank scrolls. */
-    private static Optional<String> scrollSource(ItemStack stack) {
+    /** Replaces a scroll's pages with {@code source} - also used for the controller's slotted scroll (issue #7). */
+    static void writeScrollSource(ItemStack stack, String source) {
+        List<Filterable<String>> pages = ScriptScrollContent
+                .splitIntoPages(source, WritableBookContent.PAGE_EDIT_LENGTH)
+                .stream().map(Filterable::passThrough).toList();
+        stack.set(DataComponents.WRITABLE_BOOK_CONTENT, new WritableBookContent(pages));
+    }
+
+    /**
+     * The joined script text of a written scroll; empty for non-scrolls and blank scrolls.
+     * Package-visible: the controller's slotted scroll (issue #7) reads through this too.
+     */
+    static Optional<String> scrollSource(ItemStack stack) {
         if (!(stack.getItem() instanceof ScriptScrollItem)) {
             return Optional.empty();
         }

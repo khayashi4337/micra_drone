@@ -7,6 +7,8 @@ import java.util.Map;
 import java.util.TreeMap;
 
 import io.github.khayashi4337.micradrone.MicraDroneClient;
+import io.github.khayashi4337.micradrone.drone.ScriptId;
+import io.github.khayashi4337.micradrone.drone.net.EjectScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.FillScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
@@ -84,13 +86,18 @@ public class DroneScreen extends Screen {
         addRenderableWidget(logBox);
 
         int buttonY = top + LOG_HEIGHT + 8;
+        int thirdBtnW = (LOG_WIDTH - 8) / 3;
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.run"),
                 b -> PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptList.selectedId())))
-                .bounds(left, buttonY, 80, 20)
+                .bounds(left, buttonY, thirdBtnW, 20)
+                .build());
+        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.eject_scroll"),
+                b -> PacketDistributor.sendToServer(new EjectScrollPayload(pos)))
+                .bounds(left + thirdBtnW + 4, buttonY, thirdBtnW, 20)
                 .build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.stop"),
                 b -> PacketDistributor.sendToServer(new StopScriptPayload(pos)))
-                .bounds(left + LOG_WIDTH - 80, buttonY, 80, 20)
+                .bounds(left + 2 * (thirdBtnW + 4), buttonY, thirdBtnW, 20)
                 .build());
 
         int scriptsFolderY = buttonY + 24;
@@ -234,9 +241,11 @@ public class DroneScreen extends Screen {
 
             Row(ScriptEntry entry) {
                 this.entry = entry;
-                // Chest scrolls get a marker so they read differently from on-disk files.
-                this.label = Component.literal(entry.id().startsWith("scroll:")
-                        ? "⚑ " + entry.displayName() : entry.displayName());
+                // Markers tell the sources apart at a glance: ◇ = the scroll slotted in the
+                // controller, ⚑ = a scroll in a library chest, plain = an on-disk file.
+                String name = entry.displayName();
+                this.label = Component.literal(ScriptId.CONTROLLER_ID.equals(entry.id()) ? "◇ " + name
+                        : entry.id().startsWith("scroll:") ? "⚑ " + name : name);
             }
 
             @Override

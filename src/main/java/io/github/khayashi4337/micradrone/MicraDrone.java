@@ -17,6 +17,7 @@ import io.github.khayashi4337.micradrone.drone.ScriptScrollItem;
 import io.github.khayashi4337.micradrone.drone.net.DebugCommandPayload;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
+import io.github.khayashi4337.micradrone.drone.net.EjectScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.FillScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.PurchaseUnlockPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
@@ -180,6 +181,7 @@ public class MicraDrone {
         registrar.playToServer(RequestShopStatePayload.TYPE, RequestShopStatePayload.STREAM_CODEC, MicraDrone::handleRequestShopState);
         registrar.playToServer(FillScrollPayload.TYPE, FillScrollPayload.STREAM_CODEC, MicraDrone::handleFillScroll);
         registrar.playToServer(RunScrollPayload.TYPE, RunScrollPayload.STREAM_CODEC, MicraDrone::handleRunScroll);
+        registrar.playToServer(EjectScrollPayload.TYPE, EjectScrollPayload.STREAM_CODEC, MicraDrone::handleEjectScroll);
         registrar.playToServer(RequestScriptSourcePayload.TYPE, RequestScriptSourcePayload.STREAM_CODEC, MicraDrone::handleRequestScriptSource);
         registrar.playToServer(SaveScriptPayload.TYPE, SaveScriptPayload.STREAM_CODEC, MicraDrone::handleSaveScript);
         registrar.playToServer(SetBreakpointsPayload.TYPE, SetBreakpointsPayload.STREAM_CODEC, MicraDrone::handleSetBreakpoints);
@@ -267,6 +269,14 @@ public class MicraDrone {
         if (context.player() instanceof ServerPlayer serverPlayer
                 && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
             be.saveScript(serverPlayer, payload.scriptName(), payload.source());
+        }
+    }
+
+    // Controller slot (issue #7): DroneScreen's Eject button pops the slotted scroll back out.
+    private static void handleEjectScroll(EjectScrollPayload payload, IPayloadContext context) {
+        if (context.player() instanceof ServerPlayer serverPlayer
+                && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
+            be.ejectScroll(serverPlayer);
         }
     }
 
