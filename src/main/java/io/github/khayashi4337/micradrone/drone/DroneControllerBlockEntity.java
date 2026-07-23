@@ -26,6 +26,8 @@ import io.github.khayashi4337.micradrone.lang.Parser;
 import io.github.khayashi4337.micradrone.lang.ast.Stmt;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
+import net.minecraft.core.component.DataComponentMap;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.StringTag;
@@ -86,9 +88,10 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     // (see purchaseUnlock). Written on the main thread only (purchaseUnlock runs from the network
     // handler, which is main-thread per PayloadRegistrar's default).
     private final Set<String> unlockedCrops = ConcurrentHashMap.newKeySet();
-    // Human-readable label a player can set - coordinates alone are hard to tell apart. The script
-    // folder on disk is named after this (falling back to coordinates when blank) and gets renamed
-    // in place when it changes - see setAlias and ScriptFileStore#folderName(String, int, int, int).
+    // Human-readable label - coordinates alone are hard to tell apart. Set by renaming the
+    // controller ITEM in a vanilla anvil before placing it (the CUSTOM_NAME component flows in via
+    // applyImplicitComponents, the same route vanilla chests use); the script folder on disk is
+    // named after it, falling back to coordinates when blank - see ScriptFileStore#folderName.
     private volatile String alias = "";
     private volatile String selectedScript = ScriptFileStore.DEFAULT_SCRIPT_NAME;
     // Refreshed from disk + library chests in sendLogSnapshotTo (screen open); reused as-is by
@@ -519,23 +522,26 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     /**
-     * DroneScreen's alias field: a human-readable label, so e.g. "North Farm" beats a bare
-     * coordinate. Also renames the script folder on disk to match (see
-     * ScriptFileStore#renameControllerFolder) so the saved scripts follow the new name instead of
-     * being left behind under the old one.
+     * The anvil-rename alias route (GUI reduction, issue #7): a controller ITEM renamed in an
+     * anvil carries a CUSTOM_NAME component, which lands here when the block is placed - the exact
+     * mechanism vanilla chests use for their names. Replaces the old DroneScreen alias field.
      */
-    public void setAlias(String alias) {
-        if (level instanceof ServerLevel serverLevel && !alias.equals(this.alias)) {
-            BlockPos pos = getBlockPos();
-            try {
-                ScriptFileStore.renameControllerFolder(scriptsDir(serverLevel), this.alias, alias, pos.getX(), pos.getY(), pos.getZ());
-            } catch (IOException e) {
-                MicraDrone.LOGGER.error("could not rename script folder for {}", pos, e);
-            }
+    @Override
+    protected void applyImplicitComponents(BlockEntity.DataComponentInput componentInput) {
+        super.applyImplicitComponents(componentInput);
+        Component name = componentInput.get(DataComponents.CUSTOM_NAME);
+        if (name != null) {
+            alias = name.getString();
         }
-        this.alias = alias;
-        setChanged();
-        pushLogSnapshot();
+    }
+
+    /** The reverse of {@link #applyImplicitComponents}, for if this block ever drops as a named item. */
+    @Override
+    protected void collectImplicitComponents(DataComponentMap.Builder components) {
+        super.collectImplicitComponents(components);
+        if (!alias.isEmpty()) {
+            components.set(DataComponents.CUSTOM_NAME, Component.literal(alias));
+        }
     }
 
     /**

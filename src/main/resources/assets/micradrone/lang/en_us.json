@@ -28,8 +28,6 @@
   "gui.micradrone.ide_screen.debug_step": "Step",
   "gui.micradrone.ide_screen.debug_step_out": "Step Out",
   "gui.micradrone.ide_screen.debug_stop": "Stop",
-  "gui.micradrone.drone_screen.alias": "Alias (e.g. North Farm)",
-  "gui.micradrone.drone_screen.set_alias": "Set",
   "gui.micradrone.drone_screen.script_description": "Description",
   "gui.micradrone.drone_screen.script_description_placeholder": "Select a script to see its description",
   "gui.micradrone.shop_screen.title": "Unlock Shop",

@@ -12,13 +12,11 @@ import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptEntry;
-import io.github.khayashi4337.micradrone.drone.net.SetAliasPayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.Screen;
@@ -41,20 +39,18 @@ public class DroneScreen extends Screen {
     private static final int SCRIPT_LIST_HEIGHT = 64;
     private static final int DESCRIPTION_HEIGHT = 28;
     private static final String DEFAULT_SCRIPT_NAME = "main.mdrone";
-    private static final int ALIAS_ROW_Y = 4;
-    private static final int ALIAS_ROW_HEIGHT = 18;
-    // Alias row occupies [4, 22). Points lines start at 24 (2px gap) and are 9px tall each; with up
-    // to 2 crops shown that's [24, 42). Script list starts at 46, a further 4px clear of that; the
-    // description box for whichever script is selected sits right below it.
-    private static final int POINTS_LINES_Y = 24;
-    private static final int SCRIPT_LIST_Y = 46;
+    // Points lines start at 6 and are 9px tall each; with up to 2 crops shown that's [6, 24).
+    // Script list starts at 28, a further 4px clear of that; the description box for whichever
+    // script is selected sits right below it. (An alias row used to sit on top - it was replaced
+    // by renaming the controller item in an anvil, issue #7.)
+    private static final int POINTS_LINES_Y = 6;
+    private static final int SCRIPT_LIST_Y = 28;
     private static final int DESCRIPTION_Y = SCRIPT_LIST_Y + SCRIPT_LIST_HEIGHT + 6;
 
     private final BlockPos pos;
 
     private MultiLineEditBox logBox;
     private MultiLineEditBox descriptionBox;
-    private EditBox aliasBox;
     private ScriptListWidget scriptList;
     private List<Component> pointsLines = List.of();
 
@@ -66,15 +62,6 @@ public class DroneScreen extends Screen {
     @Override
     protected void init() {
         int left = (this.width - LOG_WIDTH) / 2;
-
-        aliasBox = new EditBox(this.font, left, ALIAS_ROW_Y, LOG_WIDTH - 76 - 4, ALIAS_ROW_HEIGHT,
-                Component.translatable("gui.micradrone.drone_screen.alias"));
-        aliasBox.setMaxLength(48);
-        addRenderableWidget(aliasBox);
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.set_alias"),
-                b -> PacketDistributor.sendToServer(new SetAliasPayload(pos, aliasBox.getValue())))
-                .bounds(left + LOG_WIDTH - 76, ALIAS_ROW_Y, 76, ALIAS_ROW_HEIGHT)
-                .build());
 
         // Created before scriptList so its overridden setSelected (triggered by replaceEntries below,
         // even for this very first population) always has somewhere to write the description to.
@@ -167,19 +154,15 @@ public class DroneScreen extends Screen {
             scriptList.selectId(selectedScript);
         }
 
-        // Don't clobber text the player is actively typing with a stale server echo.
-        if (!aliasBox.isFocused()) {
-            aliasBox.setValue(alias);
-        }
+        // alias is unused since the anvil-rename flow replaced the alias field (issue #7); it stays
+        // in the payload so this change didn't need another payload shape bump.
     }
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
-        // Between the alias row's bottom (ALIAS_ROW_Y + ALIAS_ROW_HEIGHT) and the script list's top
-        // (SCRIPT_LIST_Y) there's a fixed 18px gap; up to 2 point lines (9px each) fit without
-        // overlapping either neighbor.
-        int y = ALIAS_ROW_Y + ALIAS_ROW_HEIGHT + 1;
+        // Up to 2 point lines (9px each) fit between the top margin and the script list.
+        int y = POINTS_LINES_Y;
         for (Component line : pointsLines) {
             guiGraphics.drawCenteredString(this.font, line, this.width / 2, y, 0xFFFFFF);
             y += 9;

@@ -26,7 +26,6 @@ import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.SaveScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
-import io.github.khayashi4337.micradrone.drone.net.SetAliasPayload;
 import io.github.khayashi4337.micradrone.drone.net.SetBreakpointsPayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
@@ -177,7 +176,6 @@ public class MicraDrone {
         registrar.playToServer(RunScriptPayload.TYPE, RunScriptPayload.STREAM_CODEC, MicraDrone::handleRunScript);
         registrar.playToServer(StopScriptPayload.TYPE, StopScriptPayload.STREAM_CODEC, MicraDrone::handleStopScript);
         registrar.playToServer(RequestLogPayload.TYPE, RequestLogPayload.STREAM_CODEC, MicraDrone::handleRequestLog);
-        registrar.playToServer(SetAliasPayload.TYPE, SetAliasPayload.STREAM_CODEC, MicraDrone::handleSetAlias);
         registrar.playToServer(PurchaseUnlockPayload.TYPE, PurchaseUnlockPayload.STREAM_CODEC, MicraDrone::handlePurchaseUnlock);
         registrar.playToServer(RequestShopStatePayload.TYPE, RequestShopStatePayload.STREAM_CODEC, MicraDrone::handleRequestShopState);
         registrar.playToServer(FillScrollPayload.TYPE, FillScrollPayload.STREAM_CODEC, MicraDrone::handleFillScroll);
@@ -212,13 +210,6 @@ public class MicraDrone {
         if (context.player() instanceof ServerPlayer serverPlayer
                 && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
             be.sendLogSnapshotTo(serverPlayer);
-        }
-    }
-
-    private static void handleSetAlias(SetAliasPayload payload, IPayloadContext context) {
-        if (context.player() instanceof ServerPlayer serverPlayer
-                && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
-            be.setAlias(payload.alias());
         }
     }
 
