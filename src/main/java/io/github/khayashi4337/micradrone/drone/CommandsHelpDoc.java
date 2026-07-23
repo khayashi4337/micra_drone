@@ -1,8 +1,14 @@
-package io.github.khayashi4337.micradrone.client;
+package io.github.khayashi4337.micradrone.drone;
 
-/** Static content for the commands.txt reference doc written by the DroneScreen "Help" button. */
+/**
+ * Static content for the command reference. Obtainable in-game as a help scroll from the
+ * enchanting table (see {@link SampleCatalog}) - it lives in this Minecraft-free package (moved
+ * from {@code client}) because the server writes it into scroll items. The leading "#" line makes
+ * {@link ScriptFileStore#describeScript} produce a real description wherever the scroll is listed.
+ */
 public final class CommandsHelpDoc {
     public static final String CONTENT = """
+            # コマンド一覧と文法のリファレンス(実行するスクリプトではない)
             === MicraDrone スクリプト コマンド一覧 ===
 
             ■ ドローンを動かす（ワールドを変える。実行に少し時間がかかる）
@@ -72,7 +78,7 @@ public final class CommandsHelpDoc {
 
             ■ ログに出力する
             print(値)
-                このGUIのログ欄に1行追記する。数値・文字列・真偽値を渡せる。
+                コントローラのScripts画面のログ欄に1行追記する。数値・文字列・真偽値を渡せる。
                 注意: 文字列と数値を + で連結することはできない
                 (例: "points: " + get_points() はエラーになる。分けてprintする)。
 
@@ -93,22 +99,23 @@ public final class CommandsHelpDoc {
                 till()
                 plant("wheat")
 
-            ■ スクリプトファイルについて
-            スクリプトはワールドごとに <world>/micradrone/scripts/<フォルダ名>/
-            フォルダの中に .mdrone ファイルとして保存される（「Open Scripts Folder」
-            ボタンで開ける）。フォルダ名はコントローラのエイリアス（未設定なら座標）で、
-            エイリアスを変更すると既存のスクリプトごとフォルダ名も追従する。1つの
-            コントローラにつき複数のスクリプトを置けて、DroneScreen
-            のリストから選んでRunを押すと、選択中のスクリプトが実行される。リストにはファイル名
-            ではなく、そのスクリプトの先頭に書いた # コメントが説明として表示される
-            （例: 1行目が「# 畑を耕して植える」なら、リストにはその文がそのまま出る）。
-            main.mdrone のほかに、動作見本として move_square.mdrone（移動のみ）・
-            till_and_plant.mdrone（畑を耕して植える）・harvest_when_ready.mdrone
-            （育った作物を収穫する）・carrot_farm.mdrone（carrotを耕して植えて
-            収穫を繰り返す。carrotのアンロック後、繰り返しRunして使う）・
-            pumpkin_smart_harvest.mdrone（pumpkinを植え、is_rotten()で腐ったマスを
-            見分けて無駄なharvest()を避けながら収穫する見本。pumpkinのアンロック後、
-            繰り返しRunして使う）が最初から入っている。
+            ■ スクリプトの巻物について
+            スクリプトは「スクリプトの巻物」アイテムに書く。空の巻物は
+            紙3枚+羽根+インク袋でクラフトでき、何も狙わずに右クリックすると
+            本と羽ペンと同じ画面で直接書ける。
+            - コントローラに巻物を持って右クリックすると1本はめ込める
+              （ジュークボックスにレコードを入れる操作と同じ）。はめ込んだ
+              巻物は、コントローラの隣にレバーを置いてON=実行/OFF=停止できる。
+              取り出しはScripts画面のEjectボタン。
+            - コントローラとコーナーマーカーが作る四角形の残り2つの頂点に
+              チェスト・シュルカーボックス・彫刻入りの本棚を置くと、その中の
+              巻物がスクリプト一覧に並ぶ（スクリプトライブラリ）。
+            - 巻物は金床で名前を変えられ、一覧にはその名前で表示される。
+              一覧の下には、巻物の先頭に書いた # コメントが説明として出る。
+            - 空（未記入）の巻物をエンチャントテーブルに向かって使うと、
+              ラピスラズリと引き換えにサンプルスクリプトやこのヘルプを
+              書き込んでもらえる。周りに本棚を置くほど選べる候補が増える。
+            - 一覧から巻物を選んでEditを押すと、ゲーム内IDEで編集できる。
             """;
 
     private CommandsHelpDoc() {
