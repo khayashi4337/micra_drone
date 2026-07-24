@@ -22,10 +22,13 @@ import net.neoforged.neoforge.network.PacketDistributor;
  * bookshelves than currently surround the table are greyed out with their requirement shown, so
  * building up the library is a visible goal - the bookshelf count re-runs vanilla's own rule
  * against the synced client level every tick, so placing bookshelves while the screen is open
- * unlocks entries live), followed by every already-written scroll sitting in a chiseled bookshelf
- * around the table ({@link ScrollEnchanter#findCopySources}, a flat-cost copy with no lock -
- * computed once at open time, not re-scanned every tick like the sample lock does, since
- * rearranging a table's bookshelf contents mid-picker is not a case worth the extra complexity).
+ * unlocks entries live), followed by every already-written scroll sitting in ANY container (chest,
+ * barrel, shulker box, chiseled bookshelf, ...) at one of those same 16 positions
+ * ({@link ScrollEnchanter#findCopySources}, a flat-cost copy with no lock - computed once at open
+ * time, not re-scanned every tick like the sample lock does, since rearranging a table's
+ * bookshelf-position contents mid-picker is not a case worth the extra complexity). A plain chest
+ * works fine here and gives the familiar chest screen instead of the vanilla chiseled bookshelf's
+ * fiddly per-slot click interaction (a real-machine try found the latter not great).
  * Inscribing sends {@link EnchantScrollPayload}; the server re-validates everything, takes the
  * lapis, and writes straight into the scroll still sitting in the table's slot (see
  * {@code ScrollEnchanter}). Since this screen stands in for the vanilla {@code EnchantmentScreen}

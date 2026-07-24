@@ -12,6 +12,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.Container;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.EnchantmentMenu;
 import net.minecraft.world.inventory.Slot;
@@ -20,7 +21,6 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.EnchantingTableBlock;
-import net.minecraft.world.level.block.entity.ChiseledBookShelfBlockEntity;
 
 /**
  * Enchanting-table scroll inscription (issue #8): dropping a blank script scroll into the
@@ -33,12 +33,16 @@ import net.minecraft.world.level.block.entity.ChiseledBookShelfBlockEntity;
  *       vanilla rule - {@link EnchantingTableBlock#isValidBookShelf} over
  *       {@link EnchantingTableBlock#BOOKSHELF_OFFSETS}), so surrounding the table with books
  *       unlocks deeper knowledge.</li>
- *   <li>{@link CopySource}: an already-written scroll sitting in a chiseled bookshelf at one of
- *       those same 16 positions (GUI reduction follow-up - replaces the old "Copy Script -&gt;
- *       Scroll" button) - flat 1 lapis, no count gating; being able to find it at all IS the gate.
- *       Identified by position (offset index + slot), re-resolved at inscribe time rather than
- *       trusted from the picker's snapshot, same "stale id fails loudly" idiom
- *       {@code ScriptChestLibrary}'s chest scrolls already use.</li>
+ *   <li>{@link CopySource}: an already-written scroll sitting in ANY container (chest, barrel,
+ *       shulker box, chiseled bookshelf, ...) at one of those same 16 positions (GUI reduction
+ *       follow-up - replaces the old "Copy Script -&gt; Scroll" button) - flat 1 lapis, no count
+ *       gating; being able to find it at all IS the gate. Deliberately not restricted to chiseled
+ *       bookshelves: a real-machine try found their vanilla per-slot click interaction fiddly
+ *       compared to a proper container screen, so a plain chest at a bookshelf position works just
+ *       as well - the position is what matters, not the block. Identified by position (offset
+ *       index + slot), re-resolved at inscribe time rather than trusted from the picker's
+ *       snapshot, same "stale id fails loudly" idiom {@code ScriptChestLibrary}'s chest scrolls
+ *       already use.</li>
  * </ul>
  * Each inscription costs lapis like a vanilla enchant (free in creative). Failures are reported
  * to chat; a silent no-op is never acceptable here (see the issue-#1 saga).
@@ -55,9 +59,9 @@ public final class ScrollEnchanter {
     }
 
     /**
-     * An already-written scroll found in a chiseled bookshelf around the table - a copy candidate
-     * (GUI reduction follow-up). {@code bookshelfOffsetIndex} indexes
-     * {@link EnchantingTableBlock#BOOKSHELF_OFFSETS}; {@code slot} is the shelf's own slot (0..5).
+     * An already-written scroll found in a container standing at one of the table's 16 bookshelf
+     * positions - a copy candidate (GUI reduction follow-up). {@code bookshelfOffsetIndex} indexes
+     * {@link EnchantingTableBlock#BOOKSHELF_OFFSETS}; {@code slot} is the container's own slot.
      */
     public record CopySource(int bookshelfOffsetIndex, int slot, String displayName, String description) {
     }
@@ -74,19 +78,20 @@ public final class ScrollEnchanter {
     }
 
     /**
-     * Every written script scroll sitting in a chiseled bookshelf at one of the table's 16
-     * standard bookshelf positions - runs against either side's Level (blocks are synced), so the
-     * picker can show live results without a network round trip.
+     * Every written script scroll sitting in a container (any {@link Container} block entity -
+     * chest, barrel, shulker box, chiseled bookshelf, ...) at one of the table's 16 standard
+     * bookshelf positions - runs against either side's Level (blocks are synced), so the picker
+     * can show live results without a network round trip.
      */
     public static List<CopySource> findCopySources(Level level, BlockPos tablePos) {
         List<CopySource> sources = new ArrayList<>();
         List<BlockPos> offsets = EnchantingTableBlock.BOOKSHELF_OFFSETS;
         for (int i = 0; i < offsets.size(); i++) {
-            if (!(level.getBlockEntity(tablePos.offset(offsets.get(i))) instanceof ChiseledBookShelfBlockEntity shelf)) {
+            if (!(level.getBlockEntity(tablePos.offset(offsets.get(i))) instanceof Container container)) {
                 continue;
             }
-            for (int slot = 0; slot < shelf.getContainerSize(); slot++) {
-                ItemStack stack = shelf.getItem(slot);
+            for (int slot = 0; slot < container.getContainerSize(); slot++) {
+                ItemStack stack = container.getItem(slot);
                 Optional<String> source = ScriptChestLibrary.scrollSource(stack);
                 if (source.isPresent()) {
                     String name = stack.getHoverName().getString();
@@ -140,17 +145,17 @@ public final class ScrollEnchanter {
                     .filter(c -> c.bookshelfOffsetIndex() == bookshelfOffsetIndex && c.slot() == copySlot)
                     .findFirst();
             if (copy.isEmpty()) {
-                player.sendSystemMessage(Component.literal("[scroll] that script isn't in a nearby bookshelf anymore"));
+                player.sendSystemMessage(Component.literal("[scroll] that script isn't in a nearby container anymore"));
                 return;
             }
-            BlockPos shelfPos = tablePos.offset(EnchantingTableBlock.BOOKSHELF_OFFSETS.get(bookshelfOffsetIndex));
-            if (!(level.getBlockEntity(shelfPos) instanceof ChiseledBookShelfBlockEntity shelf)) {
-                player.sendSystemMessage(Component.literal("[scroll] that script isn't in a nearby bookshelf anymore"));
+            BlockPos containerPos = tablePos.offset(EnchantingTableBlock.BOOKSHELF_OFFSETS.get(bookshelfOffsetIndex));
+            if (!(level.getBlockEntity(containerPos) instanceof Container container)) {
+                player.sendSystemMessage(Component.literal("[scroll] that script isn't in a nearby container anymore"));
                 return;
             }
-            Optional<String> copySource = ScriptChestLibrary.scrollSource(shelf.getItem(copySlot));
+            Optional<String> copySource = ScriptChestLibrary.scrollSource(container.getItem(copySlot));
             if (copySource.isEmpty()) {
-                player.sendSystemMessage(Component.literal("[scroll] that script isn't in a nearby bookshelf anymore"));
+                player.sendSystemMessage(Component.literal("[scroll] that script isn't in a nearby container anymore"));
                 return;
             }
             displayName = copy.get().displayName();
