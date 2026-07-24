@@ -251,7 +251,8 @@ public class MicraDrone {
     // sender's blank scroll - all real logic lives in ScrollEnchanter.
     private static void handleEnchantScroll(EnchantScrollPayload payload, IPayloadContext context) {
         if (context.player() instanceof ServerPlayer serverPlayer) {
-            ScrollEnchanter.enchant(serverPlayer, payload.tablePos(), payload.sampleIndex());
+            ScrollEnchanter.enchant(serverPlayer, payload.tablePos(), payload.sampleIndex(),
+                    payload.bookshelfOffsetIndex(), payload.copySlot());
         }
     }
 
