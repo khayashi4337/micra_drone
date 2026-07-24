@@ -4,6 +4,7 @@ import io.github.khayashi4337.micradrone.client.DroneModel;
 import io.github.khayashi4337.micradrone.client.DroneRenderer;
 import io.github.khayashi4337.micradrone.client.DroneScreen;
 import io.github.khayashi4337.micradrone.client.EnchantScrollScreen;
+import io.github.khayashi4337.micradrone.client.EnchantTableWatcher;
 import io.github.khayashi4337.micradrone.client.IdeScreen;
 import io.github.khayashi4337.micradrone.client.ShopScreen;
 import io.github.khayashi4337.micradrone.drone.ScriptId;
@@ -16,13 +17,13 @@ import net.minecraft.client.model.geom.ModelLayerLocation;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.InteractionHand;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.EntityRenderersEvent;
+import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 // This class will not load on dedicated servers. Accessing client side code from here is safe.
@@ -34,6 +35,12 @@ public class MicraDroneClient {
             new ModelLayerLocation(ResourceLocation.fromNamespaceAndPath(MicraDrone.MODID, "drone"), "main");
 
     public MicraDroneClient() {
+        // A separate instance, not `this` - this class's own static @SubscribeEvent methods below
+        // (registered to the FML mod bus via the class-level @EventBusSubscriber above) make
+        // NeoForge.EVENT_BUS.register(this) reject the whole class outright at mod-construction time
+        // ("Expected @SubscribeEvent method ... to NOT be static") - confirmed by a real-machine
+        // crash the first time this was tried directly here. See EnchantTableWatcher's own javadoc.
+        NeoForge.EVENT_BUS.register(new EnchantTableWatcher());
     }
 
     @SubscribeEvent
@@ -68,9 +75,9 @@ public class MicraDroneClient {
         Minecraft.getInstance().setScreen(new ShopScreen(pos));
     }
 
-    /** Called from ScriptScrollItem's client-side onItemUseFirst branch (blank scroll on an enchanting table). */
-    public static void openEnchantScrollScreen(BlockPos tablePos, InteractionHand hand) {
-        Minecraft.getInstance().setScreen(new EnchantScrollScreen(tablePos, hand));
+    /** Called from {@link EnchantTableWatcher} once a blank scroll lands in the enchanting table's item slot. */
+    public static void openEnchantScrollScreen(BlockPos tablePos) {
+        Minecraft.getInstance().setScreen(new EnchantScrollScreen(tablePos));
     }
 
     /** Registered as the DroneLogPayload handler in MicraDrone's RegisterPayloadHandlersEvent listener. */

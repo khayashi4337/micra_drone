@@ -12,17 +12,22 @@ import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
-import net.minecraft.world.InteractionHand;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
- * The enchanting table's sample picker (issue #8), opened by using a BLANK script scroll on the
- * table (see {@code ScriptScrollItem#onItemUseFirst}). Lists every {@link SampleCatalog} entry;
- * ones needing more bookshelves than currently surround the table are greyed out with their
- * requirement shown, so building up the library is a visible goal. The bookshelf count re-runs
- * vanilla's own rule against the synced client level every tick - placing bookshelves while the
- * screen is open unlocks entries live. Inscribing sends {@link EnchantScrollPayload}; the server
- * re-validates everything and takes the lapis (see {@code ScrollEnchanter}).
+ * The enchanting table's sample picker (issue #8): dropping a BLANK script scroll into the
+ * vanilla enchanting table's own item slot - the normal drag-and-drop way that GUI already works
+ * - opens this screen in place of it (see {@code EnchantTableWatcher}). Lists every
+ * {@link SampleCatalog} entry; ones needing more bookshelves than currently surround the table
+ * are greyed out with their requirement shown, so building up the library is a visible goal. The
+ * bookshelf count re-runs vanilla's own rule against the synced client level every tick - placing
+ * bookshelves while the screen is open unlocks entries live. Inscribing sends
+ * {@link EnchantScrollPayload}; the server re-validates everything, takes the lapis, and writes
+ * straight into the scroll still sitting in the table's slot (see {@code ScrollEnchanter}). Since
+ * this screen stands in for the vanilla {@code EnchantmentScreen} without ever telling the server
+ * that menu closed, {@link #onClose} closes it properly (same packet vanilla's own Escape/X would
+ * send) - that's also what hands the (now-inscribed, or still-blank on Cancel) scroll back to the
+ * player, via vanilla's normal container-close item return.
  * Client-only, so no logic here is unit-testable - verified manually in-game.
  */
 public class EnchantScrollScreen extends Screen {
@@ -36,17 +41,15 @@ public class EnchantScrollScreen extends Screen {
     private static final int BUTTON_Y = DESCRIPTION_Y + DESCRIPTION_HEIGHT + 8;
 
     private final BlockPos tablePos;
-    private final InteractionHand hand;
 
     private MultiLineEditBox descriptionBox;
     private SampleListWidget sampleList;
     private Button inscribeButton;
     private int bookshelfCount;
 
-    public EnchantScrollScreen(BlockPos tablePos, InteractionHand hand) {
+    public EnchantScrollScreen(BlockPos tablePos) {
         super(Component.translatable("gui.micradrone.enchant_scroll.title"));
         this.tablePos = tablePos;
-        this.hand = hand;
     }
 
     @Override
@@ -83,9 +86,23 @@ public class EnchantScrollScreen extends Screen {
     private void inscribe() {
         SampleListWidget.Row selected = sampleList.getSelected();
         if (selected != null && SampleCatalog.isUnlocked(selected.index, bookshelfCount)) {
-            PacketDistributor.sendToServer(new EnchantScrollPayload(
-                    tablePos, selected.index, hand == InteractionHand.MAIN_HAND));
+            PacketDistributor.sendToServer(new EnchantScrollPayload(tablePos, selected.index));
             onClose();
+        }
+    }
+
+    /**
+     * This screen stands in for the vanilla enchanting menu's own screen without the server ever
+     * being told that menu closed - closing it here for real (not just swapping the client's
+     * displayed Screen) is what returns the (now-inscribed) scroll to the player, exactly like
+     * closing a real enchanting table normally does.
+     */
+    @Override
+    public void onClose() {
+        if (this.minecraft != null && this.minecraft.player != null) {
+            this.minecraft.player.closeContainer();
+        } else {
+            super.onClose();
         }
     }
 
