@@ -447,6 +447,23 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         scriptRunner.start(program);
     }
 
+    /**
+     * Marks {@code scriptId} as selected without running or saving anything (the IDE's script
+     * list, GUI reduction follow-up) - a redstone signal, or right-clicking the controller with an
+     * empty hand, subsequently acts on whatever was selected last. Silently ignored (not logged;
+     * this is a routine picker interaction, not a script action) if {@code scriptId} isn't a shape
+     * the server recognizes.
+     */
+    public void selectScript(ServerPlayer requester, String scriptId) {
+        viewingPlayerUuid = requester.getUUID();
+        if (!ScriptId.isValidId(scriptId)) {
+            return;
+        }
+        selectedScript = scriptId;
+        setChanged();
+        pushLogSnapshotTo(requester);
+    }
+
     /** Requests the running script (if any) to stop. Safe to call even when nothing is running. */
     public void stopScript(ServerPlayer requester) {
         viewingPlayerUuid = requester.getUUID();

@@ -24,6 +24,7 @@ import io.github.khayashi4337.micradrone.drone.net.RequestShopStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.SaveScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
+import io.github.khayashi4337.micradrone.drone.net.SelectScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.SetBreakpointsPayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
@@ -174,6 +175,7 @@ public class MicraDrone {
         registrar.playToServer(EnchantScrollPayload.TYPE, EnchantScrollPayload.STREAM_CODEC, MicraDrone::handleEnchantScroll);
         registrar.playToServer(RequestScriptSourcePayload.TYPE, RequestScriptSourcePayload.STREAM_CODEC, MicraDrone::handleRequestScriptSource);
         registrar.playToServer(SaveScriptPayload.TYPE, SaveScriptPayload.STREAM_CODEC, MicraDrone::handleSaveScript);
+        registrar.playToServer(SelectScriptPayload.TYPE, SelectScriptPayload.STREAM_CODEC, MicraDrone::handleSelectScript);
         registrar.playToServer(SetBreakpointsPayload.TYPE, SetBreakpointsPayload.STREAM_CODEC, MicraDrone::handleSetBreakpoints);
         registrar.playToServer(DebugCommandPayload.TYPE, DebugCommandPayload.STREAM_CODEC, MicraDrone::handleDebugCommand);
         registrar.playToClient(DroneLogPayload.TYPE, DroneLogPayload.STREAM_CODEC, MicraDroneClient::handleDroneLog);
@@ -234,6 +236,14 @@ public class MicraDrone {
         if (context.player() instanceof ServerPlayer serverPlayer
                 && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
             be.saveScript(serverPlayer, payload.scriptName(), payload.source());
+        }
+    }
+
+    // IDE's script list (GUI reduction follow-up): clicking an entry just selects it.
+    private static void handleSelectScript(SelectScriptPayload payload, IPayloadContext context) {
+        if (context.player() instanceof ServerPlayer serverPlayer
+                && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
+            be.selectScript(serverPlayer, payload.scriptId());
         }
     }
 
