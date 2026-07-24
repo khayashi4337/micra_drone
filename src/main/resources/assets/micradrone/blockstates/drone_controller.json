@@ -1,5 +1,6 @@
 {
   "variants": {
-    "": { "model": "micradrone:block/drone_controller" }
+    "active=false": { "model": "micradrone:block/drone_controller_docked" },
+    "active=true": { "model": "micradrone:block/drone_controller_active" }
   }
 }

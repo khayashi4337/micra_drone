@@ -18,19 +18,35 @@ import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.StateDefinition;
+import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.phys.BlockHitResult;
 
 /** Placed to claim a farm plot; holds the drone's script and grid state via {@link DroneControllerBlockEntity}. */
 public class DroneControllerBlock extends BaseEntityBlock {
     public static final MapCodec<DroneControllerBlock> CODEC = simpleCodec(DroneControllerBlock::new);
+    /**
+     * Docked (idle) vs active (a script is currently RUNNING) texture - see
+     * {@link DroneControllerBlockEntity#serverTick}, which keeps this in sync with
+     * {@code DroneScriptRunner.State.RUNNING} every tick (same pattern as a furnace's LIT property;
+     * no vanilla BlockStateProperties constant fits, so this mirrors how ChiseledBookShelfBlock
+     * defines its own slot-occupied properties directly rather than reusing a shared one).
+     */
+    public static final BooleanProperty ACTIVE = BooleanProperty.create("active");
 
     public DroneControllerBlock(BlockBehaviour.Properties properties) {
         super(properties);
+        registerDefaultState(stateDefinition.any().setValue(ACTIVE, false));
     }
 
     @Override
     public MapCodec<DroneControllerBlock> codec() {
         return CODEC;
+    }
+
+    @Override
+    protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
+        builder.add(ACTIVE);
     }
 
     @Nullable
