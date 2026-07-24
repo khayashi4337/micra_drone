@@ -7,7 +7,6 @@ import io.github.khayashi4337.micradrone.client.EnchantScrollScreen;
 import io.github.khayashi4337.micradrone.client.EnchantTableWatcher;
 import io.github.khayashi4337.micradrone.client.IdeScreen;
 import io.github.khayashi4337.micradrone.client.ShopScreen;
-import io.github.khayashi4337.micradrone.drone.ScriptId;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
@@ -61,12 +60,14 @@ public class MicraDroneClient {
     }
 
     /**
-     * Called from DroneControllerBlock's client-side useWithoutItem branch (issue #8): the IDE,
-     * editing the slotted scroll, is the controller's default screen. The script list/log screen
-     * (DroneScreen) opens from the IDE's Scripts button.
+     * Called from DroneControllerBlock's client-side useWithoutItem branch (issue #8): the IDE is
+     * the controller's default screen. The jukebox-style item slot is gone (GUI-reduction
+     * follow-up) - the IDE is meant to open on whichever script is currently selected, but that
+     * requires a round trip the client doesn't have wired up yet (in progress, next commit); for
+     * now it opens with no script resolved, which reads as "nothing selected yet".
      */
     public static void openIdeScreen(BlockPos pos) {
-        Minecraft.getInstance().setScreen(new IdeScreen(pos, ScriptId.CONTROLLER_ID,
+        Minecraft.getInstance().setScreen(new IdeScreen(pos, "",
                 Component.translatable("gui.micradrone.ide_screen.slotted_scroll").getString()));
     }
 

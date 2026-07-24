@@ -6,12 +6,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 
-import io.github.khayashi4337.micradrone.drone.ScriptId;
-import io.github.khayashi4337.micradrone.drone.net.EjectScrollPayload;
-import io.github.khayashi4337.micradrone.drone.net.FillScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
-import io.github.khayashi4337.micradrone.drone.net.RunScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptEntry;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
 import net.minecraft.client.Minecraft;
@@ -85,43 +81,25 @@ public class DroneScreen extends Screen {
                 Component.translatable("gui.micradrone.drone_screen.log"));
         addRenderableWidget(logBox);
 
+        // GUI reduction follow-up: the jukebox-style controller slot (and its Eject/Copy-to-scroll/
+        // Run-scroll buttons) is gone - a script only ever lives in a library container now, picked
+        // by selecting it below. This screen is slated to fold into IdeScreen entirely next; Run/Stop
+        // stay for now since flipping a lever isn't wired to "whatever's selected" from here yet.
         int buttonY = top + LOG_HEIGHT + 8;
-        int thirdBtnW = (LOG_WIDTH - 8) / 3;
+        int halfBtnW = (LOG_WIDTH - 4) / 2;
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.run"),
                 b -> PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptList.selectedId())))
-                .bounds(left, buttonY, thirdBtnW, 20)
-                .build());
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.eject_scroll"),
-                b -> PacketDistributor.sendToServer(new EjectScrollPayload(pos)))
-                .bounds(left + thirdBtnW + 4, buttonY, thirdBtnW, 20)
+                .bounds(left, buttonY, halfBtnW, 20)
                 .build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.stop"),
                 b -> PacketDistributor.sendToServer(new StopScriptPayload(pos)))
-                .bounds(left + 2 * (thirdBtnW + 4), buttonY, thirdBtnW, 20)
+                .bounds(left + halfBtnW + 4, buttonY, halfBtnW, 20)
                 .build());
 
-        // Scroll import/export (GitHub issue #1) + IDE editor (issue #6), one three-button row -
-        // explicit buttons instead of overloading the controller's own right-click with hidden
-        // modifiers (sneak, held-item checks) - that design broke twice against vanilla's
-        // Item/Block interaction dispatch order in real-machine testing. The scroll buttons act on
-        // whatever ScriptScrollItem is in the player's main hand; the server reports why nothing
-        // happened (not holding a scroll, scroll is blank) via chat if the action can't apply.
-        // (The Open Scripts Folder and Help rows that used to sit here left with issue #8: local
-        // files are gone from the list, and the command reference is now a help scroll from the
-        // enchanting table.)
-        int scrollRowY = buttonY + 24;
-        int thirdW = (LOG_WIDTH - 8) / 3;
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.copy_to_scroll"),
-                b -> PacketDistributor.sendToServer(new FillScrollPayload(pos, scriptList.selectedId())))
-                .bounds(left, scrollRowY, thirdW, 20)
-                .build());
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.run_scroll"),
-                b -> PacketDistributor.sendToServer(new RunScrollPayload(pos)))
-                .bounds(left + thirdW + 4, scrollRowY, thirdW, 20)
-                .build());
+        int editRowY = buttonY + 24;
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.edit_script"),
                 b -> Minecraft.getInstance().setScreen(new IdeScreen(pos, scriptList.selectedId(), scriptList.selectedDisplayName())))
-                .bounds(left + 2 * (thirdW + 4), scrollRowY, thirdW, 20)
+                .bounds(left, editRowY, LOG_WIDTH, 20)
                 .build());
 
         PacketDistributor.sendToServer(new RequestLogPayload(pos));
@@ -205,12 +183,12 @@ public class DroneScreen extends Screen {
 
         String selectedId() {
             Row selected = getSelected();
-            return selected != null ? selected.entry.id() : ScriptId.CONTROLLER_ID;
+            return selected != null ? selected.entry.id() : "";
         }
 
         String selectedDisplayName() {
             Row selected = getSelected();
-            return selected != null ? selected.entry.displayName() : ScriptId.CONTROLLER_ID;
+            return selected != null ? selected.entry.displayName() : "";
         }
 
         /** Single hook point for every way the selection can change: clicks, arrow keys, and the programmatic calls above. */
@@ -231,11 +209,9 @@ public class DroneScreen extends Screen {
 
             Row(ScriptEntry entry) {
                 this.entry = entry;
-                // Markers tell the sources apart at a glance: ◇ = the scroll slotted in the
-                // controller, ⚑ = a scroll in a library chest, plain = an on-disk file.
+                // ⚑ marks a scroll in a library chest; plain text is an on-disk file.
                 String name = entry.displayName();
-                this.label = Component.literal(ScriptId.CONTROLLER_ID.equals(entry.id()) ? "◇ " + name
-                        : entry.id().startsWith("scroll:") ? "⚑ " + name : name);
+                this.label = Component.literal(entry.id().startsWith("scroll:") ? "⚑ " + name : name);
             }
 
             @Override

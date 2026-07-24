@@ -44,17 +44,12 @@ class ScriptIdTest {
     }
 
     @Test
-    void isValidIdAcceptsFileNamesScrollIdsAndTheControllerSlot() {
+    void isValidIdAcceptsFileNamesAndScrollIds() {
         assertTrue(ScriptId.isValidId("main.mdrone"));
         assertTrue(ScriptId.isValidId("scroll:0:0"));
-        assertTrue(ScriptId.isValidId(ScriptId.CONTROLLER_ID));
+        assertFalse(ScriptId.isValidId(""));
         assertFalse(ScriptId.isValidId("../evil.mdrone"));
         assertFalse(ScriptId.isValidId("scroll:0"));
         assertFalse(ScriptId.isValidId("notes.txt"));
-    }
-
-    @Test
-    void theControllerSlotIdIsNotAScrollId() {
-        assertFalse(ScriptId.isScrollId(ScriptId.CONTROLLER_ID));
     }
 }
