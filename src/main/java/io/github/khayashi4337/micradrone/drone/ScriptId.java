@@ -1,18 +1,23 @@
 package io.github.khayashi4337.micradrone.drone;
 
 /**
- * Script identifiers as they travel between the GUI and the server (issue #6, chest library).
- * Two shapes exist:
+ * Script identifiers as they travel between the GUI and the server (issue #6, chest library;
+ * issue #7, controller slot). Three shapes exist:
  * <ul>
  *   <li>File scripts: the plain {@code *.mdrone} file name, validated by
  *       {@link ScriptFileStore#isValidScriptName}.</li>
  *   <li>Chest scrolls: {@code scroll:<chestIndex>:<slot>}, pointing into the controller's library
  *       chests (see {@code ScriptChestLibrary}). Indexes are re-resolved against the chests at use
  *       time, so a stale id (items moved) fails loudly instead of hitting the wrong scroll.</li>
+ *   <li>{@link #CONTROLLER_ID}: the single scroll slotted into the controller block itself
+ *       (jukebox-style, issue #7) - the script that a redstone signal runs.</li>
  * </ul>
  * Minecraft-free so the parsing/validation rules are unit-testable.
  */
 public final class ScriptId {
+    /** The id of the scroll slotted into the controller block itself. */
+    public static final String CONTROLLER_ID = "controller";
+
     private static final String SCROLL_PREFIX = "scroll:";
 
     private ScriptId() {
@@ -41,9 +46,9 @@ public final class ScriptId {
         return parsed == null ? -1 : parsed[1];
     }
 
-    /** True for every id shape the server accepts from the network: a valid file name or a scroll id. */
+    /** True for every id shape the server accepts from the network: a valid file name, a scroll id, or the controller slot. */
     public static boolean isValidId(String id) {
-        return ScriptFileStore.isValidScriptName(id) || isScrollId(id);
+        return CONTROLLER_ID.equals(id) || ScriptFileStore.isValidScriptName(id) || isScrollId(id);
     }
 
     private static int[] parse(String id) {

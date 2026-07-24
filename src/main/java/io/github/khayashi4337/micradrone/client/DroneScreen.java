@@ -6,19 +6,18 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 
-import io.github.khayashi4337.micradrone.MicraDroneClient;
+import io.github.khayashi4337.micradrone.drone.ScriptId;
+import io.github.khayashi4337.micradrone.drone.net.EjectScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.FillScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptEntry;
-import io.github.khayashi4337.micradrone.drone.net.SetAliasPayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.Screen;
@@ -26,7 +25,9 @@ import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
- * Opened by right-clicking a Drone Controller: alias, points-per-crop, script picker, log, Run/Stop.
+ * The controller's script list/log screen, opened from the IDE's Scripts button (issue #8 made
+ * the IDE itself the controller's default right-click screen): points-per-crop, script picker,
+ * log, Run/Stop.
  * The unlock shop lives on the paired Corner Marker instead (see {@code ShopScreen}) - an earlier
  * tab-based version of this screen packed both into one window, but the two tab buttons didn't read
  * as real tabs and, worse, had a real layout bug (points text overlapping the alias box). Splitting
@@ -40,21 +41,18 @@ public class DroneScreen extends Screen {
     private static final int LOG_HEIGHT = 110;
     private static final int SCRIPT_LIST_HEIGHT = 64;
     private static final int DESCRIPTION_HEIGHT = 28;
-    private static final String DEFAULT_SCRIPT_NAME = "main.mdrone";
-    private static final int ALIAS_ROW_Y = 4;
-    private static final int ALIAS_ROW_HEIGHT = 18;
-    // Alias row occupies [4, 22). Points lines start at 24 (2px gap) and are 9px tall each; with up
-    // to 2 crops shown that's [24, 42). Script list starts at 46, a further 4px clear of that; the
-    // description box for whichever script is selected sits right below it.
-    private static final int POINTS_LINES_Y = 24;
-    private static final int SCRIPT_LIST_Y = 46;
+    // Points lines start at 6 and are 9px tall each; with up to 2 crops shown that's [6, 24).
+    // Script list starts at 28, a further 4px clear of that; the description box for whichever
+    // script is selected sits right below it. (An alias row used to sit on top - it was replaced
+    // by renaming the controller item in an anvil, issue #7.)
+    private static final int POINTS_LINES_Y = 6;
+    private static final int SCRIPT_LIST_Y = 28;
     private static final int DESCRIPTION_Y = SCRIPT_LIST_Y + SCRIPT_LIST_HEIGHT + 6;
 
     private final BlockPos pos;
 
     private MultiLineEditBox logBox;
     private MultiLineEditBox descriptionBox;
-    private EditBox aliasBox;
     private ScriptListWidget scriptList;
     private List<Component> pointsLines = List.of();
 
@@ -67,15 +65,6 @@ public class DroneScreen extends Screen {
     protected void init() {
         int left = (this.width - LOG_WIDTH) / 2;
 
-        aliasBox = new EditBox(this.font, left, ALIAS_ROW_Y, LOG_WIDTH - 76 - 4, ALIAS_ROW_HEIGHT,
-                Component.translatable("gui.micradrone.drone_screen.alias"));
-        aliasBox.setMaxLength(48);
-        addRenderableWidget(aliasBox);
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.set_alias"),
-                b -> PacketDistributor.sendToServer(new SetAliasPayload(pos, aliasBox.getValue())))
-                .bounds(left + LOG_WIDTH - 76, ALIAS_ROW_Y, 76, ALIAS_ROW_HEIGHT)
-                .build());
-
         // Created before scriptList so its overridden setSelected (triggered by replaceEntries below,
         // even for this very first population) always has somewhere to write the description to.
         // MultiLineEditBox has no read-only mode (same as logBox below) - it's technically editable,
@@ -87,7 +76,7 @@ public class DroneScreen extends Screen {
 
         scriptList = new ScriptListWidget(Minecraft.getInstance(), LOG_WIDTH, SCRIPT_LIST_HEIGHT, SCRIPT_LIST_Y, 16);
         scriptList.setX(left);
-        scriptList.replaceEntries(List.of(new ScriptEntry(DEFAULT_SCRIPT_NAME, DEFAULT_SCRIPT_NAME, DEFAULT_SCRIPT_NAME)));
+        scriptList.replaceEntries(List.of()); // populated by the first DroneLogPayload
         addRenderableWidget(scriptList);
 
         int top = DESCRIPTION_Y + DESCRIPTION_HEIGHT + 6;
@@ -97,35 +86,30 @@ public class DroneScreen extends Screen {
         addRenderableWidget(logBox);
 
         int buttonY = top + LOG_HEIGHT + 8;
+        int thirdBtnW = (LOG_WIDTH - 8) / 3;
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.run"),
                 b -> PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptList.selectedId())))
-                .bounds(left, buttonY, 80, 20)
+                .bounds(left, buttonY, thirdBtnW, 20)
+                .build());
+        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.eject_scroll"),
+                b -> PacketDistributor.sendToServer(new EjectScrollPayload(pos)))
+                .bounds(left + thirdBtnW + 4, buttonY, thirdBtnW, 20)
                 .build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.stop"),
                 b -> PacketDistributor.sendToServer(new StopScriptPayload(pos)))
-                .bounds(left + LOG_WIDTH - 80, buttonY, 80, 20)
-                .build());
-
-        int scriptsFolderY = buttonY + 24;
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.open_scripts_folder"),
-                b -> MicraDroneClient.openScriptsFolder())
-                .bounds(left, scriptsFolderY, LOG_WIDTH, 20)
-                .build());
-
-        int helpY = scriptsFolderY + 24;
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.help"),
-                b -> MicraDroneClient.openHelpFolder())
-                .bounds(left, helpY, LOG_WIDTH, 20)
+                .bounds(left + 2 * (thirdBtnW + 4), buttonY, thirdBtnW, 20)
                 .build());
 
         // Scroll import/export (GitHub issue #1) + IDE editor (issue #6), one three-button row -
-        // the screen is already at its vertical limit at GUI scale 3, so no new rows fit. Explicit
-        // buttons instead of overloading the controller's own right-click with hidden modifiers
-        // (sneak, held-item checks) - that design broke twice against vanilla's Item/Block
-        // interaction dispatch order in real-machine testing. The scroll buttons act on whatever
-        // ScriptScrollItem is in the player's main hand; the server reports why nothing happened
-        // (not holding a scroll, scroll is blank) via chat if the action can't apply.
-        int scrollRowY = helpY + 24;
+        // explicit buttons instead of overloading the controller's own right-click with hidden
+        // modifiers (sneak, held-item checks) - that design broke twice against vanilla's
+        // Item/Block interaction dispatch order in real-machine testing. The scroll buttons act on
+        // whatever ScriptScrollItem is in the player's main hand; the server reports why nothing
+        // happened (not holding a scroll, scroll is blank) via chat if the action can't apply.
+        // (The Open Scripts Folder and Help rows that used to sit here left with issue #8: local
+        // files are gone from the list, and the command reference is now a help scroll from the
+        // enchanting table.)
+        int scrollRowY = buttonY + 24;
         int thirdW = (LOG_WIDTH - 8) / 3;
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.drone_screen.copy_to_scroll"),
                 b -> PacketDistributor.sendToServer(new FillScrollPayload(pos, scriptList.selectedId())))
@@ -167,19 +151,15 @@ public class DroneScreen extends Screen {
             scriptList.selectId(selectedScript);
         }
 
-        // Don't clobber text the player is actively typing with a stale server echo.
-        if (!aliasBox.isFocused()) {
-            aliasBox.setValue(alias);
-        }
+        // alias is unused since the anvil-rename flow replaced the alias field (issue #7); it stays
+        // in the payload so this change didn't need another payload shape bump.
     }
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
-        // Between the alias row's bottom (ALIAS_ROW_Y + ALIAS_ROW_HEIGHT) and the script list's top
-        // (SCRIPT_LIST_Y) there's a fixed 18px gap; up to 2 point lines (9px each) fit without
-        // overlapping either neighbor.
-        int y = ALIAS_ROW_Y + ALIAS_ROW_HEIGHT + 1;
+        // Up to 2 point lines (9px each) fit between the top margin and the script list.
+        int y = POINTS_LINES_Y;
         for (Component line : pointsLines) {
             guiGraphics.drawCenteredString(this.font, line, this.width / 2, y, 0xFFFFFF);
             y += 9;
@@ -225,12 +205,12 @@ public class DroneScreen extends Screen {
 
         String selectedId() {
             Row selected = getSelected();
-            return selected != null ? selected.entry.id() : DEFAULT_SCRIPT_NAME;
+            return selected != null ? selected.entry.id() : ScriptId.CONTROLLER_ID;
         }
 
         String selectedDisplayName() {
             Row selected = getSelected();
-            return selected != null ? selected.entry.displayName() : DEFAULT_SCRIPT_NAME;
+            return selected != null ? selected.entry.displayName() : ScriptId.CONTROLLER_ID;
         }
 
         /** Single hook point for every way the selection can change: clicks, arrow keys, and the programmatic calls above. */
@@ -251,9 +231,11 @@ public class DroneScreen extends Screen {
 
             Row(ScriptEntry entry) {
                 this.entry = entry;
-                // Chest scrolls get a marker so they read differently from on-disk files.
-                this.label = Component.literal(entry.id().startsWith("scroll:")
-                        ? "⚑ " + entry.displayName() : entry.displayName());
+                // Markers tell the sources apart at a glance: ◇ = the scroll slotted in the
+                // controller, ⚑ = a scroll in a library chest, plain = an on-disk file.
+                String name = entry.displayName();
+                this.label = Component.literal(ScriptId.CONTROLLER_ID.equals(entry.id()) ? "◇ " + name
+                        : entry.id().startsWith("scroll:") ? "⚑ " + name : name);
             }
 
             @Override

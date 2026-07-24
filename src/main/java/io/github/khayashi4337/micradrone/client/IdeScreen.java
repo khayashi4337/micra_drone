@@ -23,7 +23,9 @@ import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
- * Fullscreen script IDE (issue #6), opened from DroneScreen's Edit button: the left half is a
+ * Fullscreen script IDE (issue #6) - since issue #8 the controller's DEFAULT screen (right-click
+ * opens it straight onto the slotted scroll; DroneScreen's Edit button opens other scripts here
+ * too): the left half is a
  * {@link MultiLineEditBox} editor for one of the controller's scripts; the right half simply IS
  * the real field, seen from straight above - the game's own camera hovers over the plot
  * ({@link IdeCameraController}, 林さん's "float the viewpoint" idea) and this screen skips the
@@ -130,7 +132,9 @@ public class IdeScreen extends Screen {
                     PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptId));
                 })
                 .bounds(leftX + 2 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.back"),
+        // "Scripts" opens the list/log screen (DroneScreen) - since issue #8 the IDE is the
+        // controller's default screen, so this is the way IN to the list, and Esc closes to the game.
+        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.scripts"),
                         b -> this.minecraft.setScreen(new DroneScreen(pos)))
                 .bounds(leftX + 3 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
 

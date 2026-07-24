@@ -64,16 +64,15 @@ class ScriptFileStoreTest {
     }
 
     @Test
-    void ensureControllerFolderSeedsEverySampleScriptWhenMissing() throws IOException {
+    void ensureControllerFolderCreatesAnEmptyFolder() throws IOException {
+        // Sample seeding was retired with the GUI-reduction rework (issue #7): samples now arrive
+        // as scroll items in the auto-placed library container, not as files.
         Path scriptsDir = tempDir.resolve("scripts");
 
         Path folder = ScriptFileStore.ensureControllerFolder(scriptsDir, 5, 64, -5);
 
         assertEquals(scriptsDir.resolve("5_64_-5"), folder);
-        for (String name : SampleScripts.ALL.keySet()) {
-            assertTrue(Files.exists(folder.resolve(name)), name + " should have been seeded");
-        }
-        assertEquals(SampleScripts.MAIN, ScriptFileStore.load(folder.resolve(ScriptFileStore.DEFAULT_SCRIPT_NAME)));
+        assertEquals(List.of(), ScriptFileStore.listScripts(folder));
     }
 
     @Test
@@ -89,38 +88,13 @@ class ScriptFileStoreTest {
     }
 
     @Test
-    void ensureControllerFolderRestoresADeletedSampleAsAPermanentReferenceLibrary() throws IOException {
-        Path scriptsDir = tempDir.resolve("scripts");
-        ScriptFileStore.ensureControllerFolder(scriptsDir, 1, 2, 3);
-        Path folder = scriptsDir.resolve(ScriptFileStore.folderName(1, 2, 3));
-        Files.delete(folder.resolve("move_square.mdrone"));
-
-        ScriptFileStore.ensureControllerFolder(scriptsDir, 1, 2, 3);
-
-        assertTrue(Files.exists(folder.resolve("move_square.mdrone")));
-        assertEquals(SampleScripts.MOVE_SQUARE, ScriptFileStore.load(folder.resolve("move_square.mdrone")));
-    }
-
-    @Test
-    void ensureControllerFolderKeepsAnEditedSampleAsIs() throws IOException {
-        Path scriptsDir = tempDir.resolve("scripts");
-        ScriptFileStore.ensureControllerFolder(scriptsDir, 1, 2, 3);
-        Path folder = scriptsDir.resolve(ScriptFileStore.folderName(1, 2, 3));
-        Files.writeString(folder.resolve("move_square.mdrone"), "print(\"edited\")\n");
-
-        ScriptFileStore.ensureControllerFolder(scriptsDir, 1, 2, 3);
-
-        assertEquals("print(\"edited\")\n", ScriptFileStore.load(folder.resolve("move_square.mdrone")));
-    }
-
-    @Test
-    void ensureControllerFolderWithAliasSeedsUnderTheAliasNamedFolder() throws IOException {
+    void ensureControllerFolderWithAliasCreatesTheAliasNamedFolder() throws IOException {
         Path scriptsDir = tempDir.resolve("scripts");
 
         Path folder = ScriptFileStore.ensureControllerFolder(scriptsDir, "North Farm", 5, 64, -5);
 
         assertEquals(scriptsDir.resolve("North Farm_5_64_-5"), folder);
-        assertTrue(Files.exists(folder.resolve(ScriptFileStore.DEFAULT_SCRIPT_NAME)));
+        assertTrue(Files.isDirectory(folder));
     }
 
     @Test
@@ -161,11 +135,13 @@ class ScriptFileStoreTest {
     void listScriptsReturnsOnlyMdroneFilesSorted() throws IOException {
         Path scriptsDir = tempDir.resolve("scripts");
         Path folder = ScriptFileStore.ensureControllerFolder(scriptsDir, 0, 0, 0);
+        Files.writeString(folder.resolve("b.mdrone"), "till()\n");
+        Files.writeString(folder.resolve("a.mdrone"), "till()\n");
         Files.writeString(folder.resolve("notes.txt"), "not a script");
 
         List<String> names = ScriptFileStore.listScripts(folder);
 
-        assertEquals(List.copyOf(SampleScripts.ALL.keySet()).stream().sorted().toList(), names);
+        assertEquals(List.of("a.mdrone", "b.mdrone"), names);
     }
 
     @Test
@@ -203,13 +179,12 @@ class ScriptFileStoreTest {
     void listScriptsWithDescriptionsPairsEveryFileWithItsDescription() throws IOException {
         Path scriptsDir = tempDir.resolve("scripts");
         Path folder = ScriptFileStore.ensureControllerFolder(scriptsDir, 0, 0, 0);
+        Files.writeString(folder.resolve("greet.mdrone"), "# Says hello.\nprint(\"hi\")\n");
 
         Map<String, String> described = ScriptFileStore.listScriptsWithDescriptions(folder);
 
-        assertEquals(SampleScripts.ALL.size(), described.size());
-        assertEquals(
-                ScriptFileStore.describeScript(SampleScripts.MAIN, ScriptFileStore.DEFAULT_SCRIPT_NAME),
-                described.get(ScriptFileStore.DEFAULT_SCRIPT_NAME));
+        assertEquals(1, described.size());
+        assertEquals("Says hello.", described.get("greet.mdrone"));
     }
 
     @Test

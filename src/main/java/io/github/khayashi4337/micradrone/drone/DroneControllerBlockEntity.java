@@ -26,6 +26,8 @@ import io.github.khayashi4337.micradrone.lang.Parser;
 import io.github.khayashi4337.micradrone.lang.ast.Stmt;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
+import net.minecraft.core.component.DataComponentMap;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.StringTag;
@@ -33,6 +35,9 @@ import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.Containers;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -86,19 +91,28 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     // (see purchaseUnlock). Written on the main thread only (purchaseUnlock runs from the network
     // handler, which is main-thread per PayloadRegistrar's default).
     private final Set<String> unlockedCrops = ConcurrentHashMap.newKeySet();
-    // Human-readable label a player can set - coordinates alone are hard to tell apart. The script
-    // folder on disk is named after this (falling back to coordinates when blank) and gets renamed
-    // in place when it changes - see setAlias and ScriptFileStore#folderName(String, int, int, int).
+    // Human-readable label - coordinates alone are hard to tell apart. Set by renaming the
+    // controller ITEM in a vanilla anvil before placing it (the CUSTOM_NAME component flows in via
+    // applyImplicitComponents, the same route vanilla chests use); the script folder on disk is
+    // named after it, falling back to coordinates when blank - see ScriptFileStore#folderName.
     private volatile String alias = "";
-    private volatile String selectedScript = ScriptFileStore.DEFAULT_SCRIPT_NAME;
-    // Refreshed from disk + library chests in sendLogSnapshotTo (screen open); reused as-is by
-    // every other push so routine log/points updates don't hit the filesystem or re-scan chests.
-    private volatile List<ScriptEntry> availableScripts = List.of(new ScriptEntry(
-            ScriptFileStore.DEFAULT_SCRIPT_NAME, ScriptFileStore.DEFAULT_SCRIPT_NAME, ScriptFileStore.DEFAULT_SCRIPT_NAME));
+    private volatile String selectedScript = ScriptId.CONTROLLER_ID;
+    // Refreshed from the slotted scroll + library containers in sendLogSnapshotTo (screen open);
+    // reused as-is by every other push so routine log/points updates don't re-scan anything.
+    // On-disk .mdrone files are no longer listed (GUI reduction, issue #7) - scripts live in
+    // items now; the file store remains as internal plumbing (e.g. Run Scroll's scroll.mdrone).
+    private volatile List<ScriptEntry> availableScripts = List.of();
 
     private DroneScriptRunner scriptRunner;
     /** The visible {@link DroneEntity} tracked by UUID (entities aren't safe to hold direct references to across reloads). */
     private UUID droneEntityUuid;
+
+    /**
+     * The one scroll slotted into the controller itself, jukebox-style (issue #7): the beginner
+     * path that needs no chest and no GUI - slot a scroll, flip a lever. NBT-persisted; dropped
+     * when the block is broken. Main-thread only.
+     */
+    private ItemStack slottedScroll = ItemStack.EMPTY;
 
     // IDE debugger (issue #6). Breakpoints are per-controller and session-only (deliberately not
     // saved to NBT); the controller is recreated for every run with the current set applied.
@@ -284,15 +298,18 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     /**
-     * Reads {@code scriptName}'s source from this controller's script folder (creating the folder and
-     * seeding it with {@link SampleScripts#ALL} if missing) without running it - used to fill a blank
-     * {@code ScriptScrollItem} (GitHub issue #1) so a player can carry/hand off a known-good script
-     * without typing one by hand first. Empty on any I/O error (logged); the caller is a network
-     * payload handler with no player-facing error channel besides the log.
+     * Reads {@code scriptName}'s source (slotted scroll, library scroll, or the controller's
+     * script folder) without running it - used to fill a blank {@code ScriptScrollItem} (GitHub
+     * issue #1) so a player can carry/hand off a known-good script without typing one by hand
+     * first. Empty on any I/O error (logged); the caller is a network payload handler with no
+     * player-facing error channel besides the log.
      */
     public Optional<String> loadScriptSource(String scriptName) {
         if (!(level instanceof ServerLevel serverLevel)) {
             return Optional.empty();
+        }
+        if (ScriptId.CONTROLLER_ID.equals(scriptName)) {
+            return ScriptChestLibrary.scrollSource(slottedScroll);
         }
         if (ScriptId.isScrollId(scriptName)) {
             return ScriptChestLibrary.resolveScrollSource(serverLevel, getBlockPos(), scriptName);
@@ -345,7 +362,14 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             requester.sendSystemMessage(Component.literal("[ide] script too long (" + source.length() + " > " + MAX_SCRIPT_CHARS + " chars)"));
             return;
         }
-        if (ScriptId.isScrollId(scriptName)) {
+        if (ScriptId.CONTROLLER_ID.equals(scriptName)) {
+            // The slotted scroll: write the edit straight into the item in the controller.
+            if (slottedScroll.isEmpty()) {
+                requester.sendSystemMessage(Component.literal("[ide] no scroll is slotted in the controller - nothing saved"));
+                return;
+            }
+            ScriptChestLibrary.writeScrollSource(slottedScroll, source);
+        } else if (ScriptId.isScrollId(scriptName)) {
             // A chest scroll: write the edit back into the scroll item itself.
             if (!ScriptChestLibrary.saveScrollSource(serverLevel, getBlockPos(), scriptName, source)) {
                 requester.sendSystemMessage(Component.literal(
@@ -386,16 +410,41 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         startScript(requester, ScriptScrollContent.SCROLL_SCRIPT_NAME);
     }
 
+    private final RedstoneEdge redstoneEdge = new RedstoneEdge();
+
     /**
-     * Loads {@code scriptName} from this controller's script folder (creating the folder and seeding
-     * it with {@link SampleScripts#ALL} if missing) and runs it. No-op (besides a log line) if a
-     * script is already running.
+     * The GUI-free run path (issue #7): a rising redstone edge runs the scroll slotted in the
+     * controller, a falling edge stops the running script. Called from
+     * DroneControllerBlock#neighborChanged on the server.
+     */
+    public void onNeighborSignalChange(boolean powered) {
+        switch (redstoneEdge.update(powered)) {
+            case RISING -> {
+                appendLog("[redstone] signal on");
+                startScript(null, ScriptId.CONTROLLER_ID);
+            }
+            case FALLING -> {
+                if (scriptRunner != null) {
+                    scriptRunner.stop();
+                    appendLog("[redstone] signal off - stop requested");
+                }
+            }
+            case NONE -> { }
+        }
+    }
+
+    /**
+     * Resolves {@code scriptName} (controller slot, chest scroll, or file) and runs it. No-op
+     * (besides a log line) if a script is already running. {@code requester} may be null for the
+     * redstone path - log pushes then keep going to whoever viewed the screen last.
      */
     public void startScript(ServerPlayer requester, String scriptName) {
         if (!(level instanceof ServerLevel serverLevel)) {
             return;
         }
-        viewingPlayerUuid = requester.getUUID();
+        if (requester != null) {
+            viewingPlayerUuid = requester.getUUID();
+        }
         if (scriptRunner != null && scriptRunner.getState() == DroneScriptRunner.State.RUNNING) {
             appendLog("[run] a script is already running");
             return;
@@ -408,23 +457,14 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         selectedScript = scriptName;
         setChanged();
 
-        String source;
-        if (ScriptId.isScrollId(scriptName)) {
-            Optional<String> scroll = ScriptChestLibrary.resolveScrollSource(serverLevel, getBlockPos(), scriptName);
-            if (scroll.isEmpty()) {
-                appendLog("[error] scroll " + scriptName + " is no longer in a library chest - reopen the screen to refresh the list");
-                return;
-            }
-            source = scroll.get();
-        } else {
-            try {
-                Path folder = controllerScriptFolder(serverLevel);
-                source = ScriptFileStore.load(folder.resolve(scriptName));
-            } catch (IOException e) {
-                appendLog("[error] could not read script '" + scriptName + "': " + e.getMessage());
-                return;
-            }
+        Optional<String> loaded = loadScriptSource(scriptName);
+        if (loaded.isEmpty()) {
+            appendLog(ScriptId.CONTROLLER_ID.equals(scriptName)
+                    ? "[error] no (written) scroll is slotted in the controller"
+                    : "[error] could not read script '" + scriptName + "' - missing scroll or file; reopen the screen to refresh the list");
+            return;
         }
+        String source = loaded.get();
 
         List<Stmt> program;
         try {
@@ -455,6 +495,56 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         }
         scriptRunner.stop();
         appendLog("[stop] stop requested");
+    }
+
+    /**
+     * Slots a scroll from the player's hand into the controller (jukebox-style, issue #7). Called
+     * from DroneControllerBlock#useItemOn on the server; consumes one scroll from the hand on
+     * success. Refuses (with a chat reason) when a scroll is already slotted - eject it first.
+     */
+    public void insertScroll(Player player, ItemStack heldScroll) {
+        if (player instanceof ServerPlayer serverPlayer) {
+            viewingPlayerUuid = serverPlayer.getUUID();
+        }
+        if (!slottedScroll.isEmpty()) {
+            player.sendSystemMessage(Component.literal("[controller] a scroll is already slotted - eject it from the screen first"));
+            return;
+        }
+        slottedScroll = heldScroll.copyWithCount(1);
+        heldScroll.shrink(1);
+        selectedScript = ScriptId.CONTROLLER_ID;
+        setChanged();
+        if (level instanceof ServerLevel serverLevel) {
+            refreshAvailableScripts(serverLevel);
+        }
+        pushLogSnapshot();
+        player.sendSystemMessage(Component.literal("[controller] scroll slotted - a redstone signal (or Run) starts it"));
+    }
+
+    /** DroneScreen's Eject button: pops the slotted scroll out on top of the controller. */
+    public void ejectScroll(ServerPlayer requester) {
+        viewingPlayerUuid = requester.getUUID();
+        if (slottedScroll.isEmpty()) {
+            requester.sendSystemMessage(Component.literal("[controller] no scroll is slotted"));
+            return;
+        }
+        BlockPos pos = getBlockPos();
+        Containers.dropItemStack(level, pos.getX() + 0.5, pos.getY() + 1.0, pos.getZ() + 0.5, slottedScroll);
+        slottedScroll = ItemStack.EMPTY;
+        setChanged();
+        if (level instanceof ServerLevel serverLevel) {
+            refreshAvailableScripts(serverLevel);
+        }
+        pushLogSnapshot();
+    }
+
+    /** Called from DroneControllerBlock#onRemove so a slotted scroll survives the block being broken. */
+    public void dropSlottedScroll() {
+        if (!slottedScroll.isEmpty() && level != null) {
+            BlockPos pos = getBlockPos();
+            Containers.dropItemStack(level, pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, slottedScroll);
+            slottedScroll = ItemStack.EMPTY;
+        }
     }
 
     /**
@@ -519,23 +609,26 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     /**
-     * DroneScreen's alias field: a human-readable label, so e.g. "North Farm" beats a bare
-     * coordinate. Also renames the script folder on disk to match (see
-     * ScriptFileStore#renameControllerFolder) so the saved scripts follow the new name instead of
-     * being left behind under the old one.
+     * The anvil-rename alias route (GUI reduction, issue #7): a controller ITEM renamed in an
+     * anvil carries a CUSTOM_NAME component, which lands here when the block is placed - the exact
+     * mechanism vanilla chests use for their names. Replaces the old DroneScreen alias field.
      */
-    public void setAlias(String alias) {
-        if (level instanceof ServerLevel serverLevel && !alias.equals(this.alias)) {
-            BlockPos pos = getBlockPos();
-            try {
-                ScriptFileStore.renameControllerFolder(scriptsDir(serverLevel), this.alias, alias, pos.getX(), pos.getY(), pos.getZ());
-            } catch (IOException e) {
-                MicraDrone.LOGGER.error("could not rename script folder for {}", pos, e);
-            }
+    @Override
+    protected void applyImplicitComponents(BlockEntity.DataComponentInput componentInput) {
+        super.applyImplicitComponents(componentInput);
+        Component name = componentInput.get(DataComponents.CUSTOM_NAME);
+        if (name != null) {
+            alias = name.getString();
         }
-        this.alias = alias;
-        setChanged();
-        pushLogSnapshot();
+    }
+
+    /** The reverse of {@link #applyImplicitComponents}, for if this block ever drops as a named item. */
+    @Override
+    protected void collectImplicitComponents(DataComponentMap.Builder components) {
+        super.collectImplicitComponents(components);
+        if (!alias.isEmpty()) {
+            components.set(DataComponents.CUSTOM_NAME, Component.literal(alias));
+        }
     }
 
     /**
@@ -551,20 +644,15 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     private void refreshAvailableScripts(ServerLevel level) {
-        try {
-            Path folder = controllerScriptFolder(level);
-            List<ScriptEntry> entries = new ArrayList<>();
-            ScriptFileStore.listScriptsWithDescriptions(folder)
-                    .forEach((name, description) -> entries.add(new ScriptEntry(name, name, description)));
-            entries.addAll(ScriptChestLibrary.listScrolls(level, getBlockPos()));
-            if (!entries.isEmpty()) {
-                availableScripts = List.copyOf(entries);
-                if (availableScripts.stream().noneMatch(entry -> entry.id().equals(selectedScript))) {
-                    selectedScript = availableScripts.get(0).id();
-                }
-            }
-        } catch (IOException e) {
-            MicraDrone.LOGGER.error("could not list scripts for {}", getBlockPos(), e);
+        List<ScriptEntry> entries = new ArrayList<>();
+        ScriptChestLibrary.scrollSource(slottedScroll).ifPresent(source -> {
+            String name = slottedScroll.getHoverName().getString();
+            entries.add(new ScriptEntry(ScriptId.CONTROLLER_ID, name, ScriptFileStore.describeScript(source, name)));
+        });
+        entries.addAll(ScriptChestLibrary.listScrolls(level, getBlockPos()));
+        availableScripts = List.copyOf(entries);
+        if (!entries.isEmpty() && entries.stream().noneMatch(entry -> entry.id().equals(selectedScript))) {
+            selectedScript = entries.get(0).id();
         }
     }
 
@@ -624,7 +712,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             pointsByCrop.put(crop, pointsTag.getLong(crop));
         }
         alias = tag.getString("Alias");
-        selectedScript = tag.contains("SelectedScript") ? tag.getString("SelectedScript") : ScriptFileStore.DEFAULT_SCRIPT_NAME;
+        selectedScript = tag.contains("SelectedScript") ? tag.getString("SelectedScript") : ScriptId.CONTROLLER_ID;
         unlockedCrops.clear();
         unlockedCrops.add("wheat");
         ListTag unlockedTag = tag.getList("UnlockedCrops", Tag.TAG_STRING);
@@ -632,6 +720,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             unlockedCrops.add(t.getAsString());
         }
         droneEntityUuid = tag.hasUUID("DroneEntityUuid") ? tag.getUUID("DroneEntityUuid") : null;
+        slottedScroll = tag.contains("SlottedScroll")
+                ? ItemStack.parseOptional(registries, tag.getCompound("SlottedScroll"))
+                : ItemStack.EMPTY;
     }
 
     @Override
@@ -649,6 +740,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         tag.put("UnlockedCrops", unlockedTag);
         if (droneEntityUuid != null) {
             tag.putUUID("DroneEntityUuid", droneEntityUuid);
+        }
+        if (!slottedScroll.isEmpty()) {
+            tag.put("SlottedScroll", slottedScroll.save(registries));
         }
     }
 }

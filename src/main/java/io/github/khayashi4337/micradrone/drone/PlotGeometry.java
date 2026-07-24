@@ -20,6 +20,16 @@ final class PlotGeometry {
         return new int[]{dirX * (1 + gx), dirZ * (1 + gy)};
     }
 
+    /**
+     * The controller and its corner marker span a square; these are the offsets (from the
+     * controller) of the OTHER two vertices of that square - the designated spots for script
+     * library containers (issue #7). {@code markerDx/markerDz} is the marker's offset from the
+     * controller. Order is deterministic: the same-X-as-marker corner first.
+     */
+    static int[][] remainingCornerOffsets(int markerDx, int markerDz) {
+        return new int[][]{{markerDx, 0}, {0, markerDz}};
+    }
+
     /** Every {dx, dz} ground offset in a worldSize x worldSize plot, in no particular order. */
     static List<int[]> allGroundOffsets(int dirX, int dirZ, int worldSize) {
         List<int[]> offsets = new ArrayList<>(worldSize * worldSize);

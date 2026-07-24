@@ -15,15 +15,22 @@ import net.minecraft.world.item.WritableBookItem;
  * pages never "sign"/lock into a {@code WrittenBookItem}, so it stays rewritable forever, which is
  * exactly the behavior the issue asked for.
  * <p>
- * All the scroll-specific behavior when used on a {@link DroneControllerBlockEntity} lives on
- * {@link DroneControllerBlock#useItemOn} instead of an override here - see that method's comment for
- * why an {@code Item#useOn} override on this class would never actually be reached. Used anywhere
- * else (including empty air), this item behaves as a plain {@code WritableBookItem}: right-clicking
- * opens the book-and-quill edit screen.
+ * Block-facing behavior: slotting into a controller is {@link DroneControllerBlock#useItemOn}, and
+ * the enchanting-table inscription (issue #8) is entirely event-driven - see
+ * {@code EnchantTableWatcher} in the client package: dropping a blank scroll into the vanilla
+ * enchanting table's own item slot (the table's normal drag-and-drop GUI, opened completely
+ * normally, no interception on the click itself) opens a sample picker in place of it. Used
+ * anywhere else (including empty air), this item behaves as a plain {@code WritableBookItem}:
+ * right-clicking opens the book-and-quill edit screen.
  */
 public class ScriptScrollItem extends WritableBookItem {
     public ScriptScrollItem(Properties properties) {
         super(properties);
+    }
+
+    /** True for a {@code ScriptScrollItem} with no written content yet - the enchanting table's trigger condition. */
+    public static boolean isBlank(ItemStack stack) {
+        return stack.getItem() instanceof ScriptScrollItem && ScriptChestLibrary.scrollSource(stack).isEmpty();
     }
 
     @Override
