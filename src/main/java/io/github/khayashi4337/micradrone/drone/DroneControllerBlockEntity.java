@@ -36,6 +36,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.LevelResource;
@@ -618,8 +619,21 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         int tick = level.getServer().getTickCount();
         be.pacedActionQueue.tick(tick);
         be.maybePushDebugState();
+        be.syncActiveBlockState(level, pos, state);
         if (be.plotConfirmed && tick % GROWTH_BOOST_INTERVAL_TICKS == 0) {
             new LiveFarmBlockAccess(level, pos, be).boostGrowth();
+        }
+    }
+
+    /**
+     * Docked/active texture toggle (see {@link DroneControllerBlock#ACTIVE}) - written only when it
+     * actually changes, same "diff before you write" discipline as {@link #maybePushDebugState},
+     * so an idle controller costs nothing beyond the state comparison every tick.
+     */
+    private void syncActiveBlockState(Level level, BlockPos pos, BlockState state) {
+        boolean running = scriptRunner != null && scriptRunner.getState() == DroneScriptRunner.State.RUNNING;
+        if (state.getValue(DroneControllerBlock.ACTIVE) != running) {
+            level.setBlock(pos, state.setValue(DroneControllerBlock.ACTIVE, running), Block.UPDATE_CLIENTS);
         }
     }
 
