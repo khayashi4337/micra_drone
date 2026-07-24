@@ -37,15 +37,20 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.Filterable;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.entity.animal.allay.Allay;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.WritableBookContent;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.material.MapColor;
@@ -57,6 +62,7 @@ import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
 import net.neoforged.neoforge.event.entity.EntityAttributeCreationEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
@@ -167,6 +173,43 @@ public class MicraDrone {
             event.accept(CORNER_MARKER_ITEM);
             event.accept(SCRIPT_SCROLL_ITEM);
         }
+    }
+
+    /**
+     * Enchanting-table scroll inscription trigger (issue #8). Fires on both sides, once per hand,
+     * BEFORE vanilla's own onItemUseFirst/useWithoutItem/useOn dispatch even starts (see the
+     * RightClickBlock javadoc) - the earliest point a mod can intervene. Checking both of the
+     * player's hands directly (rather than relying on {@code event.getHand()}, which only reports
+     * whichever hand this particular firing is for) means it doesn't matter which hand holds the
+     * blank scroll; only handling the MAIN_HAND firing is enough, since a cancellation here stops
+     * the click before vanilla's own off-hand retry would ever run. Replaces an earlier
+     * ScriptScrollItem#onItemUseFirst override that only checked the clicked hand's own item and
+     * missed the case where the scroll sat in the other hand while the click's own hand opened the
+     * vanilla enchanting menu first (real-machine-tested and confirmed as the actual failure mode).
+     */
+    @SubscribeEvent
+    public void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
+        if (event.getHand() != InteractionHand.MAIN_HAND) {
+            return;
+        }
+        Level level = event.getLevel();
+        if (!level.getBlockState(event.getPos()).is(Blocks.ENCHANTING_TABLE)) {
+            return;
+        }
+        Player player = event.getEntity();
+        InteractionHand blankScrollHand;
+        if (ScriptScrollItem.isBlank(player.getMainHandItem())) {
+            blankScrollHand = InteractionHand.MAIN_HAND;
+        } else if (ScriptScrollItem.isBlank(player.getOffhandItem())) {
+            blankScrollHand = InteractionHand.OFF_HAND;
+        } else {
+            return;
+        }
+        if (level.isClientSide) {
+            MicraDroneClient.openEnchantScrollScreen(event.getPos(), blankScrollHand);
+        }
+        event.setCanceled(true);
+        event.setCancellationResult(InteractionResult.sidedSuccess(level.isClientSide));
     }
 
     @SubscribeEvent
@@ -287,7 +330,7 @@ public class MicraDrone {
     // sender's blank scroll - all real logic lives in ScrollEnchanter.
     private static void handleEnchantScroll(EnchantScrollPayload payload, IPayloadContext context) {
         if (context.player() instanceof ServerPlayer serverPlayer) {
-            ScrollEnchanter.enchant(serverPlayer, payload.tablePos(), payload.sampleIndex());
+            ScrollEnchanter.enchant(serverPlayer, payload.tablePos(), payload.sampleIndex(), payload.mainHand());
         }
     }
 

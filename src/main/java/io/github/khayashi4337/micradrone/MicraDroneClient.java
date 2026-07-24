@@ -7,7 +7,6 @@ import io.github.khayashi4337.micradrone.client.EnchantScrollScreen;
 import io.github.khayashi4337.micradrone.client.IdeScreen;
 import io.github.khayashi4337.micradrone.client.ShopScreen;
 import io.github.khayashi4337.micradrone.drone.ScriptId;
-import io.github.khayashi4337.micradrone.drone.ScriptScrollItem;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
@@ -17,20 +16,13 @@ import net.minecraft.client.model.geom.ModelLayerLocation;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.world.inventory.ContainerListener;
-import net.minecraft.world.inventory.EnchantmentMenu;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.InteractionHand;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.EntityRenderersEvent;
-import net.neoforged.neoforge.common.NeoForge;
-import net.neoforged.neoforge.event.entity.player.PlayerContainerEvent;
-import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 // This class will not load on dedicated servers. Accessing client side code from here is safe.
@@ -41,64 +33,7 @@ public class MicraDroneClient {
     public static final ModelLayerLocation DRONE_MODEL_LAYER =
             new ModelLayerLocation(ResourceLocation.fromNamespaceAndPath(MicraDrone.MODID, "drone"), "main");
 
-    /**
-     * The enchanting table this player most recently right-clicked (issue #8), remembered just long
-     * enough to know which table a subsequently-opened {@link EnchantmentMenu} belongs to - the menu
-     * itself doesn't expose its block position. Single field: only one local player exists client-side.
-     */
-    private static BlockPos pendingEnchantTablePos;
-
     public MicraDroneClient() {
-        // NeoForge.EVENT_BUS (game events, e.g. PlayerInteractEvent/PlayerContainerEvent below) is
-        // separate from the mod bus the class-level @EventBusSubscriber above wires up (FML
-        // lifecycle/client-setup events) - same split MicraDrone itself uses for its own game-event
-        // handlers, see its constructor.
-        NeoForge.EVENT_BUS.register(this);
-    }
-
-    /**
-     * Remembers which enchanting table the player is right-clicking (issue #8) so the
-     * {@link #onContainerOpen} handler below knows which table the vanilla menu that opens right
-     * after belongs to - vanilla's own click handling is left completely alone here (no
-     * cancellation): the player drags their blank scroll into the table's own item slot exactly
-     * like any other enchant-table use, matching how the table already works instead of requiring a
-     * separate hold-then-click gesture (real-machine feedback: the latter didn't match what players
-     * expect from an enchanting table at all).
-     */
-    @SubscribeEvent
-    public void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
-        if (event.getLevel().getBlockState(event.getPos()).is(Blocks.ENCHANTING_TABLE)) {
-            pendingEnchantTablePos = event.getPos();
-        }
-    }
-
-    /**
-     * The actual trigger (issue #8): when the enchanting menu that just opened is the one at
-     * {@link #pendingEnchantTablePos}, watch its item slot (slot 0, {@link EnchantmentMenu}'s
-     * layout) for a blank script scroll landing in it - the moment a player drops one in, same as
-     * dropping in any other enchant target, opens the sample picker. A one-shot listener: it
-     * unregisters itself the instant it fires, so it neither re-opens the picker on every later slot
-     * change nor lingers once its job is done.
-     */
-    @SubscribeEvent
-    public void onContainerOpen(PlayerContainerEvent.Open event) {
-        BlockPos tablePos = pendingEnchantTablePos;
-        if (tablePos == null || !(event.getContainer() instanceof EnchantmentMenu menu)) {
-            return;
-        }
-        menu.addSlotListener(new ContainerListener() {
-            @Override
-            public void slotChanged(AbstractContainerMenu changedMenu, int slotIndex, ItemStack stack) {
-                if (slotIndex == 0 && ScriptScrollItem.isBlank(stack)) {
-                    changedMenu.removeSlotListener(this);
-                    openEnchantScrollScreen(tablePos);
-                }
-            }
-
-            @Override
-            public void dataChanged(AbstractContainerMenu changedMenu, int dataSlotIndex, int value) {
-            }
-        });
     }
 
     @SubscribeEvent
@@ -133,9 +68,9 @@ public class MicraDroneClient {
         Minecraft.getInstance().setScreen(new ShopScreen(pos));
     }
 
-    /** Called from {@link #onContainerOpen} once a blank scroll lands in the enchanting table's item slot. */
-    public static void openEnchantScrollScreen(BlockPos tablePos) {
-        Minecraft.getInstance().setScreen(new EnchantScrollScreen(tablePos));
+    /** Called from ScriptScrollItem's client-side onItemUseFirst branch (blank scroll on an enchanting table). */
+    public static void openEnchantScrollScreen(BlockPos tablePos, InteractionHand hand) {
+        Minecraft.getInstance().setScreen(new EnchantScrollScreen(tablePos, hand));
     }
 
     /** Registered as the DroneLogPayload handler in MicraDrone's RegisterPayloadHandlersEvent listener. */

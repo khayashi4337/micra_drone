@@ -10,16 +10,17 @@ import net.minecraft.resources.ResourceLocation;
 
 /**
  * C2S: inscribe the {@code SampleCatalog} entry at {@code sampleIndex} onto the blank script
- * scroll sitting in the sender's currently-open enchanting table menu (item slot), paid for at
- * the table at {@code tablePos}. Sent by {@code EnchantScrollScreen}; fully re-validated
- * server-side by {@code ScrollEnchanter} - see issue #8.
+ * scroll the sender holds (main or off hand), paid for at the enchanting table at
+ * {@code tablePos}. Sent by {@code EnchantScrollScreen}; fully re-validated server-side by
+ * {@code ScrollEnchanter} - see issue #8.
  */
-public record EnchantScrollPayload(BlockPos tablePos, int sampleIndex) implements CustomPacketPayload {
+public record EnchantScrollPayload(BlockPos tablePos, int sampleIndex, boolean mainHand) implements CustomPacketPayload {
     public static final Type<EnchantScrollPayload> TYPE =
             new Type<>(ResourceLocation.fromNamespaceAndPath(MicraDrone.MODID, "enchant_scroll"));
     public static final StreamCodec<ByteBuf, EnchantScrollPayload> STREAM_CODEC = StreamCodec.composite(
             BlockPos.STREAM_CODEC, EnchantScrollPayload::tablePos,
             ByteBufCodecs.VAR_INT, EnchantScrollPayload::sampleIndex,
+            ByteBufCodecs.BOOL, EnchantScrollPayload::mainHand,
             EnchantScrollPayload::new);
 
     @Override
