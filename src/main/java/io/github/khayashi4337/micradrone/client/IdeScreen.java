@@ -2,37 +2,51 @@ package io.github.khayashi4337.micradrone.client;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
 import io.github.khayashi4337.micradrone.drone.net.DebugCommandPayload;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
+import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestScriptSourcePayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.SaveScriptPayload;
+import io.github.khayashi4337.micradrone.drone.net.ScriptEntry;
+import io.github.khayashi4337.micradrone.drone.net.SelectScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.SetBreakpointsPayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.MultiLineEditBox;
+import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
- * Fullscreen script IDE (issue #6) - since issue #8 the controller's DEFAULT screen (right-click
- * opens it straight onto the slotted scroll; DroneScreen's Edit button opens other scripts here
- * too): the left half is a
- * {@link MultiLineEditBox} editor for one of the controller's scripts; the right half simply IS
- * the real field, seen from straight above - the game's own camera hovers over the plot
- * ({@link IdeCameraController}, 林さん's "float the viewpoint" idea) and this screen skips the
- * vanilla background blur/darkening so the normally-rendered world shows through. Hit Save &amp;
- * Run and watch the real drone work while you edit. Earlier versions also had a 2D tile view and
- * a dry-run simulator here; both were removed at 林さん's request once the real camera proved out
- * (see git history of this file to resurrect them).
+ * Fullscreen script IDE (issue #6) - the controller's ONLY screen (GUI-reduction follow-up
+ * dissolved the separate list/log screen, {@code DroneScreen}, into this one's right half as a
+ * toggleable "list mode" - see {@link #listMode}). Left half is a {@link MultiLineEditBox} editor
+ * for one of the controller's scripts; the right half is normally the real field seen from
+ * straight above (the game's own camera hovers over the plot, {@link IdeCameraController}, 林さん's
+ * "float the viewpoint" idea) - pressing List swaps it for the script picker (script list +
+ * description + log + points, exactly what {@code DroneScreen} used to show on its own) instead,
+ * since hiding the live view briefly to pick a file doesn't hurt the experience (林さん's call).
+ * Picking a script there sends {@link SelectScriptPayload}, switches the editor to it, and closes
+ * list mode automatically; pressing List again with nothing picked just closes it.
+ *
+ * <p>Selection IS the run target now: the jukebox-style item slot that used to decide what a
+ * redstone signal runs is gone (GUI reduction follow-up) - a lever now runs whichever script was
+ * selected last. Right-clicking the controller with an empty hand opens this screen without yet
+ * knowing which script that is (there's no fixed slot id to assume anymore); {@link #updateLog}
+ * resolves it from the server's answer the first time one arrives (see {@link #scriptId}'s doc).
  *
  * <p>Debugger (issue #6): the editor gutter shows line numbers - click one to toggle a
  * breakpoint (red). The line about to execute is highlighted yellow, live. Pause/Resume, Step,
@@ -52,19 +66,34 @@ public class IdeScreen extends Screen {
     private static final int GUTTER_WIDTH = 20;
     /** How often (client ticks) the plot size/direction is re-resolved from the blocks. */
     private static final int RESCAN_INTERVAL_TICKS = 20;
+    // List-mode panel (right half) sub-region heights, top to bottom: points text, script list,
+    // description, then log fills whatever's left.
+    private static final int POINTS_HEIGHT = 20;
+    private static final int LIST_HEIGHT = 90;
+    private static final int DESCRIPTION_HEIGHT = 28;
 
     private final BlockPos pos;
-    private final String scriptId;
-    /** Human-facing name for the heading; for chest scrolls this is the item's (anvil-renamable) name. */
-    private final String displayName;
     private final IdeCameraController cameraController;
+
+    /**
+     * Empty means "not resolved yet" - right-clicking the controller with an empty hand no longer
+     * has a fixed id to open on (the jukebox slot is gone), so this starts blank and
+     * {@link #updateLog} fills it in from the server's {@code selectedScript} the first time a
+     * {@code DroneLogPayload} arrives. Picking an entry in list mode resolves it immediately
+     * instead, since the entry's own id/name are already known at click time.
+     */
+    private String scriptId;
+    /** Human-facing name for the heading; mutable for the same reason as {@link #scriptId}. */
+    private String displayName;
 
     private DebugEditBox editor;
     private Button pauseResumeButton;
+    private Button listButton;
 
-    // Survive init() re-runs on window resize: the editor widget is rebuilt, its text is not.
+    // Survive init() re-runs on window resize/list-mode toggles: widgets are rebuilt, this isn't.
     private String editorText = "";
     private boolean sourceRequested = false;
+    private boolean logRequested = false;
 
     // Debugger state, driven by DebugStatePayload; breakpoints are the client's working copy.
     private final Set<Integer> breakpoints = new HashSet<>();
@@ -73,6 +102,17 @@ public class IdeScreen extends Screen {
     // Gutter geometry, computed in init() and reused by render()/mouseClicked().
     private int editorTop;
     private int editorHeight;
+
+    // List-mode state, refreshed from every DroneLogPayload regardless of whether list mode is
+    // currently showing, so it's ready the instant the player opens it.
+    private boolean listMode = false;
+    private List<ScriptEntry> availableScripts = List.of();
+    private String selectedScriptFromServer = "";
+    private List<String> logLines = List.of();
+    private Map<String, Long> pointsByCrop = Map.of();
+    private ScriptListWidget scriptList;
+    private MultiLineEditBox descriptionBox;
+    private MultiLineEditBox logBox;
 
     private CornerMarkerScan.PlotBounds bounds = new CornerMarkerScan.PlotBounds(
             DroneControllerBlockEntity.DEFAULT_WORLD_SIZE, 1, 1, false);
@@ -132,21 +172,86 @@ public class IdeScreen extends Screen {
                     PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptId));
                 })
                 .bounds(leftX + 2 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
-        // "Scripts" opens the list/log screen (DroneScreen) - since issue #8 the IDE is the
-        // controller's default screen, so this is the way IN to the list, and Esc closes to the game.
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.scripts"),
-                        b -> this.minecraft.setScreen(new DroneScreen(pos)))
+        listButton = addRenderableWidget(Button.builder(listButtonLabel(), b -> toggleListMode())
                 .bounds(leftX + 3 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
+
+        if (listMode) {
+            initListModeWidgets(listPanelX(), listPanelWidth());
+        }
 
         if (this.minecraft != null && this.minecraft.level != null) {
             rescanPlot();
             cameraController.update(this.minecraft, bounds); // no first-frame flash from the player's own view
         }
 
-        if (!sourceRequested) {
+        if (!logRequested) {
+            logRequested = true;
+            PacketDistributor.sendToServer(new RequestLogPayload(pos));
+        }
+        if (!sourceRequested && !scriptId.isEmpty()) {
             sourceRequested = true;
             PacketDistributor.sendToServer(new RequestScriptSourcePayload(pos, scriptId));
         }
+    }
+
+    /** Left edge of the right-half list-mode panel - shared by {@link #init()} and rendering so they never drift apart. */
+    private int listPanelX() {
+        return MARGIN + (this.width / 2 - MARGIN - ROW_GAP) + ROW_GAP;
+    }
+
+    private int listPanelWidth() {
+        return this.width - MARGIN - listPanelX();
+    }
+
+    /** Builds the right-half script-picker panel: points text (drawn in {@link #render}), list, description, log. */
+    private void initListModeWidgets(int rightX, int rightW) {
+        int y = editorTop + POINTS_HEIGHT;
+        scriptList = new ScriptListWidget(Minecraft.getInstance(), rightW, LIST_HEIGHT, y, 16);
+        scriptList.setX(rightX);
+        scriptList.replaceEntries(availableScripts);
+        scriptList.selectId(scriptId);
+        addRenderableWidget(scriptList);
+
+        y += LIST_HEIGHT + ROW_GAP;
+        descriptionBox = new MultiLineEditBox(this.font, rightX, y, rightW, DESCRIPTION_HEIGHT,
+                Component.translatable("gui.micradrone.drone_screen.script_description_placeholder"),
+                Component.translatable("gui.micradrone.drone_screen.script_description"));
+        descriptionBox.setValue(scriptList.selectedDescription());
+        addRenderableWidget(descriptionBox);
+
+        y += DESCRIPTION_HEIGHT + ROW_GAP;
+        int logHeight = editorTop + editorHeight - y;
+        logBox = new MultiLineEditBox(this.font, rightX, y, rightW, logHeight,
+                Component.translatable("gui.micradrone.drone_screen.log_placeholder"),
+                Component.translatable("gui.micradrone.drone_screen.log"));
+        logBox.setValue(String.join("\n", logLines));
+        addRenderableWidget(logBox);
+    }
+
+    private void toggleListMode() {
+        listMode = !listMode;
+        rebuildWidgets();
+    }
+
+    private Component listButtonLabel() {
+        return Component.translatable(listMode
+                ? "gui.micradrone.ide_screen.list_close" : "gui.micradrone.ide_screen.list_open");
+    }
+
+    /**
+     * Switches the editor to {@code entry} (list-mode click): tells the server it's now selected,
+     * adopts its id/name locally right away (no need to wait for a round trip - the list already
+     * has them), reloads the editor from it, and closes list mode.
+     */
+    private void selectAndEdit(ScriptEntry entry) {
+        PacketDistributor.sendToServer(new SelectScriptPayload(pos, entry.id()));
+        scriptId = entry.id();
+        displayName = entry.displayName();
+        editorText = "";
+        sourceRequested = true;
+        PacketDistributor.sendToServer(new RequestScriptSourcePayload(pos, scriptId));
+        listMode = false;
+        rebuildWidgets();
     }
 
     /**
@@ -166,6 +271,47 @@ public class IdeScreen extends Screen {
         if (sourcePos.equals(this.pos) && sourceScriptName.equals(this.scriptId)) {
             editorText = source;
             editor.setValue(source);
+        }
+    }
+
+    /**
+     * Called from {@code MicraDroneClient} on every {@code DroneLogPayload} (list refresh, log
+     * lines, points) - the same snapshot {@code DroneScreen} used to consume on its own. The first
+     * one to arrive after opening on an unresolved {@link #scriptId} (right-click with an empty
+     * hand - no fixed slot id exists anymore) resolves it to the server's current selection.
+     */
+    public void updateLog(BlockPos sourcePos, List<String> lines, Map<String, Long> newPointsByCrop,
+            List<ScriptEntry> scripts, String selectedScript, String alias) {
+        if (!sourcePos.equals(this.pos)) {
+            return;
+        }
+        logLines = lines;
+        pointsByCrop = newPointsByCrop;
+        selectedScriptFromServer = selectedScript;
+        if (!scripts.isEmpty()) {
+            availableScripts = scripts;
+        }
+
+        if (scriptId.isEmpty() && !selectedScriptFromServer.isEmpty()) {
+            scriptId = selectedScriptFromServer;
+            displayName = availableScripts.stream()
+                    .filter(entry -> entry.id().equals(scriptId))
+                    .findFirst()
+                    .map(ScriptEntry::displayName)
+                    .orElse(scriptId);
+            sourceRequested = true;
+            PacketDistributor.sendToServer(new RequestScriptSourcePayload(pos, scriptId));
+        }
+
+        if (listMode && scriptList != null) {
+            scriptList.replaceEntries(availableScripts);
+            scriptList.selectId(scriptId);
+            if (descriptionBox != null) {
+                descriptionBox.setValue(scriptList.selectedDescription());
+            }
+            if (logBox != null) {
+                logBox.setValue(String.join("\n", logLines));
+            }
         }
     }
 
@@ -230,13 +376,15 @@ public class IdeScreen extends Screen {
         if (tickCounter % RESCAN_INTERVAL_TICKS == 0) {
             rescanPlot();
         }
-        // Every tick: follows corner-marker changes, FOV changes, and window resizes.
+        // Every tick: follows corner-marker changes, FOV changes, and window resizes. Harmless to
+        // keep driving while list mode hides it behind the opaque panel fill.
         cameraController.update(this.minecraft, bounds);
     }
 
     /**
-     * The vanilla blur + dark overlay would hide the whole point of this screen - skip them so
-     * the world (rendered from the overhead camera) shows through crisply.
+     * The vanilla blur + dark overlay would hide the whole point of the camera view - skip it so
+     * the world shows through crisply. List mode instead paints its own opaque panel over the
+     * right half (see {@link #render}), since the picker needs a readable background.
      */
     @Override
     public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
@@ -253,11 +401,34 @@ public class IdeScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        if (listMode) {
+            guiGraphics.fill(listPanelX() - ROW_GAP, 0, this.width, this.height, 0xE0101010);
+        }
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         guiGraphics.drawCenteredString(this.font,
                 Component.translatable("gui.micradrone.ide_screen.heading", displayName),
                 this.width / 2, MARGIN, 0xFFFFFF);
         renderGutter(guiGraphics);
+        if (listMode) {
+            renderPointsLines(guiGraphics);
+        }
+    }
+
+    private void renderPointsLines(GuiGraphics guiGraphics) {
+        int rightX = listPanelX();
+        int rightW = listPanelWidth();
+        int y = editorTop;
+        for (Map.Entry<String, Long> entry : new TreeMap<>(pointsByCrop).entrySet()) {
+            guiGraphics.drawString(this.font, cropDisplayName(entry.getKey()) + ": " + entry.getValue(),
+                    rightX + rightW / 2 - this.font.width(cropDisplayName(entry.getKey()) + ": " + entry.getValue()) / 2,
+                    y, 0xFFFFFF);
+            y += 9;
+        }
+    }
+
+    private static String cropDisplayName(String cropName) {
+        return cropName.isEmpty() ? cropName
+                : Character.toUpperCase(cropName.charAt(0)) + cropName.substring(1).toLowerCase(Locale.ROOT);
     }
 
     /** Line numbers + breakpoint dots, scrolled in sync with the editor text. */
@@ -283,5 +454,81 @@ public class IdeScreen extends Screen {
     @Override
     public boolean isPauseScreen() {
         return false;
+    }
+
+    /**
+     * Scrollable list of this controller's available scripts (library scrolls, plain text - the
+     * jukebox slot marker is gone with the slot itself). Selecting a row calls back into
+     * {@link #selectAndEdit}; server order is kept as-is (chest scrolls in chest/slot order).
+     */
+    private final class ScriptListWidget extends ObjectSelectionList<ScriptListWidget.Row> {
+        ScriptListWidget(Minecraft minecraft, int width, int height, int y, int itemHeight) {
+            super(minecraft, width, height, y, itemHeight);
+        }
+
+        void replaceEntries(List<ScriptEntry> entries) {
+            String previouslySelected = scriptId;
+            clearEntries();
+            entries.forEach(entry -> addEntry(new Row(entry)));
+            selectId(previouslySelected);
+            if (getSelected() == null && getItemCount() > 0) {
+                setSelected(getEntry(0));
+            }
+        }
+
+        void selectId(String id) {
+            for (int i = 0; i < getItemCount(); i++) {
+                Row row = getEntry(i);
+                if (row.entry.id().equals(id)) {
+                    setSelected(row);
+                    return;
+                }
+            }
+        }
+
+        String selectedDescription() {
+            Row selected = getSelected();
+            return selected != null ? selected.entry.description() : "";
+        }
+
+        @Override
+        public int getRowWidth() {
+            return this.width - 10;
+        }
+
+        final class Row extends ObjectSelectionList.Entry<Row> {
+            private final ScriptEntry entry;
+            private final Component label;
+
+            Row(ScriptEntry entry) {
+                this.entry = entry;
+                // ⚑ marks a scroll in a library chest; plain text is an on-disk file.
+                String name = entry.displayName();
+                this.label = Component.literal(entry.id().startsWith("scroll:") ? "⚑ " + name : name);
+            }
+
+            @Override
+            public Component getNarration() {
+                return Component.literal(entry.displayName() + ": " + entry.description());
+            }
+
+            @Override
+            public void render(GuiGraphics guiGraphics, int index, int top, int left, int width, int height,
+                    int mouseX, int mouseY, boolean hovering, float partialTick) {
+                guiGraphics.drawString(IdeScreen.this.font, label, left + 2, top + (height - 8) / 2, 0xFFFFFF);
+            }
+
+            @Override
+            public boolean mouseClicked(double mouseX, double mouseY, int button) {
+                ScriptListWidget.this.setSelected(this);
+                if (!this.entry.id().equals(IdeScreen.this.scriptId)) {
+                    IdeScreen.this.selectAndEdit(this.entry);
+                } else {
+                    IdeScreen.this.listMode = false;
+                    IdeScreen.this.rebuildWidgets();
+                }
+                return true;
+            }
+        }
     }
 }
