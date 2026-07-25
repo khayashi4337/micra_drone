@@ -18,12 +18,32 @@ own. Inspired by the Steam game
 - **A real (tiny) programming language** — variables, `if`/`elif`/`else`,
   `while`, `for i in range(...)`, comments, and a handful of drone commands
   (`move`, `till`, `plant`, `harvest`, `can_harvest`, `is_rotten`,
-  `get_points`, `print`, ...). Scripts are plain `.mdrone` text files you can
-  edit in any external editor — no in-game code editor required.
+  `get_points`, `print`, ...), plus perception commands that read the world
+  around the drone (`get_ground`, `get_block_above`, `get_time`,
+  `get_weather`, `get_biome`, `get_light`). Scripts are written on a
+  rewritable **Script Scroll** item, or in a full **in-game IDE** with a
+  live top-down camera view of your plot, a debugger (breakpoints,
+  step/step-out), and a script list.
 - **Claim a plot** — place a Drone Controller and a Corner Marker on a
-  diagonal to define a square farming area. Vanilla farmland inside it is
-  kept watered automatically, and crops grow faster than normal whenever the
-  plot is claimed, script running or not.
+  diagonal to define a square farming area. The controller can be embedded
+  flush with the farmland, or stood on the surface (the plot is
+  automatically detected one block below). Vanilla farmland inside the plot
+  is kept watered automatically, and crops grow faster than normal whenever
+  the plot is claimed, script running or not.
+- **Learn from the enchanting table** — right-click an enchanting table to
+  open its normal vanilla screen, then drag a blank Script Scroll into its
+  item slot: the screen switches to a picker offering starter scripts and a
+  full command reference, unlocked as you surround the table with more
+  bookshelves (exactly like vanilla enchanting), for a lapis lazuli cost.
+  You can also copy an already-written scroll sitting in a chest, shulker
+  box, or chiseled bookshelf around the table for a flat 1 lapis.
+- **A script library you can carry** — store scrolls in a chest, shulker
+  box, or chiseled bookshelf at the plot's other two corners and they show
+  up in the controller's script list automatically. Run the selected script
+  with a redstone signal (a lever, for example) — no GUI required during
+  normal play.
+- **The controller shows what it's doing** — a docked look while idle, an
+  active look while a script is running, and it faces whoever placed it.
 - **Wheat, carrot, and pumpkin** — earn points per crop by harvesting, then
   spend them in an in-game shop (right-click the Corner Marker) to unlock
   carrot and pumpkin farming.
@@ -35,20 +55,24 @@ own. Inspired by the Steam game
 - **Advancements** — a dedicated advancement tab tracks obtaining the
   controller and marker, unlocking each crop, and harvest-count milestones
   (10 / 100 / 1000) per crop.
-- **Multiple scripts per controller, with a description** — pick from a
-  scrollable list of saved scripts by file name; the first `#` comment line
-  of the selected script shows as its description.
+- **Multiplayer-friendly** — several players can watch the same
+  controller's log/debugger output at once, and harvest achievements are
+  credited to whoever started the run.
 
 ### Getting started
 
 1. Craft a **Drone Controller** (4 iron ingots, 4 glass, 1 redstone) and a
    **Corner Marker** (4 gold ingots, 1 glass).
-2. Place the controller, then place the marker diagonally from it to size
-   your plot (or skip the marker for a default 5x5 area).
-3. Right-click the controller to open its screen: set an alias, pick a
-   script, hit **Run**. Click **Open Scripts Folder** to edit scripts in
-   your own editor, or **Help** to write out a full command reference.
-4. Right-click the Corner Marker to open the shop and spend earned points on
+2. Place the controller (on the surface or embedded flush with the ground —
+   your choice), then place the marker diagonally from it to size your plot
+   (or skip the marker for a default 5x5 area).
+3. Craft a blank **Script Scroll** (3 paper, 1 feather, 1 ink sac). Open a
+   nearby **enchanting table** and drag the scroll into its item slot to
+   learn a starter script or the full command reference.
+4. Right-click the controller to open the in-game **IDE** and start
+   editing/running the script. A redstone signal (a lever, for example)
+   next to the controller runs whatever script is currently selected.
+5. Right-click the Corner Marker to open the shop and spend earned points on
    new crops.
 
 Full command reference and playthrough notes: see the
