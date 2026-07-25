@@ -28,6 +28,7 @@ public final class SampleCatalog {
             new Sample("main", SampleScripts.MAIN, 0, 1),
             new Sample("move_square", SampleScripts.MOVE_SQUARE, 0, 1),
             new Sample("till_and_plant", SampleScripts.TILL_AND_PLANT, 3, 1),
+            new Sample("survey_plot", SampleScripts.SURVEY_PLOT, 6, 2),
             new Sample("harvest_when_ready", SampleScripts.HARVEST_WHEN_READY, 6, 2),
             new Sample("carrot_farm", SampleScripts.CARROT_FARM, 9, 2),
             new Sample("pumpkin_smart_harvest", SampleScripts.PUMPKIN_SMART_HARVEST, MAX_BOOKSHELVES, 3));

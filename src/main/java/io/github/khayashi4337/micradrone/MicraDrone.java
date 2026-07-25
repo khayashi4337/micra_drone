@@ -1,6 +1,5 @@
 package io.github.khayashi4337.micradrone;
 
-import java.util.List;
 import java.util.Set;
 
 import org.slf4j.Logger;
@@ -12,31 +11,27 @@ import io.github.khayashi4337.micradrone.drone.DroneControllerBlock;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
 import io.github.khayashi4337.micradrone.drone.DroneEntity;
 import io.github.khayashi4337.micradrone.drone.GiantPumpkinBlock;
-import io.github.khayashi4337.micradrone.drone.ScriptScrollContent;
 import io.github.khayashi4337.micradrone.drone.ScriptScrollItem;
 import io.github.khayashi4337.micradrone.drone.ScrollEnchanter;
 import io.github.khayashi4337.micradrone.drone.net.DebugCommandPayload;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
-import io.github.khayashi4337.micradrone.drone.net.EjectScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.EnchantScrollPayload;
-import io.github.khayashi4337.micradrone.drone.net.FillScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.PurchaseUnlockPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestScriptSourcePayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestShopStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
-import io.github.khayashi4337.micradrone.drone.net.RunScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.SaveScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
+import io.github.khayashi4337.micradrone.drone.net.SelectScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.SetBreakpointsPayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
-import net.minecraft.core.component.DataComponents;
+import io.github.khayashi4337.micradrone.drone.net.StopViewingPayload;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.Registries;
-import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.server.network.Filterable;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.entity.animal.allay.Allay;
@@ -44,8 +39,6 @@ import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.component.WritableBookContent;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.material.MapColor;
@@ -181,24 +174,42 @@ public class MicraDrone {
         registrar.playToServer(RequestLogPayload.TYPE, RequestLogPayload.STREAM_CODEC, MicraDrone::handleRequestLog);
         registrar.playToServer(PurchaseUnlockPayload.TYPE, PurchaseUnlockPayload.STREAM_CODEC, MicraDrone::handlePurchaseUnlock);
         registrar.playToServer(RequestShopStatePayload.TYPE, RequestShopStatePayload.STREAM_CODEC, MicraDrone::handleRequestShopState);
-        registrar.playToServer(FillScrollPayload.TYPE, FillScrollPayload.STREAM_CODEC, MicraDrone::handleFillScroll);
-        registrar.playToServer(RunScrollPayload.TYPE, RunScrollPayload.STREAM_CODEC, MicraDrone::handleRunScroll);
-        registrar.playToServer(EjectScrollPayload.TYPE, EjectScrollPayload.STREAM_CODEC, MicraDrone::handleEjectScroll);
         registrar.playToServer(EnchantScrollPayload.TYPE, EnchantScrollPayload.STREAM_CODEC, MicraDrone::handleEnchantScroll);
         registrar.playToServer(RequestScriptSourcePayload.TYPE, RequestScriptSourcePayload.STREAM_CODEC, MicraDrone::handleRequestScriptSource);
         registrar.playToServer(SaveScriptPayload.TYPE, SaveScriptPayload.STREAM_CODEC, MicraDrone::handleSaveScript);
+        registrar.playToServer(SelectScriptPayload.TYPE, SelectScriptPayload.STREAM_CODEC, MicraDrone::handleSelectScript);
         registrar.playToServer(SetBreakpointsPayload.TYPE, SetBreakpointsPayload.STREAM_CODEC, MicraDrone::handleSetBreakpoints);
         registrar.playToServer(DebugCommandPayload.TYPE, DebugCommandPayload.STREAM_CODEC, MicraDrone::handleDebugCommand);
+        registrar.playToServer(StopViewingPayload.TYPE, StopViewingPayload.STREAM_CODEC, MicraDrone::handleStopViewing);
         registrar.playToClient(DroneLogPayload.TYPE, DroneLogPayload.STREAM_CODEC, MicraDroneClient::handleDroneLog);
         registrar.playToClient(ShopStatePayload.TYPE, ShopStatePayload.STREAM_CODEC, MicraDroneClient::handleShopState);
         registrar.playToClient(ScriptSourcePayload.TYPE, ScriptSourcePayload.STREAM_CODEC, MicraDroneClient::handleScriptSource);
         registrar.playToClient(DebugStatePayload.TYPE, DebugStatePayload.STREAM_CODEC, MicraDroneClient::handleDebugState);
     }
 
+    /**
+     * How far (squared) a player may act on a controller, corner marker, or enchanting table
+     * through one of this mod's payloads. Every payload below carries a client-chosen BlockPos, and
+     * on a dedicated server nothing about that position is trustworthy - without this check a
+     * modified client could run scripts on, spend the points of, or eject the scroll from any
+     * controller in the world it knew the coordinates of. 12 blocks is well past vanilla's own ~4.5
+     * block reach on purpose: a screen stays open across a piston push or a teleport, so the bound
+     * only has to be tight enough to keep a player near the block they opened.
+     */
+    private static final double MAX_INTERACTION_DISTANCE_SQ = 144.0;
+
+    /** True if {@code player} is close enough to legitimately be acting on {@code pos}. */
+    private static boolean isInReach(ServerPlayer player, BlockPos pos) {
+        return player.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5)
+                <= MAX_INTERACTION_DISTANCE_SQ;
+    }
+
     // Payload handlers run on the main thread by default (PayloadRegistrar), so it's safe to touch
-    // the BlockEntity directly here.
+    // the BlockEntity directly here. They all resolve the block through the SENDER's own level, so
+    // a payload can never reach into another dimension; isInReach bounds it within that level.
     private static void handleRunScript(RunScriptPayload payload, IPayloadContext context) {
         if (context.player() instanceof ServerPlayer serverPlayer
+                && isInReach(serverPlayer, payload.pos())
                 && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
             be.startScript(serverPlayer, payload.scriptName());
         }
@@ -206,6 +217,7 @@ public class MicraDrone {
 
     private static void handleStopScript(StopScriptPayload payload, IPayloadContext context) {
         if (context.player() instanceof ServerPlayer serverPlayer
+                && isInReach(serverPlayer, payload.pos())
                 && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
             be.stopScript(serverPlayer);
         }
@@ -213,6 +225,7 @@ public class MicraDrone {
 
     private static void handleRequestLog(RequestLogPayload payload, IPayloadContext context) {
         if (context.player() instanceof ServerPlayer serverPlayer
+                && isInReach(serverPlayer, payload.pos())
                 && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
             be.sendLogSnapshotTo(serverPlayer);
         }
@@ -220,48 +233,48 @@ public class MicraDrone {
 
     private static void handlePurchaseUnlock(PurchaseUnlockPayload payload, IPayloadContext context) {
         if (context.player() instanceof ServerPlayer serverPlayer
+                && isInReach(serverPlayer, payload.pos())
                 && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
             be.purchaseUnlock(serverPlayer, payload.unlockId());
         }
     }
 
     // payload.pos() here is the corner marker the player right-clicked, not a controller - see
-    // DroneControllerBlockEntity#findByCornerMarker for the reverse-scan that resolves it.
+    // DroneControllerBlockEntity#findByCornerMarker for the reverse-scan that resolves it. The reach
+    // check is against the marker, which is what the player is actually standing at; its controller
+    // is legitimately up to MAX_MARKER_SCAN_DISTANCE away.
     private static void handleRequestShopState(RequestShopStatePayload payload, IPayloadContext context) {
-        if (context.player() instanceof ServerPlayer serverPlayer) {
+        if (context.player() instanceof ServerPlayer serverPlayer && isInReach(serverPlayer, payload.pos())) {
             DroneControllerBlockEntity.findByCornerMarker(serverPlayer.level(), payload.pos())
-                    .ifPresent(be -> be.sendShopStateTo(serverPlayer));
+                    .ifPresent(be -> {
+                        // Registered as a viewer so someone else's purchase updates this Shop screen too.
+                        be.addViewer(serverPlayer);
+                        be.sendShopStateTo(serverPlayer);
+                    });
         }
     }
 
-    // Sent by DroneScreen's "Copy Script -> Scroll" button (GitHub issue #1): writes scriptName's
-    // source onto the sender's held scroll. Always targets the main hand - see that button's design
-    // note on why this no longer offers an off-hand option. Reports failures to the player's chat
-    // (purchaseUnlock's existing pattern) since a silent no-op is exactly what caused the confusion
-    // that led to this redesign.
-    private static void handleFillScroll(FillScrollPayload payload, IPayloadContext context) {
+    // Any controller screen closing: stop pushing that controller's updates to this player. The
+    // Shop screen sends its corner marker's position, so both lookups are tried. Deliberately the
+    // one handler with no reach check: unregistering a viewer only ever removes the sender's own
+    // subscription, and refusing it because they drifted out of range would leak that subscription
+    // for the rest of the session - exactly what this payload exists to prevent.
+    private static void handleStopViewing(StopViewingPayload payload, IPayloadContext context) {
         if (!(context.player() instanceof ServerPlayer serverPlayer)) {
             return;
         }
-        ItemStack stack = serverPlayer.getMainHandItem();
-        if (!(stack.getItem() instanceof ScriptScrollItem)) {
-            serverPlayer.sendSystemMessage(Component.literal("[scroll] hold a script scroll in your main hand first"));
+        if (serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
+            be.removeViewer(serverPlayer);
             return;
         }
-        if (!(serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be)) {
-            return;
-        }
-        be.loadScriptSource(payload.scriptName()).ifPresent(source -> {
-            List<Filterable<String>> pages = ScriptScrollContent.splitIntoPages(source, WritableBookContent.PAGE_EDIT_LENGTH)
-                    .stream().map(Filterable::passThrough).toList();
-            stack.set(DataComponents.WRITABLE_BOOK_CONTENT, new WritableBookContent(pages));
-            serverPlayer.sendSystemMessage(Component.literal("[scroll] copied '" + payload.scriptName() + "' onto your scroll"));
-        });
+        DroneControllerBlockEntity.findByCornerMarker(serverPlayer.level(), payload.pos())
+                .ifPresent(be -> be.removeViewer(serverPlayer));
     }
 
     // IdeScreen opening (issue #6): fetch the selected script's source for the editor.
     private static void handleRequestScriptSource(RequestScriptSourcePayload payload, IPayloadContext context) {
         if (context.player() instanceof ServerPlayer serverPlayer
+                && isInReach(serverPlayer, payload.pos())
                 && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
             be.sendScriptSource(serverPlayer, payload.scriptName());
         }
@@ -270,30 +283,34 @@ public class MicraDrone {
     // IdeScreen's Save button (issue #6): write the edited source back to the script folder.
     private static void handleSaveScript(SaveScriptPayload payload, IPayloadContext context) {
         if (context.player() instanceof ServerPlayer serverPlayer
+                && isInReach(serverPlayer, payload.pos())
                 && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
             be.saveScript(serverPlayer, payload.scriptName(), payload.source());
         }
     }
 
-    // Controller slot (issue #7): DroneScreen's Eject button pops the slotted scroll back out.
-    private static void handleEjectScroll(EjectScrollPayload payload, IPayloadContext context) {
+    // IDE's script list (GUI reduction follow-up): clicking an entry just selects it.
+    private static void handleSelectScript(SelectScriptPayload payload, IPayloadContext context) {
         if (context.player() instanceof ServerPlayer serverPlayer
+                && isInReach(serverPlayer, payload.pos())
                 && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
-            be.ejectScroll(serverPlayer);
+            be.selectScript(serverPlayer, payload.scriptId());
         }
     }
 
     // Enchanting-table inscription (issue #8): re-validates and writes a catalog sample onto the
     // sender's blank scroll - all real logic lives in ScrollEnchanter.
     private static void handleEnchantScroll(EnchantScrollPayload payload, IPayloadContext context) {
-        if (context.player() instanceof ServerPlayer serverPlayer) {
-            ScrollEnchanter.enchant(serverPlayer, payload.tablePos(), payload.sampleIndex());
+        if (context.player() instanceof ServerPlayer serverPlayer && isInReach(serverPlayer, payload.tablePos())) {
+            ScrollEnchanter.enchant(serverPlayer, payload.tablePos(), payload.sampleIndex(),
+                    payload.bookshelfOffsetIndex(), payload.copySlot());
         }
     }
 
     // IDE debugger (issue #6): gutter clicks replace the whole breakpoint set.
     private static void handleSetBreakpoints(SetBreakpointsPayload payload, IPayloadContext context) {
         if (context.player() instanceof ServerPlayer serverPlayer
+                && isInReach(serverPlayer, payload.pos())
                 && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
             be.setBreakpoints(serverPlayer, Set.copyOf(payload.lines()));
         }
@@ -302,31 +319,9 @@ public class MicraDrone {
     // IDE debugger (issue #6): Pause/Resume/Step/Step Out buttons.
     private static void handleDebugCommand(DebugCommandPayload payload, IPayloadContext context) {
         if (context.player() instanceof ServerPlayer serverPlayer
+                && isInReach(serverPlayer, payload.pos())
                 && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
             be.debugCommand(serverPlayer, payload.command());
         }
-    }
-
-    // Sent by DroneScreen's "Run Scroll" button (GitHub issue #1): joins the held scroll's pages and
-    // runs them on the controller at payload.pos(), same as picking a saved script and hitting Run.
-    private static void handleRunScroll(RunScrollPayload payload, IPayloadContext context) {
-        if (!(context.player() instanceof ServerPlayer serverPlayer)) {
-            return;
-        }
-        ItemStack stack = serverPlayer.getMainHandItem();
-        if (!(stack.getItem() instanceof ScriptScrollItem)) {
-            serverPlayer.sendSystemMessage(Component.literal("[scroll] hold a script scroll in your main hand first"));
-            return;
-        }
-        WritableBookContent content = stack.getOrDefault(DataComponents.WRITABLE_BOOK_CONTENT, WritableBookContent.EMPTY);
-        List<String> pages = content.pages().stream().map(Filterable::raw).toList();
-        if (ScriptScrollContent.isBlank(pages)) {
-            serverPlayer.sendSystemMessage(Component.literal("[scroll] your scroll is blank - write something on it first"));
-            return;
-        }
-        if (!(serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be)) {
-            return;
-        }
-        be.applyScroll(serverPlayer, ScriptScrollContent.joinPages(pages));
     }
 }

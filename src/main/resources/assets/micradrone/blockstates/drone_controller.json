@@ -1,5 +1,12 @@
 {
   "variants": {
-    "": { "model": "micradrone:block/drone_controller" }
+    "active=false,facing=north": { "model": "micradrone:block/drone_controller_docked" },
+    "active=false,facing=east": { "model": "micradrone:block/drone_controller_docked", "y": 90 },
+    "active=false,facing=south": { "model": "micradrone:block/drone_controller_docked", "y": 180 },
+    "active=false,facing=west": { "model": "micradrone:block/drone_controller_docked", "y": 270 },
+    "active=true,facing=north": { "model": "micradrone:block/drone_controller_active" },
+    "active=true,facing=east": { "model": "micradrone:block/drone_controller_active", "y": 90 },
+    "active=true,facing=south": { "model": "micradrone:block/drone_controller_active", "y": 180 },
+    "active=true,facing=west": { "model": "micradrone:block/drone_controller_active", "y": 270 }
   }
 }

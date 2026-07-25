@@ -1,0 +1,12 @@
+{
+  "parent": "minecraft:block/cube",
+  "textures": {
+    "particle": "micradrone:block/drone_controller_docked_front",
+    "north": "micradrone:block/drone_controller_docked_front",
+    "south": "micradrone:block/drone_controller_docked_back",
+    "east": "micradrone:block/drone_controller_docked_side",
+    "west": "micradrone:block/drone_controller_docked_side",
+    "up": "micradrone:block/drone_controller_docked_top",
+    "down": "micradrone:block/drone_controller_docked_bottom"
+  }
+}

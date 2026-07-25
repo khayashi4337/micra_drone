@@ -19,6 +19,12 @@ public interface DroneGridState {
     /** +1 or -1: which world Z direction grid row 0 starts in, relative to the controller. */
     int dirZ();
 
+    /**
+     * 0 (embedded controller, farmland at the controller's own Y) or -1 (surface-mounted controller,
+     * farmland one block down) - see {@link CornerMarkerScan#groundYOffset}.
+     */
+    int groundYOffset();
+
     /** This plot's point balance for one crop type (0 if it has never earned any). Never resets on its own. */
     long getPoints(String crop);
 

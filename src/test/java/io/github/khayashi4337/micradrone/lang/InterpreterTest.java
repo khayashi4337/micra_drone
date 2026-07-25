@@ -199,4 +199,58 @@ class InterpreterTest {
                 x = range(3)
                 """));
     }
+
+    // ---- perception (issue #10) ----
+
+    @Test
+    void perceptionCommandsReachTheApiAndComeBackAsScriptValues() {
+        FakeDroneApi api = run("""
+                print(get_ground())
+                print(get_block_above())
+                print(get_time())
+                print(get_weather())
+                print(get_biome())
+                print(get_light())
+                """);
+        assertEquals(List.of("dirt", "air", "6000", "clear", "plains", "15"), api.printed);
+        assertEquals(List.of("get_ground", "get_block_above", "get_time", "get_weather", "get_biome", "get_light"),
+                api.calls);
+    }
+
+    @Test
+    void getGroundReportsTheCellsRealStateSoBranchingOnItActuallyWorks() {
+        FakeDroneApi api = run("""
+                if get_ground() == "dirt":
+                    till()
+                print(get_ground())
+                """);
+        assertEquals(List.of("farmland"), api.printed, "till() should be visible to the next get_ground()");
+    }
+
+    @Test
+    void perceptionValuesCompareAndBranchLikeAnyOtherValue() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        api.setWeather("thunder");
+        api.setDayTime(18000);
+        api.setLight(4);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                if get_weather() == "thunder":
+                    print("storm")
+                if get_time() > 13000:
+                    print("night")
+                if get_light() < 9:
+                    print("dark")
+                """).scan()).parseProgram());
+        assertEquals(List.of("storm", "night", "dark"), api.printed);
+    }
+
+    @Test
+    void perceptionCommandsTakeNoArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                x = get_ground("here")
+                """));
+        assertThrows(MicraLangException.class, () -> run("""
+                x = get_weather(1)
+                """));
+    }
 }

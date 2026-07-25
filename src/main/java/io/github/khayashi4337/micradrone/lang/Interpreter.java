@@ -252,6 +252,31 @@ public final class Interpreter {
                             "get_points() takes 0 or 1 argument(s) but got " + args.size());
                 }
             }
+            // Perception (GitHub issue #10): read-only looks at the world around the drone.
+            case "get_ground" -> {
+                requireArgCount(call, 0);
+                yield api.getGround();
+            }
+            case "get_block_above" -> {
+                requireArgCount(call, 0);
+                yield api.getBlockAbove();
+            }
+            case "get_time" -> {
+                requireArgCount(call, 0);
+                yield api.getTime();
+            }
+            case "get_weather" -> {
+                requireArgCount(call, 0);
+                yield api.getWeather();
+            }
+            case "get_biome" -> {
+                requireArgCount(call, 0);
+                yield api.getBiome();
+            }
+            case "get_light" -> {
+                requireArgCount(call, 0);
+                yield api.getLight();
+            }
             case "print" -> {
                 requireArgCount(call, 1);
                 api.print(stringify(eval(args.get(0))));

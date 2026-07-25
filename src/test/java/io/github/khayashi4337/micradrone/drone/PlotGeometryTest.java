@@ -34,7 +34,7 @@ class PlotGeometryTest {
     void allFourDirectionsLeaveExactlyTheCenterCellFarmable() {
         for (Case c : threeByThreeCases()) {
             CornerMarkerScan.MarkerLookup lookup = (dx, dy, dz) -> dx == c.markerDx() && dy == 0 && dz == c.markerDz();
-            PlotBounds bounds = CornerMarkerScan.scan(lookup, 10, 4, 5);
+            PlotBounds bounds = CornerMarkerScan.scan(lookup, (dx, dy, dz) -> true, 10, 4, 5);
 
             assertEquals(1, bounds.worldSize(), c.label() + ": expected a single farmable cell");
             assertEquals(c.markerDx() > 0 ? 1 : -1, bounds.dirX(), c.label() + ": wrong dirX");
@@ -50,7 +50,7 @@ class PlotGeometryTest {
     void noFarmableCellEverReachesOrPassesTheMarkerInAnyDirection() {
         for (Case c : threeByThreeCases()) {
             CornerMarkerScan.MarkerLookup lookup = (dx, dy, dz) -> dx == c.markerDx() && dy == 0 && dz == c.markerDz();
-            PlotBounds bounds = CornerMarkerScan.scan(lookup, 10, 4, 5);
+            PlotBounds bounds = CornerMarkerScan.scan(lookup, (dx, dy, dz) -> true, 10, 4, 5);
 
             for (int gx = 0; gx < bounds.worldSize(); gx++) {
                 for (int gy = 0; gy < bounds.worldSize(); gy++) {
@@ -71,7 +71,7 @@ class PlotGeometryTest {
         // marker 4 diagonal steps away (a 5x5 span including both corner cells) -> 3x3 interior
         for (Case c : List.of(new Case("south-east", 4, 4), new Case("north-west", -4, -4))) {
             CornerMarkerScan.MarkerLookup lookup = (dx, dy, dz) -> dx == c.markerDx() && dy == 0 && dz == c.markerDz();
-            PlotBounds bounds = CornerMarkerScan.scan(lookup, 10, 4, 5);
+            PlotBounds bounds = CornerMarkerScan.scan(lookup, (dx, dy, dz) -> true, 10, 4, 5);
             assertEquals(3, bounds.worldSize(), c.label());
         }
     }

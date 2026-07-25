@@ -114,6 +114,26 @@ print("planted the whole plot")
 読み取り系コマンドで状況を判断する。詳しい一覧はゲーム内の「Help」ボタンで
 確認できる。
 
+さらに `get_ground()` / `get_block_above()` / `get_time()` / `get_weather()` /
+`get_biome()` / `get_light()` でMinecraftの世界そのものを読み取れる。
+これらを使うと「決まった手順をなぞるだけ」ではなく、その場の地形や天気を
+見て判断するスクリプトが書ける:
+
+```python
+ground = get_ground()
+if ground == "farmland":
+    plant("wheat")
+elif ground == "dirt":
+    till()
+    plant("wheat")
+else:
+    print("ここには植えられない")
+    print(ground)
+```
+
+ブロック名・バイオーム名はvanillaのものなら `"dirt"` のように短い名前、
+MODが追加したものだけ `"micradrone:rotten_pumpkin"` のように名前空間が付く。
+
 スクリプトを選んで **Run** を押すと実行され、ログ欄に `print()` の出力が
 流れる。**Stop** でいつでも安全に止められる。
 

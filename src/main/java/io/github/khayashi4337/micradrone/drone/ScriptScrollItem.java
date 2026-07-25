@@ -15,9 +15,10 @@ import net.minecraft.world.item.WritableBookItem;
  * pages never "sign"/lock into a {@code WrittenBookItem}, so it stays rewritable forever, which is
  * exactly the behavior the issue asked for.
  * <p>
- * Block-facing behavior: slotting into a controller is {@link DroneControllerBlock#useItemOn}, and
- * the enchanting-table inscription (issue #8) is entirely event-driven - see
- * {@code EnchantTableWatcher} in the client package: dropping a blank scroll into the vanilla
+ * Block-facing behavior: a controller's script list picks which library scroll runs (GUI
+ * reduction; there's no per-item slotting anymore), and the enchanting-table inscription (issue
+ * #8) is entirely event-driven - see {@code EnchantTableWatcher} in the client package: dropping
+ * a blank scroll into the vanilla
  * enchanting table's own item slot (the table's normal drag-and-drop GUI, opened completely
  * normally, no interception on the click itself) opens a sample picker in place of it. Used
  * anywhere else (including empty air), this item behaves as a plain {@code WritableBookItem}:

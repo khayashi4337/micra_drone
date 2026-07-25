@@ -49,7 +49,7 @@ final class IdeCameraController {
         double centerX = controllerPos.getX() + 0.5 + bounds.dirX() * (1 + (size - 1) / 2.0);
         double centerZ = controllerPos.getZ() + 0.5 + bounds.dirZ() * (1 + (size - 1) / 2.0);
         double x = centerX - pose.westOffset();
-        double y = controllerPos.getY() + 1 + pose.height();
+        double y = controllerPos.getY() + 1 + bounds.groundYOffset() + pose.height();
         double z = centerZ;
 
         camera.setPos(x, y, z);

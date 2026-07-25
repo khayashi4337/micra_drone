@@ -2,12 +2,10 @@ package io.github.khayashi4337.micradrone;
 
 import io.github.khayashi4337.micradrone.client.DroneModel;
 import io.github.khayashi4337.micradrone.client.DroneRenderer;
-import io.github.khayashi4337.micradrone.client.DroneScreen;
 import io.github.khayashi4337.micradrone.client.EnchantScrollScreen;
 import io.github.khayashi4337.micradrone.client.EnchantTableWatcher;
 import io.github.khayashi4337.micradrone.client.IdeScreen;
 import io.github.khayashi4337.micradrone.client.ShopScreen;
-import io.github.khayashi4337.micradrone.drone.ScriptId;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
@@ -61,13 +59,15 @@ public class MicraDroneClient {
     }
 
     /**
-     * Called from DroneControllerBlock's client-side useWithoutItem branch (issue #8): the IDE,
-     * editing the slotted scroll, is the controller's default screen. The script list/log screen
-     * (DroneScreen) opens from the IDE's Scripts button.
+     * Called from DroneControllerBlock's client-side useWithoutItem branch: the IDE is the
+     * controller's only screen (GUI reduction follow-up dissolved the separate list/log screen
+     * into the IDE's own "List" toggle). The jukebox-style item slot is gone too - there's no
+     * fixed id to open on anymore, so this opens unresolved; {@code IdeScreen#updateLog} resolves
+     * it to the server's current selection the first time a DroneLogPayload arrives.
      */
     public static void openIdeScreen(BlockPos pos) {
-        Minecraft.getInstance().setScreen(new IdeScreen(pos, ScriptId.CONTROLLER_ID,
-                Component.translatable("gui.micradrone.ide_screen.slotted_scroll").getString()));
+        Minecraft.getInstance().setScreen(new IdeScreen(pos, "",
+                Component.translatable("gui.micradrone.ide_screen.loading").getString()));
     }
 
     /** Called from CornerMarkerBlock's client-side useWithoutItem branch. pos is the marker, not a controller. */
@@ -82,7 +82,7 @@ public class MicraDroneClient {
 
     /** Registered as the DroneLogPayload handler in MicraDrone's RegisterPayloadHandlersEvent listener. */
     public static void handleDroneLog(DroneLogPayload payload, IPayloadContext context) {
-        if (Minecraft.getInstance().screen instanceof DroneScreen screen) {
+        if (Minecraft.getInstance().screen instanceof IdeScreen screen) {
             screen.updateLog(payload.pos(), payload.lines(), payload.pointsByCrop(),
                     payload.scripts(), payload.selectedScript(), payload.alias());
         }

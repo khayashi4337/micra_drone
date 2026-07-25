@@ -14,6 +14,10 @@ final class FakeDroneApi implements DroneApi {
     private final int matureAge = 3;
     private final boolean[][] rotten;
     private long points = 0;
+    private long dayTime = 6000; // noon
+    private String weather = "clear";
+    private String biome = "plains";
+    private double light = 15;
 
     final List<String> calls = new ArrayList<>();
     final List<String> printed = new ArrayList<>();
@@ -32,6 +36,18 @@ final class FakeDroneApi implements DroneApi {
 
     void setRotten(int atX, int atY, boolean isRotten) {
         rotten[atX][atY] = isRotten;
+    }
+
+    void setWeather(String weather) {
+        this.weather = weather;
+    }
+
+    void setDayTime(long dayTime) {
+        this.dayTime = dayTime;
+    }
+
+    void setLight(double light) {
+        this.light = light;
     }
 
     int posXInt() { return x; }
@@ -127,6 +143,47 @@ final class FakeDroneApi implements DroneApi {
         // The fake only ever deals in one implicit crop ("wheat"), matching the real game's current
         // (wheat-only) state - see LiveFarmBlockAccess.POINTS_PER_WHEAT_HARVEST.
         return "wheat".equals(crop) ? points : 0;
+    }
+
+    // ---- perception (issue #10) ----
+    // The ground tracks this cell's real till state, so a script that branches on get_ground()
+    // exercises both branches here rather than always taking the same one. The rest are fixed
+    // "nice day on a plain" readings, overridable where a test needs a different world.
+
+    @Override
+    public String getGround() {
+        calls.add("get_ground");
+        return tilled[x][y] ? "farmland" : "dirt";
+    }
+
+    @Override
+    public String getBlockAbove() {
+        calls.add("get_block_above");
+        return cropAge[x][y] == -1 ? "air" : "wheat";
+    }
+
+    @Override
+    public double getTime() {
+        calls.add("get_time");
+        return dayTime;
+    }
+
+    @Override
+    public String getWeather() {
+        calls.add("get_weather");
+        return weather;
+    }
+
+    @Override
+    public String getBiome() {
+        calls.add("get_biome");
+        return biome;
+    }
+
+    @Override
+    public double getLight() {
+        calls.add("get_light");
+        return light;
     }
 
     @Override

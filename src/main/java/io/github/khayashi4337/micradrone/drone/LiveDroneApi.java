@@ -104,6 +104,41 @@ public final class LiveDroneApi implements DroneApi {
         return grid.getPoints(crop);
     }
 
+    // ---- perception (GitHub issue #10) ----
+    // All read-only, so they take canHarvest()'s route: a plain main-thread query with no pacing
+    // delay. Reading the world costs a script nothing but the main-thread round-trip, which keeps
+    // "look before you act" free enough that scripts are encouraged to actually do it.
+
+    @Override
+    public String getGround() {
+        return queryMainThread(farm::groundBlockName);
+    }
+
+    @Override
+    public String getBlockAbove() {
+        return queryMainThread(farm::blockAboveName);
+    }
+
+    @Override
+    public double getTime() {
+        return queryMainThread(farm::dayTime);
+    }
+
+    @Override
+    public String getWeather() {
+        return queryMainThread(farm::weather);
+    }
+
+    @Override
+    public String getBiome() {
+        return queryMainThread(farm::biomeName);
+    }
+
+    @Override
+    public double getLight() {
+        return queryMainThread(farm::lightLevel);
+    }
+
     @Override
     public void print(String text) {
         logSink.accept(text);

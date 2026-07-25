@@ -10,6 +10,8 @@ import java.util.Set;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.util.RandomSource;
@@ -59,7 +61,7 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
 
     private BlockPos groundPos() {
         int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), grid.gridX(), grid.gridY());
-        return origin.offset(offset[0], 0, offset[1]);
+        return origin.offset(offset[0], grid.groundYOffset(), offset[1]);
     }
 
     private BlockPos cropPos() {
@@ -83,6 +85,55 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     @Override
     public boolean isRotten() {
         return level.getBlockState(cropPos()).is(MicraDrone.ROTTEN_PUMPKIN_BLOCK.get());
+    }
+
+    // ---- perception (GitHub issue #10) ----
+
+    @Override
+    public String groundBlockName() {
+        return blockName(groundPos());
+    }
+
+    @Override
+    public String blockAboveName() {
+        return blockName(cropPos());
+    }
+
+    private String blockName(BlockPos pos) {
+        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(level.getBlockState(pos).getBlock());
+        return SenseNames.simplify(id.getNamespace(), id.getPath());
+    }
+
+    @Override
+    public long dayTime() {
+        return SenseNames.timeOfDay(level.getDayTime());
+    }
+
+    @Override
+    public String weather() {
+        return SenseNames.weather(level.isRaining(), level.isThundering());
+    }
+
+    /**
+     * Biomes can be defined inline (unregistered) by a datapack, in which case there is no key to
+     * report - hand back "unknown" rather than throwing, so a perception script can never crash a
+     * run just by standing somewhere unusual.
+     */
+    @Override
+    public String biomeName() {
+        return level.getBiome(cropPos()).unwrapKey()
+                .map(key -> SenseNames.simplify(key.location().getNamespace(), key.location().getPath()))
+                .orElse("unknown");
+    }
+
+    /**
+     * The same "how bright is it here" number vanilla uses for mob spawning: block light and sky
+     * light combined, already dimmed for night and for weather - so a script watching this sees the
+     * day/night cycle and a passing storm the way a player standing there would.
+     */
+    @Override
+    public int lightLevel() {
+        return level.getMaxLocalRawBrightness(cropPos());
     }
 
     @Override
@@ -244,7 +295,7 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         for (int gx = 0; gx < worldSize; gx++) {
             for (int gy = 0; gy < worldSize; gy++) {
                 int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), gx, gy);
-                BlockPos ground = origin.offset(offset[0], 0, offset[1]);
+                BlockPos ground = origin.offset(offset[0], grid.groundYOffset(), offset[1]);
                 BlockState groundState = level.getBlockState(ground);
                 if (!groundState.is(Blocks.FARMLAND)) {
                     continue;
@@ -316,7 +367,7 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
                 int gx = patch.originGx() + lx;
                 int gy = patch.originGy() + ly;
                 int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), gx, gy);
-                BlockPos above = origin.offset(offset[0], 1, offset[1]);
+                BlockPos above = origin.offset(offset[0], grid.groundYOffset() + 1, offset[1]);
                 int position = GiantPatchDetector.classifyPosition(lx, ly, patch.side());
                 level.setBlockAndUpdate(above, giantPumpkin.setValue(GiantPumpkinBlock.POSITION, position));
             }
