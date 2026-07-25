@@ -115,7 +115,7 @@ public class IdeScreen extends Screen {
     private MultiLineEditBox logBox;
 
     private CornerMarkerScan.PlotBounds bounds = new CornerMarkerScan.PlotBounds(
-            DroneControllerBlockEntity.DEFAULT_WORLD_SIZE, 1, 1, false);
+            DroneControllerBlockEntity.DEFAULT_WORLD_SIZE, 1, 1, false, 0);
     private int tickCounter = 0;
 
     public IdeScreen(BlockPos pos, String scriptId, String displayName) {
@@ -261,6 +261,7 @@ public class IdeScreen extends Screen {
     private void rescanPlot() {
         bounds = CornerMarkerScan.scan(
                 (dx, dy, dz) -> this.minecraft.level.getBlockState(pos.offset(dx, dy, dz)).is(MicraDrone.CORNER_MARKER_BLOCK.get()),
+                (dx, dy, dz) -> DroneControllerBlockEntity.isDirtLike(this.minecraft.level.getBlockState(pos.offset(dx, dy, dz))),
                 DroneControllerBlockEntity.MAX_MARKER_SCAN_DISTANCE,
                 DroneControllerBlockEntity.MAX_MARKER_SCAN_Y_TOLERANCE,
                 DroneControllerBlockEntity.DEFAULT_WORLD_SIZE);

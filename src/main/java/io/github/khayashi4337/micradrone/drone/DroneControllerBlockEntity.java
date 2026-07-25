@@ -35,8 +35,10 @@ import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.LevelResource;
@@ -261,6 +263,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         BlockPos pos = getBlockPos();
         CornerMarkerScan.PlotBounds bounds = CornerMarkerScan.scan(
                 (dx, dy, dz) -> level.getBlockState(pos.offset(dx, dy, dz)).is(MicraDrone.CORNER_MARKER_BLOCK.get()),
+                (dx, dy, dz) -> isDirtLike(level.getBlockState(pos.offset(dx, dy, dz))),
                 MAX_MARKER_SCAN_DISTANCE, MAX_MARKER_SCAN_Y_TOLERANCE, DEFAULT_WORLD_SIZE);
         worldSize = bounds.worldSize();
         dirX = bounds.dirX();
@@ -268,6 +271,17 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         // Ambient effects like the growth boost must never apply to the size-5-toward-SE guess used
         // when no marker has actually been placed/found - only to a plot the player explicitly marked.
         plotConfirmed = bounds.markerFound();
+    }
+
+    /**
+     * "Soil" for {@link CornerMarkerScan#groundYOffset}'s placement-style check: vanilla's own
+     * {@link BlockTags#DIRT} (dirt/grass/podzol/coarse dirt/mycelium/rooted dirt/moss/mud/muddy
+     * mangrove roots - confirmed via the actual tag data) plus farmland, which that tag omits.
+     * Public: the IDE screen's client-side plot rescan (see {@link #scanForCornerMarker}'s own
+     * javadoc on why that scan is duplicated client-side) needs the exact same rule.
+     */
+    public static boolean isDirtLike(BlockState state) {
+        return state.is(BlockTags.DIRT) || state.is(Blocks.FARMLAND);
     }
 
     /**
