@@ -59,4 +59,38 @@ final class FakeFarmBlockAccess implements FarmBlockAccess {
     public boolean isRotten() {
         return rotten;
     }
+
+    // ---- perception (issue #10) ----
+    // Fixed readings except for the ground, which tracks this cell's real till state so a test can
+    // tell an "I looked and saw farmland" branch from a hardcoded answer.
+
+    @Override
+    public String groundBlockName() {
+        return tilled ? "farmland" : "dirt";
+    }
+
+    @Override
+    public String blockAboveName() {
+        return plantedCrop == null ? "air" : plantedCrop;
+    }
+
+    @Override
+    public long dayTime() {
+        return 6000; // noon
+    }
+
+    @Override
+    public String weather() {
+        return "clear";
+    }
+
+    @Override
+    public String biomeName() {
+        return "plains";
+    }
+
+    @Override
+    public int lightLevel() {
+        return 15;
+    }
 }

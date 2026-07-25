@@ -14,6 +14,7 @@ import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptEntry;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
+import io.github.khayashi4337.micradrone.drone.net.StopViewingPayload;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.client.gui.GuiGraphics;
@@ -125,6 +126,17 @@ public class DroneScreen extends Screen {
                 .build());
 
         PacketDistributor.sendToServer(new RequestLogPayload(pos));
+    }
+
+    /**
+     * Tells the server to stop pushing this controller's log/points updates to us. Overriding
+     * {@code removed()} rather than {@code onClose()} catches the Edit button's hop to IdeScreen as
+     * well as a plain Escape; that screen re-registers us on its way in.
+     */
+    @Override
+    public void removed() {
+        PacketDistributor.sendToServer(new StopViewingPayload(pos));
+        super.removed();
     }
 
     private static String displayName(String cropName) {

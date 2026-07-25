@@ -6,12 +6,14 @@ import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.drone.net.DebugCommandPayload;
@@ -35,6 +37,7 @@ import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.players.PlayerList;
 import net.minecraft.world.Containers;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
@@ -69,9 +72,35 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private static final int GROWTH_BOOST_INTERVAL_TICKS = 100;
 
     private final PacedActionQueue pacedActionQueue = new PacedActionQueue();
+    /**
+     * Guarded by its own monitor: {@link #appendLog} runs on the script's worker thread (print() is
+     * the one DroneApi call that never hops to the main thread - see LiveDroneApi#print), while
+     * clearing and snapshotting happen on the main thread.
+     */
     private final Deque<String> logBuffer = new ArrayDeque<>();
-    /** The player who last clicked Run/Stop/opened the screen; log updates are pushed to them. */
-    private UUID viewingPlayerUuid;
+    /**
+     * Set whenever the log/points/script list changed, cleared by {@link #maybePushLogSnapshot} on
+     * the next tick. The push itself has to happen on the main thread (it sends packets), and
+     * coalescing per tick also means a chatty script costs one packet per tick per viewer instead of
+     * one per print() per viewer - which matters far more with several players watching.
+     */
+    private volatile boolean logDirty = false;
+    /**
+     * Everyone currently looking at this controller through a screen (Scripts/IDE/Shop), not just
+     * one player: on a shared server several people routinely watch the same farm, and pushing to
+     * only the most recent one silently froze everybody else's screen. Kept as UUIDs because
+     * ServerPlayer instances don't survive a respawn/dimension change; entries are pruned as soon as
+     * a player goes offline (see {@link #forEachViewer}).
+     */
+    private final Set<UUID> viewers = ConcurrentHashMap.newKeySet();
+    /**
+     * The player this controller's work is credited to: whoever last started a run or slotted a
+     * scroll. Deliberately separate from {@link #viewers} - harvest advancements belong to the
+     * player who set the drone going, not to a bystander who happened to open the screen while it
+     * ran. Persisted so the redstone path (which has no requester at all) still credits the player
+     * who set the controller up, even across a server restart.
+     */
+    private volatile UUID ownerUuid;
 
     // Written only on the main thread (paced action apply, or scanForCornerMarker); read from the
     // script worker thread too.
@@ -216,7 +245,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         long newTotal = pointsByCrop.merge(crop, delta, Long::sum);
         setChanged();
         pushLogSnapshot();
-        resolveViewingPlayer().ifPresent(player -> MicraDroneAdvancements.checkHarvestMilestones(player, crop, newTotal));
+        // Credited to the owner, not to whoever has the screen open: on a shared server a bystander
+        // opening the Scripts screen mid-run used to collect the harvest advancements instead.
+        resolveOwner().ifPresent(player -> MicraDroneAdvancements.checkHarvestMilestones(player, crop, newTotal));
     }
 
     @Override
@@ -250,7 +281,15 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             requester.sendSystemMessage(Component.literal("[shop] unlocked " + unlockId));
             MicraDroneAdvancements.awardUnlock(requester, unlockId);
         }
+        // Broadcast, not just to the buyer: a plot's unlocks and points are shared, so anyone else
+        // with the Shop screen open needs to see the balance drop too, or they'll try to buy with
+        // points that are already spent.
         sendShopStateTo(requester);
+        forEachViewer(viewer -> {
+            if (!viewer.getUUID().equals(requester.getUUID())) {
+                sendShopStateTo(viewer);
+            }
+        });
     }
 
     public void sendShopStateTo(ServerPlayer requester) {
@@ -329,7 +368,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      * than silently doing nothing.
      */
     public void sendScriptSource(ServerPlayer requester, String scriptName) {
-        viewingPlayerUuid = requester.getUUID();
+        addViewer(requester);
         if (!ScriptId.isValidId(scriptName)) {
             requester.sendSystemMessage(Component.literal("[ide] invalid script id '" + scriptName + "'"));
             return;
@@ -350,7 +389,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      * every outcome, success included, is reported to the player's chat.
      */
     public void saveScript(ServerPlayer requester, String scriptName, String source) {
-        viewingPlayerUuid = requester.getUUID();
+        addViewer(requester);
         if (!(level instanceof ServerLevel serverLevel)) {
             return;
         }
@@ -436,14 +475,15 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     /**
      * Resolves {@code scriptName} (controller slot, chest scroll, or file) and runs it. No-op
      * (besides a log line) if a script is already running. {@code requester} may be null for the
-     * redstone path - log pushes then keep going to whoever viewed the screen last.
+     * redstone path - the run then belongs to whoever last claimed the controller (see
+     * {@link #ownerUuid}), and its log goes to every open screen either way.
      */
     public void startScript(ServerPlayer requester, String scriptName) {
         if (!(level instanceof ServerLevel serverLevel)) {
             return;
         }
         if (requester != null) {
-            viewingPlayerUuid = requester.getUUID();
+            addViewer(requester); // even a refused Run should show its "already running" line
         }
         if (scriptRunner != null && scriptRunner.getState() == DroneScriptRunner.State.RUNNING) {
             appendLog("[run] a script is already running");
@@ -453,8 +493,14 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             appendLog("[error] invalid script id '" + scriptName + "'");
             return;
         }
-        logBuffer.clear();
+        clearLog();
         selectedScript = scriptName;
+        // Actually starting a run is what claims this controller, so a second player's refused Run
+        // above can't take the harvests of the run already going. The redstone path passes no
+        // requester and deliberately keeps whoever claimed it last.
+        if (requester != null) {
+            ownerUuid = requester.getUUID();
+        }
         setChanged();
 
         Optional<String> loaded = loadScriptSource(scriptName);
@@ -489,7 +535,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
     /** Requests the running script (if any) to stop. Safe to call even when nothing is running. */
     public void stopScript(ServerPlayer requester) {
-        viewingPlayerUuid = requester.getUUID();
+        addViewer(requester);
         if (scriptRunner == null) {
             return;
         }
@@ -503,12 +549,14 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      * success. Refuses (with a chat reason) when a scroll is already slotted - eject it first.
      */
     public void insertScroll(Player player, ItemStack heldScroll) {
-        if (player instanceof ServerPlayer serverPlayer) {
-            viewingPlayerUuid = serverPlayer.getUUID();
-        }
         if (!slottedScroll.isEmpty()) {
             player.sendSystemMessage(Component.literal("[controller] a scroll is already slotted - eject it from the screen first"));
             return;
+        }
+        if (player instanceof ServerPlayer serverPlayer) {
+            // Slotting the scroll a lever will run claims the controller the same way Run does -
+            // otherwise a redstone-only setup would have nobody to credit its harvests to.
+            ownerUuid = serverPlayer.getUUID();
         }
         slottedScroll = heldScroll.copyWithCount(1);
         heldScroll.shrink(1);
@@ -523,7 +571,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
     /** DroneScreen's Eject button: pops the slotted scroll out on top of the controller. */
     public void ejectScroll(ServerPlayer requester) {
-        viewingPlayerUuid = requester.getUUID();
+        addViewer(requester);
         if (slottedScroll.isEmpty()) {
             requester.sendSystemMessage(Component.literal("[controller] no scroll is slotted"));
             return;
@@ -553,7 +601,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      * the authoritative set.
      */
     public void setBreakpoints(ServerPlayer requester, Set<Integer> lines) {
-        viewingPlayerUuid = requester.getUUID();
+        addViewer(requester);
         breakpoints = Set.copyOf(lines);
         DebugController debug = debugController;
         if (debug != null) {
@@ -564,7 +612,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
     /** One debugger action (see DebugCommandPayload.COMMAND_*); silently ignored when nothing is running. */
     public void debugCommand(ServerPlayer requester, int command) {
-        viewingPlayerUuid = requester.getUUID();
+        addViewer(requester);
         DebugController debug = debugController;
         if (debug == null || scriptRunner == null || scriptRunner.getState() != DroneScriptRunner.State.RUNNING) {
             return;
@@ -596,8 +644,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     /**
-     * Called every server tick: pushes the debug snapshot to the viewing player only when it
-     * changed, so line tracking during a run costs at most one tiny packet per tick.
+     * Called every server tick: pushes the debug snapshot to every viewer only when it changed, so
+     * line tracking during a run costs at most one tiny packet per tick per viewer. The snapshot is
+     * the same for everyone, so a single "did it change" latch covers them all.
      */
     private void maybePushDebugState() {
         DebugStatePayload state = currentDebugState();
@@ -605,7 +654,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             return;
         }
         lastPushedDebugState = state;
-        resolveViewingPlayer().ifPresent(player -> PacketDistributor.sendToPlayer(player, state));
+        forEachViewer(player -> PacketDistributor.sendToPlayer(player, state));
     }
 
     /**
@@ -636,7 +685,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      * up-to-date script list instead of starting blank.
      */
     public void sendLogSnapshotTo(ServerPlayer requester) {
-        viewingPlayerUuid = requester.getUUID();
+        addViewer(requester);
         if (level instanceof ServerLevel serverLevel) {
             refreshAvailableScripts(serverLevel);
         }
@@ -665,30 +714,86 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         return level.getServer().getWorldPath(LevelResource.ROOT).resolve("micradrone").resolve("scripts");
     }
 
+    /** Safe to call from the script worker thread - see {@link #logBuffer} and {@link #logDirty}. */
     private void appendLog(String line) {
         MicraDrone.LOGGER.info("[drone {}] {}", getBlockPos(), line);
-        logBuffer.addLast(line);
-        while (logBuffer.size() > LOG_BUFFER_CAPACITY) {
-            logBuffer.removeFirst();
+        synchronized (logBuffer) {
+            logBuffer.addLast(line);
+            while (logBuffer.size() > LOG_BUFFER_CAPACITY) {
+                logBuffer.removeFirst();
+            }
         }
         pushLogSnapshot();
     }
 
-    private void pushLogSnapshot() {
-        resolveViewingPlayer().ifPresent(this::pushLogSnapshotTo);
+    private void clearLog() {
+        synchronized (logBuffer) {
+            logBuffer.clear();
+        }
+        pushLogSnapshot();
     }
 
-    /** The player who last clicked Run/Stop/opened the screen, if they're still online - see {@link #viewingPlayerUuid}. */
-    private Optional<ServerPlayer> resolveViewingPlayer() {
-        if (!(level instanceof ServerLevel serverLevel) || viewingPlayerUuid == null) {
+    /** Marks the snapshot stale; the actual send happens on the next tick - see {@link #logDirty}. */
+    private void pushLogSnapshot() {
+        logDirty = true;
+    }
+
+    private void maybePushLogSnapshot() {
+        if (!logDirty) {
+            return;
+        }
+        // Cleared before sending, so a print() landing mid-push re-marks the snapshot stale and gets
+        // picked up next tick rather than being swallowed by this one.
+        logDirty = false;
+        forEachViewer(this::pushLogSnapshotTo);
+    }
+
+    /** Registers {@code player} as a viewer of this controller - see {@link #viewers}. */
+    public void addViewer(ServerPlayer player) {
+        viewers.add(player.getUUID());
+    }
+
+    /** Drops {@code player} again, on their screen closing (see StopViewingPayload). */
+    public void removeViewer(ServerPlayer player) {
+        viewers.remove(player.getUUID());
+    }
+
+    /**
+     * Runs {@code action} for every viewer still online, dropping the ones who aren't - a player who
+     * disconnected with the screen open never sends a close, so this prune is what stops their UUID
+     * lingering forever. Main thread only (its callers send packets).
+     */
+    private void forEachViewer(Consumer<ServerPlayer> action) {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        PlayerList players = serverLevel.getServer().getPlayerList();
+        Iterator<UUID> stale = viewers.iterator();
+        while (stale.hasNext()) {
+            ServerPlayer player = players.getPlayer(stale.next());
+            if (player == null) {
+                stale.remove();
+            } else {
+                action.accept(player);
+            }
+        }
+    }
+
+    /** The player this controller's work is credited to, if they're online - see {@link #ownerUuid}. */
+    private Optional<ServerPlayer> resolveOwner() {
+        if (!(level instanceof ServerLevel serverLevel) || ownerUuid == null) {
             return Optional.empty();
         }
-        return Optional.ofNullable(serverLevel.getServer().getPlayerList().getPlayer(viewingPlayerUuid));
+        return Optional.ofNullable(serverLevel.getServer().getPlayerList().getPlayer(ownerUuid));
     }
 
     private void pushLogSnapshotTo(ServerPlayer player) {
+        List<String> lines;
+        synchronized (logBuffer) {
+            lines = List.copyOf(logBuffer);
+        }
         PacketDistributor.sendToPlayer(player,
-                new DroneLogPayload(getBlockPos(), List.copyOf(logBuffer), pointsByCrop(), availableScripts, selectedScript, alias));
+                new DroneLogPayload(getBlockPos(), lines, pointsByCrop(), availableScripts, selectedScript, alias));
     }
 
     /** Registered as this block's {@link net.minecraft.world.level.block.entity.BlockEntityTicker}; server-side only. */
@@ -696,6 +801,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         int tick = level.getServer().getTickCount();
         be.pacedActionQueue.tick(tick);
         be.maybePushDebugState();
+        be.maybePushLogSnapshot();
         if (be.plotConfirmed && tick % GROWTH_BOOST_INTERVAL_TICKS == 0) {
             new LiveFarmBlockAccess(level, pos, be).boostGrowth();
         }
@@ -720,6 +826,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             unlockedCrops.add(t.getAsString());
         }
         droneEntityUuid = tag.hasUUID("DroneEntityUuid") ? tag.getUUID("DroneEntityUuid") : null;
+        // Absent on controllers saved before owner tracking existed - they simply have no owner
+        // until someone next hits Run or slots a scroll.
+        ownerUuid = tag.hasUUID("OwnerUuid") ? tag.getUUID("OwnerUuid") : null;
         slottedScroll = tag.contains("SlottedScroll")
                 ? ItemStack.parseOptional(registries, tag.getCompound("SlottedScroll"))
                 : ItemStack.EMPTY;
@@ -740,6 +849,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         tag.put("UnlockedCrops", unlockedTag);
         if (droneEntityUuid != null) {
             tag.putUUID("DroneEntityUuid", droneEntityUuid);
+        }
+        if (ownerUuid != null) {
+            tag.putUUID("OwnerUuid", ownerUuid);
         }
         if (!slottedScroll.isEmpty()) {
             tag.put("SlottedScroll", slottedScroll.save(registries));

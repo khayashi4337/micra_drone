@@ -14,6 +14,7 @@ import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.SaveScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.SetBreakpointsPayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
+import io.github.khayashi4337.micradrone.drone.net.StopViewingPayload;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.MultiLineEditBox;
@@ -248,6 +249,10 @@ public class IdeScreen extends Screen {
         if (this.minecraft != null) {
             cameraController.restore(this.minecraft);
         }
+        // Tell the server to stop pushing this controller's log/debug updates to us. Harmless when
+        // this screen is being replaced by another one on the same controller: that screen's own
+        // opening request re-registers us right after.
+        PacketDistributor.sendToServer(new StopViewingPayload(pos));
         super.removed();
     }
 
