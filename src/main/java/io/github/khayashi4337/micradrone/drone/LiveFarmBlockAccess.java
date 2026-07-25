@@ -59,7 +59,7 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
 
     private BlockPos groundPos() {
         int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), grid.gridX(), grid.gridY());
-        return origin.offset(offset[0], 0, offset[1]);
+        return origin.offset(offset[0], grid.groundYOffset(), offset[1]);
     }
 
     private BlockPos cropPos() {
@@ -244,7 +244,7 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         for (int gx = 0; gx < worldSize; gx++) {
             for (int gy = 0; gy < worldSize; gy++) {
                 int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), gx, gy);
-                BlockPos ground = origin.offset(offset[0], 0, offset[1]);
+                BlockPos ground = origin.offset(offset[0], grid.groundYOffset(), offset[1]);
                 BlockState groundState = level.getBlockState(ground);
                 if (!groundState.is(Blocks.FARMLAND)) {
                     continue;
@@ -316,7 +316,7 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
                 int gx = patch.originGx() + lx;
                 int gy = patch.originGy() + ly;
                 int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), gx, gy);
-                BlockPos above = origin.offset(offset[0], 1, offset[1]);
+                BlockPos above = origin.offset(offset[0], grid.groundYOffset() + 1, offset[1]);
                 int position = GiantPatchDetector.classifyPosition(lx, ly, patch.side());
                 level.setBlockAndUpdate(above, giantPumpkin.setValue(GiantPumpkinBlock.POSITION, position));
             }

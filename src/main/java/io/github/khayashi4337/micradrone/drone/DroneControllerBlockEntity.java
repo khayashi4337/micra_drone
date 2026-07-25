@@ -80,6 +80,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private volatile int worldSize = DEFAULT_WORLD_SIZE;
     private volatile int dirX = 1;
     private volatile int dirZ = 1;
+    private volatile int groundYOffset = 0;
     // True only once scanForCornerMarker has actually found a paired corner marker - see its use in
     // serverTick, which must not ambient-boost growth in the size-5-toward-SE guess used otherwise.
     private volatile boolean plotConfirmed = false;
@@ -149,7 +150,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private void syncDronePosition(ServerLevel level) {
         int[] offset = PlotGeometry.groundOffset(dirX, dirZ, gridX, gridY);
         double x = getBlockPos().getX() + offset[0] + 0.5;
-        double y = getBlockPos().getY() + 1.0;
+        double y = getBlockPos().getY() + 1.0 + groundYOffset;
         double z = getBlockPos().getZ() + offset[1] + 0.5;
 
         DroneEntity drone = resolveDroneEntity(level);
@@ -199,6 +200,11 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     @Override
     public int dirZ() {
         return dirZ;
+    }
+
+    @Override
+    public int groundYOffset() {
+        return groundYOffset;
     }
 
     @Override
@@ -268,6 +274,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         worldSize = bounds.worldSize();
         dirX = bounds.dirX();
         dirZ = bounds.dirZ();
+        groundYOffset = bounds.groundYOffset();
         // Ambient effects like the growth boost must never apply to the size-5-toward-SE guess used
         // when no marker has actually been placed/found - only to a plot the player explicitly marked.
         plotConfirmed = bounds.markerFound();

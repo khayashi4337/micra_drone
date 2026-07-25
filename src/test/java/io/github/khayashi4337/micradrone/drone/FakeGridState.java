@@ -52,6 +52,11 @@ final class FakeGridState implements DroneGridState {
     }
 
     @Override
+    public int groundYOffset() {
+        return 0;
+    }
+
+    @Override
     public long getPoints(String crop) {
         return pointsByCrop.getOrDefault(crop, 0L);
     }
