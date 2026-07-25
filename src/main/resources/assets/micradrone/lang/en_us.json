@@ -9,6 +9,7 @@
   "gui.micradrone.enchant_scroll.bookshelves": "Bookshelves: %s / %s",
   "gui.micradrone.enchant_scroll.cost": "%s lapis",
   "gui.micradrone.enchant_scroll.locked": "needs %s bookshelves",
+  "gui.micradrone.enchant_scroll.needs_lapis": "needs %s lapis",
   "gui.micradrone.enchant_scroll.inscribe": "Inscribe",
   "gui.micradrone.enchant_scroll.cancel": "Cancel",
   "gui.micradrone.drone_screen.log": "Log",

@@ -2,6 +2,7 @@ package io.github.khayashi4337.micradrone.client;
 
 import io.github.khayashi4337.micradrone.drone.SampleCatalog;
 import io.github.khayashi4337.micradrone.drone.ScriptFileStore;
+import io.github.khayashi4337.micradrone.drone.ScriptScrollItem;
 import io.github.khayashi4337.micradrone.drone.ScrollEnchanter;
 import io.github.khayashi4337.micradrone.drone.net.EnchantScrollPayload;
 import net.minecraft.client.Minecraft;
@@ -9,9 +10,13 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.client.gui.components.ObjectSelectionList;
-import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.gui.screens.inventory.EnchantmentScreen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.EnchantmentMenu;
+import net.minecraft.world.inventory.Slot;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
@@ -29,15 +34,35 @@ import net.neoforged.neoforge.network.PacketDistributor;
  * bookshelf-position contents mid-picker is not a case worth the extra complexity). A plain chest
  * works fine here and gives the familiar chest screen instead of the vanilla chiseled bookshelf's
  * fiddly per-slot click interaction (a real-machine try found the latter not great).
+ * <p>
+ * Extends {@link AbstractContainerScreen} over the SAME {@link EnchantmentMenu} the vanilla
+ * enchanting screen would have used, instead of a bare {@code Screen} - a real-machine report
+ * found that a bare {@code Screen} (no slot rendering at all) made it impossible to place lapis
+ * lazuli once this picker was showing, since there was no slot UI left to drop it into. Reusing
+ * the real menu means the item slot, lapis slot, and player inventory grid all render and accept
+ * drag-and-drop exactly like any other vanilla container screen (verified prior art: the
+ * "Enchancement" mod, github.com/MoriyaShiine/enchancement, replaces the enchanting table's
+ * picker the same way - a custom list layered over the real container slots - rather than
+ * reinventing slot interaction). The picker's own list/description/buttons occupy a separate panel
+ * to the right of the vanilla slot area so neither overlaps the other.
+ * <p>
  * Inscribing sends {@link EnchantScrollPayload}; the server re-validates everything, takes the
- * lapis, and writes straight into the scroll still sitting in the table's slot (see
- * {@code ScrollEnchanter}). Since this screen stands in for the vanilla {@code EnchantmentScreen}
- * without ever telling the server that menu closed, {@link #onClose} closes it properly (same
- * packet vanilla's own Escape/X would send) - that's also what hands the (now-inscribed, or
- * still-blank on Cancel) scroll back to the player, via vanilla's normal container-close item
- * return. Client-only, so no logic here is unit-testable - verified manually in-game.
+ * lapis from the table's own lapis slot, and writes straight into the scroll still sitting in the
+ * item slot (see {@code ScrollEnchanter}). Since this screen stands in for the vanilla
+ * {@code EnchantmentScreen} over the same menu, the inherited default {@code onClose()} (close the
+ * container, return items) is exactly correct - no override needed here. Client-only, so no logic
+ * here is unit-testable - verified manually in-game.
  */
-public class EnchantScrollScreen extends Screen {
+public class EnchantScrollScreen extends AbstractContainerScreen<EnchantmentMenu> {
+    /** {@link EnchantmentMenu} slot indices - see the vanilla source (slot 0 = item, slot 1 = lapis). */
+    private static final int ITEM_SLOT = 0;
+    private static final int LAPIS_SLOT = 1;
+
+    /** Matches the vanilla enchanting slot layout ({@code EnchantmentMenu}'s own slot coordinates). */
+    private static final int CONTAINER_WIDTH = 176;
+    private static final int CONTAINER_HEIGHT = 166;
+    private static final int GAP = 14;
+
     private static final int PANEL_WIDTH = 240;
     private static final int HEADING_Y = 8;
     private static final int BOOKSHELVES_Y = 20;
@@ -46,6 +71,7 @@ public class EnchantScrollScreen extends Screen {
     private static final int DESCRIPTION_Y = LIST_Y + LIST_HEIGHT + 6;
     private static final int DESCRIPTION_HEIGHT = 28;
     private static final int BUTTON_Y = DESCRIPTION_Y + DESCRIPTION_HEIGHT + 8;
+    private static final int PANEL_HEIGHT = BUTTON_Y + 20 + 8;
 
     private final BlockPos tablePos;
 
@@ -53,24 +79,29 @@ public class EnchantScrollScreen extends Screen {
     private PickerListWidget pickerList;
     private Button inscribeButton;
     private int bookshelfCount;
+    private int lapisCount;
 
-    public EnchantScrollScreen(BlockPos tablePos) {
-        super(Component.translatable("gui.micradrone.enchant_scroll.title"));
+    public EnchantScrollScreen(BlockPos tablePos, EnchantmentMenu menu, Inventory playerInventory) {
+        super(menu, playerInventory, Component.translatable("gui.micradrone.enchant_scroll.title"));
         this.tablePos = tablePos;
+        this.imageWidth = CONTAINER_WIDTH + GAP + PANEL_WIDTH;
+        this.imageHeight = PANEL_HEIGHT;
     }
 
     @Override
     protected void init() {
-        int left = (this.width - PANEL_WIDTH) / 2;
+        super.init();
+        int panelLeft = leftPos + CONTAINER_WIDTH + GAP;
         recountBookshelves();
+        recountLapis();
 
-        descriptionBox = new MultiLineEditBox(this.font, left, DESCRIPTION_Y, PANEL_WIDTH, DESCRIPTION_HEIGHT,
+        descriptionBox = new MultiLineEditBox(this.font, panelLeft, topPos + DESCRIPTION_Y, PANEL_WIDTH, DESCRIPTION_HEIGHT,
                 Component.translatable("gui.micradrone.drone_screen.script_description_placeholder"),
                 Component.translatable("gui.micradrone.drone_screen.script_description"));
         addRenderableWidget(descriptionBox);
 
-        pickerList = new PickerListWidget(Minecraft.getInstance(), PANEL_WIDTH, LIST_HEIGHT, LIST_Y, 16);
-        pickerList.setX(left);
+        pickerList = new PickerListWidget(Minecraft.getInstance(), PANEL_WIDTH, LIST_HEIGHT, topPos + LIST_Y, 16);
+        pickerList.setX(panelLeft);
         for (int i = 0; i < SampleCatalog.ALL.size(); i++) {
             pickerList.addSampleRow(i);
         }
@@ -84,11 +115,11 @@ public class EnchantScrollScreen extends Screen {
         int halfW = (PANEL_WIDTH - 4) / 2;
         inscribeButton = addRenderableWidget(Button.builder(
                 Component.translatable("gui.micradrone.enchant_scroll.inscribe"), b -> inscribe())
-                .bounds(left, BUTTON_Y, halfW, 20)
+                .bounds(panelLeft, topPos + BUTTON_Y, halfW, 20)
                 .build());
         addRenderableWidget(Button.builder(
                 Component.translatable("gui.micradrone.enchant_scroll.cancel"), b -> onClose())
-                .bounds(left + halfW + 4, BUTTON_Y, halfW, 20)
+                .bounds(panelLeft + halfW + 4, topPos + BUTTON_Y, halfW, 20)
                 .build());
 
         pickerList.selectFirst();
@@ -97,7 +128,7 @@ public class EnchantScrollScreen extends Screen {
 
     private void inscribe() {
         PickerListWidget.Row selected = pickerList.getSelected();
-        if (selected == null || selected.locked(bookshelfCount)) {
+        if (selected == null || selected.locked()) {
             return;
         }
         if (selected.copy != null) {
@@ -109,60 +140,75 @@ public class EnchantScrollScreen extends Screen {
         onClose();
     }
 
-    /**
-     * This screen stands in for the vanilla enchanting menu's own screen without the server ever
-     * being told that menu closed - closing it here for real (not just swapping the client's
-     * displayed Screen) is what returns the (now-inscribed) scroll to the player, exactly like
-     * closing a real enchanting table normally does.
-     */
-    @Override
-    public void onClose() {
-        if (this.minecraft != null && this.minecraft.player != null) {
-            this.minecraft.player.closeContainer();
-        } else {
-            super.onClose();
-        }
-    }
-
     private void recountBookshelves() {
         if (this.minecraft != null && this.minecraft.level != null) {
             bookshelfCount = ScrollEnchanter.countBookshelves(this.minecraft.level, tablePos);
         }
     }
 
+    private void recountLapis() {
+        lapisCount = this.menu.getSlot(LAPIS_SLOT).getItem().getCount();
+    }
+
     private void refreshInscribeButton() {
         PickerListWidget.Row selected = pickerList != null ? pickerList.getSelected() : null;
         if (inscribeButton != null) {
-            inscribeButton.active = selected != null && !selected.locked(bookshelfCount);
+            inscribeButton.active = selected != null && !selected.locked();
         }
     }
 
+    /**
+     * Real-machine request: once the item slot no longer holds a scroll, OR the lapis slot runs dry,
+     * hand control back to vanilla's own enchanting screen over the SAME menu - mirrors the open
+     * condition in {@code EnchantTableWatcher} (blank scroll AND lapis both present), just in
+     * reverse. The player might still want to enchant a normal item, or place scroll/lapis again
+     * later ({@code EnchantTableWatcher} stays armed for exactly that).
+     */
     @Override
-    public void tick() {
-        super.tick();
+    protected void containerTick() {
+        super.containerTick();
+        boolean hasScroll = this.menu.getSlot(ITEM_SLOT).getItem().getItem() instanceof ScriptScrollItem;
+        boolean hasLapis = !this.menu.getSlot(LAPIS_SLOT).getItem().isEmpty();
+        if (!hasScroll || !hasLapis) {
+            if (this.minecraft != null && this.minecraft.player != null) {
+                this.minecraft.setScreen(new EnchantmentScreen(this.menu, this.minecraft.player.getInventory(),
+                        Component.translatable("container.enchant")));
+            }
+            return;
+        }
         recountBookshelves();
+        recountLapis();
         refreshInscribeButton();
+    }
+
+    @Override
+    protected void renderBg(GuiGraphics guiGraphics, float partialTick, int mouseX, int mouseY) {
+        int panelLeft = leftPos + CONTAINER_WIDTH + GAP;
+        guiGraphics.fill(leftPos - 4, topPos - 4, leftPos + CONTAINER_WIDTH + 4, topPos + CONTAINER_HEIGHT + 4, 0xC0101010);
+        guiGraphics.fill(panelLeft - 4, topPos - 4, panelLeft + PANEL_WIDTH + 4, topPos + PANEL_HEIGHT + 4, 0xC0101010);
+        for (Slot slot : this.menu.slots) {
+            guiGraphics.fill(leftPos + slot.x - 1, topPos + slot.y - 1, leftPos + slot.x + 17, topPos + slot.y + 17, 0xFF8B8B8B);
+        }
     }
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
-        guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, HEADING_Y, 0xFFFFFF);
+        this.renderTooltip(guiGraphics, mouseX, mouseY);
+        int panelLeft = leftPos + CONTAINER_WIDTH + GAP;
+        guiGraphics.drawCenteredString(this.font, this.title, panelLeft + PANEL_WIDTH / 2, topPos + HEADING_Y, 0xFFFFFF);
         guiGraphics.drawCenteredString(this.font,
                 Component.translatable("gui.micradrone.enchant_scroll.bookshelves",
                         bookshelfCount, SampleCatalog.MAX_BOOKSHELVES),
-                this.width / 2, BOOKSHELVES_Y, 0xFFFFFF);
-    }
-
-    @Override
-    public boolean isPauseScreen() {
-        return false;
+                panelLeft + PANEL_WIDTH / 2, topPos + BOOKSHELVES_Y, 0xFFFFFF);
     }
 
     /**
      * One row per entry: {@link SampleCatalog} samples first (locked by bookshelf count, name +
-     * cost/requirement), then bookshelf copy candidates (never locked, flat
-     * {@link ScrollEnchanter#COPY_LAPIS_COST}).
+     * cost/requirement), then bookshelf copy candidates (flat {@link ScrollEnchanter#COPY_LAPIS_COST}).
+     * Either kind is also locked whenever its lapis cost exceeds what's currently sitting in the
+     * table's lapis slot - real-machine request: with only 1 lapis placed, entries costing 2+ show
+     * greyed out and can't be selected, instead of failing only after Inscribe is pressed.
      */
     private final class PickerListWidget extends ObjectSelectionList<PickerListWidget.Row> {
         PickerListWidget(Minecraft minecraft, int width, int height, int y, int itemHeight) {
@@ -205,8 +251,20 @@ public class EnchantScrollScreen extends Screen {
                 this.copy = copy;
             }
 
-            boolean locked(int bookshelfCount) {
-                return copy == null && !SampleCatalog.isUnlocked(sampleIndex, bookshelfCount);
+            int cost() {
+                return copy != null ? ScrollEnchanter.COPY_LAPIS_COST : SampleCatalog.ALL.get(sampleIndex).lapisCost();
+            }
+
+            boolean bookshelfLocked() {
+                return copy == null && !SampleCatalog.isUnlocked(sampleIndex, EnchantScrollScreen.this.bookshelfCount);
+            }
+
+            boolean lapisLocked() {
+                return cost() > EnchantScrollScreen.this.lapisCount;
+            }
+
+            boolean locked() {
+                return bookshelfLocked() || lapisLocked();
             }
 
             String displayName() {
@@ -224,19 +282,20 @@ public class EnchantScrollScreen extends Screen {
             }
 
             private Component status() {
-                if (copy != null) {
-                    return Component.translatable("gui.micradrone.enchant_scroll.cost", ScrollEnchanter.COPY_LAPIS_COST);
+                if (bookshelfLocked()) {
+                    SampleCatalog.Sample sample = SampleCatalog.ALL.get(sampleIndex);
+                    return Component.translatable("gui.micradrone.enchant_scroll.locked", sample.requiredBookshelves());
                 }
-                SampleCatalog.Sample sample = SampleCatalog.ALL.get(sampleIndex);
-                return locked(bookshelfCount)
-                        ? Component.translatable("gui.micradrone.enchant_scroll.locked", sample.requiredBookshelves())
-                        : Component.translatable("gui.micradrone.enchant_scroll.cost", sample.lapisCost());
+                if (lapisLocked()) {
+                    return Component.translatable("gui.micradrone.enchant_scroll.needs_lapis", cost());
+                }
+                return Component.translatable("gui.micradrone.enchant_scroll.cost", cost());
             }
 
             @Override
             public void render(GuiGraphics guiGraphics, int rowIndex, int top, int left, int width, int height,
                     int mouseX, int mouseY, boolean hovering, float partialTick) {
-                boolean unlocked = !locked(bookshelfCount);
+                boolean unlocked = !locked();
                 int textY = top + (height - 8) / 2;
                 guiGraphics.drawString(EnchantScrollScreen.this.font, displayName(),
                         left + 2, textY, unlocked ? 0xFFFFFF : 0x808080);

@@ -15,6 +15,7 @@ import net.minecraft.client.model.geom.ModelLayerLocation;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.inventory.EnchantmentMenu;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -77,7 +78,10 @@ public class MicraDroneClient {
 
     /** Called from {@link EnchantTableWatcher} once a blank scroll lands in the enchanting table's item slot. */
     public static void openEnchantScrollScreen(BlockPos tablePos) {
-        Minecraft.getInstance().setScreen(new EnchantScrollScreen(tablePos));
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player != null && minecraft.player.containerMenu instanceof EnchantmentMenu menu) {
+            minecraft.setScreen(new EnchantScrollScreen(tablePos, menu, minecraft.player.getInventory()));
+        }
     }
 
     /** Registered as the DroneLogPayload handler in MicraDrone's RegisterPayloadHandlersEvent listener. */
