@@ -6,6 +6,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.stream.Collectors;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
@@ -38,8 +39,9 @@ import net.neoforged.neoforge.network.PacketDistributor;
  * for one of the controller's scripts; the right half is normally the real field seen from
  * straight above (the game's own camera hovers over the plot, {@link IdeCameraController}, 林さん's
  * "float the viewpoint" idea) - pressing List swaps it for the script picker (script list +
- * description + log + points, exactly what {@code DroneScreen} used to show on its own) instead,
- * since hiding the live view briefly to pick a file doesn't hurt the experience (林さん's call).
+ * description + log, what {@code DroneScreen} used to show on its own) instead, since hiding the
+ * live view briefly to pick a file doesn't hurt the experience (林さん's call). Per-crop points are
+ * a separate full-width HUD line under the heading, shown in both modes - see {@link #renderPointsHud}.
  * Picking a script there sends {@link SelectScriptPayload}, switches the editor to it, and closes
  * list mode automatically; pressing List again with nothing picked just closes it.
  *
@@ -60,16 +62,17 @@ import net.neoforged.neoforge.network.PacketDistributor;
  */
 public class IdeScreen extends Screen {
     private static final int MARGIN = 8;
-    private static final int TOP_Y = 24;
+    /** Below the heading - the points HUD line (visible in both camera and list mode, see {@link #renderPointsHud}). */
+    private static final int POINTS_Y = MARGIN + 12;
+    private static final int TOP_Y = 34;
     private static final int BUTTON_HEIGHT = 20;
     private static final int ROW_GAP = 4;
     /** Width of the line-number/breakpoint gutter to the left of the editor. */
     private static final int GUTTER_WIDTH = 20;
     /** How often (client ticks) the plot size/direction is re-resolved from the blocks. */
     private static final int RESCAN_INTERVAL_TICKS = 20;
-    // List-mode panel (right half) sub-region heights, top to bottom: points text, script list,
-    // description, then log fills whatever's left.
-    private static final int POINTS_HEIGHT = 20;
+    // List-mode panel (right half) sub-region heights, top to bottom: script list, description,
+    // then log fills whatever's left.
     private static final int LIST_HEIGHT = 90;
     private static final int DESCRIPTION_HEIGHT = 28;
 
@@ -204,9 +207,9 @@ public class IdeScreen extends Screen {
         return this.width - MARGIN - listPanelX();
     }
 
-    /** Builds the right-half script-picker panel: points text (drawn in {@link #render}), list, description, log. */
+    /** Builds the right-half script-picker panel: script list, description, log (points HUD is drawn full-width in {@link #render}). */
     private void initListModeWidgets(int rightX, int rightW) {
-        int y = editorTop + POINTS_HEIGHT;
+        int y = editorTop;
         scriptList = new ScriptListWidget(Minecraft.getInstance(), rightW, LIST_HEIGHT, y, 16);
         scriptList.setX(rightX);
         scriptList.replaceEntries(availableScripts);
@@ -414,22 +417,25 @@ public class IdeScreen extends Screen {
         guiGraphics.drawCenteredString(this.font,
                 Component.translatable("gui.micradrone.ide_screen.heading", displayName),
                 this.width / 2, MARGIN, 0xFFFFFF);
+        renderPointsHud(guiGraphics);
         renderGutter(guiGraphics);
-        if (listMode) {
-            renderPointsLines(guiGraphics);
-        }
     }
 
-    private void renderPointsLines(GuiGraphics guiGraphics) {
-        int rightX = listPanelX();
-        int rightW = listPanelWidth();
-        int y = editorTop;
-        for (Map.Entry<String, Long> entry : new TreeMap<>(pointsByCrop).entrySet()) {
-            guiGraphics.drawString(this.font, cropDisplayName(entry.getKey()) + ": " + entry.getValue(),
-                    rightX + rightW / 2 - this.font.width(cropDisplayName(entry.getKey()) + ": " + entry.getValue()) / 2,
-                    y, 0xFFFFFF);
-            y += 9;
+    /**
+     * Per-crop harvest totals as one line spanning the top of the screen, matching the persistent
+     * resource HUD in the reference game (The Farmer Was Replaced) - 林さん's request. Shown in both
+     * camera and list mode (not tucked inside list mode only, unlike the old {@code DroneScreen}-era
+     * placement) since it's exactly the kind of at-a-glance status the reference game keeps always
+     * visible.
+     */
+    private void renderPointsHud(GuiGraphics guiGraphics) {
+        if (pointsByCrop.isEmpty()) {
+            return;
         }
+        String text = new TreeMap<>(pointsByCrop).entrySet().stream()
+                .map(entry -> cropDisplayName(entry.getKey()) + ": " + entry.getValue())
+                .collect(Collectors.joining("   "));
+        guiGraphics.drawCenteredString(this.font, text, this.width / 2, POINTS_Y, 0xFFFFFF);
     }
 
     private static String cropDisplayName(String cropName) {
