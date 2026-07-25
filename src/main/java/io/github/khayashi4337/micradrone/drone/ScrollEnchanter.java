@@ -13,11 +13,9 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.Container;
-import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.EnchantmentMenu;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.EnchantingTableBlock;
@@ -50,8 +48,9 @@ import net.minecraft.world.level.block.EnchantingTableBlock;
 public final class ScrollEnchanter {
     /** Extra reach slack on top of the player's block-interaction range, vanilla's usual allowance. */
     private static final double INTERACT_DISTANCE_SLACK = 4.0;
-    /** {@link EnchantmentMenu}'s item slot index (slot 1 is the lapis slot) - see the vanilla source. */
+    /** {@link EnchantmentMenu} slot indices - see the vanilla source. */
     private static final int ITEM_SLOT = 0;
+    private static final int LAPIS_SLOT = 1;
     /** Flat lapis price for copying an existing scroll (cheaper than teaching brand-new knowledge). */
     public static final int COPY_LAPIS_COST = 1;
 
@@ -163,10 +162,15 @@ public final class ScrollEnchanter {
             lapisCost = COPY_LAPIS_COST;
         }
 
-        if (!player.getAbilities().instabuild && !consumeLapis(player.getInventory(), lapisCost)) {
-            player.sendSystemMessage(Component.literal("[scroll] inscribing '" + displayName
-                    + "' costs " + lapisCost + " lapis lazuli"));
-            return;
+        Slot lapisSlot = player.containerMenu.getSlot(LAPIS_SLOT);
+        if (!player.getAbilities().instabuild) {
+            if (lapisSlot.getItem().getCount() < lapisCost) {
+                player.sendSystemMessage(Component.literal("[scroll] inscribing '" + displayName
+                        + "' costs " + lapisCost + " lapis lazuli - put that many in the table's lapis slot"));
+                return;
+            }
+            lapisSlot.getItem().shrink(lapisCost);
+            lapisSlot.setChanged();
         }
         ScriptChestLibrary.writeScrollSource(stack, source);
         stack.set(DataComponents.CUSTOM_NAME, Component.literal(displayName));
@@ -177,30 +181,5 @@ public final class ScrollEnchanter {
         level.sendParticles(ParticleTypes.ENCHANT,
                 tablePos.getX() + 0.5, tablePos.getY() + 1.2, tablePos.getZ() + 0.5, 32, 0.3, 0.4, 0.3, 0.0);
         player.sendSystemMessage(Component.literal("[scroll] inscribed '" + displayName + "'"));
-    }
-
-    /** Takes {@code cost} lapis from {@code inventory}; false (and takes nothing) if there isn't enough. */
-    private static boolean consumeLapis(Inventory inventory, int cost) {
-        int have = 0;
-        for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
-            ItemStack stack = inventory.getItem(slot);
-            if (stack.is(Items.LAPIS_LAZULI)) {
-                have += stack.getCount();
-            }
-        }
-        if (have < cost) {
-            return false;
-        }
-        int remaining = cost;
-        for (int slot = 0; slot < inventory.getContainerSize() && remaining > 0; slot++) {
-            ItemStack stack = inventory.getItem(slot);
-            if (stack.is(Items.LAPIS_LAZULI)) {
-                int take = Math.min(remaining, stack.getCount());
-                stack.shrink(take);
-                remaining -= take;
-            }
-        }
-        inventory.setChanged();
-        return true;
     }
 }
