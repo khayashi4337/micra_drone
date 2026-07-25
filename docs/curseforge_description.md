@@ -30,16 +30,18 @@ own. Inspired by the Steam game
   automatically detected one block below). Vanilla farmland inside the plot
   is kept watered automatically, and crops grow faster than normal whenever
   the plot is claimed, script running or not.
-- **Learn from the enchanting table** — hold a blank Script Scroll up to an
-  enchanting table to be offered starter scripts and a full command
-  reference, unlocked as you surround the table with more bookshelves
-  (exactly like vanilla enchanting), for a lapis lazuli cost. You can also
-  copy an already-written scroll sitting in a chest, shulker box, or
-  chiseled bookshelf around the table for a flat 1 lapis.
+- **Learn from the enchanting table** — right-click an enchanting table to
+  open its normal vanilla screen, then drag a blank Script Scroll into its
+  item slot: the screen switches to a picker offering starter scripts and a
+  full command reference, unlocked as you surround the table with more
+  bookshelves (exactly like vanilla enchanting), for a lapis lazuli cost.
+  You can also copy an already-written scroll sitting in a chest, shulker
+  box, or chiseled bookshelf around the table for a flat 1 lapis.
 - **A script library you can carry** — store scrolls in a chest, shulker
   box, or bookshelf at the plot's other two corners and they show up in the
   controller's script list automatically. Run the selected script with a
-  lever (redstone on/off) — no GUI required during normal play.
+  redstone signal (a lever, for example) — no GUI required during normal
+  play.
 - **The controller shows what it's doing** — a docked look while idle, an
   active look while a script is running, and it faces whoever placed it.
 - **Wheat, carrot, and pumpkin** — earn points per crop by harvesting, then
@@ -64,12 +66,12 @@ own. Inspired by the Steam game
 2. Place the controller (on the surface or embedded flush with the ground —
    your choice), then place the marker diagonally from it to size your plot
    (or skip the marker for a default 5x5 area).
-3. Craft a blank **Script Scroll** (3 paper, 1 feather, 1 ink sac) and use
-   it on a nearby **enchanting table** to learn a starter script or the
-   full command reference.
+3. Craft a blank **Script Scroll** (3 paper, 1 feather, 1 ink sac). Open a
+   nearby **enchanting table** and drag the scroll into its item slot to
+   learn a starter script or the full command reference.
 4. Right-click the controller to open the in-game **IDE** and start
-   editing/running the script. A lever next to the controller runs whatever
-   script is currently selected.
+   editing/running the script. A redstone signal (a lever, for example)
+   next to the controller runs whatever script is currently selected.
 5. Right-click the Corner Marker to open the shop and spend earned points on
    new crops.
 
