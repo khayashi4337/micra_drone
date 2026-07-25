@@ -132,6 +132,51 @@ class LiveDroneApiTest {
         assertEquals(null, farm.plantedCrop());
     }
 
+    /**
+     * Perception (issue #10) has to take canHarvest()'s route, not till()'s: the read must happen on
+     * the main thread (it touches live world state) but must not cost the script a pacing delay, or
+     * "look before you act" would be strictly slower than acting blindly.
+     */
+    @Test
+    void perceptionReadsGoThroughTheMainThreadWithNoPacingDelay() throws Exception {
+        FakeMainThreadGateway gateway = new FakeMainThreadGateway();
+        PacedActionQueue queue = new PacedActionQueue();
+        FakeGridState grid = new FakeGridState(5);
+        FakeFarmBlockAccess farm = new FakeFarmBlockAccess();
+        LiveDroneApi api = newApi(gateway, queue, grid, farm, msg -> {});
+
+        Future<String> ground = worker.submit(api::getGround);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump(); // no pacedQueue tick needed: the query completes as soon as it's run
+        assertEquals("dirt", ground.get(2, TimeUnit.SECONDS));
+
+        Future<String> weather = worker.submit(api::getWeather);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump();
+        assertEquals("clear", weather.get(2, TimeUnit.SECONDS));
+
+        Future<Double> light = worker.submit(api::getLight);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump();
+        assertEquals(15.0, light.get(2, TimeUnit.SECONDS));
+    }
+
+    /** A perception read must never be answered off the main thread - the world isn't safe to touch there. */
+    @Test
+    void aPerceptionReadBlocksUntilTheMainThreadRunsIt() throws Exception {
+        FakeMainThreadGateway gateway = new FakeMainThreadGateway();
+        PacedActionQueue queue = new PacedActionQueue();
+        FakeGridState grid = new FakeGridState(5);
+        LiveDroneApi api = newApi(gateway, queue, grid, new FakeFarmBlockAccess(), msg -> {});
+
+        Future<String> biome = worker.submit(api::getBiome);
+        gateway.awaitQueuedWork(2000);
+
+        assertFalse(biome.isDone(), "the read must wait for the main thread rather than answering itself");
+        gateway.pump();
+        assertEquals("plains", biome.get(2, TimeUnit.SECONDS));
+    }
+
     @Test
     void canHarvestIsAnImmediateMainThreadReadWithNoPacingDelay() throws Exception {
         FakeMainThreadGateway gateway = new FakeMainThreadGateway();

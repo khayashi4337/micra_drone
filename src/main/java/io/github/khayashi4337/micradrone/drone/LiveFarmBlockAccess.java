@@ -10,6 +10,8 @@ import java.util.Set;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.util.RandomSource;
@@ -83,6 +85,55 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     @Override
     public boolean isRotten() {
         return level.getBlockState(cropPos()).is(MicraDrone.ROTTEN_PUMPKIN_BLOCK.get());
+    }
+
+    // ---- perception (GitHub issue #10) ----
+
+    @Override
+    public String groundBlockName() {
+        return blockName(groundPos());
+    }
+
+    @Override
+    public String blockAboveName() {
+        return blockName(cropPos());
+    }
+
+    private String blockName(BlockPos pos) {
+        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(level.getBlockState(pos).getBlock());
+        return SenseNames.simplify(id.getNamespace(), id.getPath());
+    }
+
+    @Override
+    public long dayTime() {
+        return SenseNames.timeOfDay(level.getDayTime());
+    }
+
+    @Override
+    public String weather() {
+        return SenseNames.weather(level.isRaining(), level.isThundering());
+    }
+
+    /**
+     * Biomes can be defined inline (unregistered) by a datapack, in which case there is no key to
+     * report - hand back "unknown" rather than throwing, so a perception script can never crash a
+     * run just by standing somewhere unusual.
+     */
+    @Override
+    public String biomeName() {
+        return level.getBiome(cropPos()).unwrapKey()
+                .map(key -> SenseNames.simplify(key.location().getNamespace(), key.location().getPath()))
+                .orElse("unknown");
+    }
+
+    /**
+     * The same "how bright is it here" number vanilla uses for mob spawning: block light and sky
+     * light combined, already dimmed for night and for weather - so a script watching this sees the
+     * day/night cycle and a passing storm the way a player standing there would.
+     */
+    @Override
+    public int lightLevel() {
+        return level.getMaxLocalRawBrightness(cropPos());
     }
 
     @Override

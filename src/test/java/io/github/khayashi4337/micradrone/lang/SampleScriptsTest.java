@@ -56,6 +56,24 @@ class SampleScriptsTest {
         assertTrue(api.printed.contains("9"), "expected the printed harvested-cell count to be 9");
     }
 
+    /**
+     * The perception sample (issue #10) must actually branch on what it reads, not just call the
+     * new commands: on an untilled plot every cell should take the "dirt -> till, then plant" path.
+     */
+    @Test
+    void surveyPlotTillsEveryUntilledCellItFindsAndPlantsIt() {
+        FakeDroneApi api = new FakeDroneApi(3);
+
+        new Interpreter(api).run(parse(SampleScripts.SURVEY_PLOT));
+
+        long tillCount = api.calls.stream().filter("till"::equals).count();
+        long plantCount = api.calls.stream().filter("plant:wheat"::equals).count();
+        assertEquals(9, tillCount, "every cell of a 3x3 plot starts as dirt and should be tilled");
+        assertEquals(9, plantCount, "every tilled cell should then be planted");
+        assertTrue(api.printed.contains("plains"), "expected the surveyed biome to be reported");
+        assertTrue(api.printed.contains("9"), "expected all 9 cells to be counted as planted");
+    }
+
     @Test
     void moveSquareReturnsToTheStartingCell() {
         FakeDroneApi api = new FakeDroneApi(3);

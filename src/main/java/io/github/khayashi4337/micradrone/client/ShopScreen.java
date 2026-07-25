@@ -9,6 +9,7 @@ import java.util.TreeMap;
 import io.github.khayashi4337.micradrone.drone.UnlockShop;
 import io.github.khayashi4337.micradrone.drone.net.PurchaseUnlockPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestShopStatePayload;
+import io.github.khayashi4337.micradrone.drone.net.StopViewingPayload;
 import net.minecraft.core.BlockPos;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -110,6 +111,17 @@ public class ShopScreen extends Screen {
             guiGraphics.drawCenteredString(this.font, line, this.width / 2, y, 0xFFFFFF);
             y += 10;
         }
+    }
+
+    /**
+     * Tells the server to stop pushing shop-state updates to us. Sends the marker position, the
+     * same key this screen opened with - the server resolves it back to the controller exactly as
+     * {@code RequestShopStatePayload} did.
+     */
+    @Override
+    public void removed() {
+        PacketDistributor.sendToServer(new StopViewingPayload(markerPos));
+        super.removed();
     }
 
     @Override

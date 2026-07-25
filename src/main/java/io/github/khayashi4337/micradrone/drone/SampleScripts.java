@@ -39,6 +39,55 @@ public final class SampleScripts {
             print("planted the whole plot")
             """;
 
+    public static final String SURVEY_PLOT = """
+            # Looks at the ground before acting (issue #10), so it works on a plot that hasn't been
+            # prepared yet and says what it found instead of silently failing. Without get_ground()
+            # the drone can only assume what it's standing on; with it, one script handles farmland,
+            # bare dirt, and cells it simply can't farm.
+            size = get_world_size()
+            print("biome:")
+            print(get_biome())
+            print("weather:")
+            print(get_weather())
+            planted = 0
+            blocked = 0
+            going_east = True
+            row = 0
+            while row < size:
+                col = 0
+                while col < size:
+                    ground = get_ground()
+                    if ground == "farmland":
+                        if plant("wheat"):
+                            planted = planted + 1
+                    elif ground == "dirt" or ground == "grass_block":
+                        till()
+                        if plant("wheat"):
+                            planted = planted + 1
+                    else:
+                        blocked = blocked + 1
+                        print("cannot farm this cell:")
+                        print(ground)
+                    if col < size - 1:
+                        if going_east:
+                            move("east")
+                        else:
+                            move("west")
+                    col = col + 1
+                if row < size - 1:
+                    move("south")
+                going_east = not going_east
+                row = row + 1
+            print("cells planted:")
+            print(planted)
+            print("cells I could not farm:")
+            print(blocked)
+            # Vanilla crops stop growing below light level 9, so this is worth knowing before you
+            # walk away expecting a harvest.
+            if get_light() < 9:
+                print("it is too dark here for crops to grow")
+            """;
+
     public static final String HARVEST_WHEN_READY = """
             # Walks the whole plot and harvests any cell that's ready, snake path. Run this after the
             # plot has had time to grow (see till_and_plant.mdrone to plant it first).
@@ -186,6 +235,7 @@ public final class SampleScripts {
         all.put("main.mdrone", MAIN);
         all.put("move_square.mdrone", MOVE_SQUARE);
         all.put("till_and_plant.mdrone", TILL_AND_PLANT);
+        all.put("survey_plot.mdrone", SURVEY_PLOT);
         all.put("harvest_when_ready.mdrone", HARVEST_WHEN_READY);
         all.put("carrot_farm.mdrone", CARROT_FARM);
         all.put("pumpkin_smart_harvest.mdrone", PUMPKIN_SMART_HARVEST);

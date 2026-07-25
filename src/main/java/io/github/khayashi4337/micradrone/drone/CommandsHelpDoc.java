@@ -63,6 +63,39 @@ public final class CommandsHelpDoc {
             get_points("wheat")
                 指定した作物1種類だけの資源ポイント。
 
+            ■ まわりのMinecraftの世界を見る（ワールドは変えない。すぐ結果が返る）
+            ブロック名・バイオーム名はvanillaのものなら "dirt" のように短い名前で
+            返る。MODが追加したものだけ "micradrone:rotten_pumpkin" のように
+            前に名前空間が付く。
+
+            get_ground()
+                ドローンが今いるマスの「地面」のブロック名。
+                例: "farmland"（耕地）, "dirt"（土）, "grass_block"（草）,
+                "sand"（砂）, "stone"（石）, "water"（水）。
+                till()する前に地面が何かを調べれば、どんな場所でも通用する
+                スクリプトが書ける。
+
+            get_block_above()
+                地面の上、ドローンと同じマスにあるブロック名。作物がある
+                ならその名前（"wheat", "carrots", "pumpkin_stem", "pumpkin"
+                など）、何も無ければ "air"。
+
+            get_time()
+                ワールドの1日の中での時刻（tick、0〜23999）。
+                0=日の出、6000=正午、12000=日の入り、18000=真夜中。
+
+            get_weather()
+                今の天気。"clear"（晴れ）/ "rain"（雨）/ "thunder"（雷雨）。
+                雷雨は雨も降っているが、その場合は "thunder" が返る。
+
+            get_biome()
+                今いるマスのバイオーム名。例: "plains", "desert", "jungle",
+                "snowy_taiga"。
+
+            get_light()
+                今いるマスの明るさ（0〜15）。vanillaの作物は9以上ないと
+                育たない。夜や天気でも下がるので、松明が要るかの判断に使える。
+
             ■ アンロックショップ
             コーナーマーカーのブロックを右クリックすると専用のショップ画面が開き、
             稼いだポイントを使って新しい作物を解放できる。今のところ
@@ -98,6 +131,17 @@ public final class CommandsHelpDoc {
                 move("east")
                 till()
                 plant("wheat")
+
+            ■ 使用例（まわりを見て判断する）
+            ground = get_ground()
+            if ground == "farmland":
+                plant("wheat")
+            elif ground == "dirt":
+                till()
+                plant("wheat")
+            else:
+                print("ここには植えられない")
+                print(ground)
 
             ■ スクリプトの巻物について
             スクリプトは「スクリプトの巻物」アイテムに書く。空の巻物は
