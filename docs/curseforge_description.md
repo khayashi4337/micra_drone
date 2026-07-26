@@ -44,9 +44,10 @@ own. Inspired by the Steam game
   normal play.
 - **The controller shows what it's doing** — a docked look while idle, an
   active look while a script is running, and it faces whoever placed it.
-- **Wheat, carrot, and pumpkin** — earn points per crop by harvesting, then
-  spend them in an in-game shop (right-click the Corner Marker) to unlock
-  carrot and pumpkin farming.
+- **Wheat, carrot, and pumpkin** — earn points per crop by harvesting (shown
+  live at the top of the IDE screen), then spend them in an in-game shop
+  (right-click the Corner Marker, or the IDE's Shop button) to unlock carrot
+  and pumpkin farming.
 - **Giant pumpkins** — grow a full square of pumpkins at once and they fuse
   into a giant pumpkin patch for a large bonus payout on harvest.
   Pumpkins also have a ~20% chance to grow "rotten" and yield nothing when
@@ -72,8 +73,8 @@ own. Inspired by the Steam game
 4. Right-click the controller to open the in-game **IDE** and start
    editing/running the script. A redstone signal (a lever, for example)
    next to the controller runs whatever script is currently selected.
-5. Right-click the Corner Marker to open the shop and spend earned points on
-   new crops.
+5. Right-click the Corner Marker, or use the IDE's Shop button, to open the
+   shop and spend earned points on new crops.
 
 Full command reference and playthrough notes: see the
 [GitHub repository](https://github.com/khayashi4337/micra_drone) README.

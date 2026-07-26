@@ -1,5 +1,6 @@
 package io.github.khayashi4337.micradrone;
 
+import java.util.Optional;
 import java.util.Set;
 
 import org.slf4j.Logger;
@@ -239,19 +240,23 @@ public class MicraDrone {
         }
     }
 
-    // payload.pos() here is the corner marker the player right-clicked, not a controller - see
-    // DroneControllerBlockEntity#findByCornerMarker for the reverse-scan that resolves it. The reach
-    // check is against the marker, which is what the player is actually standing at; its controller
-    // is legitimately up to MAX_MARKER_SCAN_DISTANCE away.
+    // payload.pos() is either a controller (opened via the IDE's Shop button) or a corner marker
+    // the player right-clicked directly - same dual-resolution idiom as handleStopViewing below. The
+    // reach check is against whichever position was sent; a marker's controller is legitimately up
+    // to MAX_MARKER_SCAN_DISTANCE further away, same allowance findByCornerMarker itself uses.
     private static void handleRequestShopState(RequestShopStatePayload payload, IPayloadContext context) {
-        if (context.player() instanceof ServerPlayer serverPlayer && isInReach(serverPlayer, payload.pos())) {
-            DroneControllerBlockEntity.findByCornerMarker(serverPlayer.level(), payload.pos())
-                    .ifPresent(be -> {
-                        // Registered as a viewer so someone else's purchase updates this Shop screen too.
-                        be.addViewer(serverPlayer);
-                        be.sendShopStateTo(serverPlayer);
-                    });
+        if (!(context.player() instanceof ServerPlayer serverPlayer) || !isInReach(serverPlayer, payload.pos())) {
+            return;
         }
+        Optional<DroneControllerBlockEntity> target =
+                serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be
+                        ? Optional.of(be)
+                        : DroneControllerBlockEntity.findByCornerMarker(serverPlayer.level(), payload.pos());
+        // Registered as a viewer so someone else's purchase updates this Shop screen too.
+        target.ifPresent(be -> {
+            be.addViewer(serverPlayer);
+            be.sendShopStateTo(serverPlayer);
+        });
     }
 
     // Any controller screen closing: stop pushing that controller's updates to this player. The
