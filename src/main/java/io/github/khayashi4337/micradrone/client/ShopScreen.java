@@ -40,6 +40,8 @@ public class ShopScreen extends Screen {
     private Map<String, Long> pointsByCrop = Map.of();
     private List<Component> pointsLines = List.of();
     private Component statusLine = Component.translatable("gui.micradrone.shop_screen.connecting");
+    /** What get_plot_id() would return for this plot (林さんの実機フィードバック: マーカーを見ただけでは分からなかった). Empty until the first response, or if no marker is paired. */
+    private String plotId = "";
 
     public ShopScreen(BlockPos openPos) {
         super(Component.translatable("gui.micradrone.shop_screen.title"));
@@ -88,13 +90,14 @@ public class ShopScreen extends Screen {
      * the resolved controller - this screen only ever has one outstanding request in flight for
      * itself, so there's no ambiguity about what an incoming reply refers to.
      */
-    public void updateShopState(BlockPos sourcePos, Set<String> unlockedCrops, Map<String, Long> pointsByCrop) {
+    public void updateShopState(BlockPos sourcePos, Set<String> unlockedCrops, Map<String, Long> pointsByCrop, String plotId) {
         if (controllerPos != null && !sourcePos.equals(controllerPos)) {
             return;
         }
         controllerPos = sourcePos;
         this.unlockedCrops = unlockedCrops;
         this.pointsByCrop = pointsByCrop;
+        this.plotId = plotId;
         statusLine = Component.empty();
 
         pointsLines = new TreeMap<>(pointsByCrop).entrySet().stream()
@@ -110,6 +113,12 @@ public class ShopScreen extends Screen {
         int y = 4;
         if (!statusLine.getString().isEmpty()) {
             guiGraphics.drawCenteredString(this.font, statusLine, this.width / 2, y, 0xFFFFFF);
+            y += 10;
+        }
+        if (!plotId.isEmpty()) {
+            guiGraphics.drawCenteredString(this.font,
+                    Component.translatable("gui.micradrone.shop_screen.plot_id", plotId),
+                    this.width / 2, y, 0xC0C0C0);
             y += 10;
         }
         for (Component line : pointsLines) {

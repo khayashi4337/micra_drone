@@ -296,7 +296,11 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     public void sendShopStateTo(ServerPlayer requester) {
-        PacketDistributor.sendToPlayer(requester, new ShopStatePayload(getBlockPos(), Set.copyOf(unlockedCrops), pointsByCrop()));
+        String plotId = level instanceof ServerLevel serverLevel
+                ? CornerMarkerBlockEntity.findDisplayId(serverLevel, getBlockPos())
+                : "";
+        PacketDistributor.sendToPlayer(requester,
+                new ShopStatePayload(getBlockPos(), Set.copyOf(unlockedCrops), pointsByCrop(), plotId));
     }
 
     /**
