@@ -52,4 +52,34 @@ class ScriptIdTest {
         assertFalse(ScriptId.isValidId("scroll:0"));
         assertFalse(ScriptId.isValidId("notes.txt"));
     }
+
+    @Test
+    void inventoryScrollIdRoundTrips() {
+        String id = ScriptId.inventoryScrollId(9);
+        assertEquals("inv:9", id);
+        assertTrue(ScriptId.isInventoryScrollId(id));
+        assertEquals(9, ScriptId.inventorySlot(id));
+    }
+
+    @Test
+    void inventoryScrollIdRejectsNegativeSlot() {
+        assertThrows(IllegalArgumentException.class, () -> ScriptId.inventoryScrollId(-1));
+    }
+
+    @Test
+    void malformedInventoryScrollIdsAreNotInventoryScrollIds() {
+        assertFalse(ScriptId.isInventoryScrollId(null));
+        assertFalse(ScriptId.isInventoryScrollId("inv:"));
+        assertFalse(ScriptId.isInventoryScrollId("inv:-1"));
+        assertFalse(ScriptId.isInventoryScrollId("inv:a"));
+        assertFalse(ScriptId.isInventoryScrollId("inv:1:2"));
+        assertFalse(ScriptId.isInventoryScrollId("scroll:0:0"));
+        assertEquals(-1, ScriptId.inventorySlot("inv:x"));
+    }
+
+    @Test
+    void isValidIdAcceptsInventoryScrollIds() {
+        assertTrue(ScriptId.isValidId("inv:0"));
+        assertFalse(ScriptId.isValidId("inv:-1"));
+    }
 }

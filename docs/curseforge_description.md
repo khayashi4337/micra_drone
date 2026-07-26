@@ -45,7 +45,8 @@ own. Inspired by the Steam game
   controller toward the corner marker (no need to relocate it if you resize
   the plot later) and they show up in the controller's script list
   automatically. A blank scroll in the library shows up too, ready to write
-  into straight from the list. Run the selected script with a redstone
+  into straight from the list. Scrolls in your own inventory show up in the
+  list as well, private to you. Run the selected script with a redstone
   signal (a lever, for example) — no GUI required during normal play.
 - **The controller shows what it's doing** — a docked look while idle, an
   active look while a script is running, and it faces whoever placed it.

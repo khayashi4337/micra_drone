@@ -2,21 +2,27 @@ package io.github.khayashi4337.micradrone.drone;
 
 /**
  * Script identifiers as they travel between the GUI and the server (issue #6, chest library).
- * Two shapes exist:
+ * Three shapes exist:
  * <ul>
  *   <li>File scripts: the plain {@code *.mdrone} file name, validated by
  *       {@link ScriptFileStore#isValidScriptName}.</li>
  *   <li>Chest scrolls: {@code scroll:<chestIndex>:<slot>}, pointing into the controller's library
  *       chests (see {@code ScriptChestLibrary}). Indexes are re-resolved against the chests at use
  *       time, so a stale id (items moved) fails loudly instead of hitting the wrong scroll.</li>
+ *   <li>Inventory scrolls: {@code inv:<slot>}, pointing into the REQUESTING PLAYER's own inventory
+ *       (林さんの要望: 参照する巻物の置き場所にインベントリも含める). Slot is re-resolved against that
+ *       specific player's inventory at use time, same "stale id fails loudly" idiom as chest
+ *       scrolls - and since it's always resolved against whichever player is asking, never another
+ *       player's inventory, this id shape is meaningless without a player in hand.</li>
  * </ul>
- * (A third shape, the id of a scroll slotted directly into the controller block, existed for issue
+ * (A fourth shape, the id of a scroll slotted directly into the controller block, existed for issue
  * #7's jukebox-style slot; the GUI-reduction follow-up replaced it with plain list selection - see
  * {@code DroneControllerBlockEntity#selectedScript} - so that shape no longer exists.)
  * Minecraft-free so the parsing/validation rules are unit-testable.
  */
 public final class ScriptId {
     private static final String SCROLL_PREFIX = "scroll:";
+    private static final String INVENTORY_PREFIX = "inv:";
 
     private ScriptId() {
     }
@@ -44,9 +50,28 @@ public final class ScriptId {
         return parsed == null ? -1 : parsed[1];
     }
 
-    /** True for every id shape the server accepts from the network: a valid file name or a scroll id. */
+    public static String inventoryScrollId(int slot) {
+        if (slot < 0) {
+            throw new IllegalArgumentException("slot must be >= 0: " + slot);
+        }
+        return INVENTORY_PREFIX + slot;
+    }
+
+    public static boolean isInventoryScrollId(String id) {
+        return inventorySlot(id) >= 0;
+    }
+
+    /** The inventory slot of an inventory scroll id, or -1 if {@code id} isn't a well-formed one. */
+    public static int inventorySlot(String id) {
+        if (id == null || !id.startsWith(INVENTORY_PREFIX)) {
+            return -1;
+        }
+        return parseNonNegativeInt(id.substring(INVENTORY_PREFIX.length()));
+    }
+
+    /** True for every id shape the server accepts from the network: a valid file name, a scroll id, or an inventory scroll id. */
     public static boolean isValidId(String id) {
-        return ScriptFileStore.isValidScriptName(id) || isScrollId(id);
+        return ScriptFileStore.isValidScriptName(id) || isScrollId(id) || isInventoryScrollId(id);
     }
 
     private static int[] parse(String id) {

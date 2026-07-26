@@ -524,9 +524,10 @@ public class IdeScreen extends Screen {
             Row(ScriptEntry entry) {
                 this.entry = entry;
                 // ✎ marks a blank scroll ready to write into (林さんの要望); ⚑ an already-written
-                // scroll in a library chest; plain text is an on-disk file.
+                // scroll (library chest or the player's own inventory); plain text is an on-disk file.
                 String name = entry.displayName();
-                String prefix = entry.isNew() ? "✎ " : entry.id().startsWith("scroll:") ? "⚑ " : "";
+                boolean isScrollItem = entry.id().startsWith("scroll:") || entry.id().startsWith("inv:");
+                String prefix = entry.isNew() ? "✎ " : isScrollItem ? "⚑ " : "";
                 this.label = Component.literal(prefix + name);
             }
 

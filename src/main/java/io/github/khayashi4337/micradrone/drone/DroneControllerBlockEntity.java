@@ -15,6 +15,8 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
+import javax.annotation.Nullable;
+
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.drone.net.DebugCommandPayload;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
@@ -351,16 +353,23 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     /**
-     * Reads {@code scriptName}'s source (library scroll or the controller's script folder)
-     * without running it. Empty on any I/O error (logged); the caller is a network payload
-     * handler with no player-facing error channel besides the log.
+     * Reads {@code scriptName}'s source (library scroll, the requester's own inventory scroll, or
+     * the controller's script folder) without running it. Empty on any I/O error (logged); the
+     * caller is a network payload handler with no player-facing error channel besides the log.
+     * {@code requester} may be null (the redstone run path) - an inventory scroll id then can't
+     * resolve to anyone's inventory and simply fails, same as any other missing script.
      */
-    public Optional<String> loadScriptSource(String scriptName) {
+    public Optional<String> loadScriptSource(@Nullable ServerPlayer requester, String scriptName) {
         if (!(level instanceof ServerLevel serverLevel)) {
             return Optional.empty();
         }
         if (ScriptId.isScrollId(scriptName)) {
             return ScriptChestLibrary.resolveScrollSource(serverLevel, getBlockPos(), scriptName);
+        }
+        if (ScriptId.isInventoryScrollId(scriptName)) {
+            return requester != null
+                    ? ScriptChestLibrary.resolveInventoryScrollSource(requester, scriptName)
+                    : Optional.empty();
         }
         try {
             return Optional.of(ScriptFileStore.load(controllerScriptFolder(serverLevel).resolve(scriptName)));
@@ -382,7 +391,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             requester.sendSystemMessage(Component.literal("[ide] invalid script id '" + scriptName + "'"));
             return;
         }
-        loadScriptSource(scriptName).ifPresentOrElse(
+        loadScriptSource(requester, scriptName).ifPresentOrElse(
                 source -> PacketDistributor.sendToPlayer(requester, new ScriptSourcePayload(getBlockPos(), scriptName, source)),
                 () -> requester.sendSystemMessage(Component.literal("[ide] could not read '" + scriptName + "'")));
         pushDebugStateTo(requester); // a (re)opened IDE learns the server-held breakpoints right away
@@ -415,6 +424,13 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             if (!ScriptChestLibrary.saveScrollSource(serverLevel, getBlockPos(), scriptName, source)) {
                 requester.sendSystemMessage(Component.literal(
                         "[ide] scroll " + scriptName + " is no longer in a library chest - nothing saved"));
+                return;
+            }
+        } else if (ScriptId.isInventoryScrollId(scriptName)) {
+            // An inventory scroll: write the edit back into the requester's own scroll item.
+            if (!ScriptChestLibrary.saveInventoryScrollSource(requester, scriptName, source)) {
+                requester.sendSystemMessage(Component.literal(
+                        "[ide] scroll " + scriptName + " is no longer in your inventory - nothing saved"));
                 return;
             }
         } else {
@@ -487,7 +503,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         }
         setChanged();
 
-        Optional<String> loaded = loadScriptSource(scriptName);
+        Optional<String> loaded = loadScriptSource(requester, scriptName);
         if (loaded.isEmpty()) {
             appendLog("[error] could not read script '" + scriptName + "' - missing scroll or file; reopen the screen to refresh the list");
             return;
@@ -729,13 +745,25 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         return Optional.ofNullable(serverLevel.getServer().getPlayerList().getPlayer(ownerUuid));
     }
 
+    /**
+     * The library's cached container scripts, PLUS {@code player}'s own inventory scrolls scanned
+     * fresh right now (林さんの要望) - inventory contents are per-player, so unlike the cached
+     * container list this can't be precomputed once and reused for every viewer; scanning 36 slots
+     * with no world access is cheap enough to just do on every push.
+     */
+    private List<ScriptEntry> availableScriptsFor(ServerPlayer player) {
+        List<ScriptEntry> combined = new ArrayList<>(availableScripts);
+        combined.addAll(ScriptChestLibrary.listInventoryScrolls(player));
+        return combined;
+    }
+
     private void pushLogSnapshotTo(ServerPlayer player) {
         List<String> lines;
         synchronized (logBuffer) {
             lines = List.copyOf(logBuffer);
         }
         PacketDistributor.sendToPlayer(player,
-                new DroneLogPayload(getBlockPos(), lines, pointsByCrop(), availableScripts, selectedScript, alias));
+                new DroneLogPayload(getBlockPos(), lines, pointsByCrop(), availableScriptsFor(player), selectedScript, alias));
     }
 
     /** Registered as this block's {@link net.minecraft.world.level.block.entity.BlockEntityTicker}; server-side only. */
