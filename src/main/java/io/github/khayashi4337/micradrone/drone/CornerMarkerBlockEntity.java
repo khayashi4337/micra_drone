@@ -77,6 +77,22 @@ public class CornerMarkerBlockEntity extends BlockEntity {
     }
 
     /**
+     * Lazily migrates a marker that reached the world without a sequence number: either a genuinely
+     * corrupted state, or - the case actually hit - a 0.0.7-era marker saved back when this class
+     * stored a UUID under a different NBT key ("Id", not "SequenceNumber"). {@link CompoundTag#getInt}
+     * silently reads a missing key as 0, so {@link #loadAdditional} was leaving those markers stuck
+     * showing id "0" forever, since {@code CornerMarkerBlock#setPlacedBy} (the only other place that
+     * assigns one) never re-runs for a block that's already standing in the world. Called from every
+     * path that actually reads a placed marker's id, so the fix applies the first time anyone looks
+     * (seb's PR #20 round-2 review caught this).
+     */
+    public void ensureSequenceNumber(ServerLevel level) {
+        if (!hasSequenceNumber()) {
+            assignSequenceNumber(CornerMarkerSequenceRegistry.get(level).nextNumber());
+        }
+    }
+
+    /**
      * Re-scans for the Corner Marker paired with {@code controllerPos} (same diagonal search
      * {@code DroneControllerBlockEntity#scanForCornerMarker} uses - always re-resolved rather than
      * trusting cached grid state, matching {@code ScriptChestLibrary}'s "stale position fails
@@ -92,7 +108,11 @@ public class CornerMarkerBlockEntity extends BlockEntity {
     }
 
     private static Optional<CornerMarkerBlockEntity> at(ServerLevel level, BlockPos pos) {
-        return level.getBlockEntity(pos) instanceof CornerMarkerBlockEntity be ? Optional.of(be) : Optional.empty();
+        if (level.getBlockEntity(pos) instanceof CornerMarkerBlockEntity be) {
+            be.ensureSequenceNumber(level);
+            return Optional.of(be);
+        }
+        return Optional.empty();
     }
 
     /**
