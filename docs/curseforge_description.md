@@ -41,10 +41,12 @@ own. Inspired by the Steam game
   You can also copy an already-written scroll sitting in a chest, shulker
   box, or chiseled bookshelf around the table for a flat 1 lapis.
 - **A script library you can carry** — store scrolls in a chest, shulker
-  box, or chiseled bookshelf at the plot's other two corners and they show
-  up in the controller's script list automatically. Run the selected script
-  with a redstone signal (a lever, for example) — no GUI required during
-  normal play.
+  box, or chiseled bookshelf anywhere along the two axis lines from the
+  controller toward the corner marker (no need to relocate it if you resize
+  the plot later) and they show up in the controller's script list
+  automatically. A blank scroll in the library shows up too, ready to write
+  into straight from the list. Run the selected script with a redstone
+  signal (a lever, for example) — no GUI required during normal play.
 - **The controller shows what it's doing** — a docked look while idle, an
   active look while a script is running, and it faces whoever placed it.
 - **Wheat, carrot, and pumpkin** — earn points per crop by harvesting (shown

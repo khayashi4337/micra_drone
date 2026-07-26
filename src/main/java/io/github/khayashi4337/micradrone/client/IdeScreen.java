@@ -523,9 +523,11 @@ public class IdeScreen extends Screen {
 
             Row(ScriptEntry entry) {
                 this.entry = entry;
-                // ⚑ marks a scroll in a library chest; plain text is an on-disk file.
+                // ✎ marks a blank scroll ready to write into (林さんの要望); ⚑ an already-written
+                // scroll in a library chest; plain text is an on-disk file.
                 String name = entry.displayName();
-                this.label = Component.literal(entry.id().startsWith("scroll:") ? "⚑ " + name : name);
+                String prefix = entry.isNew() ? "✎ " : entry.id().startsWith("scroll:") ? "⚑ " : "";
+                this.label = Component.literal(prefix + name);
             }
 
             @Override
