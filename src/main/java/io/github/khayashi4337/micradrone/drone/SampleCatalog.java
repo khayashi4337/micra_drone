@@ -26,6 +26,7 @@ public final class SampleCatalog {
     public static final List<Sample> ALL = List.of(
             new Sample("ヘルプ(コマンド一覧)", CommandsHelpDoc.CONTENT, 0, 1),
             new Sample("main", SampleScripts.MAIN, 0, 1),
+            new Sample("plot_id", SampleScripts.PLOT_ID, 0, 1),
             new Sample("move_square", SampleScripts.MOVE_SQUARE, 0, 1),
             new Sample("till_and_plant", SampleScripts.TILL_AND_PLANT, 3, 1),
             new Sample("survey_plot", SampleScripts.SURVEY_PLOT, 6, 2),

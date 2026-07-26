@@ -136,6 +136,28 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         return level.getMaxLocalRawBrightness(cropPos());
     }
 
+    /**
+     * Re-scans for the paired Corner Marker (same diagonal search {@code
+     * DroneControllerBlockEntity#scanForCornerMarker} uses - always re-resolved rather than trusting
+     * cached grid state, matching {@code ScriptChestLibrary}'s "stale position fails loudly" idiom)
+     * and reads its {@link CornerMarkerBlockEntity#displayId}. Empty string if no marker is currently
+     * paired.
+     */
+    @Override
+    public String plotId() {
+        Optional<int[]> markerOffset = CornerMarkerScan.findNearestMatch(
+                (dx, dy, dz) -> level.getBlockState(origin.offset(dx, dy, dz)).is(MicraDrone.CORNER_MARKER_BLOCK.get()),
+                DroneControllerBlockEntity.MAX_MARKER_SCAN_DISTANCE,
+                DroneControllerBlockEntity.MAX_MARKER_SCAN_Y_TOLERANCE);
+        if (markerOffset.isEmpty()) {
+            return "";
+        }
+        int[] o = markerOffset.get();
+        return level.getBlockEntity(origin.offset(o[0], o[1], o[2])) instanceof CornerMarkerBlockEntity be
+                ? be.displayId()
+                : "";
+    }
+
     @Override
     public Attempt attemptTill() {
         BlockPos ground = groundPos();

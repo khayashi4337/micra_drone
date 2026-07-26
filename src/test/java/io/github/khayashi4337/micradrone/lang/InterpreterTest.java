@@ -211,10 +211,21 @@ class InterpreterTest {
                 print(get_weather())
                 print(get_biome())
                 print(get_light())
+                print(get_plot_id())
                 """);
-        assertEquals(List.of("dirt", "air", "6000", "clear", "plains", "15"), api.printed);
-        assertEquals(List.of("get_ground", "get_block_above", "get_time", "get_weather", "get_biome", "get_light"),
-                api.calls);
+        assertEquals(List.of("dirt", "air", "6000", "clear", "plains", "15", ""), api.printed);
+        assertEquals(List.of("get_ground", "get_block_above", "get_time", "get_weather", "get_biome", "get_light",
+                "get_plot_id"), api.calls);
+    }
+
+    @Test
+    void getPlotIdReportsTheMarkersCurrentId() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        api.setPlotId("north_field");
+        new Interpreter(api).run(new Parser(new Lexer("""
+                print(get_plot_id())
+                """).scan()).parseProgram());
+        assertEquals(List.of("north_field"), api.printed);
     }
 
     @Test
@@ -251,6 +262,9 @@ class InterpreterTest {
                 """));
         assertThrows(MicraLangException.class, () -> run("""
                 x = get_weather(1)
+                """));
+        assertThrows(MicraLangException.class, () -> run("""
+                x = get_plot_id(1)
                 """));
     }
 }

@@ -20,7 +20,7 @@ own. Inspired by the Steam game
   (`move`, `till`, `plant`, `harvest`, `can_harvest`, `is_rotten`,
   `get_points`, `print`, ...), plus perception commands that read the world
   around the drone (`get_ground`, `get_block_above`, `get_time`,
-  `get_weather`, `get_biome`, `get_light`). Scripts are written on a
+  `get_weather`, `get_biome`, `get_light`, `get_plot_id`). Scripts are written on a
   rewritable **Script Scroll** item, or in a full **in-game IDE** with a
   live top-down camera view of your plot, a debugger (breakpoints,
   step/step-out), and a script list.

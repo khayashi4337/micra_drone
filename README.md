@@ -164,7 +164,9 @@ print("planted the whole plot")
 さらに `get_ground()` / `get_block_above()` / `get_time()` / `get_weather()` /
 `get_biome()` / `get_light()` でMinecraftの世界そのものを読み取れる。
 これらを使うと「決まった手順をなぞるだけ」ではなく、その場の地形や天気を
-見て判断するスクリプトが書ける:
+見て判断するスクリプトが書ける。`get_plot_id()` は今のプロットのコーナー
+マーカーのID（金床で付けた別名、無ければ自動採番のID）を返すので、
+複数のプロットを持っているときにスクリプト側で見分けられる:
 
 ```python
 ground = get_ground()

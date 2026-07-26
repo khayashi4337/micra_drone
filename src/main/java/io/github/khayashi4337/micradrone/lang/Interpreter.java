@@ -277,6 +277,10 @@ public final class Interpreter {
                 requireArgCount(call, 0);
                 yield api.getLight();
             }
+            case "get_plot_id" -> {
+                requireArgCount(call, 0);
+                yield api.getPlotId();
+            }
             case "print" -> {
                 requireArgCount(call, 1);
                 api.print(stringify(eval(args.get(0))));

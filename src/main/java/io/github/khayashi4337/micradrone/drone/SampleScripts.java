@@ -119,6 +119,15 @@ public final class SampleScripts {
             print(get_points("wheat"))
             """;
 
+    public static final String PLOT_ID = """
+            # Prints this plot's Corner Marker id - the friendly name if you renamed the marker in
+            # an anvil before placing it, otherwise a short auto-assigned id. Handy for telling
+            # scripts apart once you have more than one plot, or just to check which plot a script
+            # is currently running on.
+            print("plot id:")
+            print(get_plot_id())
+            """;
+
     public static final String MOVE_SQUARE = """
             # Walks the plot's outer edge once, printing the drone's position at each step. A gentle
             # first script to see move()/get_pos_x()/get_pos_y() in action.
@@ -233,6 +242,7 @@ public final class SampleScripts {
     private static Map<String, String> buildAll() {
         Map<String, String> all = new LinkedHashMap<>();
         all.put("main.mdrone", MAIN);
+        all.put("plot_id.mdrone", PLOT_ID);
         all.put("move_square.mdrone", MOVE_SQUARE);
         all.put("till_and_plant.mdrone", TILL_AND_PLANT);
         all.put("survey_plot.mdrone", SURVEY_PLOT);

@@ -93,4 +93,9 @@ final class FakeFarmBlockAccess implements FarmBlockAccess {
     public int lightLevel() {
         return 15;
     }
+
+    @Override
+    public String plotId() {
+        return "test-plot";
+    }
 }

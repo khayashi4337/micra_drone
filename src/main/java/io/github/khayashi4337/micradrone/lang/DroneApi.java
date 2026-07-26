@@ -59,6 +59,13 @@ public interface DroneApi {
     /** Read-only: light level at the drone's cell, 0..15 (vanilla crops need 9 or more to grow). */
     double getLight();
 
+    /**
+     * Read-only: this plot's Corner Marker id - the friendly name if one was set via anvil, else a
+     * short form of its auto-assigned id (see {@code CornerMarkerBlockEntity#displayId}). Empty
+     * string if no marker is currently paired with this plot.
+     */
+    String getPlotId();
+
     /** Appends text to the script's log panel. */
     void print(String text);
 }

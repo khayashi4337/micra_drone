@@ -75,6 +75,16 @@ class SampleScriptsTest {
     }
 
     @Test
+    void plotIdPrintsWhateverTheApiReportsForTheMarker() {
+        FakeDroneApi api = new FakeDroneApi(3);
+        api.setPlotId("north_field");
+
+        new Interpreter(api).run(parse(SampleScripts.PLOT_ID));
+
+        assertEquals(List.of("plot id:", "north_field"), api.printed);
+    }
+
+    @Test
     void moveSquareReturnsToTheStartingCell() {
         FakeDroneApi api = new FakeDroneApi(3);
         new Interpreter(api).run(parse(SampleScripts.MOVE_SQUARE));
