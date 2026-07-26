@@ -9,6 +9,7 @@ import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
+import io.github.khayashi4337.micradrone.MicraDroneClient;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
 import io.github.khayashi4337.micradrone.drone.net.DebugCommandPayload;
@@ -65,6 +66,9 @@ public class IdeScreen extends Screen {
     /** Below the heading - the points HUD line (visible in both camera and list mode, see {@link #renderPointsHud}). */
     private static final int POINTS_Y = MARGIN + 12;
     private static final int TOP_Y = 34;
+    /** Top-right corner, same row as the heading - opens the unlock shop without a trip to the Corner Marker. */
+    private static final int SHOP_BUTTON_WIDTH = 50;
+    private static final int SHOP_BUTTON_HEIGHT = 14;
     private static final int BUTTON_HEIGHT = 20;
     private static final int ROW_GAP = 4;
     /** Width of the line-number/breakpoint gutter to the left of the editor. */
@@ -178,6 +182,11 @@ public class IdeScreen extends Screen {
                 .bounds(leftX + 2 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
         listButton = addRenderableWidget(Button.builder(listButtonLabel(), b -> toggleListMode())
                 .bounds(leftX + 3 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
+
+        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.shop"),
+                        b -> MicraDroneClient.openShopScreen(pos))
+                .bounds(this.width - MARGIN - SHOP_BUTTON_WIDTH, MARGIN, SHOP_BUTTON_WIDTH, SHOP_BUTTON_HEIGHT)
+                .build());
 
         if (listMode) {
             initListModeWidgets(listPanelX(), listPanelWidth());
@@ -514,9 +523,12 @@ public class IdeScreen extends Screen {
 
             Row(ScriptEntry entry) {
                 this.entry = entry;
-                // ⚑ marks a scroll in a library chest; plain text is an on-disk file.
+                // ✎ marks a blank scroll ready to write into (林さんの要望); ⚑ an already-written
+                // scroll (library chest or the player's own inventory); plain text is an on-disk file.
                 String name = entry.displayName();
-                this.label = Component.literal(entry.id().startsWith("scroll:") ? "⚑ " + name : name);
+                boolean isScrollItem = entry.id().startsWith("scroll:") || entry.id().startsWith("inv:");
+                String prefix = entry.isNew() ? "✎ " : isScrollItem ? "⚑ " : "";
+                this.label = Component.literal(prefix + name);
             }
 
             @Override

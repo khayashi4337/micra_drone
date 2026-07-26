@@ -18,17 +18,22 @@ import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
- * Opened by right-clicking a Corner Marker. Spends a plot's points on new crop unlocks (see
- * {@link UnlockShop#CATALOG}). The marker itself doesn't know its paired controller's position -
- * that's resolved server-side (see DroneControllerBlockEntity#findByCornerMarker) - so this screen
- * opens keyed by the marker's position and learns the real controller position from the first
- * {@code ShopStatePayload} response, using that for every purchase afterward.
+ * Opened either by right-clicking a Corner Marker, or from the IDE's Shop button (issue: shop entry
+ * point consolidation - 林さん wanted a low-friction way in from the controller too, since visiting
+ * the marker just for this felt like an extra trip). Spends a plot's points on new crop unlocks (see
+ * {@link UnlockShop#CATALOG}). Either way this screen opens keyed by whatever position it was given
+ * - a marker doesn't know its paired controller's position (resolved server-side via a reverse scan,
+ * {@code DroneControllerBlockEntity#findByCornerMarker}), while a controller position resolves
+ * directly - both are tried server-side (same dual-resolution idiom {@code handleStopViewing} already
+ * used). The real controller position is learned from the first {@code ShopStatePayload} response and
+ * used for every purchase afterward, so this distinction only matters for the opening request.
  * Client-only, so no logic here is unit-testable - see MicraDroneClient's note on manual verification.
  */
 public class ShopScreen extends Screen {
     private static final int WIDTH = 240;
 
-    private final BlockPos markerPos;
+    /** Whatever position this screen was opened with - a corner marker OR a controller, see class doc. */
+    private final BlockPos openPos;
     /** Learned from the server's first response; null (and purchases disabled) until then. */
     private BlockPos controllerPos;
     private Set<String> unlockedCrops = Set.of();
@@ -36,15 +41,15 @@ public class ShopScreen extends Screen {
     private List<Component> pointsLines = List.of();
     private Component statusLine = Component.translatable("gui.micradrone.shop_screen.connecting");
 
-    public ShopScreen(BlockPos markerPos) {
+    public ShopScreen(BlockPos openPos) {
         super(Component.translatable("gui.micradrone.shop_screen.title"));
-        this.markerPos = markerPos;
+        this.openPos = openPos;
     }
 
     @Override
     protected void init() {
         rebuild();
-        PacketDistributor.sendToServer(new RequestShopStatePayload(markerPos));
+        PacketDistributor.sendToServer(new RequestShopStatePayload(openPos));
     }
 
     private void rebuild() {
@@ -114,13 +119,13 @@ public class ShopScreen extends Screen {
     }
 
     /**
-     * Tells the server to stop pushing shop-state updates to us. Sends the marker position, the
-     * same key this screen opened with - the server resolves it back to the controller exactly as
+     * Tells the server to stop pushing shop-state updates to us. Sends the same position this screen
+     * opened with - the server resolves it back to the controller exactly as
      * {@code RequestShopStatePayload} did.
      */
     @Override
     public void removed() {
-        PacketDistributor.sendToServer(new StopViewingPayload(markerPos));
+        PacketDistributor.sendToServer(new StopViewingPayload(openPos));
         super.removed();
     }
 

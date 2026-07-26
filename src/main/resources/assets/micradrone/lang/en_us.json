@@ -26,6 +26,7 @@
   "gui.micradrone.ide_screen.save_run": "Save & Run",
   "gui.micradrone.ide_screen.list_open": "List",
   "gui.micradrone.ide_screen.list_close": "Close List",
+  "gui.micradrone.ide_screen.shop": "Shop",
   "gui.micradrone.ide_screen.loading": "Loading...",
   "gui.micradrone.ide_screen.debug_pause": "Pause",
   "gui.micradrone.ide_screen.debug_resume": "Resume",

@@ -29,7 +29,10 @@ own. Inspired by the Steam game
   flush with the farmland, or stood on the surface (the plot is
   automatically detected one block below). Vanilla farmland inside the plot
   is kept watered automatically, and crops grow faster than normal whenever
-  the plot is claimed, script running or not.
+  the plot is claimed, script running or not. Each placed Corner Marker gets
+  a unique id automatically; rename one in an anvil before placing it to
+  give it a friendly name instead (world-wide unique - a duplicate name is
+  rejected with a chat message).
 - **Learn from the enchanting table** — right-click an enchanting table to
   open its normal vanilla screen, then drag a blank Script Scroll into its
   item slot: the screen switches to a picker offering starter scripts and a
@@ -38,15 +41,19 @@ own. Inspired by the Steam game
   You can also copy an already-written scroll sitting in a chest, shulker
   box, or chiseled bookshelf around the table for a flat 1 lapis.
 - **A script library you can carry** — store scrolls in a chest, shulker
-  box, or chiseled bookshelf at the plot's other two corners and they show
-  up in the controller's script list automatically. Run the selected script
-  with a redstone signal (a lever, for example) — no GUI required during
-  normal play.
+  box, or chiseled bookshelf anywhere along the two axis lines from the
+  controller toward the corner marker (no need to relocate it if you resize
+  the plot later) and they show up in the controller's script list
+  automatically. A blank scroll in the library shows up too, ready to write
+  into straight from the list. Scrolls in your own inventory show up in the
+  list as well, private to you. Run the selected script with a redstone
+  signal (a lever, for example) — no GUI required during normal play.
 - **The controller shows what it's doing** — a docked look while idle, an
   active look while a script is running, and it faces whoever placed it.
-- **Wheat, carrot, and pumpkin** — earn points per crop by harvesting, then
-  spend them in an in-game shop (right-click the Corner Marker) to unlock
-  carrot and pumpkin farming.
+- **Wheat, carrot, and pumpkin** — earn points per crop by harvesting (shown
+  live at the top of the IDE screen), then spend them in an in-game shop
+  (right-click the Corner Marker, or the IDE's Shop button) to unlock carrot
+  and pumpkin farming.
 - **Giant pumpkins** — grow a full square of pumpkins at once and they fuse
   into a giant pumpkin patch for a large bonus payout on harvest.
   Pumpkins also have a ~20% chance to grow "rotten" and yield nothing when
@@ -72,8 +79,8 @@ own. Inspired by the Steam game
 4. Right-click the controller to open the in-game **IDE** and start
    editing/running the script. A redstone signal (a lever, for example)
    next to the controller runs whatever script is currently selected.
-5. Right-click the Corner Marker to open the shop and spend earned points on
-   new crops.
+5. Right-click the Corner Marker, or use the IDE's Shop button, to open the
+   shop and spend earned points on new crops.
 
 Full command reference and playthrough notes: see the
 [GitHub repository](https://github.com/khayashi4337/micra_drone) README.
