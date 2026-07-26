@@ -41,6 +41,7 @@ import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.material.MapColor;
@@ -254,14 +255,23 @@ public class MicraDrone {
         if (!(context.player() instanceof ServerPlayer serverPlayer) || !isInReach(serverPlayer, payload.pos())) {
             return;
         }
+        Level level = serverPlayer.level();
         Optional<DroneControllerBlockEntity> target =
-                serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be
+                level.getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be
                         ? Optional.of(be)
-                        : DroneControllerBlockEntity.findByCornerMarker(serverPlayer.level(), payload.pos());
+                        : DroneControllerBlockEntity.findByCornerMarker(level, payload.pos());
+        // If the player opened this by right-clicking a specific marker directly, show THAT marker's
+        // own id - not whichever marker the resolved controller happens to be paired with right now.
+        // Those can differ (a second, not-yet-paired marker's reverse scan can resolve back to a
+        // DIFFERENT controller's own paired marker) - real-machine report: a freshly placed second
+        // marker showed the first marker's id because of exactly this mismatch.
+        String clickedMarkerId = level.getBlockEntity(payload.pos()) instanceof CornerMarkerBlockEntity marker
+                ? marker.displayId()
+                : null;
         // Registered as a viewer so someone else's purchase updates this Shop screen too.
         target.ifPresent(be -> {
             be.addViewer(serverPlayer);
-            be.sendShopStateTo(serverPlayer);
+            be.sendShopStateTo(serverPlayer, clickedMarkerId);
         });
     }
 
