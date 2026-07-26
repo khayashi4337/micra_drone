@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import com.mojang.logging.LogUtils;
 
 import io.github.khayashi4337.micradrone.drone.CornerMarkerBlock;
+import io.github.khayashi4337.micradrone.drone.CornerMarkerBlockEntity;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlock;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
 import io.github.khayashi4337.micradrone.drone.DroneEntity;
@@ -86,14 +87,19 @@ public class MicraDrone {
                     DroneControllerBlockEntity::new, DRONE_CONTROLLER_BLOCK.get()).build(null));
 
     // Placed at the opposite diagonal corner from a drone_controller to size its (square) plot, and
-    // doubles as the unlock shop's entry point (right-click, see CornerMarkerBlock). No BlockEntity:
-    // the controller scans the 4 diagonals for it (and vice versa for the shop), see
-    // DroneControllerBlockEntity#scanForCornerMarker/#findByCornerMarker.
+    // doubles as an unlock shop entry point (right-click, see CornerMarkerBlock). The controller
+    // still scans the 4 diagonals for it (and vice versa for the shop), see
+    // DroneControllerBlockEntity#scanForCornerMarker/#findByCornerMarker - the BlockEntity below is
+    // only for the marker's own standalone id/friendly-name (CornerMarkerBlockEntity), not a
+    // controller binding.
     public static final DeferredBlock<CornerMarkerBlock> CORNER_MARKER_BLOCK = BLOCKS.registerBlock(
             "corner_marker", CornerMarkerBlock::new,
             BlockBehaviour.Properties.of().mapColor(MapColor.GOLD).strength(2.0f));
     public static final DeferredItem<BlockItem> CORNER_MARKER_ITEM =
             ITEMS.registerSimpleBlockItem("corner_marker", CORNER_MARKER_BLOCK);
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<CornerMarkerBlockEntity>> CORNER_MARKER_BLOCK_ENTITY =
+            BLOCK_ENTITY_TYPES.register("corner_marker", () -> BlockEntityType.Builder.of(
+                    CornerMarkerBlockEntity::new, CORNER_MARKER_BLOCK.get()).build(null));
 
     // A portable, freely-rewritable script carrier (GitHub issue #1) - see ScriptScrollItem. Stacks
     // to 1, matching vanilla's own WritableBookItem (Items.WRITABLE_BOOK).

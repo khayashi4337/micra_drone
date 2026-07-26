@@ -29,7 +29,10 @@ own. Inspired by the Steam game
   flush with the farmland, or stood on the surface (the plot is
   automatically detected one block below). Vanilla farmland inside the plot
   is kept watered automatically, and crops grow faster than normal whenever
-  the plot is claimed, script running or not.
+  the plot is claimed, script running or not. Each placed Corner Marker gets
+  a unique id automatically; rename one in an anvil before placing it to
+  give it a friendly name instead (world-wide unique - a duplicate name is
+  rejected with a chat message).
 - **Learn from the enchanting table** — right-click an enchanting table to
   open its normal vanilla screen, then drag a blank Script Scroll into its
   item slot: the screen switches to a picker offering starter scripts and a
