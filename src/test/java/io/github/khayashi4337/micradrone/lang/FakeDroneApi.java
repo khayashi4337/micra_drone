@@ -18,6 +18,7 @@ final class FakeDroneApi implements DroneApi {
     private String weather = "clear";
     private String biome = "plains";
     private double light = 15;
+    private String plotId = "";
 
     final List<String> calls = new ArrayList<>();
     final List<String> printed = new ArrayList<>();
@@ -48,6 +49,10 @@ final class FakeDroneApi implements DroneApi {
 
     void setLight(double light) {
         this.light = light;
+    }
+
+    void setPlotId(String plotId) {
+        this.plotId = plotId;
     }
 
     int posXInt() { return x; }
@@ -184,6 +189,12 @@ final class FakeDroneApi implements DroneApi {
     public double getLight() {
         calls.add("get_light");
         return light;
+    }
+
+    @Override
+    public String getPlotId() {
+        calls.add("get_plot_id");
+        return plotId;
     }
 
     @Override

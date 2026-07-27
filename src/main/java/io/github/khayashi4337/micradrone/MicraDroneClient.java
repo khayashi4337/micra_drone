@@ -95,7 +95,7 @@ public class MicraDroneClient {
     /** Registered as the ShopStatePayload handler in MicraDrone's RegisterPayloadHandlersEvent listener. */
     public static void handleShopState(ShopStatePayload payload, IPayloadContext context) {
         if (Minecraft.getInstance().screen instanceof ShopScreen screen) {
-            screen.updateShopState(payload.pos(), payload.unlockedCrops(), payload.pointsByCrop());
+            screen.updateShopState(payload.pos(), payload.unlockedCrops(), payload.pointsByCrop(), payload.plotId());
         }
     }
 

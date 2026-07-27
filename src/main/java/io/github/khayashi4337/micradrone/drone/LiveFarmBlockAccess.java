@@ -136,6 +136,12 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         return level.getMaxLocalRawBrightness(cropPos());
     }
 
+    /** See {@link CornerMarkerBlockEntity#findDisplayId} - shared with the Shop screen so both agree on the same id. */
+    @Override
+    public String plotId() {
+        return level instanceof ServerLevel serverLevel ? CornerMarkerBlockEntity.findDisplayId(serverLevel, origin) : "";
+    }
+
     @Override
     public Attempt attemptTill() {
         BlockPos ground = groundPos();

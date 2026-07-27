@@ -140,6 +140,11 @@ public final class LiveDroneApi implements DroneApi {
     }
 
     @Override
+    public String getPlotId() {
+        return queryMainThread(farm::plotId);
+    }
+
+    @Override
     public void print(String text) {
         logSink.accept(text);
     }

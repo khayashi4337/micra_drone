@@ -30,10 +30,11 @@ import net.minecraft.world.phys.BlockHitResult;
  * class's history for why.
  * <p>
  * BlockEntity-backed ({@link CornerMarkerBlockEntity}, 林さんの「IDで管理」構想) so a placed marker has
- * a standalone identity independent of any controller - see that class's doc for the id/friendly-name
- * split. This block is the only thing that talks to {@link CornerMarkerNameRegistry}: claiming a
- * name on placement ({@link #setPlacedBy}) and releasing it on removal ({@link #onRemove}), since
- * the BlockEntity itself has no way to see other markers in the world.
+ * a standalone identity independent of any controller - see that class's doc for the sequence-number/
+ * friendly-name split. This block is the only thing that talks to {@link CornerMarkerNameRegistry}
+ * and {@link CornerMarkerSequenceRegistry}: assigning a number and claiming a name on placement
+ * ({@link #setPlacedBy}), releasing the name on removal ({@link #onRemove}), since the BlockEntity
+ * itself has no way to see other markers in the world.
  */
 public class CornerMarkerBlock extends BaseEntityBlock {
     public static final MapCodec<CornerMarkerBlock> CODEC = simpleCodec(CornerMarkerBlock::new);
@@ -69,17 +70,25 @@ public class CornerMarkerBlock extends BaseEntityBlock {
     }
 
     /**
-     * Claims this marker's friendly name (if it has one) in the world-wide
-     * {@link CornerMarkerNameRegistry}. If another marker already owns that name, the rename is
-     * rejected right here - the only place with both the Level and the placing player at once: the
-     * name is cleared back to "no friendly name" and the placer is told in chat why, rather than
-     * silently keeping a name that couldn't actually be looked up unambiguously.
+     * Two things happen here, the only place with both the Level and the placing player at once:
+     * <ul>
+     *   <li>A brand new marker (never placed before, {@link CornerMarkerBlockEntity#hasSequenceNumber}
+     *       still false) draws its permanent number from {@link CornerMarkerSequenceRegistry}. A
+     *       marker that already has one (broken and placed again) keeps it - see that class's doc.</li>
+     *   <li>If the marker has a friendly name, it's claimed in the world-wide
+     *       {@link CornerMarkerNameRegistry}. If another marker already owns that name, the rename is
+     *       rejected: cleared back to "no friendly name" and the placer told in chat why, rather than
+     *       silently keeping a name that couldn't actually be looked up unambiguously.</li>
+     * </ul>
      */
     @Override
     public void setPlacedBy(Level level, BlockPos pos, BlockState state, @Nullable LivingEntity placer, ItemStack stack) {
         super.setPlacedBy(level, pos, state, placer, stack);
         if (!(level instanceof ServerLevel serverLevel) || !(level.getBlockEntity(pos) instanceof CornerMarkerBlockEntity be)) {
             return;
+        }
+        if (!be.hasSequenceNumber()) {
+            be.assignSequenceNumber(CornerMarkerSequenceRegistry.get(serverLevel).nextNumber());
         }
         String name = be.friendlyName();
         if (name.isEmpty()) {

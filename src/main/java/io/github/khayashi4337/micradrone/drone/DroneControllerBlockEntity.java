@@ -296,7 +296,24 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     public void sendShopStateTo(ServerPlayer requester) {
-        PacketDistributor.sendToPlayer(requester, new ShopStatePayload(getBlockPos(), Set.copyOf(unlockedCrops), pointsByCrop()));
+        sendShopStateTo(requester, null);
+    }
+
+    /**
+     * @param clickedMarkerId if the Shop screen was opened by right-clicking a specific Corner Marker,
+     *     that marker's own {@code displayId()} - shown as-is instead of re-deriving "the marker paired
+     *     with this controller" (which can be a DIFFERENT marker, e.g. right after placing a second,
+     *     not-yet-paired one - 林さんの実機報告: 2つ目のマーカーが1つ目のIDを表示していた). Null when opened via the
+     *     controller or the IDE's Shop button, or when re-broadcasting to other viewers after a purchase.
+     */
+    public void sendShopStateTo(ServerPlayer requester, @Nullable String clickedMarkerId) {
+        String plotId = clickedMarkerId != null
+                ? clickedMarkerId
+                : (level instanceof ServerLevel serverLevel
+                        ? CornerMarkerBlockEntity.findDisplayId(serverLevel, getBlockPos())
+                        : "");
+        PacketDistributor.sendToPlayer(requester,
+                new ShopStatePayload(getBlockPos(), Set.copyOf(unlockedCrops), pointsByCrop(), plotId));
     }
 
     /**

@@ -33,6 +33,7 @@ import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.StopViewingPayload;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
@@ -41,6 +42,7 @@ import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.material.MapColor;
@@ -254,14 +256,28 @@ public class MicraDrone {
         if (!(context.player() instanceof ServerPlayer serverPlayer) || !isInReach(serverPlayer, payload.pos())) {
             return;
         }
+        Level level = serverPlayer.level();
         Optional<DroneControllerBlockEntity> target =
-                serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be
+                level.getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be
                         ? Optional.of(be)
-                        : DroneControllerBlockEntity.findByCornerMarker(serverPlayer.level(), payload.pos());
+                        : DroneControllerBlockEntity.findByCornerMarker(level, payload.pos());
+        // If the player opened this by right-clicking a specific marker directly, show THAT marker's
+        // own id - not whichever marker the resolved controller happens to be paired with right now.
+        // Those can differ (a second, not-yet-paired marker's reverse scan can resolve back to a
+        // DIFFERENT controller's own paired marker) - real-machine report: a freshly placed second
+        // marker showed the first marker's id because of exactly this mismatch.
+        CornerMarkerBlockEntity clickedMarker =
+                level.getBlockEntity(payload.pos()) instanceof CornerMarkerBlockEntity marker ? marker : null;
+        if (clickedMarker != null && level instanceof ServerLevel serverLevel) {
+            // Self-heals a 0.0.7-era marker that has no sequence number yet (seb's PR #20 round-2
+            // review: those markers were stuck showing id "0" forever, see ensureSequenceNumber's doc).
+            clickedMarker.ensureSequenceNumber(serverLevel);
+        }
+        String clickedMarkerId = clickedMarker != null ? clickedMarker.displayId() : null;
         // Registered as a viewer so someone else's purchase updates this Shop screen too.
         target.ifPresent(be -> {
             be.addViewer(serverPlayer);
-            be.sendShopStateTo(serverPlayer);
+            be.sendShopStateTo(serverPlayer, clickedMarkerId);
         });
     }
 

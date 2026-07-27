@@ -39,4 +39,7 @@ public interface FarmBlockAccess {
 
     /** Light level at the drone's cell, 0..15. */
     int lightLevel();
+
+    /** This plot's Corner Marker id (friendly name, or a short form of its auto-assigned id); empty if unpaired. */
+    String plotId();
 }
