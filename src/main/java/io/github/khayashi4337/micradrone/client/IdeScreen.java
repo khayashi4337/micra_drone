@@ -71,6 +71,8 @@ public class IdeScreen extends Screen {
     private static final int SHOP_BUTTON_HEIGHT = 14;
     private static final int BUTTON_HEIGHT = 20;
     private static final int ROW_GAP = 4;
+    /** Icon-only Run control above the editor (green square, white triangle) - see {@link PlayButton}. */
+    private static final int PLAY_BUTTON_SIZE = 20;
     /** Width of the line-number/breakpoint gutter to the left of the editor. */
     private static final int GUTTER_WIDTH = 20;
     /** How often (client ticks) the plot size/direction is re-resolved from the blocks. */
@@ -140,8 +142,16 @@ public class IdeScreen extends Screen {
         int leftW = this.width / 2 - MARGIN - ROW_GAP;
         int saveRowY = this.height - MARGIN - BUTTON_HEIGHT;
         int debugRowY = saveRowY - BUTTON_HEIGHT - ROW_GAP;
-        editorTop = TOP_Y;
-        editorHeight = debugRowY - ROW_GAP - TOP_Y;
+        editorTop = TOP_Y + PLAY_BUTTON_SIZE + ROW_GAP;
+        editorHeight = debugRowY - ROW_GAP - editorTop;
+
+        // Icon-only Run control, above the editor - matches the reference game's play button
+        // (林さんの要望). Runs the SAVED script without touching unsaved editor changes, same
+        // behavior the old text "Run" button had; "Save & Run" below still does both.
+        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.run"),
+                        b -> PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptId)))
+                .bounds(leftX + GUTTER_WIDTH, TOP_Y, PLAY_BUTTON_SIZE, PLAY_BUTTON_SIZE)
+                .build(PlayButton::new));
 
         editor = new DebugEditBox(this.font, leftX + GUTTER_WIDTH, editorTop, leftW - GUTTER_WIDTH, editorHeight,
                 Component.translatable("gui.micradrone.ide_screen.editor_placeholder"),
@@ -167,21 +177,17 @@ public class IdeScreen extends Screen {
                         b -> PacketDistributor.sendToServer(new StopScriptPayload(pos)))
                 .bounds(leftX + 3 * (debugW + ROW_GAP), debugRowY, debugW, BUTTON_HEIGHT).build());
 
-        int buttonW = (leftW - 3 * ROW_GAP) / 4;
+        // 3-way now: the Run icon moved above the editor (see the PlayButton added earlier in this method).
+        int buttonW = (leftW - 2 * ROW_GAP) / 3;
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.save"), b -> save())
                 .bounds(leftX, saveRowY, buttonW, BUTTON_HEIGHT).build());
-        // Plain Run: runs the SAVED script without touching unsaved editor changes - handy when
-        // re-running a debug session repeatedly.
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.run"),
-                        b -> PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptId)))
-                .bounds(leftX + buttonW + ROW_GAP, saveRowY, buttonW, BUTTON_HEIGHT).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.save_run"), b -> {
                     save();
                     PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptId));
                 })
-                .bounds(leftX + 2 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
+                .bounds(leftX + buttonW + ROW_GAP, saveRowY, buttonW, BUTTON_HEIGHT).build());
         listButton = addRenderableWidget(Button.builder(listButtonLabel(), b -> toggleListMode())
-                .bounds(leftX + 3 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
+                .bounds(leftX + 2 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
 
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.shop"),
                         b -> MicraDroneClient.openShopScreen(pos))
@@ -475,6 +481,50 @@ public class IdeScreen extends Screen {
     @Override
     public boolean isPauseScreen() {
         return false;
+    }
+
+    /**
+     * Icon-only Run control (green square, white right-pointing triangle) instead of a text label -
+     * matches the reference game's (The Farmer Was Replaced) play button, 林さんの要望. No existing
+     * icon-button precedent in this mod, so it's a plain procedural {@link GuiGraphics#fill} draw
+     * (a background rect plus a triangle built from horizontal strips) rather than a new texture
+     * asset - simplest option for a single flat 2-color icon.
+     */
+    private static final class PlayButton extends Button {
+        private static final int BACKGROUND = 0xFF3E9142;
+        private static final int BACKGROUND_HOVER = 0xFF57B75B;
+        private static final int TRIANGLE_COLOR = 0xFFFFFFFF;
+        private static final int PADDING = 5;
+
+        PlayButton(Button.Builder builder) {
+            super(builder);
+        }
+
+        @Override
+        protected void renderWidget(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+            int x = getX();
+            int y = getY();
+            int w = getWidth();
+            int h = getHeight();
+            guiGraphics.fill(x, y, x + w, y + h, isHoveredOrFocused() ? BACKGROUND_HOVER : BACKGROUND);
+
+            int left = x + PADDING;
+            int top = y + PADDING;
+            int bottom = y + h - PADDING;
+            int right = x + w - PADDING;
+            int centerY = y + h / 2;
+            int halfHeight = (bottom - top) / 2;
+            if (halfHeight <= 0) {
+                return;
+            }
+            for (int row = top; row <= bottom; row++) {
+                int distanceFromCenter = Math.abs(row - centerY);
+                int rowRight = left + (right - left) * (halfHeight - distanceFromCenter) / halfHeight;
+                if (rowRight > left) {
+                    guiGraphics.fill(left, row, rowRight, row + 1, TRIANGLE_COLOR);
+                }
+            }
+        }
     }
 
     /**
