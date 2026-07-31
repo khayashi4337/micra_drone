@@ -81,7 +81,7 @@ public class IdeScreen extends Screen {
     private static final int ROW_GAP = 4;
     /** Icon-only Run control above the editor (green square, white triangle) - see {@link PlayButton}. */
     private static final int PLAY_BUTTON_SIZE = 20;
-    /** Tight gap between the Play/Step icon buttons on the title bar (see G:\prj2\micra_drone\explain\editor.png). */
+    /** Tight gap between the Play/Step icon buttons on the title bar (see {@code explain/editor.png}). */
     private static final int ICON_GAP = 2;
     /** Width of the line-number/breakpoint gutter to the left of the editor. */
     private static final int GUTTER_WIDTH = 20;
@@ -131,12 +131,16 @@ public class IdeScreen extends Screen {
     private final Set<Integer> breakpoints = new HashSet<>();
     private int debugState = DebugStatePayload.STATE_IDLE;
 
-    // Autocomplete popup state - see updateAutocomplete/renderAutocompletePopup. Position fields are
-    // recomputed every render() and read back by mouseClicked (safe: a click can't land before the
-    // frame that shows the popup it's clicking on has rendered at least once).
+    // Autocomplete popup state - see refreshAutocomplete/renderAutocompletePopup. Recomputed from
+    // the editor's real caret every frame rather than pushed from an edit callback, so moving the
+    // caret (arrows, Home/End, a click) re-targets the popup instead of leaving it aimed at a
+    // stale spot. Position fields are filled in by the same render pass and read back by
+    // mouseClicked (safe: a click can't land before the popup it hits has been drawn at least once).
     private String autocompleteWord = "";
     private List<String> autocompleteMatches = List.of();
     private int autocompleteSelected;
+    /** Set when the player dismisses the popup with Escape; cleared as soon as the typed word changes. */
+    private boolean autocompleteDismissed;
     private int autocompletePopupX;
     private int autocompletePopupY;
     private int autocompletePopupWidth;
@@ -205,7 +209,6 @@ public class IdeScreen extends Screen {
         editor.setCharacterLimit(DroneControllerBlockEntity.MAX_SCRIPT_CHARS);
         editor.setValue(editorText);
         editor.setValueListener(text -> editorText = text);
-        editor.setAutocompleteListener(this::updateAutocomplete);
         editor.setBreakpointLines(breakpoints);
         addRenderableWidget(editor);
 
@@ -457,28 +460,34 @@ public class IdeScreen extends Screen {
         return lines;
     }
 
-    /** The script's last (currently open) line - autocomplete only ever fires at the very end of the text, see DebugEditBox. */
-    private String currentLineText() {
-        int lastNewline = editorText.lastIndexOf('\n');
-        return lastNewline < 0 ? editorText : editorText.substring(lastNewline + 1);
-    }
-
-    /** Called from {@link DebugEditBox#setAutocompleteListener}; {@code word} is "" when the popup should be hidden. */
-    private void updateAutocomplete(String word) {
-        autocompleteWord = word;
-        autocompleteSelected = 0;
-        autocompleteMatches = word.isEmpty() ? List.of()
+    /**
+     * Re-reads the word at the caret and refilters the suggestions - called once per frame from
+     * {@link #render}, so the popup follows the caret wherever it goes. A word the player dismissed
+     * stays dismissed only until they type something different.
+     */
+    private void refreshAutocomplete() {
+        String word = editor.wordBeforeCursor();
+        if (!word.equals(autocompleteWord)) {
+            autocompleteWord = word;
+            autocompleteSelected = 0;
+            autocompleteDismissed = false;
+        }
+        autocompleteMatches = word.isEmpty() || autocompleteDismissed ? List.of()
                 : AUTOCOMPLETE_CANDIDATES.stream()
                         .filter(candidate -> candidate.startsWith(word) && !candidate.equals(word))
                         .limit(AUTOCOMPLETE_MAX_ROWS)
                         .toList();
     }
 
-    /** Replaces the word being typed with {@code candidate} and closes the popup. */
+    /**
+     * Replaces the word at the caret with {@code candidate} and closes the popup. The editor
+     * re-derives that word itself at this moment, so the text swapped out is always whatever is
+     * actually under the caret now - never a stale copy from when the popup was drawn.
+     */
     private void acceptAutocomplete(String candidate) {
-        editorText = editorText.substring(0, editorText.length() - autocompleteWord.length()) + candidate;
-        editor.setValue(editorText);
+        editor.replaceWordBeforeCursor(candidate);
         autocompleteMatches = List.of();
+        autocompleteDismissed = true;
     }
 
     /**
@@ -579,6 +588,7 @@ public class IdeScreen extends Screen {
                 }
                 case GLFW.GLFW_KEY_ESCAPE -> {
                     autocompleteMatches = List.of();
+                    autocompleteDismissed = true;
                     return true;
                 }
                 default -> { }
@@ -641,6 +651,7 @@ public class IdeScreen extends Screen {
                 this.width / 2, MARGIN, 0xFFFFFF);
         renderPointsHud(guiGraphics);
         renderGutter(guiGraphics);
+        refreshAutocomplete();
         renderAutocompletePopup(guiGraphics);
     }
 
@@ -703,13 +714,10 @@ public class IdeScreen extends Screen {
     }
 
     /**
-     * Command autocomplete popup: anchored just below (or, if that would run off the bottom of the
-     * editor box, above) the cursor's line - same Y math {@link #renderGutter} already uses
-     * (logical {@code \n}-delimited lines, not vanilla's internal word-wrapped display lines; this
-     * script language's lines are short enough that they don't wrap in practice, see
-     * DebugEditBox's class doc). X is the editor's own text-start X plus the pixel width of the
-     * current line's text - the same computation vanilla's own cursor rendering does internally,
-     * just without a public API to call into (see DebugEditBox's class doc for why).
+     * Command autocomplete popup, anchored to the editor's real caret ({@link DebugEditBox#cursorScreenX}
+     * /{@link DebugEditBox#cursorScreenY}, both derived from the same wrapped rows vanilla itself
+     * lays the text out on). Sits just under the caret's row, or above it when that would run off
+     * the bottom of the editor box.
      */
     private void renderAutocompletePopup(GuiGraphics guiGraphics) {
         if (autocompleteMatches.isEmpty()) {
@@ -717,12 +725,11 @@ public class IdeScreen extends Screen {
         }
         int popupWidth = autocompleteMatches.stream().mapToInt(this.font::width).max().orElse(0) + 6;
         int popupHeight = autocompleteMatches.size() * AUTOCOMPLETE_ROW_HEIGHT;
-        int lineTop = editorTop + editor.gutterTopPadding()
-                + (lineCount() - 1) * DebugEditBox.LINE_HEIGHT - (int) editor.gutterScroll();
-        int x = editor.getX() + editor.gutterTopPadding() + this.font.width(currentLineText());
-        int y = lineTop + DebugEditBox.LINE_HEIGHT + 1;
+        int rowTop = editor.cursorScreenY();
+        int x = editor.cursorScreenX();
+        int y = rowTop + DebugEditBox.LINE_HEIGHT + 1;
         if (y + popupHeight > editorTop + editorHeight) {
-            y = lineTop - popupHeight - 1;
+            y = rowTop - popupHeight - 1;
         }
         autocompletePopupX = x;
         autocompletePopupY = y;
