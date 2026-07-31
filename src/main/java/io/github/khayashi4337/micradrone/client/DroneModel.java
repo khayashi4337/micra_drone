@@ -111,5 +111,16 @@ public class DroneModel extends HierarchicalModel<DroneEntity> {
         this.root.y += Mth.cos(ageInTicks * 0.1F) * 0.6F;
         this.propRight.yRot = ageInTicks * 3.5F;
         this.propLeft.yRot = -ageInTicks * 3.5F;
+
+        // do_a_flip(): a real somersault (tumbling forward around the horizontal axis), not a
+        // turn-in-place spin - 林さんのフィードバック. ageInTicks is entity.tickCount + partialTick
+        // (LivingEntityRenderer#getBob, verified in decompiled sources), so it's directly comparable
+        // to the synced flipStartTick() for smooth, partial-tick interpolated rotation. ModelPart
+        // rotation fields are radians, not degrees (ModelPart#compile uses them straight into a
+        // Quaternionf, verified in decompiled sources) - a full somersault is 2*PI.
+        float elapsedFlipTicks = ageInTicks - entity.flipStartTick();
+        if (elapsedFlipTicks >= 0 && elapsedFlipTicks < DroneEntity.FLIP_TICKS) {
+            this.root.xRot = (elapsedFlipTicks / DroneEntity.FLIP_TICKS) * ((float) Math.PI * 2F);
+        }
     }
 }

@@ -3,6 +3,9 @@ package io.github.khayashi4337.micradrone.drone;
 import com.mojang.serialization.Dynamic;
 
 import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.EntityDataSerializers;
+import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.EntityType;
@@ -20,20 +23,43 @@ import net.minecraft.world.level.Level;
  * entirely by {@link DroneControllerBlockEntity}, in lockstep with the drone's grid position.
  */
 public class DroneEntity extends Allay {
-    /** 45 deg/tick * 8 ticks = one full turn in 0.4s - fast enough to read as a "flip", not a snap. */
-    private static final int FLIP_TICKS = 8;
-    private static final float FLIP_DEGREES_PER_TICK = 360F / FLIP_TICKS;
+    /** do_a_flip() duration - see {@link #startFlip}, {@code DroneModel#setupAnim}. */
+    public static final int FLIP_TICKS = 8;
 
-    /** do_a_flip(): counts down while the entity spins itself once around the vertical axis. */
-    private int flipTicksRemaining;
+    /**
+     * {@code tickCount} at the start of the current/most recent somersault, or {@code Integer.MIN_VALUE}
+     * before the first one - synced (issue: {@code startFlip} only ever runs server-side, from
+     * {@code DroneControllerBlockEntity#triggerDroneFlip}, but the animation itself is purely a
+     * client-side render concern in {@code DroneModel#setupAnim}, which needs this value on ITS side
+     * too). {@link SynchedEntityData} is the standard vanilla mechanism for exactly this - a plain
+     * server-only field would never reach the client's copy of this entity.
+     */
+    private static final EntityDataAccessor<Integer> DATA_FLIP_START_TICK =
+            SynchedEntityData.defineId(DroneEntity.class, EntityDataSerializers.INT);
 
     public DroneEntity(EntityType<? extends Allay> entityType, Level level) {
         super(entityType, level);
     }
 
-    /** Starts (or restarts, if already mid-flip) a one-shot 360-degree spin - see {@code DroneApi#doAFlip}. */
+    @Override
+    protected void defineSynchedData(SynchedEntityData.Builder builder) {
+        super.defineSynchedData(builder);
+        builder.define(DATA_FLIP_START_TICK, Integer.MIN_VALUE);
+    }
+
+    /**
+     * Starts (or restarts, if already mid-somersault) a one-shot 360-degree tumble - a real
+     * somersault (rotating forward/back around the horizontal axis), not a turn-in-place spin;
+     * 林さんのフィードバック (最初の実装はyawの回転で、宙返りの仕様を誤解していた) . See
+     * {@code DroneApi#doAFlip}.
+     */
     public void startFlip() {
-        flipTicksRemaining = FLIP_TICKS;
+        this.entityData.set(DATA_FLIP_START_TICK, this.tickCount);
+    }
+
+    /** The {@code tickCount} the current/most recent flip started at - see {@code DroneModel#setupAnim}. */
+    public int flipStartTick() {
+        return this.entityData.get(DATA_FLIP_START_TICK);
     }
 
     @Override
@@ -52,15 +78,6 @@ public class DroneEntity extends Allay {
     @Override
     public void tick() {
         super.tick();
-        // yBodyRot (not yRot) is what LivingEntityRenderer#setupRotations actually turns the model
-        // by (verified in decompiled sources) - AllayAi's look control is disabled along with the
-        // rest of its brain, so nothing else would ever move it. super.tick() (LivingEntity#tick)
-        // already copied yBodyRotO = yBodyRot for this tick before this runs, so mutating yBodyRot
-        // here is exactly what vanilla's own render-time interpolation expects for smooth motion.
-        if (flipTicksRemaining > 0) {
-            flipTicksRemaining--;
-            this.yBodyRot += FLIP_DEGREES_PER_TICK;
-        }
         // The reference artwork shows a teal jet streaming down from the thruster nozzle. Soul fire
         // flame is vanilla's teal flame and (via RisingParticle, verified in decompiled sources) it
         // honors the velocity passed here, so a small downward speed makes it stream down instead of
