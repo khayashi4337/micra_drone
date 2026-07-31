@@ -140,9 +140,10 @@ public class IdeScreen extends Screen {
     private int autocompleteSelected;
     /**
      * Set when the player closes the popup - Escape, a click outside it, or accepting a suggestion -
-     * and cleared only by the next actual edit (see the value listener in {@link #init}). Keyed on
-     * edits rather than on the word under the caret so that merely moving the caret back into a
-     * half-typed word doesn't reopen a popup the player just dismissed.
+     * and cleared by the next change to the editor's text (the value listener in {@link #init};
+     * that includes loading a different script, not just typing). Keyed on text changes rather than
+     * on the word under the caret so that merely moving the caret back into a half-typed word
+     * doesn't reopen a popup the player just dismissed.
      */
     private boolean autocompleteDismissed;
     private int autocompletePopupX;
@@ -572,13 +573,15 @@ public class IdeScreen extends Screen {
      * flows through to it via {@code super.keyPressed} + {@link #setFocused}.
      *
      * <p>Otherwise, while the autocomplete popup is showing <em>and the editor holds the
-     * keyboard</em>, Up/Down move the selection, Escape dismisses it, and Tab/Enter accept it
-     * (matching vanilla's own {@code CommandSuggestions.SuggestionsList} bindings, GLFW key codes
-     * via {@link GLFW} rather than raw numbers). Up/Down/Escape are consumed outright; Tab/Enter
-     * only when the suggestion actually applied - {@link #acceptAutocomplete} refuses a stale one,
-     * and the key then carries on to the editor so it still does its ordinary job. Everything else,
-     * including all of these once the popup is empty or the editor is unfocused, goes to the
-     * focused widget as usual.
+     * keyboard</em>: Up/Down move the selection and Escape dismisses it, all three consumed
+     * outright. Tab and Enter accept the highlighted suggestion, but are consumed only when it
+     * actually applied - {@link #acceptAutocomplete} refuses a stale one, and the key then falls
+     * through to {@code super.keyPressed}, where Enter inserts its newline as usual and Tab moves
+     * the screen's focus (vanilla's own handling of it - the editor itself ignores Tab).
+     * Up/Down/Escape/Tab are the same keys vanilla's {@code CommandSuggestions.SuggestionsList}
+     * binds; accepting with Enter as well is this editor's own addition. Key codes come from
+     * {@link GLFW} rather than raw numbers. Everything else - including all of these once the popup
+     * is empty or the editor is unfocused - goes to the focused widget as usual.
      */
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
@@ -607,7 +610,7 @@ public class IdeScreen extends Screen {
                     return true;
                 }
                 case GLFW.GLFW_KEY_TAB, GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> {
-                    // Falls through to the editor when the suggestion turned out to be stale, so a
+                    // Leaves the key unconsumed when the suggestion turned out to be stale, so a
                     // batched Backspace-then-Enter still inserts the newline the player asked for.
                     if (acceptAutocomplete(autocompleteMatches.get(autocompleteSelected))) {
                         return true;
@@ -683,11 +686,12 @@ public class IdeScreen extends Screen {
     }
 
     /**
-     * Title-bar strip spanning the editor's width, drawn behind the Play icon so it reads as one
-     * header row (icon + script name) rather than a floating button (like a code editor's title
-     * bar/toolbar, room for more controls later). The Play button
-     * widget itself is rendered afterward by {@code super.render}, painting over this bar's left
-     * end so the icon visually sits on top of it.
+     * Title-bar strip spanning the editor's width, drawn behind the Play and Step icons so they
+     * read as one header row (icons + script name) rather than floating buttons - like a code
+     * editor's title bar/toolbar, with room for more controls later. Both icon widgets are
+     * rendered afterward by {@code super.render}, painting over this bar's left end so they
+     * visually sit on top of it. The script name is skipped while a rename is in progress, since
+     * the rename box occupies that same spot.
      */
     private void renderEditorTitleBar(GuiGraphics guiGraphics) {
         int barLeft = MARGIN + GUTTER_WIDTH;
