@@ -131,14 +131,19 @@ public class IdeScreen extends Screen {
     private int debugState = DebugStatePayload.STATE_IDLE;
 
     // Autocomplete popup state - see refreshAutocomplete/renderAutocompletePopup. Recomputed from
-    // the editor's real caret every frame rather than pushed from an edit callback, so moving the
-    // caret (arrows, Home/End, a click) re-targets the popup instead of leaving it aimed at a
-    // stale spot. Position fields are filled in by the same render pass and read back by
-    // mouseClicked (safe: a click can't land before the popup it hits has been drawn at least once).
+    // the editor's real caret every frame rather than pushed from an edit callback, so the popup
+    // tracks wherever the caret actually is instead of a spot it was at when some edit landed.
+    // Position fields are filled in by the same render pass and read back by mouseClicked (safe: a
+    // click can't land before the popup it hits has been drawn at least once).
     private String autocompleteWord = "";
     private List<String> autocompleteMatches = List.of();
     private int autocompleteSelected;
-    /** Set when the player dismisses the popup with Escape; cleared as soon as the typed word changes. */
+    /**
+     * Set when the player closes the popup - Escape, a click outside it, or accepting a suggestion -
+     * and cleared only by the next actual edit (see the value listener in {@link #init}). Keyed on
+     * edits rather than on the word under the caret so that merely moving the caret back into a
+     * half-typed word doesn't reopen a popup the player just dismissed.
+     */
     private boolean autocompleteDismissed;
     private int autocompletePopupX;
     private int autocompletePopupY;
@@ -564,12 +569,16 @@ public class IdeScreen extends Screen {
     /**
      * While renaming (title double-clicked), Enter commits and Escape cancels - both consumed
      * before reaching the rename box itself; everything else (typing, arrows, backspace) still
-     * flows through to it via {@code super.keyPressed} + {@link #setFocused}. Otherwise, while the
-     * autocomplete popup is showing, Up/Down move the selection, Tab/Enter accept it, and Escape
-     * dismisses it - none of those reach the editor underneath (matches vanilla's own
-     * {@code CommandSuggestions.SuggestionsList} key bindings, GLFW key codes via {@link GLFW}
-     * rather than raw numbers). Everything else (including these same keys once the popup is empty)
-     * goes through to the focused widget as usual.
+     * flows through to it via {@code super.keyPressed} + {@link #setFocused}.
+     *
+     * <p>Otherwise, while the autocomplete popup is showing <em>and the editor holds the
+     * keyboard</em>, Up/Down move the selection, Escape dismisses it, and Tab/Enter accept it
+     * (matching vanilla's own {@code CommandSuggestions.SuggestionsList} bindings, GLFW key codes
+     * via {@link GLFW} rather than raw numbers). Up/Down/Escape are consumed outright; Tab/Enter
+     * only when the suggestion actually applied - {@link #acceptAutocomplete} refuses a stale one,
+     * and the key then carries on to the editor so it still does its ordinary job. Everything else,
+     * including all of these once the popup is empty or the editor is unfocused, goes to the
+     * focused widget as usual.
      */
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
@@ -770,10 +779,10 @@ public class IdeScreen extends Screen {
 
     /**
      * Shared look for the title bar's icon buttons (green square, white glyph) instead of a text
-     * label - matches the reference game's (The Farmer Was Replaced) title bar,
-     * No existing icon-button precedent in this mod, so it's a plain procedural
-     * {@link GuiGraphics#fill} draw rather than a new texture asset - simplest option for flat
-     * 2-color icons. Subclasses only need to draw their glyph; the background/hover fill is common.
+     * label - matches the reference game's (The Farmer Was Replaced) title bar. No existing
+     * icon-button precedent in this mod, so it's a plain procedural {@link GuiGraphics#fill} draw
+     * rather than a new texture asset - simplest option for flat 2-color icons. Subclasses only
+     * need to draw their glyph; the background/hover fill is common.
      */
     private abstract static class IconButton extends Button {
         private static final int BACKGROUND = 0xFF3E9142;
@@ -829,9 +838,9 @@ public class IdeScreen extends Screen {
     }
 
     /**
-     * Hollow/outline triangle - "step one instruction", distinct from Play's solid triangle
-     * Drawn by filling a full triangle in the glyph color, then punching out
-     * a smaller triangle in the button's own current background color on top of it.
+     * Hollow/outline triangle - "step one instruction", distinct from Play's solid triangle. Drawn
+     * by filling a full triangle in the glyph color, then punching out a smaller triangle in the
+     * button's own current background color on top of it.
      */
     private static final class StepButton extends IconButton {
         private static final int PADDING = 5;
