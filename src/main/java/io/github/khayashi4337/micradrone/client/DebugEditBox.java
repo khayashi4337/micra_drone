@@ -33,6 +33,8 @@ final class DebugEditBox extends MultiLineEditBox {
     static final int LINE_HEIGHT = 9;
     private static final int CURRENT_LINE_COLOR = 0x66FFD83D;   // translucent yellow
     private static final int BREAKPOINT_LINE_COLOR = 0x55CC3333; // translucent red
+    /** Monokai's background color - the one part of the editor's look safe to reskin (see class doc: everything else that could carry color is behind vanilla's private text-field rendering). */
+    private static final int BACKGROUND_COLOR = 0xFF272822;
 
     private int currentLine; // 1-based; 0 = no highlight
     private Set<Integer> breakpointLines = Set.of();
@@ -106,6 +108,19 @@ final class DebugEditBox extends MultiLineEditBox {
 
     int gutterTopPadding() {
         return innerPadding();
+    }
+
+    /**
+     * Replaces vanilla's text-field sprite with a flat Monokai-style dark background - independent
+     * of {@link #renderContents} (AbstractScrollWidget#renderWidget calls this first, unrelated to
+     * the cursor/selection/text vanilla draws afterward - verified in decompiled sources), so this
+     * is safe to always apply regardless of focus state. Vanilla's own text color (0xFFE0E0E0, a
+     * light grey - decoded from the private constant used in MultiLineEditBox#renderContents)
+     * stays plenty legible against it.
+     */
+    @Override
+    protected void renderBackground(GuiGraphics guiGraphics) {
+        guiGraphics.fill(getX(), getY(), getX() + getWidth(), getY() + getHeight(), BACKGROUND_COLOR);
     }
 
     @Override
