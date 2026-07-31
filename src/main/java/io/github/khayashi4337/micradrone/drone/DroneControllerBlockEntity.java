@@ -490,20 +490,42 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     /**
-     * Resolves {@code scriptName} (chest scroll or file) and runs it. No-op (besides a log line)
-     * if a script is already running. {@code requester} may be null for the redstone path - the
-     * run then belongs to whoever last claimed the controller (see {@link #ownerUuid}), and its
-     * log goes to every open screen either way.
+     * Resolves {@code scriptName} (chest scroll or file) and runs it. {@code requester} may be null
+     * for the redstone path - the run then belongs to whoever last claimed the controller (see
+     * {@link #ownerUuid}), and its log goes to every open screen either way.
+     *
+     * <p>State-transition design (林さんのフィードバック: ステップ実行モード中にRunを押しても
+     * 反応するように): while a script is alive, {@link DroneScriptRunner.State} stays
+     * {@code RUNNING} whether or not the debugger has it paused - pause is a sub-state tracked only
+     * by {@link DebugController#isPaused()}. So the SAME Run control means "continue" when paused
+     * mid-debug, and only refuses when a script is genuinely running unpaused (an actual conflict -
+     * two script runs would fight over the drone).
      */
     public void startScript(ServerPlayer requester, String scriptName) {
-        if (!(level instanceof ServerLevel serverLevel)) {
-            return;
-        }
         if (requester != null) {
-            addViewer(requester); // even a refused Run should show its "already running" line
+            addViewer(requester); // even a refused/resumed Run should show its log line
         }
         if (scriptRunner != null && scriptRunner.getState() == DroneScriptRunner.State.RUNNING) {
+            DebugController debug = debugController;
+            if (debug != null && debug.isPaused()) {
+                debug.resume();
+                return;
+            }
             appendLog("[run] a script is already running");
+            return;
+        }
+        startFreshRun(requester, scriptName, false);
+    }
+
+    /**
+     * Shared body of {@link #startScript} and the Step-from-cold path in {@link #debugCommand}:
+     * resolves, parses, and launches {@code scriptName}. {@code startPaused} arms the debugger to
+     * pause before the very first statement instead of running to completion - see
+     * {@link DebugController#requestPause} (called before the worker thread starts, so the first
+     * {@code onStatement} call already finds a pause pending).
+     */
+    private void startFreshRun(ServerPlayer requester, String scriptName, boolean startPaused) {
+        if (!(level instanceof ServerLevel serverLevel)) {
             return;
         }
         if (!ScriptId.isValidId(scriptName)) {
@@ -542,9 +564,12 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         LiveDroneApi api = new LiveDroneApi(gateway, pacedActionQueue, this, farm, this::appendLog);
         DebugController debug = new DebugController();
         debug.setBreakpoints(breakpoints);
+        if (startPaused) {
+            debug.requestPause();
+        }
         debugController = debug;
         scriptRunner = new DroneScriptRunner(api, this::appendLog, debug);
-        appendLog("[run] running " + scriptName);
+        appendLog(startPaused ? "[run] stepping " + scriptName : "[run] running " + scriptName);
         scriptRunner.start(program);
     }
 
@@ -590,13 +615,24 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         pushDebugStateTo(requester);
     }
 
-    /** One debugger action (see DebugCommandPayload.COMMAND_*); silently ignored when nothing is running. */
+    /**
+     * One debugger action (see DebugCommandPayload.COMMAND_*). Pause/Resume/Step Out need a live
+     * run to act on and are no-ops otherwise, but Step is special-cased: pressed with nothing
+     * running, it bootstraps a fresh run of {@link #selectedScript} pre-armed to pause before its
+     * first statement (see {@link #startFreshRun}'s {@code startPaused}) instead of doing nothing -
+     * 林さんのフィードバック: 停止中にステップ実行を押しても反応するように(直感的に「最初の一歩」
+     * が動く挙動).
+     */
     public void debugCommand(ServerPlayer requester, int command) {
         addViewer(requester);
-        DebugController debug = debugController;
-        if (debug == null || scriptRunner == null || scriptRunner.getState() != DroneScriptRunner.State.RUNNING) {
+        boolean running = scriptRunner != null && scriptRunner.getState() == DroneScriptRunner.State.RUNNING;
+        if (!running) {
+            if (command == DebugCommandPayload.COMMAND_STEP) {
+                startFreshRun(requester, selectedScript, true);
+            }
             return;
         }
+        DebugController debug = debugController;
         switch (command) {
             case DebugCommandPayload.COMMAND_PAUSE -> debug.requestPause();
             case DebugCommandPayload.COMMAND_RESUME -> debug.resume();
