@@ -73,6 +73,8 @@ public class IdeScreen extends Screen {
     private static final int ROW_GAP = 4;
     /** Icon-only Run control above the editor (green square, white triangle) - see {@link PlayButton}. */
     private static final int PLAY_BUTTON_SIZE = 20;
+    /** Tight gap between the Play/Step icon buttons on the title bar (see G:\prj2\micra_drone\explain\editor.png). */
+    private static final int ICON_GAP = 2;
     /** Width of the line-number/breakpoint gutter to the left of the editor. */
     private static final int GUTTER_WIDTH = 20;
     /** How often (client ticks) the plot size/direction is re-resolved from the blocks. */
@@ -148,14 +150,20 @@ public class IdeScreen extends Screen {
         editorHeight = debugRowY - ROW_GAP - editorTop;
         titleBarRight = leftX + leftW;
 
-        // Icon-only Run control, sitting on the editor's title bar (see renderEditorTitleBar) -
-        // matches the reference game's play button, 本家準拠のマルチモーダル型タイトルバー
-        // (林さんの要望). Runs the SAVED script without touching unsaved editor changes, same
-        // behavior the old text "Run" button had; "Save & Run" below still does both.
+        // Icon-only Run + Step controls, sitting side by side on the editor's title bar (see
+        // renderEditorTitleBar) - matches the reference game's title bar, explain/editor.png
+        // (林さんの要望). Run plays the SAVED script without touching unsaved editor changes, same
+        // behavior the old text "Run" button had; "Save & Run" below still does both. Step moved up
+        // here from the debug row below (was a duplicate control once an icon existed - 林さんの
+        // 「重複したボタンは減らすのがいい」方針), so the debug row is now 3-wide, not 4.
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.run"),
                         b -> PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptId)))
                 .bounds(leftX + GUTTER_WIDTH, TOP_Y, PLAY_BUTTON_SIZE, PLAY_BUTTON_SIZE)
                 .build(PlayButton::new));
+        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.debug_step"),
+                        b -> PacketDistributor.sendToServer(new DebugCommandPayload(pos, DebugCommandPayload.COMMAND_STEP)))
+                .bounds(leftX + GUTTER_WIDTH + PLAY_BUTTON_SIZE + ICON_GAP, TOP_Y, PLAY_BUTTON_SIZE, PLAY_BUTTON_SIZE)
+                .build(StepButton::new));
 
         editor = new DebugEditBox(this.font, leftX + GUTTER_WIDTH, editorTop, leftW - GUTTER_WIDTH, editorHeight,
                 Component.translatable("gui.micradrone.ide_screen.editor_placeholder"),
@@ -166,20 +174,19 @@ public class IdeScreen extends Screen {
         editor.setBreakpointLines(breakpoints);
         addRenderableWidget(editor);
 
-        int debugW = (leftW - 3 * ROW_GAP) / 4;
+        // 3-way now: Step moved up to the title bar icon row above (see the StepButton added earlier
+        // in this method).
+        int debugW = (leftW - 2 * ROW_GAP) / 3;
         pauseResumeButton = addRenderableWidget(Button.builder(pauseResumeLabel(), b -> PacketDistributor.sendToServer(
                         new DebugCommandPayload(pos, debugState == DebugStatePayload.STATE_PAUSED
                                 ? DebugCommandPayload.COMMAND_RESUME : DebugCommandPayload.COMMAND_PAUSE)))
                 .bounds(leftX, debugRowY, debugW, BUTTON_HEIGHT).build());
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.debug_step"),
-                        b -> PacketDistributor.sendToServer(new DebugCommandPayload(pos, DebugCommandPayload.COMMAND_STEP)))
-                .bounds(leftX + debugW + ROW_GAP, debugRowY, debugW, BUTTON_HEIGHT).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.debug_step_out"),
                         b -> PacketDistributor.sendToServer(new DebugCommandPayload(pos, DebugCommandPayload.COMMAND_STEP_OUT)))
-                .bounds(leftX + 2 * (debugW + ROW_GAP), debugRowY, debugW, BUTTON_HEIGHT).build());
+                .bounds(leftX + debugW + ROW_GAP, debugRowY, debugW, BUTTON_HEIGHT).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.debug_stop"),
                         b -> PacketDistributor.sendToServer(new StopScriptPayload(pos)))
-                .bounds(leftX + 3 * (debugW + ROW_GAP), debugRowY, debugW, BUTTON_HEIGHT).build());
+                .bounds(leftX + 2 * (debugW + ROW_GAP), debugRowY, debugW, BUTTON_HEIGHT).build());
 
         // 3-way now: the Run icon moved above the editor (see the PlayButton added earlier in this method).
         int buttonW = (leftW - 2 * ROW_GAP) / 3;
@@ -451,7 +458,7 @@ public class IdeScreen extends Screen {
     private void renderEditorTitleBar(GuiGraphics guiGraphics) {
         int barLeft = MARGIN + GUTTER_WIDTH;
         guiGraphics.fill(barLeft, TOP_Y, titleBarRight, TOP_Y + PLAY_BUTTON_SIZE, 0xE0101010);
-        int textX = barLeft + PLAY_BUTTON_SIZE + ROW_GAP;
+        int textX = barLeft + 2 * PLAY_BUTTON_SIZE + ICON_GAP + ROW_GAP;
         int textY = TOP_Y + (PLAY_BUTTON_SIZE - this.font.lineHeight) / 2;
         guiGraphics.drawString(this.font, displayName, textX, textY, 0xFFFFFF, false);
     }
@@ -504,35 +511,37 @@ public class IdeScreen extends Screen {
     }
 
     /**
-     * Icon-only Run control (green square, white right-pointing triangle) instead of a text label -
-     * matches the reference game's (The Farmer Was Replaced) play button, 林さんの要望. No existing
-     * icon-button precedent in this mod, so it's a plain procedural {@link GuiGraphics#fill} draw
-     * (a background rect plus a triangle built from horizontal strips) rather than a new texture
-     * asset - simplest option for a single flat 2-color icon.
+     * Shared look for the title bar's icon buttons (green square, white glyph) instead of a text
+     * label - matches the reference game's (The Farmer Was Replaced) title bar,
+     * explain/editor.png. No existing icon-button precedent in this mod, so it's a plain procedural
+     * {@link GuiGraphics#fill} draw rather than a new texture asset - simplest option for flat
+     * 2-color icons. Subclasses only need to draw their glyph; the background/hover fill is common.
      */
-    private static final class PlayButton extends Button {
+    private abstract static class IconButton extends Button {
         private static final int BACKGROUND = 0xFF3E9142;
         private static final int BACKGROUND_HOVER = 0xFF57B75B;
-        private static final int TRIANGLE_COLOR = 0xFFFFFFFF;
-        private static final int PADDING = 5;
+        static final int GLYPH_COLOR = 0xFFFFFFFF;
 
-        PlayButton(Button.Builder builder) {
+        IconButton(Button.Builder builder) {
             super(builder);
         }
 
         @Override
-        protected void renderWidget(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        protected final void renderWidget(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
             int x = getX();
             int y = getY();
             int w = getWidth();
             int h = getHeight();
-            guiGraphics.fill(x, y, x + w, y + h, isHoveredOrFocused() ? BACKGROUND_HOVER : BACKGROUND);
+            int background = isHoveredOrFocused() ? BACKGROUND_HOVER : BACKGROUND;
+            guiGraphics.fill(x, y, x + w, y + h, background);
+            drawGlyph(guiGraphics, x, y, w, h, background);
+        }
 
-            int left = x + PADDING;
-            int top = y + PADDING;
-            int bottom = y + h - PADDING;
-            int right = x + w - PADDING;
-            int centerY = y + h / 2;
+        protected abstract void drawGlyph(GuiGraphics guiGraphics, int x, int y, int w, int h, int background);
+
+        /** Fills a right-pointing triangle (built from horizontal strips) inside the given bounds. */
+        static void fillTriangle(GuiGraphics guiGraphics, int left, int top, int right, int bottom, int color) {
+            int centerY = (top + bottom) / 2;
             int halfHeight = (bottom - top) / 2;
             if (halfHeight <= 0) {
                 return;
@@ -541,9 +550,44 @@ public class IdeScreen extends Screen {
                 int distanceFromCenter = Math.abs(row - centerY);
                 int rowRight = left + (right - left) * (halfHeight - distanceFromCenter) / halfHeight;
                 if (rowRight > left) {
-                    guiGraphics.fill(left, row, rowRight, row + 1, TRIANGLE_COLOR);
+                    guiGraphics.fill(left, row, rowRight, row + 1, color);
                 }
             }
+        }
+    }
+
+    /** Solid triangle - "run/play". */
+    private static final class PlayButton extends IconButton {
+        private static final int PADDING = 5;
+
+        PlayButton(Button.Builder builder) {
+            super(builder);
+        }
+
+        @Override
+        protected void drawGlyph(GuiGraphics guiGraphics, int x, int y, int w, int h, int background) {
+            fillTriangle(guiGraphics, x + PADDING, y + PADDING, x + w - PADDING, y + h - PADDING, GLYPH_COLOR);
+        }
+    }
+
+    /**
+     * Hollow/outline triangle - "step one instruction", distinct from Play's solid triangle
+     * (explain/editor.png). Drawn by filling a full triangle in the glyph color, then punching out
+     * a smaller triangle in the button's own current background color on top of it.
+     */
+    private static final class StepButton extends IconButton {
+        private static final int PADDING = 5;
+        private static final int OUTLINE = 2;
+
+        StepButton(Button.Builder builder) {
+            super(builder);
+        }
+
+        @Override
+        protected void drawGlyph(GuiGraphics guiGraphics, int x, int y, int w, int h, int background) {
+            fillTriangle(guiGraphics, x + PADDING, y + PADDING, x + w - PADDING, y + h - PADDING, GLYPH_COLOR);
+            fillTriangle(guiGraphics, x + PADDING + OUTLINE, y + PADDING + OUTLINE,
+                    x + w - PADDING - OUTLINE, y + h - PADDING - OUTLINE, background);
         }
     }
 
