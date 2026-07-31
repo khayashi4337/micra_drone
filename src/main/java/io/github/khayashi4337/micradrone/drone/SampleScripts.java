@@ -4,12 +4,23 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Ready-to-run example scripts seeded into every controller's script folder (see
- * {@link ScriptFileStore}), so trying the drone out doesn't require hand-writing a script first.
- * Each one is exercised against {@code FakeDroneApi} in {@code SampleScriptsTest} to catch
- * language-level mistakes before they ship.
+ * Ready-to-run example scripts, handed out one at a time by the enchanting table (see
+ * {@link SampleCatalog}, which decides what a given library unlocks and what it costs) so trying
+ * the drone out doesn't require hand-writing a script first. Each one is exercised against
+ * {@code FakeDroneApi} in {@code SampleScriptsTest} to catch language-level mistakes before they
+ * ship - that test is what {@link #ALL} exists for.
  */
 public final class SampleScripts {
+    public static final String FIRST_PROGRAM = """
+            # The very first program, straight out of The Farmer Was Replaced: harvest whatever the
+            # drone is standing on, then celebrate. do_a_flip() does nothing at all to the farm - it
+            # is purely for watching the drone tumble - which makes it a safe way to see a script
+            # really run, and to try a for-loop, before touching a single crop.
+            harvest()
+            for i in range(5):
+                do_a_flip()
+            """;
+
     public static final String MAIN = """
             # Write your drone script here, then click Run.
             print(get_world_size())
@@ -241,6 +252,7 @@ public final class SampleScripts {
 
     private static Map<String, String> buildAll() {
         Map<String, String> all = new LinkedHashMap<>();
+        all.put("first_program.mdrone", FIRST_PROGRAM);
         all.put("main.mdrone", MAIN);
         all.put("plot_id.mdrone", PLOT_ID);
         all.put("move_square.mdrone", MOVE_SQUARE);

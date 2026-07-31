@@ -25,6 +25,7 @@ public final class SampleCatalog {
     /** All inscribable scrolls, easiest first; indexes into this list travel in EnchantScrollPayload. */
     public static final List<Sample> ALL = List.of(
             new Sample("ヘルプ(コマンド一覧)", CommandsHelpDoc.CONTENT, 0, 1),
+            new Sample("first_program", SampleScripts.FIRST_PROGRAM, 0, 1),
             new Sample("main", SampleScripts.MAIN, 0, 1),
             new Sample("plot_id", SampleScripts.PLOT_ID, 0, 1),
             new Sample("move_square", SampleScripts.MOVE_SQUARE, 0, 1),

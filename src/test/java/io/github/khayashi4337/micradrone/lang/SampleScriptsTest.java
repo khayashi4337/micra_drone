@@ -29,6 +29,18 @@ class SampleScriptsTest {
         }
     }
 
+    /** The beginner sample must stay harmless: one harvest attempt and five flips, nothing that alters the plot. */
+    @Test
+    void firstProgramHarvestsOnceThenFlipsFiveTimes() {
+        FakeDroneApi api = new FakeDroneApi(3);
+        api.setCropAge(0, 0, 3); // mature, so the harvest() actually does something
+
+        new Interpreter(api).run(parse(SampleScripts.FIRST_PROGRAM));
+
+        assertEquals(List.of("harvest", "do_a_flip", "do_a_flip", "do_a_flip", "do_a_flip", "do_a_flip"),
+                api.calls);
+    }
+
     @Test
     void tillAndPlantCoversEveryCellInThePlot() {
         FakeDroneApi api = new FakeDroneApi(3);

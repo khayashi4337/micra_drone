@@ -18,12 +18,17 @@ own. Inspired by the Steam game
 - **A real (tiny) programming language** — variables, `if`/`elif`/`else`,
   `while`, `for i in range(...)`, comments, and a handful of drone commands
   (`move`, `till`, `plant`, `harvest`, `can_harvest`, `is_rotten`,
-  `get_points`, `print`, ...), plus perception commands that read the world
-  around the drone (`get_ground`, `get_block_above`, `get_time`,
+  `get_points`, `print`, `do_a_flip`, ...), plus perception commands that read
+  the world around the drone (`get_ground`, `get_block_above`, `get_time`,
   `get_weather`, `get_biome`, `get_light`, `get_plot_id`). Scripts are written on a
-  rewritable **Script Scroll** item, or in a full **in-game IDE** with a
-  live top-down camera view of your plot, a debugger (breakpoints,
-  step/step-out), and a script list.
+  rewritable **Script Scroll** item, or in the in-game IDE below.
+- **An in-game IDE that behaves like one** — syntax highlighting in a Monokai
+  palette (keywords, strings, numbers and comments each get their own color,
+  and a mistyped command name is visibly not the color a real one would be),
+  an autocomplete popup as you type a command name, run and step buttons on
+  the editor's title bar, rename-in-place by double-clicking the script name,
+  a debugger with breakpoints and step/step-out, a script list, and a live
+  top-down camera view of your plot filling the other half of the screen.
 - **Claim a plot** — place a Drone Controller and a Corner Marker on a
   diagonal to define a square farming area. The controller can be embedded
   flush with the farmland, or stood on the surface (the plot is
