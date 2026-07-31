@@ -112,6 +112,8 @@ public class IdeScreen extends Screen {
     // Gutter geometry, computed in init() and reused by render()/mouseClicked().
     private int editorTop;
     private int editorHeight;
+    /** Right edge of the editor title bar (see {@link #renderEditorTitleBar}), computed in init(). */
+    private int titleBarRight;
 
     // List-mode state, refreshed from every DroneLogPayload regardless of whether list mode is
     // currently showing, so it's ready the instant the player opens it.
@@ -144,8 +146,10 @@ public class IdeScreen extends Screen {
         int debugRowY = saveRowY - BUTTON_HEIGHT - ROW_GAP;
         editorTop = TOP_Y + PLAY_BUTTON_SIZE + ROW_GAP;
         editorHeight = debugRowY - ROW_GAP - editorTop;
+        titleBarRight = leftX + leftW;
 
-        // Icon-only Run control, above the editor - matches the reference game's play button
+        // Icon-only Run control, sitting on the editor's title bar (see renderEditorTitleBar) -
+        // matches the reference game's play button, 本家準拠のマルチモーダル型タイトルバー
         // (林さんの要望). Runs the SAVED script without touching unsaved editor changes, same
         // behavior the old text "Run" button had; "Save & Run" below still does both.
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.run"),
@@ -428,12 +432,28 @@ public class IdeScreen extends Screen {
         if (listMode) {
             guiGraphics.fill(listPanelX() - ROW_GAP, 0, this.width, this.height, 0xE0101010);
         }
+        renderEditorTitleBar(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         guiGraphics.drawCenteredString(this.font,
                 Component.translatable("gui.micradrone.ide_screen.heading", displayName),
                 this.width / 2, MARGIN, 0xFFFFFF);
         renderPointsHud(guiGraphics);
         renderGutter(guiGraphics);
+    }
+
+    /**
+     * Title-bar strip spanning the editor's width, drawn behind the Play icon so it reads as one
+     * "multimodal" header row (icon + script name) rather than a floating button - 林さんの要望
+     * (like a code editor's title bar/toolbar, room for more controls later). The Play button
+     * widget itself is rendered afterward by {@code super.render}, painting over this bar's left
+     * end so the icon visually sits on top of it.
+     */
+    private void renderEditorTitleBar(GuiGraphics guiGraphics) {
+        int barLeft = MARGIN + GUTTER_WIDTH;
+        guiGraphics.fill(barLeft, TOP_Y, titleBarRight, TOP_Y + PLAY_BUTTON_SIZE, 0xE0101010);
+        int textX = barLeft + PLAY_BUTTON_SIZE + ROW_GAP;
+        int textY = TOP_Y + (PLAY_BUTTON_SIZE - this.font.lineHeight) / 2;
+        guiGraphics.drawString(this.font, displayName, textX, textY, 0xFFFFFF, false);
     }
 
     /**
