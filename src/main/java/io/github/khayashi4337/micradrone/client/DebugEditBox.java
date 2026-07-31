@@ -91,8 +91,16 @@ final class DebugEditBox extends MultiLineEditBox {
         this.breakpointLines = Set.copyOf(lines);
     }
 
-    /** The identifier being typed - everything word-shaped immediately before the cursor, or "" if there is none. */
+    /**
+     * The identifier being typed - everything word-shaped immediately before the cursor, or "" if
+     * there is none. Also "" while any text is selected: nothing is being typed at that point, and
+     * {@link #replaceWordBeforeCursor} could not honour the selection anyway (see its note), so
+     * reporting no word keeps the popup away from the one state that edit can't handle.
+     */
     String wordBeforeCursor() {
+        if (textField.hasSelection()) {
+            return "";
+        }
         String value = textField.value();
         int cursor = textField.cursor();
         int start = cursor;
@@ -106,8 +114,18 @@ final class DebugEditBox extends MultiLineEditBox {
      * Swaps {@link #wordBeforeCursor} for {@code replacement}, leaving the cursor right after it -
      * the same {@code deleteText}/{@code insertText} pair backspace and typing use, so the caret
      * behaves exactly as if the player had typed the rest of the word themselves.
+     *
+     * <p>No-op while text is selected. {@code MultilineTextField#deleteText} ignores its length
+     * argument entirely when there is a selection and wipes the selection instead (verified in
+     * decompiled sources), which would delete the wrong text and then paste the suggestion into the
+     * hole - so this refuses rather than corrupting the script. {@link #wordBeforeCursor} already
+     * reports "" in that state, so the popup never offers anything to accept there in the first
+     * place; this is the backstop.
      */
     void replaceWordBeforeCursor(String replacement) {
+        if (textField.hasSelection()) {
+            return;
+        }
         int wordLength = wordBeforeCursor().length();
         if (wordLength > 0) {
             textField.deleteText(-wordLength);

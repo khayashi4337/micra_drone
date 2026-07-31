@@ -81,7 +81,7 @@ public class IdeScreen extends Screen {
     private static final int ROW_GAP = 4;
     /** Icon-only Run control above the editor (green square, white triangle) - see {@link PlayButton}. */
     private static final int PLAY_BUTTON_SIZE = 20;
-    /** Tight gap between the Play/Step icon buttons on the title bar (see {@code explain/editor.png}). */
+    /** Tight gap between the Play/Step icon buttons on the title bar - they read as one control pair. */
     private static final int ICON_GAP = 2;
     /** Width of the line-number/breakpoint gutter to the left of the editor. */
     private static final int GUTTER_WIDTH = 20;
@@ -92,8 +92,7 @@ public class IdeScreen extends Screen {
     private static final int LIST_HEIGHT = 90;
     private static final int DESCRIPTION_HEIGHT = 28;
 
-    // Command autocomplete popup - see
-    // renderAutocompletePopup/updateAutocomplete/DebugEditBox#setAutocompleteListener.
+    // Command autocomplete popup - see refreshAutocomplete/acceptAutocomplete/renderAutocompletePopup.
     private static final List<String> AUTOCOMPLETE_CANDIDATES =
             Stream.concat(CommandNames.ALL.stream(), Lexer.keywords().stream()).sorted().toList();
     private static final int AUTOCOMPLETE_MAX_ROWS = 8;
@@ -189,7 +188,7 @@ public class IdeScreen extends Screen {
         titleBarRight = leftX + leftW;
 
         // Icon-only Run + Step controls, sitting side by side on the editor's title bar (see
-        // renderEditorTitleBar) - matches the reference game's title bar, explain/editor.png. Run
+        // renderEditorTitleBar) - matches the reference game's own title bar. Run
         // plays the SAVED script without touching unsaved editor changes, same behavior the old text
         // "Run" button had; "Save & Run" below still does both. Step moved up here from the debug
         // row below (was a duplicate control once an icon existed), so the debug row is now 3-wide,
@@ -208,7 +207,11 @@ public class IdeScreen extends Screen {
                 Component.translatable("gui.micradrone.ide_screen.editor"));
         editor.setCharacterLimit(DroneControllerBlockEntity.MAX_SCRIPT_CHARS);
         editor.setValue(editorText);
-        editor.setValueListener(text -> editorText = text);
+        editor.setValueListener(text -> {
+            editorText = text;
+            // Typing is the one thing that brings a dismissed popup back - see refreshAutocomplete.
+            autocompleteDismissed = false;
+        });
         editor.setBreakpointLines(breakpoints);
         addRenderableWidget(editor);
 
@@ -462,15 +465,15 @@ public class IdeScreen extends Screen {
 
     /**
      * Re-reads the word at the caret and refilters the suggestions - called once per frame from
-     * {@link #render}, so the popup follows the caret wherever it goes. A word the player dismissed
-     * stays dismissed only until they type something different.
+     * {@link #render}, so the popup follows the caret wherever it goes. Only ever suggests while the
+     * editor itself holds the keyboard: otherwise a popup left over from earlier would keep
+     * swallowing Up/Down/Enter meant for whatever the player moved on to.
      */
     private void refreshAutocomplete() {
-        String word = editor.wordBeforeCursor();
+        String word = editor.isFocused() ? editor.wordBeforeCursor() : "";
         if (!word.equals(autocompleteWord)) {
             autocompleteWord = word;
             autocompleteSelected = 0;
-            autocompleteDismissed = false;
         }
         autocompleteMatches = word.isEmpty() || autocompleteDismissed ? List.of()
                 : AUTOCOMPLETE_CANDIDATES.stream()
@@ -480,14 +483,25 @@ public class IdeScreen extends Screen {
     }
 
     /**
-     * Replaces the word at the caret with {@code candidate} and closes the popup. The editor
-     * re-derives that word itself at this moment, so the text swapped out is always whatever is
-     * actually under the caret now - never a stale copy from when the popup was drawn.
+     * Replaces the word at the caret with {@code candidate}, or reports false and changes nothing
+     * when the popup turns out to be stale.
+     *
+     * <p>Keystrokes arrive in batches rather than one per frame, so the list being read here can
+     * still describe the word as it was before an earlier key in the same batch edited it - a
+     * Backspace immediately followed by Enter would otherwise paste a suggestion for a word that no
+     * longer exists. Re-checking the live caret catches exactly that; returning false lets the
+     * caller leave the key unconsumed so it does its normal job instead.
      */
-    private void acceptAutocomplete(String candidate) {
+    private boolean acceptAutocomplete(String candidate) {
+        String word = editor.wordBeforeCursor();
+        if (word.isEmpty() || !candidate.startsWith(word)) {
+            autocompleteMatches = List.of();
+            return false;
+        }
         editor.replaceWordBeforeCursor(candidate);
         autocompleteMatches = List.of();
         autocompleteDismissed = true;
+        return true;
     }
 
     /**
@@ -529,6 +543,7 @@ public class IdeScreen extends Screen {
                 return true;
             }
             autocompleteMatches = List.of();
+            autocompleteDismissed = true; // stays shut until the next keystroke, even if the caret lands mid-word
         }
         if (button == 0 && mouseX >= MARGIN && mouseX < MARGIN + GUTTER_WIDTH
                 && mouseY >= editorTop && mouseY < editorTop + editorHeight) {
@@ -572,7 +587,7 @@ public class IdeScreen extends Screen {
             }
             return super.keyPressed(keyCode, scanCode, modifiers);
         }
-        if (!autocompleteMatches.isEmpty()) {
+        if (!autocompleteMatches.isEmpty() && editor.isFocused()) {
             switch (keyCode) {
                 case GLFW.GLFW_KEY_UP -> {
                     autocompleteSelected = Math.floorMod(autocompleteSelected - 1, autocompleteMatches.size());
@@ -583,8 +598,11 @@ public class IdeScreen extends Screen {
                     return true;
                 }
                 case GLFW.GLFW_KEY_TAB, GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> {
-                    acceptAutocomplete(autocompleteMatches.get(autocompleteSelected));
-                    return true;
+                    // Falls through to the editor when the suggestion turned out to be stale, so a
+                    // batched Backspace-then-Enter still inserts the newline the player asked for.
+                    if (acceptAutocomplete(autocompleteMatches.get(autocompleteSelected))) {
+                        return true;
+                    }
                 }
                 case GLFW.GLFW_KEY_ESCAPE -> {
                     autocompleteMatches = List.of();
@@ -753,7 +771,7 @@ public class IdeScreen extends Screen {
     /**
      * Shared look for the title bar's icon buttons (green square, white glyph) instead of a text
      * label - matches the reference game's (The Farmer Was Replaced) title bar,
-     * explain/editor.png. No existing icon-button precedent in this mod, so it's a plain procedural
+     * No existing icon-button precedent in this mod, so it's a plain procedural
      * {@link GuiGraphics#fill} draw rather than a new texture asset - simplest option for flat
      * 2-color icons. Subclasses only need to draw their glyph; the background/hover fill is common.
      */
@@ -812,7 +830,7 @@ public class IdeScreen extends Screen {
 
     /**
      * Hollow/outline triangle - "step one instruction", distinct from Play's solid triangle
-     * (explain/editor.png). Drawn by filling a full triangle in the glyph color, then punching out
+     * Drawn by filling a full triangle in the glyph color, then punching out
      * a smaller triangle in the button's own current background color on top of it.
      */
     private static final class StepButton extends IconButton {
