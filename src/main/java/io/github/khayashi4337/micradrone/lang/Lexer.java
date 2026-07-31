@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Tokenizes Micra Drone script source into a flat token stream, synthesizing
@@ -35,6 +36,11 @@ public final class Lexer {
     public Lexer(String source) {
         this.source = source;
         this.indents.push(0);
+    }
+
+    /** Every reserved word the language recognizes - the editor autocomplete popup's other candidate source. */
+    public static Set<String> keywords() {
+        return KEYWORDS.keySet();
     }
 
     public List<Token> scan() {
