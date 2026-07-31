@@ -207,6 +207,13 @@ public final class Lexer {
             case ')' -> addOneChar(TokenType.RPAREN);
             case ':' -> addOneChar(TokenType.COLON);
             case ',' -> addOneChar(TokenType.COMMA);
+            case '[' -> addOneChar(TokenType.LBRACKET);
+            case ']' -> addOneChar(TokenType.RBRACKET);
+            case '{' -> addOneChar(TokenType.LBRACE);
+            case '}' -> addOneChar(TokenType.RBRACE);
+            // Only ever reached for a lone '.', since number() consumes the decimal point of "1.5"
+            // itself (it requires a digit after the dot) before symbol() ever sees it.
+            case '.' -> addOneChar(TokenType.DOT);
             default -> throw new MicraLangException(line, "unexpected character '" + c + "'");
         }
     }
