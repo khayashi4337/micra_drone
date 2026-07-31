@@ -22,6 +22,13 @@ import net.minecraft.util.Mth;
  * ends. The downward jet in the artwork is done with particles, not geometry - see DroneEntity#tick.
  */
 public class DroneModel extends HierarchicalModel<DroneEntity> {
+    /**
+     * How far do_a_flip() lifts the model at the peak of its hop (model-space units, comparable to
+     * the body's own 10-unit size) - generous on purpose so the swept geometry clears the ground
+     * regardless of exactly where the rotation's true pivot ends up (see {@link #setupAnim}).
+     */
+    private static final float FLIP_HOP_HEIGHT = 8.0F;
+
     private final ModelPart root;
     private final ModelPart propRight;
     private final ModelPart propLeft;
@@ -120,7 +127,17 @@ public class DroneModel extends HierarchicalModel<DroneEntity> {
         // Quaternionf, verified in decompiled sources) - a full somersault is 2*PI.
         float elapsedFlipTicks = ageInTicks - entity.flipStartTick();
         if (elapsedFlipTicks >= 0 && elapsedFlipTicks < DroneEntity.FLIP_TICKS) {
-            this.root.xRot = (elapsedFlipTicks / DroneEntity.FLIP_TICKS) * ((float) Math.PI * 2F);
+            float progress = elapsedFlipTicks / DroneEntity.FLIP_TICKS;
+            this.root.xRot = progress * ((float) Math.PI * 2F);
+            // 林さんのフィードバック: rotating root in place pivots around its own origin, which sits
+            // near ground level (root is offset (0,24,0) from the mesh root; the body hangs well
+            // above that, at local Y -14..-4 - see createBodyLayer) - so the body swept through the
+            // ground on the way around. A hop timed to the rotation (peaking at the 180 deg midpoint,
+            // zero at both ends) reads as "kick the legs up and tumble" instead, and comfortably
+            // clears the ground regardless of exactly where the geometry swings (more negative Y is
+            // "up" in this model's local space - consistently true of every part above the root, see
+            // the more-negative-with-height offsets of pod/mast/prop in createBodyLayer).
+            this.root.y -= Mth.sin(progress * (float) Math.PI) * FLIP_HOP_HEIGHT;
         }
     }
 }
