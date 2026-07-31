@@ -119,16 +119,17 @@ public class DroneModel extends HierarchicalModel<DroneEntity> {
         this.propRight.yRot = ageInTicks * 3.5F;
         this.propLeft.yRot = -ageInTicks * 3.5F;
 
-        // do_a_flip(): a real somersault (tumbling forward around the horizontal axis), not a
-        // turn-in-place spin - 林さんのフィードバック. ageInTicks is entity.tickCount + partialTick
-        // (LivingEntityRenderer#getBob, verified in decompiled sources), so it's directly comparable
-        // to the synced flipStartTick() for smooth, partial-tick interpolated rotation. ModelPart
-        // rotation fields are radians, not degrees (ModelPart#compile uses them straight into a
-        // Quaternionf, verified in decompiled sources) - a full somersault is 2*PI.
+        // do_a_flip(): a real somersault (tumbling backward around the horizontal axis - 前転で
+        //作ったところ後転に直してほしいと林さんからフィードバック、符号を反転), not a turn-in-place
+        // spin. ageInTicks is entity.tickCount + partialTick (LivingEntityRenderer#getBob, verified
+        // in decompiled sources), so it's directly comparable to the synced flipStartTick() for
+        // smooth, partial-tick interpolated rotation. ModelPart rotation fields are radians, not
+        // degrees (ModelPart#compile uses them straight into a Quaternionf, verified in decompiled
+        // sources) - a full somersault is 2*PI.
         float elapsedFlipTicks = ageInTicks - entity.flipStartTick();
         if (elapsedFlipTicks >= 0 && elapsedFlipTicks < DroneEntity.FLIP_TICKS) {
             float progress = elapsedFlipTicks / DroneEntity.FLIP_TICKS;
-            this.root.xRot = progress * ((float) Math.PI * 2F);
+            this.root.xRot = -progress * ((float) Math.PI * 2F);
             // 林さんのフィードバック: rotating root in place pivots around its own origin, which sits
             // near ground level (root is offset (0,24,0) from the mesh root; the body hangs well
             // above that, at local Y -14..-4 - see createBodyLayer) - so the body swept through the
