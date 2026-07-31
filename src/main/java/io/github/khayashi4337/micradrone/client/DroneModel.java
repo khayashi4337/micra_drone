@@ -119,25 +119,24 @@ public class DroneModel extends HierarchicalModel<DroneEntity> {
         this.propRight.yRot = ageInTicks * 3.5F;
         this.propLeft.yRot = -ageInTicks * 3.5F;
 
-        // do_a_flip(): a real somersault (tumbling backward around the horizontal axis - 前転で
-        //作ったところ後転に直してほしいと林さんからフィードバック、符号を反転), not a turn-in-place
-        // spin. ageInTicks is entity.tickCount + partialTick (LivingEntityRenderer#getBob, verified
-        // in decompiled sources), so it's directly comparable to the synced flipStartTick() for
-        // smooth, partial-tick interpolated rotation. ModelPart rotation fields are radians, not
-        // degrees (ModelPart#compile uses them straight into a Quaternionf, verified in decompiled
-        // sources) - a full somersault is 2*PI.
+        // do_a_flip(): a real somersault, tumbling backward around the horizontal axis (not a
+        // turn-in-place spin). ageInTicks is entity.tickCount + partialTick (LivingEntityRenderer#
+        // getBob, verified in decompiled sources), so it's directly comparable to the synced
+        // flipStartTick() for smooth, partial-tick interpolated rotation. ModelPart rotation fields
+        // are radians, not degrees (ModelPart#compile uses them straight into a Quaternionf,
+        // verified in decompiled sources) - a full somersault is 2*PI.
         float elapsedFlipTicks = ageInTicks - entity.flipStartTick();
         if (elapsedFlipTicks >= 0 && elapsedFlipTicks < DroneEntity.FLIP_TICKS) {
             float progress = elapsedFlipTicks / DroneEntity.FLIP_TICKS;
             this.root.xRot = -progress * ((float) Math.PI * 2F);
-            // 林さんのフィードバック: rotating root in place pivots around its own origin, which sits
-            // near ground level (root is offset (0,24,0) from the mesh root; the body hangs well
-            // above that, at local Y -14..-4 - see createBodyLayer) - so the body swept through the
-            // ground on the way around. A hop timed to the rotation (peaking at the 180 deg midpoint,
-            // zero at both ends) reads as "kick the legs up and tumble" instead, and comfortably
-            // clears the ground regardless of exactly where the geometry swings (more negative Y is
-            // "up" in this model's local space - consistently true of every part above the root, see
-            // the more-negative-with-height offsets of pod/mast/prop in createBodyLayer).
+            // Rotating root in place pivots around its own origin, which sits near ground level
+            // (root is offset (0,24,0) from the mesh root; the body hangs well above that, at local
+            // Y -14..-4 - see createBodyLayer) - so the body swept through the ground on the way
+            // around. A hop timed to the rotation (peaking at the 180 deg midpoint, zero at both
+            // ends) reads as "kick the legs up and tumble" instead, and comfortably clears the
+            // ground regardless of exactly where the geometry swings (more negative Y is "up" in
+            // this model's local space - consistently true of every part above the root, see the
+            // more-negative-with-height offsets of pod/mast/prop in createBodyLayer).
             this.root.y -= Mth.sin(progress * (float) Math.PI) * FLIP_HOP_HEIGHT;
         }
     }

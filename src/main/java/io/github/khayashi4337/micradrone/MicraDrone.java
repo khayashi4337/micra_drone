@@ -318,7 +318,7 @@ public class MicraDrone {
         }
     }
 
-    // IDE title bar double-click (林さんの要望): rename the scroll a script id points at.
+    // IDE title bar double-click: rename the scroll a script id points at.
     private static void handleRenameScript(RenameScriptPayload payload, IPayloadContext context) {
         if (context.player() instanceof ServerPlayer serverPlayer
                 && isInReach(serverPlayer, payload.pos())

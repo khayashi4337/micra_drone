@@ -49,8 +49,7 @@ public class DroneEntity extends Allay {
 
     /**
      * Starts (or restarts, if already mid-somersault) a one-shot 360-degree tumble - a real
-     * somersault (rotating forward/back around the horizontal axis), not a turn-in-place spin;
-     * 林さんのフィードバック (最初の実装はyawの回転で、宙返りの仕様を誤解していた) . See
+     * somersault (rotating forward/back around the horizontal axis), not a turn-in-place spin. See
      * {@code DroneApi#doAFlip}.
      */
     public void startFlip() {

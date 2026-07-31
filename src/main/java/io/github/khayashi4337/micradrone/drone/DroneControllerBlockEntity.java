@@ -478,9 +478,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     /**
-     * Renames the scroll {@code scriptId} points at (IDE title bar double-click, 林さんの要望) -
-     * the same effect a vanilla anvil rename has, just without a trip to an anvil. File-backed
-     * script ids have no rename concept (nothing in today's list is file-backed anyway - see
+     * Renames the scroll {@code scriptId} points at (IDE title bar double-click) - the same effect
+     * a vanilla anvil rename has, just without a trip to an anvil. File-backed script ids have no
+     * rename concept (nothing in today's list is file-backed anyway - see
      * {@link #refreshAvailableScripts}) so they're rejected here rather than silently ignored.
      */
     public void renameScript(ServerPlayer requester, String scriptId, String newName) {
@@ -538,8 +538,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      * for the redstone path - the run then belongs to whoever last claimed the controller (see
      * {@link #ownerUuid}), and its log goes to every open screen either way.
      *
-     * <p>State-transition design (林さんのフィードバック: ステップ実行モード中にRunを押しても
-     * 反応するように): while a script is alive, {@link DroneScriptRunner.State} stays
+     * <p>State-transition design: while a script is alive, {@link DroneScriptRunner.State} stays
      * {@code RUNNING} whether or not the debugger has it paused - pause is a sub-state tracked only
      * by {@link DebugController#isPaused()}. So the SAME Run control means "continue" when paused
      * mid-debug, and only refuses when a script is genuinely running unpaused (an actual conflict -
@@ -664,8 +663,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      * run to act on and are no-ops otherwise, but Step is special-cased: pressed with nothing
      * running, it bootstraps a fresh run of {@link #selectedScript} pre-armed to pause before its
      * first statement (see {@link #startFreshRun}'s {@code startPaused}) instead of doing nothing -
-     * 林さんのフィードバック: 停止中にステップ実行を押しても反応するように(直感的に「最初の一歩」
-     * が動く挙動).
+     * an intuitive "take the first step" behavior even when nothing is currently running.
      */
     public void debugCommand(ServerPlayer requester, int command) {
         addViewer(requester);

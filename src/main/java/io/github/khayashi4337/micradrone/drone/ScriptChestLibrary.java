@@ -152,8 +152,8 @@ final class ScriptChestLibrary {
 
     /**
      * Renames a scroll a scroll id points at - the same effect as a vanilla anvil rename (both set
-     * {@code CUSTOM_NAME}, see {@link #listScrolls}), just from the IDE title bar (林さんの要望:
-     * タイトルのダブルクリックで改名). False if the id no longer resolves to a scroll.
+     * {@code CUSTOM_NAME}, see {@link #listScrolls}), just from the IDE title bar. False if the id
+     * no longer resolves to a scroll.
      */
     static boolean renameScroll(ServerLevel level, BlockPos controllerPos, String scrollId, String newName) {
         Optional<ItemStack> stack = resolveScroll(level, controllerPos, scrollId);

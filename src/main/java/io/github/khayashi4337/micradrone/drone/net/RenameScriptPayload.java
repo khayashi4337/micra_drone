@@ -10,7 +10,7 @@ import net.minecraft.resources.ResourceLocation;
 
 /**
  * C2S: rename the scroll {@code scriptId} points at to {@code newName} - same effect as a vanilla
- * anvil rename, just triggered by double-clicking the title in {@code IdeScreen} (林さんの要望).
+ * anvil rename, just triggered by double-clicking the title in {@code IdeScreen}.
  * The server re-resolves {@code scriptId} and re-validates the name; failures are reported to the
  * player's chat.
  */

@@ -4,7 +4,7 @@ import java.util.List;
 
 /**
  * Every script-visible command name (snake_case, as scripts call them) the interpreter recognizes -
- * the editor autocomplete popup's candidate list (issue: do_a_flip() was hard to find, 林さんの依頼).
+ * the editor autocomplete popup's candidate list (do_a_flip() was hard to find without one).
  * There's no way to derive this mechanically from {@link Interpreter#evalCall}'s {@code switch}
  * (case labels aren't reflectively enumerable), so this is a hand-maintained mirror of it - keep the
  * two in sync when adding or removing a command, the same "duplicated in a couple of related places"

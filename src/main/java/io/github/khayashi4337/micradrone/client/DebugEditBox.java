@@ -18,7 +18,7 @@ import net.minecraft.network.chat.Component;
  * line each bar up with its text exactly.
  *
  * <p>Also detects the word currently being typed at the very end of the text, for the command
- * autocomplete popup {@code IdeScreen} draws (do_a_flip() was hard to find, 林さんの依頼). Vanilla
+ * autocomplete popup {@code IdeScreen} draws. Vanilla
  * {@link MultiLineEditBox} exposes no cursor-position API at all (verified in decompiled sources -
  * {@code MultilineTextField.cursor()} is behind a private field even subclasses can't reach), and
  * {@link #setValue} always snaps the cursor to the end of the text (also verified), so accepting a
