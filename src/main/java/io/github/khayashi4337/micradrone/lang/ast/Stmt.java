@@ -7,6 +7,9 @@ public sealed interface Stmt {
 
     record AssignStmt(String name, Expr value, int line) implements Stmt {}
 
+    /** {@code target[index] = value} - a list position or a dict key. */
+    record IndexAssignStmt(Expr target, Expr index, Expr value, int line) implements Stmt {}
+
     record ExprStmt(Expr expr, int line) implements Stmt {}
 
     /** if/elif chain: each branch is a (condition, block) pair; elseBlock is null when absent. */

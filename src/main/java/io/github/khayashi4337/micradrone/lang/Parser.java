@@ -32,16 +32,27 @@ public final class Parser {
         return simpleStmt();
     }
 
+    /**
+     * Parses the left-hand side as an ordinary expression and only then looks for {@code =}, rather
+     * than peeking for {@code IDENT '='} up front: that way {@code a[0] = x} and {@code d["k"] = v}
+     * reach the same place plain {@code x = 1} does, and anything else in front of an {@code =}
+     * fails with a message about what is assignable instead of a confusing parse error further on.
+     */
     private Stmt simpleStmt() {
         int line = peek().line();
-        if (check(TokenType.IDENT) && checkNext(TokenType.EQUAL)) {
-            String name = advance().lexeme();
-            expect(TokenType.EQUAL, "'='");
+        Expr expr = expression();
+        if (check(TokenType.EQUAL)) {
+            advance();
             Expr value = expression();
             expect(TokenType.NEWLINE, "end of line");
-            return new Stmt.AssignStmt(name, value, line);
+            if (expr instanceof Expr.VarRef ref) {
+                return new Stmt.AssignStmt(ref.name(), value, line);
+            }
+            if (expr instanceof Expr.Index index) {
+                return new Stmt.IndexAssignStmt(index.target(), index.index(), value, line);
+            }
+            throw new MicraLangException(line, "cannot assign to this - expected a name or name[index]");
         }
-        Expr expr = expression();
         expect(TokenType.NEWLINE, "end of line");
         return new Stmt.ExprStmt(expr, line);
     }
@@ -126,10 +137,15 @@ public final class Parser {
         return comparison();
     }
 
+    /**
+     * {@code in} sits here alongside the comparisons, as in Python. There is deliberately no
+     * {@code not in}: {@code not} binds looser than this level, so {@code not x in y} already parses
+     * as {@code not (x in y)} and means the right thing.
+     */
     private Expr comparison() {
         Expr left = arith();
         while (checkAny(TokenType.EQUAL_EQUAL, TokenType.BANG_EQUAL, TokenType.LESS,
-                TokenType.GREATER, TokenType.LESS_EQUAL, TokenType.GREATER_EQUAL)) {
+                TokenType.GREATER, TokenType.LESS_EQUAL, TokenType.GREATER_EQUAL, TokenType.IN)) {
             Token op = advance();
             left = new Expr.Binary(op.lexeme(), left, arith(), op.line());
         }
@@ -162,26 +178,82 @@ public final class Parser {
         return atomTrailer();
     }
 
+    /**
+     * An atom followed by any run of trailers: {@code (args)} calls and {@code [i]} indexes, so
+     * chains like {@code grid[y][x]} parse. Calls stay name-only ({@link Expr.Call} carries a name,
+     * not a callee), so {@code f()()} is still rejected.
+     */
     private Expr atomTrailer() {
         Expr expr = atom();
-        while (check(TokenType.LPAREN)) {
-            int line = peek().line();
-            if (!(expr instanceof Expr.VarRef ref)) {
-                throw new MicraLangException(line, "only a name can be called, e.g. move(...)");
-            }
-            advance(); // (
-            List<Expr> args = new ArrayList<>();
-            if (!check(TokenType.RPAREN)) {
-                args.add(expression());
-                while (check(TokenType.COMMA)) {
-                    advance();
-                    args.add(expression());
+        while (true) {
+            if (check(TokenType.LPAREN)) {
+                int line = peek().line();
+                if (!(expr instanceof Expr.VarRef ref)) {
+                    throw new MicraLangException(line, "only a name can be called, e.g. move(...)");
                 }
+                advance(); // (
+                expr = new Expr.Call(ref.name(), argList(), line);
+            } else if (check(TokenType.LBRACKET)) {
+                int line = peek().line();
+                advance(); // [
+                Expr index = expression();
+                expect(TokenType.RBRACKET, "']'");
+                expr = new Expr.Index(expr, index, line);
+            } else {
+                return expr;
             }
-            expect(TokenType.RPAREN, "')'");
-            expr = new Expr.Call(ref.name(), args, line);
         }
-        return expr;
+    }
+
+    /**
+     * A {@code { ... }} literal, which is a dict or a set depending on what follows the first
+     * element - a {@code :} makes it a dict. Empty braces are an empty dict, matching Python;
+     * an empty set has no literal form and is written {@code set()}.
+     */
+    private Expr braceLiteral(int line) {
+        advance(); // {
+        if (check(TokenType.RBRACE)) {
+            advance();
+            return new Expr.DictLit(new ArrayList<>(), new ArrayList<>(), line);
+        }
+        Expr first = expression();
+        if (check(TokenType.COLON)) {
+            advance();
+            List<Expr> keys = new ArrayList<>();
+            List<Expr> values = new ArrayList<>();
+            keys.add(first);
+            values.add(expression());
+            while (check(TokenType.COMMA)) {
+                advance();
+                keys.add(expression());
+                expect(TokenType.COLON, "':'");
+                values.add(expression());
+            }
+            expect(TokenType.RBRACE, "'}'");
+            return new Expr.DictLit(keys, values, line);
+        }
+        List<Expr> elements = new ArrayList<>();
+        elements.add(first);
+        while (check(TokenType.COMMA)) {
+            advance();
+            elements.add(expression());
+        }
+        expect(TokenType.RBRACE, "'}'");
+        return new Expr.SetLit(elements, line);
+    }
+
+    /** The comma-separated arguments of a call, with the opening '(' already consumed; consumes the ')'. */
+    private List<Expr> argList() {
+        List<Expr> args = new ArrayList<>();
+        if (!check(TokenType.RPAREN)) {
+            args.add(expression());
+            while (check(TokenType.COMMA)) {
+                advance();
+                args.add(expression());
+            }
+        }
+        expect(TokenType.RPAREN, "')'");
+        return args;
     }
 
     private Expr atom() {
@@ -216,6 +288,22 @@ public final class Parser {
                 Expr inner = expression();
                 expect(TokenType.RPAREN, "')'");
                 return inner;
+            }
+            case LBRACKET -> {
+                advance();
+                List<Expr> elements = new ArrayList<>();
+                if (!check(TokenType.RBRACKET)) {
+                    elements.add(expression());
+                    while (check(TokenType.COMMA)) {
+                        advance();
+                        elements.add(expression());
+                    }
+                }
+                expect(TokenType.RBRACKET, "']'");
+                return new Expr.ListLit(elements, t.line());
+            }
+            case LBRACE -> {
+                return braceLiteral(t.line());
             }
             default -> throw new MicraLangException(t.line(), "unexpected token " + t);
         }

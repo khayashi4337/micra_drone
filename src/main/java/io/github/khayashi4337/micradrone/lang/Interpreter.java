@@ -1,6 +1,13 @@
 package io.github.khayashi4337.micradrone.lang;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import io.github.khayashi4337.micradrone.lang.ast.Expr;
 import io.github.khayashi4337.micradrone.lang.ast.Stmt;
@@ -14,6 +21,8 @@ import io.github.khayashi4337.micradrone.lang.ast.Stmt;
 public final class Interpreter {
     /** Number of statements allowed to execute with zero DroneApi calls before we assume a runaway loop. */
     private static final long RUNAWAY_STATEMENT_THRESHOLD = 1_000_000;
+    /** How deep {@link #stringify(Object, int)} descends into nested collections before giving up. */
+    private static final int MAX_STRINGIFY_DEPTH = 8;
 
     private final DroneApi api;
     /** Optional debugger (breakpoints/pause/step - see DebugController); null = no debugging overhead. */
@@ -49,11 +58,45 @@ public final class Interpreter {
         }
         switch (stmt) {
             case Stmt.AssignStmt s -> env.set(s.name(), eval(s.value()));
+            case Stmt.IndexAssignStmt s -> execIndexAssign(s);
             case Stmt.ExprStmt s -> eval(s.expr());
             case Stmt.IfStmt s -> execIf(s);
             case Stmt.WhileStmt s -> execWhile(s);
             case Stmt.ForStmt s -> execFor(s);
         }
+    }
+
+    /** {@code a[i] = v} on a list (existing position only) or {@code d[k] = v} on a dict (adds or replaces). */
+    private void execIndexAssign(Stmt.IndexAssignStmt s) {
+        Object target = eval(s.target());
+        Object index = eval(s.index());
+        Object value = eval(s.value());
+        if (target instanceof List<?> list) {
+            @SuppressWarnings("unchecked")
+            List<Object> mutable = (List<Object>) list;
+            mutable.set(listIndex(index, mutable.size(), s.line()), value);
+            return;
+        }
+        if (target instanceof Map<?, ?> map) {
+            @SuppressWarnings("unchecked")
+            Map<Object, Object> mutable = (Map<Object, Object>) map;
+            mutable.put(index, value);
+            return;
+        }
+        throw new MicraLangException(s.line(), "cannot assign into " + typeName(target));
+    }
+
+    /** Validates a list position and returns it as an int; lists are indexed from 0, negatives are not supported. */
+    private int listIndex(Object index, int size, int line) {
+        double raw = asDouble(index, line);
+        if (raw != Math.floor(raw)) {
+            throw new MicraLangException(line, "list index must be a whole number but was " + stringify(index));
+        }
+        int i = (int) raw;
+        if (i < 0 || i >= size) {
+            throw new MicraLangException(line, "list index " + i + " is out of range (list has " + size + " items)");
+        }
+        return i;
     }
 
     private void execIf(Stmt.IfStmt s) {
@@ -80,10 +123,30 @@ public final class Interpreter {
         }
     }
 
+    /**
+     * {@code range(...)} stays a syntactic special case - it is not a value in this language, so it
+     * is recognised here rather than evaluated - while anything else is evaluated and walked as a
+     * collection (see {@link #iterableOf}).
+     */
     private void execFor(Stmt.ForStmt s) {
-        if (!(s.rangeExpr() instanceof Expr.Call call) || !call.name().equals("range")) {
-            throw new MicraLangException(s.line(), "for-in currently only supports range(...)");
+        if (s.rangeExpr() instanceof Expr.Call call && call.name().equals("range")) {
+            execForRange(s, call);
+            return;
         }
+        Iterable<Object> values = iterableOf(eval(s.rangeExpr()), s.line());
+        enterLoopForDebug();
+        try {
+            for (Object value : values) {
+                checkCancellation(s.line());
+                env.set(s.varName(), value);
+                execBlock(s.block());
+            }
+        } finally {
+            exitLoopForDebug();
+        }
+    }
+
+    private void execForRange(Stmt.ForStmt s, Expr.Call call) {
         double[] bounds = rangeBounds(call);
         double start = bounds[0];
         double stop = bounds[1];
@@ -101,6 +164,33 @@ public final class Interpreter {
         } finally {
             exitLoopForDebug();
         }
+    }
+
+    /**
+     * What {@code for x in ...} walks: a list's items, a set's members, a dict's keys (as in
+     * Python), or a string's characters. Snapshots lists and sets so that a body which appends to
+     * the very collection it is walking can't throw ConcurrentModificationException out of the
+     * script - it simply iterates what was there when the loop started.
+     */
+    private Iterable<Object> iterableOf(Object value, int line) {
+        if (value instanceof List<?> list) {
+            return new ArrayList<>(list);
+        }
+        if (value instanceof Set<?> set) {
+            return new ArrayList<>(set);
+        }
+        if (value instanceof Map<?, ?> map) {
+            return new ArrayList<>(map.keySet());
+        }
+        if (value instanceof String s) {
+            List<Object> chars = new ArrayList<>(s.length());
+            for (int i = 0; i < s.length(); i++) {
+                chars.add(String.valueOf(s.charAt(i)));
+            }
+            return chars;
+        }
+        throw new MicraLangException(line, "cannot loop over " + typeName(value)
+                + " - expected range(...), a list, a set, a dict, or a string");
     }
 
     /** Loop-depth bookkeeping for the debugger's step-out - see {@link DebugController#stepOut}. */
@@ -153,7 +243,55 @@ public final class Interpreter {
             case Expr.Unary e -> evalUnary(e);
             case Expr.Binary e -> evalBinary(e);
             case Expr.Call e -> evalCall(e);
+            case Expr.ListLit e -> evalListLit(e);
+            case Expr.DictLit e -> evalDictLit(e);
+            case Expr.SetLit e -> evalSetLit(e);
+            case Expr.Index e -> evalIndex(e);
         };
+    }
+
+    private Object evalListLit(Expr.ListLit e) {
+        List<Object> list = new ArrayList<>(e.elements().size());
+        for (Expr element : e.elements()) {
+            list.add(eval(element));
+        }
+        return list;
+    }
+
+    /** Insertion-ordered, so printing a dict shows its keys in the order they were added (as in Python). */
+    private Object evalDictLit(Expr.DictLit e) {
+        Map<Object, Object> map = new LinkedHashMap<>();
+        for (int i = 0; i < e.keys().size(); i++) {
+            map.put(eval(e.keys().get(i)), eval(e.values().get(i)));
+        }
+        return map;
+    }
+
+    private Object evalSetLit(Expr.SetLit e) {
+        Set<Object> set = new LinkedHashSet<>();
+        for (Expr element : e.elements()) {
+            set.add(eval(element));
+        }
+        return set;
+    }
+
+    private Object evalIndex(Expr.Index e) {
+        Object target = eval(e.target());
+        Object index = eval(e.index());
+        if (target instanceof List<?> list) {
+            return list.get(listIndex(index, list.size(), e.line()));
+        }
+        if (target instanceof Map<?, ?> map) {
+            Object value = map.get(index);
+            if (value == null && !map.containsKey(index)) {
+                throw new MicraLangException(e.line(), "no key " + stringify(index) + " in this dict");
+            }
+            return value;
+        }
+        if (target instanceof String s) {
+            return String.valueOf(s.charAt(listIndex(index, s.length(), e.line())));
+        }
+        throw new MicraLangException(e.line(), "cannot index " + typeName(target));
     }
 
     private Object evalUnary(Expr.Unary e) {
@@ -185,6 +323,9 @@ public final class Interpreter {
         }
         if (e.op().equals("!=")) {
             return !left.equals(right);
+        }
+        if (e.op().equals("in")) {
+            return contains(right, left, e.line());
         }
 
         double l = asDouble(left, e.line());
@@ -316,7 +457,24 @@ public final class Interpreter {
         if (v instanceof Boolean b) return b;
         if (v instanceof Double d) return d != 0.0;
         if (v instanceof String s) return !s.isEmpty();
+        if (v instanceof Collection<?> c) return !c.isEmpty();
+        if (v instanceof Map<?, ?> m) return !m.isEmpty();
         return v != MicraNone.INSTANCE;
+    }
+
+    /** {@code x in y}: a list's items, a set's members, a dict's keys, or a substring of a string. */
+    private boolean contains(Object container, Object item, int line) {
+        if (container instanceof Collection<?> c) {
+            return c.contains(item);
+        }
+        if (container instanceof Map<?, ?> m) {
+            return m.containsKey(item);
+        }
+        if (container instanceof String s) {
+            return s.contains(asString(item, line));
+        }
+        throw new MicraLangException(line, "'in' expects a list, a set, a dict, or a string on the right, but got "
+                + typeName(container));
     }
 
     private double asDouble(Object v, int line) {
@@ -333,15 +491,52 @@ public final class Interpreter {
         if (v instanceof Double) return "number";
         if (v instanceof String) return "string";
         if (v instanceof Boolean) return "bool";
+        if (v instanceof List) return "list";
+        if (v instanceof Set) return "set";
+        if (v instanceof Map) return "dict";
         return "None";
     }
 
     static String stringify(Object v) {
+        return stringify(v, 0);
+    }
+
+    /**
+     * Collections print their contents, so {@code print(items)} is actually useful. {@code depth}
+     * caps the recursion: a script can build a collection that contains itself
+     * ({@code a = []; a.append(a)}), and running off the stack would raise a StackOverflowError -
+     * an Error, not an Exception, so it would slip past the runner's {@code catch (RuntimeException)}
+     * and kill the script thread with no message at all. Beyond the cap the nested value is shown
+     * as an ellipsis instead, the way Python renders the same cycle.
+     */
+    private static String stringify(Object v, int depth) {
         if (v instanceof Double d) {
             return (d == Math.floor(d) && !Double.isInfinite(d)) ? String.valueOf((long) (double) d) : String.valueOf(d);
         }
         if (v instanceof Boolean b) return b ? "True" : "False";
         if (v instanceof String s) return s;
+        if (v instanceof List<?> || v instanceof Set<?> || v instanceof Map<?, ?>) {
+            if (depth >= MAX_STRINGIFY_DEPTH) {
+                return "...";
+            }
+            if (v instanceof Map<?, ?> map) {
+                return map.entrySet().stream()
+                        .map(entry -> quoted(entry.getKey(), depth + 1) + ": " + quoted(entry.getValue(), depth + 1))
+                        .collect(Collectors.joining(", ", "{", "}"));
+            }
+            Collection<?> items = (Collection<?>) v;
+            String open = v instanceof Set<?> ? "{" : "[";
+            String close = v instanceof Set<?> ? "}" : "]";
+            return items.stream().map(item -> quoted(item, depth + 1)).collect(Collectors.joining(", ", open, close));
+        }
         return "None";
+    }
+
+    /**
+     * How a value looks *inside* a collection: strings get quotes there (so an empty string and a
+     * missing one are told apart) even though a bare {@code print("hi")} prints them without.
+     */
+    private static String quoted(Object v, int depth) {
+        return v instanceof String s ? "\"" + s + "\"" : stringify(v, depth);
     }
 }

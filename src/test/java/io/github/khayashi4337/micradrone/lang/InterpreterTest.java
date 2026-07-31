@@ -67,6 +67,167 @@ class InterpreterTest {
         assertEquals(List.of("0", "1", "2", "1", "2", "3", "0", "2", "4"), api.printed);
     }
 
+    // ---- collections ----
+
+    @Test
+    void listLiteralsIndexAndPrint() {
+        FakeDroneApi api = run("""
+                items = [1, 2, 3]
+                print(items)
+                print(items[0])
+                print(items[2])
+                """);
+        assertEquals(List.of("[1, 2, 3]", "1", "3"), api.printed);
+    }
+
+    @Test
+    void dictLiteralsLookUpAndPrint() {
+        FakeDroneApi api = run("""
+                costs = {"wheat": 20, "carrot": 15}
+                print(costs)
+                print(costs["wheat"])
+                """);
+        assertEquals(List.of("{\"wheat\": 20, \"carrot\": 15}", "20"), api.printed);
+    }
+
+    @Test
+    void emptyBracesAreAnEmptyDict() {
+        FakeDroneApi api = run("""
+                d = {}
+                print(d)
+                """);
+        assertEquals(List.of("{}"), api.printed);
+    }
+
+    @Test
+    void setLiteralsDropDuplicates() {
+        FakeDroneApi api = run("""
+                s = {1, 2, 2, 3}
+                print(s)
+                """);
+        assertEquals(List.of("{1, 2, 3}"), api.printed);
+    }
+
+    @Test
+    void indexAssignmentReplacesListItemsAndDictValues() {
+        FakeDroneApi api = run("""
+                items = [1, 2, 3]
+                items[1] = 99
+                print(items)
+                d = {}
+                d["a"] = 1
+                d["a"] = 2
+                print(d)
+                """);
+        assertEquals(List.of("[1, 99, 3]", "{\"a\": 2}"), api.printed);
+    }
+
+    @Test
+    void nestedListsIndexByChaining() {
+        FakeDroneApi api = run("""
+                grid = [[1, 2], [3, 4]]
+                print(grid[1][0])
+                """);
+        assertEquals(List.of("3"), api.printed);
+    }
+
+    @Test
+    void forLoopsWalkListsSetsDictKeysAndStrings() {
+        FakeDroneApi api = run("""
+                for x in [1, 2]:
+                    print(x)
+                for k in {"a": 1}:
+                    print(k)
+                for c in "hi":
+                    print(c)
+                """);
+        assertEquals(List.of("1", "2", "a", "h", "i"), api.printed);
+    }
+
+    /** A body that appends to the very list it walks must not blow up - the loop sees the original items. */
+    @Test
+    void appendingDuringIterationDoesNotThrow() {
+        FakeDroneApi api = run("""
+                items = [1, 2]
+                seen = 0
+                for x in items:
+                    items[0] = 9
+                    seen = seen + 1
+                print(seen)
+                """);
+        assertEquals(List.of("2"), api.printed);
+    }
+
+    @Test
+    void inOperatorWorksOnEveryContainer() {
+        FakeDroneApi api = run("""
+                print(2 in [1, 2, 3])
+                print(5 in [1, 2, 3])
+                print("a" in {"a": 1})
+                print(1 in {1, 2})
+                print("ell" in "hello")
+                print(not 5 in [1, 2])
+                """);
+        assertEquals(List.of("True", "False", "True", "True", "True", "True"), api.printed);
+    }
+
+    @Test
+    void collectionsCompareByValue() {
+        FakeDroneApi api = run("""
+                print([1, 2] == [1, 2])
+                print([1, 2] == [2, 1])
+                print({"a": 1} == {"a": 1})
+                """);
+        assertEquals(List.of("True", "False", "True"), api.printed);
+    }
+
+    @Test
+    void emptyCollectionsAreFalsy() {
+        FakeDroneApi api = run("""
+                if []:
+                    print("no")
+                if not {}:
+                    print("empty dict is falsy")
+                if [1]:
+                    print("non-empty list is truthy")
+                """);
+        assertEquals(List.of("empty dict is falsy", "non-empty list is truthy"), api.printed);
+    }
+
+    /** Self-referencing collections must print, not blow the stack (a StackOverflowError would kill the thread silently). */
+    @Test
+    void selfReferencingListPrintsInsteadOfOverflowing() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        List<io.github.khayashi4337.micradrone.lang.ast.Stmt> program = new Parser(new Lexer("""
+                a = [1]
+                a[0] = a
+                print(a)
+                """).scan()).parseProgram();
+        new Interpreter(api).run(program);
+        assertEquals(1, api.printed.size());
+        assertTrue(api.printed.get(0).endsWith("...]]]]]]]]"), "expected the cycle to bottom out in an ellipsis");
+    }
+
+    @Test
+    void listIndexOutOfRangeRaises() {
+        assertThrows(MicraLangException.class, () -> run("print([1, 2][5])\n"));
+    }
+
+    @Test
+    void missingDictKeyRaises() {
+        assertThrows(MicraLangException.class, () -> run("print({\"a\": 1}[\"b\"])\n"));
+    }
+
+    @Test
+    void loopingOverANumberRaises() {
+        assertThrows(MicraLangException.class, () -> run("for x in 5:\n    print(x)\n"));
+    }
+
+    @Test
+    void assigningToSomethingUnassignableRaises() {
+        assertThrows(MicraLangException.class, () -> run("1 = 2\n"));
+    }
+
     @Test
     void moveTillPlantHarvest() {
         FakeDroneApi api = run("""

@@ -20,4 +20,16 @@ public sealed interface Expr {
     record Binary(String op, Expr left, Expr right, int line) implements Expr {}
 
     record Call(String name, List<Expr> args, int line) implements Expr {}
+
+    /** {@code [a, b, c]} - also {@code []}. */
+    record ListLit(List<Expr> elements, int line) implements Expr {}
+
+    /** {@code {k: v, ...}} - also {@code {}}, which is an empty dict (as in Python; {@code set()} makes an empty set). */
+    record DictLit(List<Expr> keys, List<Expr> values, int line) implements Expr {}
+
+    /** {@code {a, b, c}} - told apart from a dict literal by the absence of a {@code :} after the first element. */
+    record SetLit(List<Expr> elements, int line) implements Expr {}
+
+    /** {@code target[index]} - a list position, a dict key, or a character of a string. */
+    record Index(Expr target, Expr index, int line) implements Expr {}
 }
