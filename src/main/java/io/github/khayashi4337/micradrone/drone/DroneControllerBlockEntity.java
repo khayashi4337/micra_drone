@@ -41,6 +41,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.PlayerList;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.world.inventory.AnvilMenu;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -474,6 +475,38 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         refreshAvailableScripts(serverLevel);
         pushLogSnapshotTo(requester);
         requester.sendSystemMessage(Component.literal("[ide] saved " + scriptName));
+    }
+
+    /**
+     * Renames the scroll {@code scriptId} points at (IDE title bar double-click, 林さんの要望) -
+     * the same effect a vanilla anvil rename has, just without a trip to an anvil. File-backed
+     * script ids have no rename concept (nothing in today's list is file-backed anyway - see
+     * {@link #refreshAvailableScripts}) so they're rejected here rather than silently ignored.
+     */
+    public void renameScript(ServerPlayer requester, String scriptId, String newName) {
+        addViewer(requester);
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        if (newName.isBlank() || newName.length() > AnvilMenu.MAX_NAME_LENGTH) {
+            requester.sendSystemMessage(Component.literal("[ide] invalid name '" + newName + "'"));
+            return;
+        }
+        boolean renamed;
+        if (ScriptId.isScrollId(scriptId)) {
+            renamed = ScriptChestLibrary.renameScroll(serverLevel, getBlockPos(), scriptId, newName);
+        } else if (ScriptId.isInventoryScrollId(scriptId)) {
+            renamed = ScriptChestLibrary.renameInventoryScroll(requester, scriptId, newName);
+        } else {
+            renamed = false;
+        }
+        if (!renamed) {
+            requester.sendSystemMessage(Component.literal(
+                    "[ide] scroll " + scriptId + " is no longer in a library chest or your inventory - nothing renamed"));
+            return;
+        }
+        refreshAvailableScripts(serverLevel);
+        pushLogSnapshotTo(requester);
     }
 
     private final RedstoneEdge redstoneEdge = new RedstoneEdge();

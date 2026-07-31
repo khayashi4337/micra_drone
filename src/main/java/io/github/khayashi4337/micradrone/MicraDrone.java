@@ -22,6 +22,7 @@ import io.github.khayashi4337.micradrone.drone.net.EnchantScrollPayload;
 import io.github.khayashi4337.micradrone.drone.net.PurchaseUnlockPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestScriptSourcePayload;
+import io.github.khayashi4337.micradrone.drone.net.RenameScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestShopStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.SaveScriptPayload;
@@ -186,6 +187,7 @@ public class MicraDrone {
         registrar.playToServer(EnchantScrollPayload.TYPE, EnchantScrollPayload.STREAM_CODEC, MicraDrone::handleEnchantScroll);
         registrar.playToServer(RequestScriptSourcePayload.TYPE, RequestScriptSourcePayload.STREAM_CODEC, MicraDrone::handleRequestScriptSource);
         registrar.playToServer(SaveScriptPayload.TYPE, SaveScriptPayload.STREAM_CODEC, MicraDrone::handleSaveScript);
+        registrar.playToServer(RenameScriptPayload.TYPE, RenameScriptPayload.STREAM_CODEC, MicraDrone::handleRenameScript);
         registrar.playToServer(SelectScriptPayload.TYPE, SelectScriptPayload.STREAM_CODEC, MicraDrone::handleSelectScript);
         registrar.playToServer(SetBreakpointsPayload.TYPE, SetBreakpointsPayload.STREAM_CODEC, MicraDrone::handleSetBreakpoints);
         registrar.playToServer(DebugCommandPayload.TYPE, DebugCommandPayload.STREAM_CODEC, MicraDrone::handleDebugCommand);
@@ -313,6 +315,15 @@ public class MicraDrone {
                 && isInReach(serverPlayer, payload.pos())
                 && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
             be.saveScript(serverPlayer, payload.scriptName(), payload.source());
+        }
+    }
+
+    // IDE title bar double-click (林さんの要望): rename the scroll a script id points at.
+    private static void handleRenameScript(RenameScriptPayload payload, IPayloadContext context) {
+        if (context.player() instanceof ServerPlayer serverPlayer
+                && isInReach(serverPlayer, payload.pos())
+                && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
+            be.renameScript(serverPlayer, payload.scriptId(), payload.newName());
         }
     }
 
