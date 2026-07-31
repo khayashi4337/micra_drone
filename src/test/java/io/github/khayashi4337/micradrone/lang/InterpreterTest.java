@@ -78,6 +78,24 @@ class InterpreterTest {
     }
 
     @Test
+    void doAFlipDispatchesAndReturnsNoneLikePrint() {
+        FakeDroneApi api = run("""
+                do_a_flip()
+                x = do_a_flip()
+                print(x)
+                """);
+        assertEquals(List.of("do_a_flip", "do_a_flip"), api.calls);
+        assertEquals(List.of("None"), api.printed);
+    }
+
+    @Test
+    void doAFlipRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                do_a_flip(1)
+                """));
+    }
+
+    @Test
     void moveFailsAtBoundaryAndReturnsFalse() {
         FakeDroneApi api = run("""
                 if move("north"):

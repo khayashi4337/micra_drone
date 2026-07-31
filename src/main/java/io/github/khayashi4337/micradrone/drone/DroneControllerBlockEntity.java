@@ -207,6 +207,17 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         return level.getEntity(droneEntityUuid) instanceof DroneEntity drone ? drone : null;
     }
 
+    /** do_a_flip(): a no-op action visually, other than spinning the visible drone once - see DroneEntity#startFlip. */
+    @Override
+    public void triggerDroneFlip() {
+        if (level instanceof ServerLevel serverLevel) {
+            DroneEntity drone = resolveDroneEntity(serverLevel);
+            if (drone != null) {
+                drone.startFlip();
+            }
+        }
+    }
+
     /** Removes the visible drone entity, e.g. when this controller block is broken. */
     public void discardDroneEntity() {
         if (level instanceof ServerLevel serverLevel) {

@@ -11,9 +11,14 @@ final class FakeGridState implements DroneGridState {
     private final int size;
     private final Map<String, Long> pointsByCrop = new HashMap<>();
     private final Set<String> unlockedCrops = new HashSet<>(Set.of("wheat"));
+    private int flipCount;
 
     FakeGridState(int size) {
         this.size = size;
+    }
+
+    int flipCount() {
+        return flipCount;
     }
 
     void unlock(String crop) {
@@ -74,5 +79,10 @@ final class FakeGridState implements DroneGridState {
     @Override
     public boolean isUnlocked(String crop) {
         return unlockedCrops.contains(crop);
+    }
+
+    @Override
+    public void triggerDroneFlip() {
+        flipCount++;
     }
 }

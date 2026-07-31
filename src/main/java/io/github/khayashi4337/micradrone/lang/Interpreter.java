@@ -222,6 +222,11 @@ public final class Interpreter {
                 requireArgCount(call, 0);
                 yield api.harvest();
             }
+            case "do_a_flip" -> {
+                requireArgCount(call, 0);
+                api.doAFlip();
+                yield MicraNone.INSTANCE;
+            }
             case "can_harvest" -> {
                 requireArgCount(call, 0);
                 yield api.canHarvest();

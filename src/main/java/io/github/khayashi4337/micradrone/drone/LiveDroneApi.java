@@ -70,6 +70,11 @@ public final class LiveDroneApi implements DroneApi {
     }
 
     @Override
+    public void doAFlip() {
+        dispatch(() -> new Attempt(true, grid::triggerDroneFlip));
+    }
+
+    @Override
     public boolean canHarvest() {
         return queryMainThread(farm::canHarvest);
     }
