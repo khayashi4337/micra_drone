@@ -7,11 +7,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.MicraDroneClient;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
+import io.github.khayashi4337.micradrone.lang.CommandNames;
+import io.github.khayashi4337.micradrone.lang.Lexer;
 import io.github.khayashi4337.micradrone.drone.net.DebugCommandPayload;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
@@ -84,6 +87,15 @@ public class IdeScreen extends Screen {
     private static final int LIST_HEIGHT = 90;
     private static final int DESCRIPTION_HEIGHT = 28;
 
+    // Command autocomplete popup (do_a_flip() was hard to find, 林さんの依頼) - see
+    // renderAutocompletePopup/updateAutocomplete/DebugEditBox#setAutocompleteListener.
+    private static final List<String> AUTOCOMPLETE_CANDIDATES =
+            Stream.concat(CommandNames.ALL.stream(), Lexer.keywords().stream()).sorted().toList();
+    private static final int AUTOCOMPLETE_MAX_ROWS = 8;
+    private static final int AUTOCOMPLETE_ROW_HEIGHT = 10;
+    private static final int AUTOCOMPLETE_BACKGROUND = 0xF0202020;
+    private static final int AUTOCOMPLETE_SELECTED_BACKGROUND = 0xF0355C7D;
+
     private final BlockPos pos;
     private final IdeCameraController cameraController;
 
@@ -110,6 +122,16 @@ public class IdeScreen extends Screen {
     // Debugger state, driven by DebugStatePayload; breakpoints are the client's working copy.
     private final Set<Integer> breakpoints = new HashSet<>();
     private int debugState = DebugStatePayload.STATE_IDLE;
+
+    // Autocomplete popup state - see updateAutocomplete/renderAutocompletePopup. Position fields are
+    // recomputed every render() and read back by mouseClicked (safe: a click can't land before the
+    // frame that shows the popup it's clicking on has rendered at least once).
+    private String autocompleteWord = "";
+    private List<String> autocompleteMatches = List.of();
+    private int autocompleteSelected;
+    private int autocompletePopupX;
+    private int autocompletePopupY;
+    private int autocompletePopupWidth;
 
     // Gutter geometry, computed in init() and reused by render()/mouseClicked().
     private int editorTop;
@@ -171,6 +193,7 @@ public class IdeScreen extends Screen {
         editor.setCharacterLimit(DroneControllerBlockEntity.MAX_SCRIPT_CHARS);
         editor.setValue(editorText);
         editor.setValueListener(text -> editorText = text);
+        editor.setAutocompleteListener(this::updateAutocomplete);
         editor.setBreakpointLines(breakpoints);
         addRenderableWidget(editor);
 
@@ -278,6 +301,7 @@ public class IdeScreen extends Screen {
         scriptId = entry.id();
         displayName = entry.displayName();
         editorText = "";
+        autocompleteMatches = List.of();
         sourceRequested = true;
         PacketDistributor.sendToServer(new RequestScriptSourcePayload(pos, scriptId));
         listMode = false;
@@ -302,6 +326,7 @@ public class IdeScreen extends Screen {
         if (sourcePos.equals(this.pos) && sourceScriptName.equals(this.scriptId)) {
             editorText = source;
             editor.setValue(source);
+            autocompleteMatches = List.of();
         }
     }
 
@@ -378,9 +403,47 @@ public class IdeScreen extends Screen {
         return lines;
     }
 
-    /** Gutter clicks toggle a breakpoint on the clicked line; everything else goes to the widgets. */
+    /** The script's last (currently open) line - autocomplete only ever fires at the very end of the text, see DebugEditBox. */
+    private String currentLineText() {
+        int lastNewline = editorText.lastIndexOf('\n');
+        return lastNewline < 0 ? editorText : editorText.substring(lastNewline + 1);
+    }
+
+    /** Called from {@link DebugEditBox#setAutocompleteListener}; {@code word} is "" when the popup should be hidden. */
+    private void updateAutocomplete(String word) {
+        autocompleteWord = word;
+        autocompleteSelected = 0;
+        autocompleteMatches = word.isEmpty() ? List.of()
+                : AUTOCOMPLETE_CANDIDATES.stream()
+                        .filter(candidate -> candidate.startsWith(word) && !candidate.equals(word))
+                        .limit(AUTOCOMPLETE_MAX_ROWS)
+                        .toList();
+    }
+
+    /** Replaces the word being typed with {@code candidate} and closes the popup. */
+    private void acceptAutocomplete(String candidate) {
+        editorText = editorText.substring(0, editorText.length() - autocompleteWord.length()) + candidate;
+        editor.setValue(editorText);
+        autocompleteMatches = List.of();
+    }
+
+    /**
+     * Autocomplete popup clicks pick that row; a click anywhere else while it's showing just
+     * dismisses it (doesn't consume the click - it still reaches whatever else is under it). Gutter
+     * clicks toggle a breakpoint on the clicked line; everything else goes to the widgets.
+     */
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (!autocompleteMatches.isEmpty()) {
+            int popupHeight = autocompleteMatches.size() * AUTOCOMPLETE_ROW_HEIGHT;
+            if (button == 0 && mouseX >= autocompletePopupX && mouseX < autocompletePopupX + autocompletePopupWidth
+                    && mouseY >= autocompletePopupY && mouseY < autocompletePopupY + popupHeight) {
+                int row = (int) ((mouseY - autocompletePopupY) / AUTOCOMPLETE_ROW_HEIGHT);
+                acceptAutocomplete(autocompleteMatches.get(row));
+                return true;
+            }
+            autocompleteMatches = List.of();
+        }
         if (button == 0 && mouseX >= MARGIN && mouseX < MARGIN + GUTTER_WIDTH
                 && mouseY >= editorTop && mouseY < editorTop + editorHeight) {
             int line = (int) ((mouseY - editorTop - editor.gutterTopPadding() + editor.gutterScroll())
@@ -395,6 +458,39 @@ public class IdeScreen extends Screen {
             return true;
         }
         return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    /**
+     * While the autocomplete popup is showing, Up/Down move the selection, Tab/Enter accept it, and
+     * Escape dismisses it - none of those reach the editor underneath (matches vanilla's own
+     * {@code CommandSuggestions.SuggestionsList}, same key codes, verified in decompiled sources:
+     * 265/264 = up/down, 258 = tab, 257/335 = enter/numpad enter, 256 = escape). Everything else
+     * (including these same keys once the popup is empty) goes through to the focused widget as usual.
+     */
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (!autocompleteMatches.isEmpty()) {
+            switch (keyCode) {
+                case 265 -> {
+                    autocompleteSelected = Math.floorMod(autocompleteSelected - 1, autocompleteMatches.size());
+                    return true;
+                }
+                case 264 -> {
+                    autocompleteSelected = Math.floorMod(autocompleteSelected + 1, autocompleteMatches.size());
+                    return true;
+                }
+                case 258, 257, 335 -> {
+                    acceptAutocomplete(autocompleteMatches.get(autocompleteSelected));
+                    return true;
+                }
+                case 256 -> {
+                    autocompleteMatches = List.of();
+                    return true;
+                }
+                default -> { }
+            }
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
     }
 
     @Override
@@ -446,6 +542,7 @@ public class IdeScreen extends Screen {
                 this.width / 2, MARGIN, 0xFFFFFF);
         renderPointsHud(guiGraphics);
         renderGutter(guiGraphics);
+        renderAutocompletePopup(guiGraphics);
     }
 
     /**
@@ -502,6 +599,42 @@ public class IdeScreen extends Screen {
             String label = String.valueOf(line);
             guiGraphics.drawString(this.font, label,
                     MARGIN + GUTTER_WIDTH - 2 - this.font.width(label), y, 0xFF808080, false);
+        }
+    }
+
+    /**
+     * Command autocomplete popup: anchored just below (or, if that would run off the bottom of the
+     * editor box, above) the cursor's line - same Y math {@link #renderGutter} already uses
+     * (logical {@code \n}-delimited lines, not vanilla's internal word-wrapped display lines; this
+     * script language's lines are short enough that they don't wrap in practice, see
+     * DebugEditBox's class doc). X is the editor's own text-start X plus the pixel width of the
+     * current line's text - the same computation vanilla's own cursor rendering does internally,
+     * just without a public API to call into (see DebugEditBox's class doc for why).
+     */
+    private void renderAutocompletePopup(GuiGraphics guiGraphics) {
+        if (autocompleteMatches.isEmpty()) {
+            return;
+        }
+        int popupWidth = autocompleteMatches.stream().mapToInt(this.font::width).max().orElse(0) + 6;
+        int popupHeight = autocompleteMatches.size() * AUTOCOMPLETE_ROW_HEIGHT;
+        int lineTop = editorTop + editor.gutterTopPadding()
+                + (lineCount() - 1) * DebugEditBox.LINE_HEIGHT - (int) editor.gutterScroll();
+        int x = editor.getX() + editor.gutterTopPadding() + this.font.width(currentLineText());
+        int y = lineTop + DebugEditBox.LINE_HEIGHT + 1;
+        if (y + popupHeight > editorTop + editorHeight) {
+            y = lineTop - popupHeight - 1;
+        }
+        autocompletePopupX = x;
+        autocompletePopupY = y;
+        autocompletePopupWidth = popupWidth;
+
+        guiGraphics.fill(x, y, x + popupWidth, y + popupHeight, AUTOCOMPLETE_BACKGROUND);
+        for (int i = 0; i < autocompleteMatches.size(); i++) {
+            int rowY = y + i * AUTOCOMPLETE_ROW_HEIGHT;
+            if (i == autocompleteSelected) {
+                guiGraphics.fill(x, rowY, x + popupWidth, rowY + AUTOCOMPLETE_ROW_HEIGHT, AUTOCOMPLETE_SELECTED_BACKGROUND);
+            }
+            guiGraphics.drawString(this.font, autocompleteMatches.get(i), x + 3, rowY + 1, 0xFFFFFF, false);
         }
     }
 
