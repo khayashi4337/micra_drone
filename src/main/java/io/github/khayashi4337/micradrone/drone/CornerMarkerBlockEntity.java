@@ -143,8 +143,9 @@ public class CornerMarkerBlockEntity extends BlockEntity {
 
     /**
      * Resolves ANY marker's {@link #displayId} (friendly name or auto-assigned number) to its current
-     * position anywhere in the world - unlike {@link #findDisplayId}, not limited to whatever's paired
-     * with a specific controller. Used by pair_with()/set_output(id) (林さんの提案: id指定でのペアリング).
+     * position anywhere in the world - unlike {@link #findDisplayId}, not limited to a marker
+     * discoverable via a specific controller's diagonal scan. Used by pair_with()/set_output(id)
+     * (林さんの提案: id指定でのペアリング).
      * Tries the name registry first, matching {@link #displayId}'s own priority (a friendly name
      * always wins over a number for a GIVEN marker); only if nothing claims {@code id} as a name, and
      * it parses as a plain integer, falls back to the number registry.
