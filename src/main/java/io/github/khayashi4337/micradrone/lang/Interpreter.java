@@ -551,6 +551,14 @@ public final class Interpreter {
                             "get_points() takes 0 or 1 argument(s) but got " + args.size());
                 }
             }
+            case "set_output" -> {
+                api.setOutput(asBoolean(argAt(call, 0), call.line()));
+                yield MicraNone.INSTANCE;
+            }
+            case "get_output" -> {
+                requireArgCount(call, 0);
+                yield api.getOutput();
+            }
             // Perception (GitHub issue #10): read-only looks at the world around the drone.
             case "get_ground" -> {
                 requireArgCount(call, 0);
@@ -735,6 +743,11 @@ public final class Interpreter {
     private String asString(Object v, int line) {
         if (v instanceof String s) return s;
         throw new MicraLangException(line, "expected a string but got " + typeName(v));
+    }
+
+    private boolean asBoolean(Object v, int line) {
+        if (v instanceof Boolean b) return b;
+        throw new MicraLangException(line, "expected a bool but got " + typeName(v));
     }
 
     private static String typeName(Object v) {

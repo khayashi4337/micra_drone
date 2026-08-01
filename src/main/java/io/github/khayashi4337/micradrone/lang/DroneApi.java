@@ -44,6 +44,17 @@ public interface DroneApi {
     /** Read-only: this plot's current point balance for one crop type only (0 if it has none). */
     double getPoints(String crop);
 
+    /**
+     * Sets the paired Corner Marker's redstone output on (full power) or off - lets a script signal
+     * the world outside the plot (a lamp, a door, another contraption). Does nothing if no marker is
+     * currently paired with this plot. Persists until changed again, independent of whether a script
+     * is running.
+     */
+    void setOutput(boolean powered);
+
+    /** Read-only: the paired Corner Marker's current redstone output state (false if none is paired). */
+    boolean getOutput();
+
     // ---- perception: the world around the drone, not just its own grid (GitHub issue #10) ----
     // Everything below is read-only. Block/biome names come back without the "minecraft:" prefix
     // (so a script compares against plain "dirt", "plains"); anything from a mod keeps its namespace.

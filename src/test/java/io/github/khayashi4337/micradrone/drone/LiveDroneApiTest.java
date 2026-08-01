@@ -192,4 +192,26 @@ class LiveDroneApiTest {
 
         assertFalse(result.get(2, TimeUnit.SECONDS));
     }
+
+    @Test
+    void setOutputWritesThroughToTheGridAndGetOutputReadsItBack() throws Exception {
+        FakeMainThreadGateway gateway = new FakeMainThreadGateway();
+        PacedActionQueue queue = new PacedActionQueue();
+        FakeGridState grid = new FakeGridState(5);
+        LiveDroneApi api = newApi(gateway, queue, grid, new FakeFarmBlockAccess(), msg -> {});
+
+        assertFalse(grid.redstoneOutput());
+
+        worker.submit(() -> api.setOutput(true));
+        gateway.awaitQueuedWork(2000);
+        gateway.pump(); // decides success (always true) and schedules the actual write
+        gateway.advanceTo(4, queue); // ACTION_DELAY_TICKS - the write only lands once this fires
+
+        assertTrue(grid.redstoneOutput());
+
+        Future<Boolean> read = worker.submit(api::getOutput);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump(); // an immediate read, like canHarvest - no pacedQueue involvement
+        assertTrue(read.get(2, TimeUnit.SECONDS));
+    }
 }
