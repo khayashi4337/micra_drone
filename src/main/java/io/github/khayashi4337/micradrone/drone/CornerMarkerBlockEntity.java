@@ -45,6 +45,15 @@ public class CornerMarkerBlockEntity extends BlockEntity {
     /** -1 = not yet assigned (a freshly crafted item that has never been placed before). */
     private int sequenceNumber = -1;
     private String friendlyName = "";
+    /**
+     * The other marker's {@link #displayId} this marker wants to pair with (empty = none) - see
+     * pair_with()/is_paired(). One-sided by itself; {@link #isPairedWith} on the target checks
+     * whether the target has named this marker back before treating the pairing as real. Tied to
+     * this placed block, not the item: unlike {@code friendlyName}/{@code sequenceNumber}, does NOT
+     * round-trip through {@link #collectImplicitComponents} - a pairing is a relationship between two
+     * specific world positions, meaningless to carry onto a dropped/replanted item.
+     */
+    private String pairedTargetId = "";
 
     public CornerMarkerBlockEntity(BlockPos pos, BlockState state) {
         super(MicraDrone.CORNER_MARKER_BLOCK_ENTITY.get(), pos, state);
@@ -52,6 +61,16 @@ public class CornerMarkerBlockEntity extends BlockEntity {
 
     public String friendlyName() {
         return friendlyName;
+    }
+
+    public String pairedTargetId() {
+        return pairedTargetId;
+    }
+
+    /** pair_with(): declares (or, with "", clears) the id this marker wants to pair with. */
+    public void setPairedTargetId(String id) {
+        pairedTargetId = id;
+        setChanged();
     }
 
     /** Short, human-typeable form for scripts/chat: the friendly name if set, else the auto-assigned sequence number. */
@@ -154,6 +173,7 @@ public class CornerMarkerBlockEntity extends BlockEntity {
         super.loadAdditional(tag, registries);
         sequenceNumber = tag.getInt("SequenceNumber");
         friendlyName = tag.getString("FriendlyName");
+        pairedTargetId = tag.getString("PairedTargetId");
     }
 
     @Override
@@ -161,5 +181,6 @@ public class CornerMarkerBlockEntity extends BlockEntity {
         super.saveAdditional(tag, registries);
         tag.putInt("SequenceNumber", sequenceNumber);
         tag.putString("FriendlyName", friendlyName);
+        tag.putString("PairedTargetId", pairedTargetId);
     }
 }
