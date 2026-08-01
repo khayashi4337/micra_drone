@@ -6,6 +6,7 @@ import com.mojang.serialization.MapCodec;
 
 import io.github.khayashi4337.micradrone.MicraDroneClient;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -13,12 +14,17 @@ import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseEntityBlock;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.StateDefinition;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.phys.BlockHitResult;
 
 /**
@@ -39,13 +45,44 @@ import net.minecraft.world.phys.BlockHitResult;
 public class CornerMarkerBlock extends BaseEntityBlock {
     public static final MapCodec<CornerMarkerBlock> CODEC = simpleCodec(CornerMarkerBlock::new);
 
+    /**
+     * Redstone output (林さんの提案): a script sets this via {@code set_output()}, and the marker then
+     * emits full power (15) on every side - both weak (into wire) and strong/direct (straight into a
+     * lamp or piston with no wire needed), mirroring how {@link net.minecraft.world.level.block.RedstoneTorchBlock}
+     * emits (see {@link #getSignal}/{@link #getDirectSignal}), just without that block's single-face
+     * restriction, since this block has no "front" the way a torch does. Reuses vanilla's own
+     * {@code POWERED} property rather than inventing a new one.
+     */
+    public static final BooleanProperty POWERED = BlockStateProperties.POWERED;
+
     public CornerMarkerBlock(BlockBehaviour.Properties properties) {
         super(properties);
+        registerDefaultState(stateDefinition.any().setValue(POWERED, false));
     }
 
     @Override
     public MapCodec<CornerMarkerBlock> codec() {
         return CODEC;
+    }
+
+    @Override
+    protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
+        builder.add(POWERED);
+    }
+
+    @Override
+    protected boolean isSignalSource(BlockState state) {
+        return true;
+    }
+
+    @Override
+    protected int getSignal(BlockState state, BlockGetter level, BlockPos pos, Direction side) {
+        return state.getValue(POWERED) ? 15 : 0;
+    }
+
+    @Override
+    protected int getDirectSignal(BlockState state, BlockGetter level, BlockPos pos, Direction side) {
+        return getSignal(state, level, pos, side);
     }
 
     @Override
@@ -103,14 +140,32 @@ public class CornerMarkerBlock extends BaseEntityBlock {
         }
     }
 
-    // Releases this marker's claimed name (if any) so a future marker elsewhere can reuse it.
+    // A freshly placed marker always starts unpowered (see the constructor), but neighbors still need
+    // telling a new signal source exists at all - same reasoning as RedstoneTorchBlock's onPlace.
+    @Override
+    protected void onPlace(BlockState state, Level level, BlockPos pos, BlockState oldState, boolean movedByPiston) {
+        for (Direction direction : Direction.values()) {
+            level.updateNeighborsAt(pos.relative(direction), this);
+        }
+    }
+
+    // Releases this marker's claimed name (if any) so a future marker elsewhere can reuse it, and - if
+    // it was powered - tells neighbors the signal just dropped to 0 (same reasoning as
+    // RedstoneTorchBlock's onRemove; movedByPiston is excluded because the piston move itself already
+    // triggers the neighbor updates once the block lands in its new spot).
     @Override
     protected void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
-        if (state.hasBlockEntity() && !state.is(newState.getBlock())
-                && level instanceof ServerLevel serverLevel
-                && level.getBlockEntity(pos) instanceof CornerMarkerBlockEntity be
-                && !be.friendlyName().isEmpty()) {
-            CornerMarkerNameRegistry.get(serverLevel).release(be.friendlyName(), pos);
+        if (state.hasBlockEntity() && !state.is(newState.getBlock())) {
+            if (level instanceof ServerLevel serverLevel
+                    && level.getBlockEntity(pos) instanceof CornerMarkerBlockEntity be
+                    && !be.friendlyName().isEmpty()) {
+                CornerMarkerNameRegistry.get(serverLevel).release(be.friendlyName(), pos);
+            }
+            if (!movedByPiston) {
+                for (Direction direction : Direction.values()) {
+                    level.updateNeighborsAt(pos.relative(direction), this);
+                }
+            }
         }
         super.onRemove(state, level, pos, newState, movedByPiston);
     }
