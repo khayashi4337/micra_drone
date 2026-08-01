@@ -142,11 +142,22 @@ final class ScriptChestLibrary {
      * scroll). False if the id no longer resolves to a written scroll.
      */
     static boolean saveScrollSource(ServerLevel level, BlockPos controllerPos, String scrollId, String source) {
-        Optional<ItemStack> stack = resolveScroll(level, controllerPos, scrollId);
-        if (stack.isEmpty()) {
+        int chestIndex = ScriptId.scrollChestIndex(scrollId);
+        int slot = ScriptId.scrollSlot(scrollId);
+        List<Container> chests = findChests(level, controllerPos);
+        if (chestIndex < 0 || chestIndex >= chests.size()) {
             return false;
         }
-        writeScrollSource(stack.get(), source);
+        Container chest = chests.get(chestIndex);
+        if (slot >= chest.getContainerSize()) {
+            return false;
+        }
+        ItemStack stack = chest.getItem(slot);
+        if (!(stack.getItem() instanceof ScriptScrollItem)) {
+            return false;
+        }
+        writeScrollSource(stack, source);
+        chest.setChanged();
         return true;
     }
 
@@ -156,11 +167,22 @@ final class ScriptChestLibrary {
      * no longer resolves to a scroll.
      */
     static boolean renameScroll(ServerLevel level, BlockPos controllerPos, String scrollId, String newName) {
-        Optional<ItemStack> stack = resolveScroll(level, controllerPos, scrollId);
-        if (stack.isEmpty()) {
+        int chestIndex = ScriptId.scrollChestIndex(scrollId);
+        int slot = ScriptId.scrollSlot(scrollId);
+        List<Container> chests = findChests(level, controllerPos);
+        if (chestIndex < 0 || chestIndex >= chests.size()) {
             return false;
         }
-        stack.get().set(DataComponents.CUSTOM_NAME, Component.literal(newName));
+        Container chest = chests.get(chestIndex);
+        if (slot >= chest.getContainerSize()) {
+            return false;
+        }
+        ItemStack stack = chest.getItem(slot);
+        if (!(stack.getItem() instanceof ScriptScrollItem)) {
+            return false;
+        }
+        stack.set(DataComponents.CUSTOM_NAME, Component.literal(newName));
+        chest.setChanged();
         return true;
     }
 
