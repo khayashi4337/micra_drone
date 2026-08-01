@@ -50,25 +50,26 @@ public interface DroneGridState {
     void triggerDroneFlip();
 
     /**
-     * Sets the paired Corner Marker's redstone output on (full power) or off - see set_output().
-     * Silently does nothing if no marker is currently paired with this plot.
+     * Sets this plot's own Corner Marker's redstone output on (full power) or off - see set_output().
+     * Silently does nothing if this plot has no marker (none placed, or none found on a diagonal).
      */
     void setRedstoneOutput(boolean powered);
 
-    /** Current redstone output state - false if no marker is paired, or none has been set yet. */
+    /** This plot's own marker's current redstone output state - false if it has no marker, or none has been set yet. */
     boolean redstoneOutput();
 
     /**
-     * pair_with(): declares (or, with "", clears) the id this plot's marker wants to pair with.
-     * One-sided by itself - see {@link #isPaired()}. Does nothing if no marker is paired with this
-     * plot.
+     * pair_with(): declares (or, with "", clears) the id this plot's own marker wants to mutually
+     * pair with - a DIFFERENT relationship than "the marker found for this plot" above (that one is
+     * always this plot's own, by diagonal scan; this one can name any marker anywhere in the world).
+     * One-sided by itself - see {@link #isPaired()}. Does nothing if this plot has no marker of its own.
      */
     void setPairTarget(String id);
 
     /**
-     * is_paired(): true only if this plot's marker names some other marker AND that other marker
-     * names this one back (mutual). False if no marker is paired with this plot, no pair target has
-     * been set, or the target hasn't (yet) named this marker back.
+     * is_paired(): true only if this plot's own marker names some other marker AND that other marker
+     * names this one back (mutual). False if this plot has no marker of its own, that marker has no
+     * pair target set, or the target hasn't (yet) named this marker back.
      */
     boolean isPaired();
 }
