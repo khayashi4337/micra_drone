@@ -22,6 +22,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CropBlock;
 import net.minecraft.world.level.block.FarmBlock;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
+import net.minecraft.world.level.block.StemBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
@@ -312,8 +313,19 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
                 if (state.getBlock() instanceof BonemealableBlock bonemealable
                         && bonemealable.isValidBonemealTarget(level, above, state)) {
                     bonemealable.performBonemeal(serverLevel, serverLevel.getRandom(), above, state);
-                    maybeRotAFreshPumpkin(above, serverLevel.getRandom());
-                    state = level.getBlockState(above); // may have just matured into a fruit (or rotted)
+                    state = level.getBlockState(above);
+                }
+                if (state.getBlock() instanceof StemBlock && state.getValue(StemBlock.AGE) == 7) {
+                    Direction direction = Direction.Plane.HORIZONTAL.getRandomDirection(serverLevel.getRandom());
+                    BlockPos fruitPos = above.relative(direction);
+                    BlockState fruitGround = level.getBlockState(fruitPos.below());
+                    if (level.getBlockState(fruitPos).isAir() && (fruitGround.is(BlockTags.DIRT) || fruitGround.is(Blocks.FARMLAND))) {
+                        Block fruitBlock = serverLevel.getRandom().nextFloat() < PUMPKIN_ROT_CHANCE
+                                ? MicraDrone.ROTTEN_PUMPKIN_BLOCK.get()
+                                : Blocks.PUMPKIN;
+                        level.setBlockAndUpdate(fruitPos, fruitBlock.defaultBlockState());
+                        level.setBlockAndUpdate(above, Blocks.ATTACHED_PUMPKIN_STEM.defaultBlockState().setValue(HorizontalDirectionalBlock.FACING, direction));
+                    }
                 }
                 maturePumpkin[gx][gy] = state.is(Blocks.PUMPKIN);
             }
@@ -341,17 +353,6 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
      * instead. Matches the original: dying only ever happens right as a pumpkin finishes growing,
      * never before.
      */
-    private void maybeRotAFreshPumpkin(BlockPos stemPos, RandomSource random) {
-        BlockState stemNowState = level.getBlockState(stemPos);
-        if (!stemNowState.is(Blocks.ATTACHED_PUMPKIN_STEM)) {
-            return;
-        }
-        Direction facing = stemNowState.getValue(HorizontalDirectionalBlock.FACING);
-        BlockPos fruitPos = stemPos.relative(facing);
-        if (level.getBlockState(fruitPos).is(Blocks.PUMPKIN) && random.nextFloat() < PUMPKIN_ROT_CHANCE) {
-            level.setBlockAndUpdate(fruitPos, MicraDrone.ROTTEN_PUMPKIN_BLOCK.get().defaultBlockState());
-        }
-    }
 
     /**
      * Reskins the largest square of simultaneously-mature pumpkins (if any, see GiantPatchDetector)
