@@ -509,6 +509,42 @@ class InterpreterTest {
     }
 
     @Test
+    void setOutputDispatchesAndGetOutputReadsBackTheSameFake() {
+        FakeDroneApi api = run("""
+                set_output(True)
+                print(get_output())
+                set_output(False)
+                print(get_output())
+                """);
+        assertEquals(List.of("set_output:true", "get_output", "set_output:false", "get_output"), api.calls);
+        assertEquals(List.of("True", "False"), api.printed);
+    }
+
+    @Test
+    void setOutputRejectsANonBooleanArgument() {
+        assertThrows(MicraLangException.class, () -> run("""
+                set_output(1)
+                """));
+    }
+
+    @Test
+    void setOutputRejectsTheWrongArgumentCount() {
+        assertThrows(MicraLangException.class, () -> run("""
+                set_output()
+                """));
+        assertThrows(MicraLangException.class, () -> run("""
+                set_output(True, False)
+                """));
+    }
+
+    @Test
+    void getOutputRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                get_output(True)
+                """));
+    }
+
+    @Test
     void moveFailsAtBoundaryAndReturnsFalse() {
         FakeDroneApi api = run("""
                 if move("north"):
