@@ -83,6 +83,11 @@ public class CornerMarkerBlockEntity extends BlockEntity {
         return sequenceNumber >= 1;
     }
 
+    /** The raw auto-assigned number, regardless of whether {@link #friendlyName} currently hides it from {@link #displayId}. */
+    public int sequenceNumber() {
+        return sequenceNumber;
+    }
+
     /** Called only by {@code CornerMarkerBlock#setPlacedBy}, exactly once per marker, the first time it's placed. */
     void assignSequenceNumber(int number) {
         sequenceNumber = number;
@@ -104,11 +109,18 @@ public class CornerMarkerBlockEntity extends BlockEntity {
      * assigns one) never re-runs for a block that's already standing in the world. Called from every
      * path that actually reads a placed marker's id, so the fix applies the first time anyone looks
      * (seb's PR #20 round-2 review caught this).
+     *
+     * <p>Also (re-)claims this number in {@link CornerMarkerNumberRegistry} even when a number was
+     * already assigned - the same "reached the world without going through setPlacedBy's claim" gap
+     * applies to any marker placed before pair_with()/set_output(id) existed, not just the 0.0.7 case
+     * above. Cheap and idempotent, so doing it unconditionally here (rather than tracking a separate
+     * "have I claimed yet" flag) is simpler.
      */
     public void ensureSequenceNumber(ServerLevel level) {
         if (!hasSequenceNumber()) {
             assignSequenceNumber(CornerMarkerSequenceRegistry.get(level).nextNumber());
         }
+        CornerMarkerNumberRegistry.get(level).claim(sequenceNumber, getBlockPos());
     }
 
     /**
@@ -124,6 +136,26 @@ public class CornerMarkerBlockEntity extends BlockEntity {
                 .flatMap(o -> at(level, controllerPos.offset(o[0], o[1], o[2])))
                 .map(CornerMarkerBlockEntity::displayId)
                 .orElse("");
+    }
+
+    /**
+     * Resolves ANY marker's {@link #displayId} (friendly name or auto-assigned number) to its current
+     * position anywhere in the world - unlike {@link #findDisplayId}, not limited to whatever's paired
+     * with a specific controller. Used by pair_with()/set_output(id) (林さんの提案: id指定でのペアリング).
+     * Tries the name registry first, matching {@link #displayId}'s own priority (a friendly name
+     * always wins over a number for a GIVEN marker); only if nothing claims {@code id} as a name, and
+     * it parses as a plain integer, falls back to the number registry.
+     */
+    public static Optional<BlockPos> resolveId(ServerLevel level, String id) {
+        Optional<BlockPos> byName = CornerMarkerNameRegistry.get(level).resolve(id);
+        if (byName.isPresent()) {
+            return byName;
+        }
+        try {
+            return CornerMarkerNumberRegistry.get(level).resolve(Integer.parseInt(id));
+        } catch (NumberFormatException e) {
+            return Optional.empty();
+        }
     }
 
     private static Optional<CornerMarkerBlockEntity> at(ServerLevel level, BlockPos pos) {

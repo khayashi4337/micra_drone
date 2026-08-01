@@ -107,11 +107,15 @@ public class CornerMarkerBlock extends BaseEntityBlock {
     }
 
     /**
-     * Two things happen here, the only place with both the Level and the placing player at once:
+     * Three things happen here, the only place with both the Level and the placing player at once:
      * <ul>
      *   <li>A brand new marker (never placed before, {@link CornerMarkerBlockEntity#hasSequenceNumber}
      *       still false) draws its permanent number from {@link CornerMarkerSequenceRegistry}. A
      *       marker that already has one (broken and placed again) keeps it - see that class's doc.</li>
+     *   <li>Either way, that number is (re-)claimed in {@link CornerMarkerNumberRegistry} at this
+     *       position - needed even for a pre-existing number, since the marker may have been broken
+     *       and placed somewhere else. Always succeeds (numbers are unique by construction), so unlike
+     *       the name below there's nothing to reject here.</li>
      *   <li>If the marker has a friendly name, it's claimed in the world-wide
      *       {@link CornerMarkerNameRegistry}. If another marker already owns that name, the rename is
      *       rejected: cleared back to "no friendly name" and the placer told in chat why, rather than
@@ -127,6 +131,7 @@ public class CornerMarkerBlock extends BaseEntityBlock {
         if (!be.hasSequenceNumber()) {
             be.assignSequenceNumber(CornerMarkerSequenceRegistry.get(serverLevel).nextNumber());
         }
+        CornerMarkerNumberRegistry.get(serverLevel).claim(be.sequenceNumber(), pos);
         String name = be.friendlyName();
         if (name.isEmpty()) {
             return;
@@ -149,17 +154,22 @@ public class CornerMarkerBlock extends BaseEntityBlock {
         }
     }
 
-    // Releases this marker's claimed name (if any) so a future marker elsewhere can reuse it, and - if
-    // it was powered - tells neighbors the signal just dropped to 0 (same reasoning as
-    // RedstoneTorchBlock's onRemove; movedByPiston is excluded because the piston move itself already
-    // triggers the neighbor updates once the block lands in its new spot).
+    // Releases this marker's claimed name and number (if any) so a future marker elsewhere can reuse
+    // the name (the number is never reused, but releasing keeps the index from pointing at an empty
+    // position - see CornerMarkerNumberRegistry), and - if it was powered - tells neighbors the signal
+    // just dropped to 0 (same reasoning as RedstoneTorchBlock's onRemove; movedByPiston is excluded
+    // because the piston move itself already triggers the neighbor updates once the block lands in
+    // its new spot).
     @Override
     protected void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
         if (state.hasBlockEntity() && !state.is(newState.getBlock())) {
-            if (level instanceof ServerLevel serverLevel
-                    && level.getBlockEntity(pos) instanceof CornerMarkerBlockEntity be
-                    && !be.friendlyName().isEmpty()) {
-                CornerMarkerNameRegistry.get(serverLevel).release(be.friendlyName(), pos);
+            if (level instanceof ServerLevel serverLevel && level.getBlockEntity(pos) instanceof CornerMarkerBlockEntity be) {
+                if (!be.friendlyName().isEmpty()) {
+                    CornerMarkerNameRegistry.get(serverLevel).release(be.friendlyName(), pos);
+                }
+                if (be.hasSequenceNumber()) {
+                    CornerMarkerNumberRegistry.get(serverLevel).release(be.sequenceNumber(), pos);
+                }
             }
             if (!movedByPiston) {
                 for (Direction direction : Direction.values()) {
