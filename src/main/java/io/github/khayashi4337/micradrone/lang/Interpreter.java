@@ -250,7 +250,148 @@ public final class Interpreter {
             case Expr.DictLit e -> evalDictLit(e);
             case Expr.SetLit e -> evalSetLit(e);
             case Expr.Index e -> evalIndex(e);
+            case Expr.MethodCall e -> evalMethodCall(e);
         };
+    }
+
+    /**
+     * The collection methods. Deliberately a small set - the ones needed to build a collection up
+     * and take it apart again - rather than all of Python's: every one of these is something a
+     * script genuinely can't do otherwise, since the literals alone can only ever produce a
+     * collection of a fixed size.
+     *
+     * <p>Like {@link #evalCall}, this resets the runaway-loop counter, so a loop whose body only
+     * calls methods is never mistaken for a script spinning on pure arithmetic.
+     */
+    private Object evalMethodCall(Expr.MethodCall call) {
+        Object target = eval(call.target());
+        List<Object> args = new ArrayList<>(call.args().size());
+        for (Expr arg : call.args()) {
+            args.add(eval(arg));
+        }
+        Object result = switch (target) {
+            case List<?> list -> listMethod(uncheckedList(list), call, args);
+            case Set<?> set -> setMethod(uncheckedSet(set), call, args);
+            case Map<?, ?> map -> dictMethod(uncheckedMap(map), call, args);
+            default -> throw new MicraLangException(call.line(),
+                    typeName(target) + " has no methods (tried ." + call.name() + "())");
+        };
+        statementsSinceApiCall = 0;
+        return result;
+    }
+
+    private Object listMethod(List<Object> list, Expr.MethodCall call, List<Object> args) {
+        return switch (call.name()) {
+            case "append" -> {
+                requireMethodArgCount(call, args, 1);
+                list.add(args.get(0));
+                yield MicraNone.INSTANCE;
+            }
+            case "pop" -> {
+                requireMethodArgCount(call, args, 0);
+                if (list.isEmpty()) {
+                    throw new MicraLangException(call.line(), "pop() on an empty list");
+                }
+                yield list.remove(list.size() - 1);
+            }
+            case "remove" -> {
+                requireMethodArgCount(call, args, 1);
+                if (!list.remove(args.get(0))) {
+                    throw new MicraLangException(call.line(), stringify(args.get(0)) + " is not in this list");
+                }
+                yield MicraNone.INSTANCE;
+            }
+            case "clear" -> {
+                requireMethodArgCount(call, args, 0);
+                list.clear();
+                yield MicraNone.INSTANCE;
+            }
+            default -> throw unknownMethod(call, "list", "append, pop, remove, clear");
+        };
+    }
+
+    private Object setMethod(Set<Object> set, Expr.MethodCall call, List<Object> args) {
+        return switch (call.name()) {
+            case "add" -> {
+                requireMethodArgCount(call, args, 1);
+                set.add(args.get(0));
+                yield MicraNone.INSTANCE;
+            }
+            case "remove" -> {
+                requireMethodArgCount(call, args, 1);
+                if (!set.remove(args.get(0))) {
+                    throw new MicraLangException(call.line(), stringify(args.get(0)) + " is not in this set");
+                }
+                yield MicraNone.INSTANCE;
+            }
+            case "clear" -> {
+                requireMethodArgCount(call, args, 0);
+                set.clear();
+                yield MicraNone.INSTANCE;
+            }
+            default -> throw unknownMethod(call, "set", "add, remove, clear");
+        };
+    }
+
+    private Object dictMethod(Map<Object, Object> map, Expr.MethodCall call, List<Object> args) {
+        return switch (call.name()) {
+            case "keys" -> {
+                requireMethodArgCount(call, args, 0);
+                yield new ArrayList<>(map.keySet());
+            }
+            case "values" -> {
+                requireMethodArgCount(call, args, 0);
+                yield new ArrayList<>(map.values());
+            }
+            // Unlike d[k], this answers None for a missing key instead of stopping the script.
+            case "get" -> {
+                requireMethodArgCount(call, args, 1);
+                Object value = map.get(args.get(0));
+                yield value == null ? MicraNone.INSTANCE : value;
+            }
+            case "remove" -> {
+                requireMethodArgCount(call, args, 1);
+                if (!map.containsKey(args.get(0))) {
+                    throw new MicraLangException(call.line(), "no key " + stringify(args.get(0)) + " in this dict");
+                }
+                yield map.remove(args.get(0));
+            }
+            case "clear" -> {
+                requireMethodArgCount(call, args, 0);
+                map.clear();
+                yield MicraNone.INSTANCE;
+            }
+            default -> throw unknownMethod(call, "dict", "keys, values, get, remove, clear");
+        };
+    }
+
+    private MicraLangException unknownMethod(Expr.MethodCall call, String type, String available) {
+        return new MicraLangException(call.line(),
+                type + " has no method '" + call.name() + "' - available: " + available);
+    }
+
+    private void requireMethodArgCount(Expr.MethodCall call, List<Object> args, int expected) {
+        if (args.size() != expected) {
+            throw new MicraLangException(call.line(),
+                    "." + call.name() + "() takes " + expected + " argument(s) but got " + args.size());
+        }
+    }
+
+    // The runtime only ever creates these collections with Object elements (see evalListLit and
+    // friends), so widening back to Object is safe even though the wildcard capture can't prove it.
+    @SuppressWarnings("unchecked")
+    private static List<Object> uncheckedList(List<?> list) {
+        return (List<Object>) list;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Set<Object> uncheckedSet(Set<?> set) {
+        return (Set<Object>) set;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<Object, Object> uncheckedMap(Map<?, ?> map) {
+        return (Map<Object, Object>) map;
     }
 
     private Object evalListLit(Expr.ListLit e) {

@@ -32,4 +32,7 @@ public sealed interface Expr {
 
     /** {@code target[index]} - a list position, a dict key, or a character of a string. */
     record Index(Expr target, Expr index, int line) implements Expr {}
+
+    /** {@code target.name(args)} - the collection methods, e.g. {@code items.append(1)}. */
+    record MethodCall(Expr target, String name, List<Expr> args, int line) implements Expr {}
 }

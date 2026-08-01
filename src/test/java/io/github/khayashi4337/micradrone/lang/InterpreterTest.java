@@ -314,6 +314,102 @@ class InterpreterTest {
         assertEquals(List.of("[1, 2]", "{3, 4}", "[\"a\", \"b\"]", "[]", "{}", "{}"), api.printed);
     }
 
+    // ---- collection methods ----
+
+    @Test
+    void listsCanBeBuiltUpWithAppend() {
+        FakeDroneApi api = run("""
+                items = []
+                for i in range(4):
+                    items.append(i * 2)
+                print(items)
+                print(len(items))
+                print(max(items))
+                """);
+        assertEquals(List.of("[0, 2, 4, 6]", "4", "6"), api.printed);
+    }
+
+    @Test
+    void listPopRemoveAndClear() {
+        FakeDroneApi api = run("""
+                items = [1, 2, 3]
+                print(items.pop())
+                print(items)
+                items.remove(1)
+                print(items)
+                items.clear()
+                print(items)
+                """);
+        assertEquals(List.of("3", "[1, 2]", "[2]", "[]"), api.printed);
+    }
+
+    @Test
+    void setAddRemoveAndClear() {
+        FakeDroneApi api = run("""
+                seen = set()
+                seen.add("a")
+                seen.add("a")
+                seen.add("b")
+                print(seen)
+                print(len(seen))
+                seen.remove("a")
+                print(seen)
+                seen.clear()
+                print(len(seen))
+                """);
+        assertEquals(List.of("{\"a\", \"b\"}", "2", "{\"b\"}", "0"), api.printed);
+    }
+
+    @Test
+    void dictKeysValuesGetRemoveAndClear() {
+        FakeDroneApi api = run("""
+                counts = {}
+                counts["wheat"] = 3
+                counts["carrot"] = 1
+                print(counts.keys())
+                print(counts.values())
+                print(counts.get("wheat"))
+                print(counts.get("nope"))
+                print(counts.remove("wheat"))
+                print(counts)
+                counts.clear()
+                print(counts)
+                """);
+        assertEquals(List.of(
+                "[\"wheat\", \"carrot\"]", "[3, 1]", "3", "None", "3", "{\"carrot\": 1}", "{}"), api.printed);
+    }
+
+    /** Methods must chain off whatever an index produced, not just off a bare name. */
+    @Test
+    void methodsChainOffIndexedValues() {
+        FakeDroneApi api = run("""
+                grid = [[1], [2]]
+                grid[0].append(9)
+                print(grid)
+                """);
+        assertEquals(List.of("[[1, 9], [2]]"), api.printed);
+    }
+
+    @Test
+    void unknownMethodRaises() {
+        assertThrows(MicraLangException.class, () -> run("[1].sort()\n"));
+    }
+
+    @Test
+    void methodOnANumberRaises() {
+        assertThrows(MicraLangException.class, () -> run("(5).append(1)\n"));
+    }
+
+    @Test
+    void methodWithTheWrongArgumentCountRaises() {
+        assertThrows(MicraLangException.class, () -> run("[1].append()\n"));
+    }
+
+    @Test
+    void popOnAnEmptyListRaises() {
+        assertThrows(MicraLangException.class, () -> run("[].pop()\n"));
+    }
+
     @Test
     void lenOfANumberRaises() {
         assertThrows(MicraLangException.class, () -> run("print(len(5))\n"));

@@ -179,9 +179,10 @@ public final class Parser {
     }
 
     /**
-     * An atom followed by any run of trailers: {@code (args)} calls and {@code [i]} indexes, so
-     * chains like {@code grid[y][x]} parse. Calls stay name-only ({@link Expr.Call} carries a name,
-     * not a callee), so {@code f()()} is still rejected.
+     * An atom followed by any run of trailers: {@code (args)} calls, {@code [i]} indexes, and
+     * {@code .name(args)} method calls, so chains like {@code grid[y].append(x)} parse. Plain calls
+     * stay name-only ({@link Expr.Call} carries a name, not a callee), so {@code f()()} is still
+     * rejected - a value can only be called through a method.
      */
     private Expr atomTrailer() {
         Expr expr = atom();
@@ -199,6 +200,12 @@ public final class Parser {
                 Expr index = expression();
                 expect(TokenType.RBRACKET, "']'");
                 expr = new Expr.Index(expr, index, line);
+            } else if (check(TokenType.DOT)) {
+                int line = peek().line();
+                advance(); // .
+                String name = expect(TokenType.IDENT, "method name").lexeme();
+                expect(TokenType.LPAREN, "'(' - methods must be called, e.g. items.append(1)");
+                expr = new Expr.MethodCall(expr, name, argList(), line);
             } else {
                 return expr;
             }
