@@ -395,6 +395,22 @@ class InterpreterTest {
         assertThrows(MicraLangException.class, () -> run("[1].sort()\n"));
     }
 
+    /**
+     * A loop that only calls a memory-growing method (never touches DroneApi) must still trip the
+     * runaway-loop watchdog, not run forever growing the heap. Method calls used to reset the same
+     * counter evalCall does, so this loop never tripped it at all - confirmed by an out-of-memory
+     * repro before the fix.
+     */
+    @Test
+    void appendOnlyLoopWithNoDroneApiCallsStillTripsTheRunawayWatchdog() {
+        MicraLangException ex = assertThrows(MicraLangException.class, () -> run("""
+                items = []
+                while True:
+                    items.append(1)
+                """));
+        assertTrue(ex.getMessage().contains("too long"), "expected the runaway-loop message, got: " + ex.getMessage());
+    }
+
     @Test
     void methodOnANumberRaises() {
         assertThrows(MicraLangException.class, () -> run("(5).append(1)\n"));

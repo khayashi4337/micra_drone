@@ -260,8 +260,10 @@ public final class Interpreter {
      * script genuinely can't do otherwise, since the literals alone can only ever produce a
      * collection of a fixed size.
      *
-     * <p>Like {@link #evalCall}, this resets the runaway-loop counter, so a loop whose body only
-     * calls methods is never mistaken for a script spinning on pure arithmetic.
+     * <p>Unlike {@link #evalCall}, this does NOT reset the runaway-loop counter: {@code append}/
+     * {@code add} grow the JVM heap with no DroneApi pacing to slow them down, so a loop like
+     * {@code while True: items.append(1)} would otherwise never trip the watchdog and OOM the
+     * server. Method calls fall under the same statement budget as pure arithmetic instead.
      */
     private Object evalMethodCall(Expr.MethodCall call) {
         Object target = eval(call.target());
@@ -269,15 +271,13 @@ public final class Interpreter {
         for (Expr arg : call.args()) {
             args.add(eval(arg));
         }
-        Object result = switch (target) {
+        return switch (target) {
             case List<?> list -> listMethod(uncheckedList(list), call, args);
             case Set<?> set -> setMethod(uncheckedSet(set), call, args);
             case Map<?, ?> map -> dictMethod(uncheckedMap(map), call, args);
             default -> throw new MicraLangException(call.line(),
                     typeName(target) + " has no methods (tried ." + call.name() + "())");
         };
-        statementsSinceApiCall = 0;
-        return result;
     }
 
     private Object listMethod(List<Object> list, Expr.MethodCall call, List<Object> args) {
