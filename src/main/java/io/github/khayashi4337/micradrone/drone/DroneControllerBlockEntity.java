@@ -224,23 +224,33 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     /**
-     * set_output(): writes the paired marker's {@link CornerMarkerBlock#POWERED} state directly (no
-     * NBT of our own - vanilla already persists BlockState across saves/reloads, the same way
-     * {@link DroneControllerBlock#ACTIVE} needs none). Re-checks the block is still actually a corner
-     * marker before writing, since {@link #plotConfirmed} only reflects the last scan - the marker
-     * could have been broken since without a rescan happening yet. Silently does nothing otherwise.
+     * set_output(): writes {@link CornerMarkerBlock#POWERED} directly (no NBT of our own - vanilla
+     * already persists BlockState across saves/reloads, the same way {@link DroneControllerBlock#ACTIVE}
+     * needs none) onto two different markers, each independently optional:
+     * <ol>
+     *   <li>this plot's OWN marker - the one diagonally scanned from this controller ({@link #cornerMarkerPos}) - unchanged from before pair_with() existed;</li>
+     *   <li>if a mutual pair_with() pairing holds (see {@link #pairedMarkerPos}), the OTHER plot's
+     *       paired-by-name partner marker too - wireless redstone between two markers that have named
+     *       each other (林さんの提案), which may be anywhere in the world, not diagonally adjacent to
+     *       anything here.</li>
+     * </ol>
+     * Silently skips whichever side (or both) isn't actually a corner marker right now - either could
+     * have been broken since the last scan/pairing.
      */
     @Override
     public void setRedstoneOutput(boolean powered) {
         if (!(level instanceof ServerLevel serverLevel)) {
             return;
         }
-        cornerMarkerPos().ifPresent(pos -> {
-            BlockState state = serverLevel.getBlockState(pos);
-            if (state.is(MicraDrone.CORNER_MARKER_BLOCK.get())) {
-                serverLevel.setBlock(pos, state.setValue(CornerMarkerBlock.POWERED, powered), Block.UPDATE_ALL);
-            }
-        });
+        cornerMarkerPos().ifPresent(pos -> writeMarkerPowered(serverLevel, pos, powered));
+        pairedMarkerPos(serverLevel).ifPresent(pos -> writeMarkerPowered(serverLevel, pos, powered));
+    }
+
+    private static void writeMarkerPowered(ServerLevel serverLevel, BlockPos pos, boolean powered) {
+        BlockState state = serverLevel.getBlockState(pos);
+        if (state.is(MicraDrone.CORNER_MARKER_BLOCK.get())) {
+            serverLevel.setBlock(pos, state.setValue(CornerMarkerBlock.POWERED, powered), Block.UPDATE_ALL);
+        }
     }
 
     /** get_output(): reads the marker's current {@link CornerMarkerBlock#POWERED} state straight off the world. */
@@ -256,7 +266,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
                 .orElse(false);
     }
 
-    /** pair_with(): writes straight onto the paired marker's own {@code pairedTargetId} - one-sided, see {@link #isPaired}. */
+    /** pair_with(): writes straight onto this plot's own marker's {@code pairedTargetId} - one-sided, see {@link #isPaired}. */
     @Override
     public void setPairTarget(String id) {
         if (!(level instanceof ServerLevel serverLevel)) {
@@ -266,24 +276,31 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
                 .ifPresent(mine -> mine.setPairedTargetId(id));
     }
 
-    /**
-     * is_paired(): resolves this plot's own marker, follows its {@code pairedTargetId} (via
-     * {@link CornerMarkerBlockEntity#resolveId}, world-wide - the target can be any marker, not just
-     * one on a diagonal from some controller) to the OTHER marker, and checks that one names this
-     * marker back. Both sides are re-resolved fresh every call - nothing about a pairing is cached.
-     */
+    /** is_paired(): true only if {@link #pairedMarkerPos} actually resolves to something. */
     @Override
     public boolean isPaired() {
-        if (!(level instanceof ServerLevel serverLevel)) {
-            return false;
-        }
+        return level instanceof ServerLevel serverLevel && pairedMarkerPos(serverLevel).isPresent();
+    }
+
+    /**
+     * The mutually pair_with()-linked partner marker's position (a DIFFERENT relationship than
+     * {@link #cornerMarkerPos} - that one is this plot's own marker, found by diagonal scan; this one
+     * is whatever other marker, anywhere in the world, has named the same pair back), re-resolved
+     * fresh every call - nothing about a pairing is cached. Resolves this plot's own marker, follows
+     * its {@code pairedTargetId} (via {@link CornerMarkerBlockEntity#resolveId}, world-wide) to the
+     * OTHER marker, and only returns it if that one names this marker back too. Empty if this plot has
+     * no marker of its own, that marker has no pair target set, or the pairing isn't (yet, or anymore)
+     * mutual.
+     */
+    private Optional<BlockPos> pairedMarkerPos(ServerLevel serverLevel) {
         Optional<CornerMarkerBlockEntity> mine = cornerMarkerPos().flatMap(pos -> CornerMarkerBlockEntity.at(serverLevel, pos));
         if (mine.isEmpty() || mine.get().pairedTargetId().isEmpty()) {
-            return false;
+            return Optional.empty();
         }
-        Optional<CornerMarkerBlockEntity> theirs = CornerMarkerBlockEntity.resolveId(serverLevel, mine.get().pairedTargetId())
-                .flatMap(pos -> CornerMarkerBlockEntity.at(serverLevel, pos));
-        return theirs.isPresent() && theirs.get().pairedTargetId().equals(mine.get().displayId());
+        Optional<BlockPos> theirPos = CornerMarkerBlockEntity.resolveId(serverLevel, mine.get().pairedTargetId());
+        Optional<CornerMarkerBlockEntity> theirs = theirPos.flatMap(pos -> CornerMarkerBlockEntity.at(serverLevel, pos));
+        boolean mutual = theirs.isPresent() && theirs.get().pairedTargetId().equals(mine.get().displayId());
+        return mutual ? theirPos : Optional.empty();
     }
 
     /** Removes the visible drone entity, e.g. when this controller block is broken. */
