@@ -46,7 +46,7 @@ public class CornerMarkerBlock extends BaseEntityBlock {
     public static final MapCodec<CornerMarkerBlock> CODEC = simpleCodec(CornerMarkerBlock::new);
 
     /**
-     * Redstone output (林さんの提案): a script sets this via {@code set_output()}, and the marker then
+     * Redstone output: a script sets this via {@code set_output()}, and the marker then
      * emits full power (15) on every side - both weak (into wire) and strong/direct (straight into a
      * lamp or piston with no wire needed), mirroring how {@link net.minecraft.world.level.block.RedstoneTorchBlock}
      * emits (see {@link #getSignal}/{@link #getDirectSignal}), just without that block's single-face

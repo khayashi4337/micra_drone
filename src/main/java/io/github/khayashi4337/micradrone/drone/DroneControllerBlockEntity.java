@@ -246,8 +246,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      *   <li>this plot's OWN marker - the one diagonally scanned from this controller ({@link #cornerMarkerPos}) - unchanged from before pair_with() existed;</li>
      *   <li>if a mutual pair_with() pairing holds (see {@link #pairedMarkerPos}), the OTHER plot's
      *       paired-by-name partner marker too - wireless redstone between two markers that have named
-     *       each other (林さんの提案), which may be anywhere in the world, not diagonally adjacent to
-     *       anything here.</li>
+     *       each other, which may be anywhere in the world, not diagonally adjacent to anything here.</li>
      * </ol>
      * Silently skips whichever side (or both) isn't actually a corner marker right now - either could
      * have been broken since the last scan/pairing.
