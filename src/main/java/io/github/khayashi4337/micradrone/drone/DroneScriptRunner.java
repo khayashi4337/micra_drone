@@ -70,7 +70,7 @@ public final class DroneScriptRunner {
             lastError = e.getMessage();
             logSink.accept("error: " + e.getMessage());
             state = State.ERROR; // set after lastError so a thread observing ERROR always sees the message too
-        } catch (RuntimeException e) {
+        } catch (Throwable e) {
             lastError = String.valueOf(e.getMessage());
             logSink.accept("error: " + e);
             state = State.ERROR; // set after lastError so a thread observing ERROR always sees the message too
