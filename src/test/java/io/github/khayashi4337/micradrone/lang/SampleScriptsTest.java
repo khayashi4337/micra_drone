@@ -68,6 +68,30 @@ class SampleScriptsTest {
         assertTrue(api.printed.contains("9"), "expected the printed harvested-cell count to be 9");
     }
 
+    @Test
+    void signalHarvestReadyTurnsOutputOnWhenSomethingIsMatureAndNeverHarvests() {
+        FakeDroneApi api = new FakeDroneApi(3);
+        api.setCropAge(2, 2, 3); // exactly one mature cell, the last one the snake path visits
+
+        new Interpreter(api).run(parse(SampleScripts.SIGNAL_HARVEST_READY));
+
+        assertEquals(0, api.calls.stream().filter("harvest"::equals).count(), "must never harvest - read-only");
+        assertEquals(List.of("set_output:true"),
+                api.calls.stream().filter(c -> c.startsWith("set_output")).toList());
+        assertEquals(List.of("harvest ready:", "True"), api.printed);
+    }
+
+    @Test
+    void signalHarvestReadyTurnsOutputOffWhenNothingIsMature() {
+        FakeDroneApi api = new FakeDroneApi(3); // fresh plot, nothing planted anywhere
+
+        new Interpreter(api).run(parse(SampleScripts.SIGNAL_HARVEST_READY));
+
+        assertEquals(List.of("set_output:false"),
+                api.calls.stream().filter(c -> c.startsWith("set_output")).toList());
+        assertEquals(List.of("harvest ready:", "False"), api.printed);
+    }
+
     /**
      * The perception sample (issue #10) must actually branch on what it reads, not just call the
      * new commands: on an untilled plot every cell should take the "dirt -> till, then plant" path.
