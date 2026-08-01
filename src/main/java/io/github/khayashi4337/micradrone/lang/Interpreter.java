@@ -563,6 +563,14 @@ public final class Interpreter {
                 requireArgCount(call, 0);
                 yield api.getOutput();
             }
+            case "pair_with" -> {
+                api.pairWith(asString(argAt(call, 0), call.line()));
+                yield MicraNone.INSTANCE;
+            }
+            case "is_paired" -> {
+                requireArgCount(call, 0);
+                yield api.isPaired();
+            }
             // Perception (GitHub issue #10): read-only looks at the world around the drone.
             case "get_ground" -> {
                 requireArgCount(call, 0);

@@ -158,7 +158,8 @@ public class CornerMarkerBlockEntity extends BlockEntity {
         }
     }
 
-    private static Optional<CornerMarkerBlockEntity> at(ServerLevel level, BlockPos pos) {
+    /** Package-private: also used by {@code DroneControllerBlockEntity} to resolve pair_with()/is_paired() targets. */
+    static Optional<CornerMarkerBlockEntity> at(ServerLevel level, BlockPos pos) {
         if (level.getBlockEntity(pos) instanceof CornerMarkerBlockEntity be) {
             be.ensureSequenceNumber(level);
             return Optional.of(be);

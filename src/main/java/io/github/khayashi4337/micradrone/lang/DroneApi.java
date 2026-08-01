@@ -67,6 +67,19 @@ public interface DroneApi {
     /** Read-only: the paired Corner Marker's current redstone output state (false if none is paired). */
     boolean getOutput();
 
+    /**
+     * Declares (or, with "", clears) the id (see get_plot_id()) this plot's marker wants to pair
+     * with - one-sided by itself, see {@link #isPaired()}. Does nothing if no marker is currently
+     * paired with this plot.
+     */
+    void pairWith(String id);
+
+    /**
+     * Read-only: true only if this plot's marker AND the marker it named both name each other back
+     * (mutual pairing).
+     */
+    boolean isPaired();
+
     // ---- perception: the world around the drone, not just its own grid (GitHub issue #10) ----
     // Everything below is read-only. Block/biome names come back without the "minecraft:" prefix
     // (so a script compares against plain "dirt", "plains"); anything from a mod keeps its namespace.
