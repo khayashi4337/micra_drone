@@ -39,4 +39,13 @@ public interface DroneGridState {
 
     /** Starts (or restarts) a one-shot cosmetic spin on the visible drone entity - see do_a_flip(). */
     void triggerDroneFlip();
+
+    /**
+     * Sets the paired Corner Marker's redstone output on (full power) or off - see set_output().
+     * Silently does nothing if no marker is currently paired with this plot.
+     */
+    void setRedstoneOutput(boolean powered);
+
+    /** Current redstone output state - false if no marker is paired, or none has been set yet. */
+    boolean redstoneOutput();
 }

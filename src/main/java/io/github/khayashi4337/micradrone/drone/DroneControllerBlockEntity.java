@@ -113,6 +113,10 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private volatile int dirX = 1;
     private volatile int dirZ = 1;
     private volatile int groundYOffset = 0;
+    // The paired marker's Y offset from this controller (see CornerMarkerScan.PlotBounds#markerDy) -
+    // together with dirX/dirZ/worldSize this reconstructs the marker's exact BlockPos for redstone
+    // output, without a re-scan. Meaningless while plotConfirmed is false.
+    private volatile int markerDy = 0;
     // True only once scanForCornerMarker has actually found a paired corner marker - see its use in
     // serverTick, which must not ambient-boost growth in the size-5-toward-SE guess used otherwise.
     private volatile boolean plotConfirmed = false;
@@ -217,6 +221,39 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
                 drone.startFlip();
             }
         }
+    }
+
+    /**
+     * set_output(): writes the paired marker's {@link CornerMarkerBlock#POWERED} state directly (no
+     * NBT of our own - vanilla already persists BlockState across saves/reloads, the same way
+     * {@link DroneControllerBlock#ACTIVE} needs none). Re-checks the block is still actually a corner
+     * marker before writing, since {@link #plotConfirmed} only reflects the last scan - the marker
+     * could have been broken since without a rescan happening yet. Silently does nothing otherwise.
+     */
+    @Override
+    public void setRedstoneOutput(boolean powered) {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        cornerMarkerPos().ifPresent(pos -> {
+            BlockState state = serverLevel.getBlockState(pos);
+            if (state.is(MicraDrone.CORNER_MARKER_BLOCK.get())) {
+                serverLevel.setBlock(pos, state.setValue(CornerMarkerBlock.POWERED, powered), Block.UPDATE_ALL);
+            }
+        });
+    }
+
+    /** get_output(): reads the marker's current {@link CornerMarkerBlock#POWERED} state straight off the world. */
+    @Override
+    public boolean redstoneOutput() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+        return cornerMarkerPos()
+                .map(serverLevel::getBlockState)
+                .filter(state -> state.is(MicraDrone.CORNER_MARKER_BLOCK.get()))
+                .map(state -> state.getValue(CornerMarkerBlock.POWERED))
+                .orElse(false);
     }
 
     /** Removes the visible drone entity, e.g. when this controller block is broken. */
@@ -345,9 +382,23 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         dirX = bounds.dirX();
         dirZ = bounds.dirZ();
         groundYOffset = bounds.groundYOffset();
+        markerDy = bounds.markerDy();
         // Ambient effects like the growth boost must never apply to the size-5-toward-SE guess used
         // when no marker has actually been placed/found - only to a plot the player explicitly marked.
         plotConfirmed = bounds.markerFound();
+    }
+
+    /**
+     * The paired marker's exact position, reconstructed from the last {@link #scanForCornerMarker}
+     * (dirX/dirZ/worldSize/markerDy) rather than re-scanning - empty when no marker is currently
+     * paired ({@link #plotConfirmed} false).
+     */
+    private Optional<BlockPos> cornerMarkerPos() {
+        if (!plotConfirmed) {
+            return Optional.empty();
+        }
+        int distance = worldSize + 1;
+        return Optional.of(getBlockPos().offset(dirX * distance, markerDy, dirZ * distance));
     }
 
     /**

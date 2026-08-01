@@ -12,6 +12,7 @@ final class FakeGridState implements DroneGridState {
     private final Map<String, Long> pointsByCrop = new HashMap<>();
     private final Set<String> unlockedCrops = new HashSet<>(Set.of("wheat"));
     private int flipCount;
+    private boolean redstoneOutput;
 
     FakeGridState(int size) {
         this.size = size;
@@ -84,5 +85,15 @@ final class FakeGridState implements DroneGridState {
     @Override
     public void triggerDroneFlip() {
         flipCount++;
+    }
+
+    @Override
+    public void setRedstoneOutput(boolean powered) {
+        redstoneOutput = powered;
+    }
+
+    @Override
+    public boolean redstoneOutput() {
+        return redstoneOutput;
     }
 }
