@@ -22,6 +22,13 @@ own. Inspired by the Steam game
   the world around the drone (`get_ground`, `get_block_above`, `get_time`,
   `get_weather`, `get_biome`, `get_light`, `get_plot_id`). Scripts are written on a
   rewritable **Script Scroll** item, or in the in-game IDE below.
+- **Lists, dicts and sets** — `items = [1, 2, 3]`, `costs = {"wheat": 20}`,
+  `seen = set()`, indexing (`items[0]`, nested as deep as you like), looping
+  straight over a collection, `x in items`, and the methods to build one up
+  (`append`, `pop`, `remove`, `add`, `keys`, `values`, `get`, `clear`) — plus
+  `len`, `abs`, `min`, `max`, `random` and `str`. Enough to count things,
+  remember what you've seen, and write the kind of script that doesn't need to
+  know its answer in advance.
 - **An in-game IDE that behaves like one** — syntax highlighting in a Monokai
   palette (keywords, strings, numbers and comments each get their own color,
   and a mistyped command name is visibly not the color a real one would be),

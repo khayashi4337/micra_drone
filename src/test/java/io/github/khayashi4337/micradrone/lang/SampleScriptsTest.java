@@ -86,6 +86,16 @@ class SampleScriptsTest {
         assertTrue(api.printed.contains("9"), "expected all 9 cells to be counted as planted");
     }
 
+    /** The collections sample: an untilled 3x3 plot is dirt everywhere, so it must find exactly one kind, 9 times. */
+    @Test
+    void countGroundTalliesEveryCellByGroundType() {
+        FakeDroneApi api = new FakeDroneApi(3);
+
+        new Interpreter(api).run(parse(SampleScripts.COUNT_GROUND));
+
+        assertEquals(List.of("見つけた地面の種類の数:", "1", "dirt", "9"), api.printed);
+    }
+
     @Test
     void plotIdPrintsWhateverTheApiReportsForTheMarker() {
         FakeDroneApi api = new FakeDroneApi(3);
