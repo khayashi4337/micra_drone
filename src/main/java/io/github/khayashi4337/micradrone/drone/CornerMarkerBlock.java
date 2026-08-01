@@ -117,9 +117,13 @@ public class CornerMarkerBlock extends BaseEntityBlock {
      *       and placed somewhere else. Always succeeds (numbers are unique by construction), so unlike
      *       the name below there's nothing to reject here.</li>
      *   <li>If the marker has a friendly name, it's claimed in the world-wide
-     *       {@link CornerMarkerNameRegistry}. If another marker already owns that name, the rename is
-     *       rejected: cleared back to "no friendly name" and the placer told in chat why, rather than
-     *       silently keeping a name that couldn't actually be looked up unambiguously.</li>
+     *       {@link CornerMarkerNameRegistry}. Rejected (cleared back to "no friendly name", placer
+     *       told in chat why) if another marker already owns that name, OR if the name is purely
+     *       numeric: {@link CornerMarkerBlockEntity#resolveId} tries the name registry before falling
+     *       back to parsing {@code id} as a number, so a marker legitimately named e.g. "3" would make
+     *       any OTHER marker whose auto-assigned number happens to be 3 permanently unreachable by
+     *       pair_with("3") - both would show that same string from get_plot_id(), but only the named
+     *       one could ever be resolved.</li>
      * </ul>
      */
     @Override
@@ -136,12 +140,31 @@ public class CornerMarkerBlock extends BaseEntityBlock {
         if (name.isEmpty()) {
             return;
         }
+        if (isPurelyNumeric(name)) {
+            be.clearFriendlyName();
+            if (placer instanceof ServerPlayer serverPlayer) {
+                serverPlayer.sendSystemMessage(Component.literal(
+                        "[corner marker] the name '" + name + "' looks like a plain number, which could be "
+                                + "confused with another marker's auto-assigned id - placed without a name"));
+            }
+            return;
+        }
         if (!CornerMarkerNameRegistry.get(serverLevel).tryClaim(name, pos)) {
             be.clearFriendlyName();
             if (placer instanceof ServerPlayer serverPlayer) {
                 serverPlayer.sendSystemMessage(Component.literal(
                         "[corner marker] the name '" + name + "' is already used by another marker - placed without a name"));
             }
+        }
+    }
+
+    /** True if {@code name} would parse as a number - see {@link CornerMarkerBlockEntity#resolveId}'s fallback. */
+    private static boolean isPurelyNumeric(String name) {
+        try {
+            Integer.parseInt(name);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
         }
     }
 
