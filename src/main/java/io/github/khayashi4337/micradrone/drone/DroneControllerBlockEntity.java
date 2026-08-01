@@ -115,12 +115,15 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private volatile int dirX = 1;
     private volatile int dirZ = 1;
     private volatile int groundYOffset = 0;
-    // The paired marker's Y offset from this controller (see CornerMarkerScan.PlotBounds#markerDy) -
-    // together with dirX/dirZ/worldSize this reconstructs the marker's exact BlockPos for redstone
-    // output, without a re-scan. Meaningless while plotConfirmed is false.
+    // The Y offset of this plot's own Corner Marker (found by diagonal scan, see #cornerMarkerPos)
+    // from this controller (see CornerMarkerScan.PlotBounds#markerDy) - together with
+    // dirX/dirZ/worldSize this reconstructs the marker's exact BlockPos for redstone output, without
+    // a re-scan. Meaningless while plotConfirmed is false.
     private volatile int markerDy = 0;
-    // True only once scanForCornerMarker has actually found a paired corner marker - see its use in
-    // serverTick, which must not ambient-boost growth in the size-5-toward-SE guess used otherwise.
+    // True only once scanForCornerMarker has actually found this plot's own corner marker (by
+    // diagonal scan - a DIFFERENT relationship than pairedMarkerPos's mutual pair_with() partner) -
+    // see its use in serverTick, which must not ambient-boost growth in the size-5-toward-SE guess
+    // used otherwise.
     private volatile boolean plotConfirmed = false;
     // Belongs to this controller, not the plot's geometry: survives corner-marker re-scans on purpose.
     // Keyed by crop name (e.g. "wheat"); written on the main thread, read from the network/GUI push
