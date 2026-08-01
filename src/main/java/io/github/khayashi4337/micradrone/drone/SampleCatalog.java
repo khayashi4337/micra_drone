@@ -39,6 +39,7 @@ public final class SampleCatalog {
             new Sample("signal_harvest_ready", SampleScripts.SIGNAL_HARVEST_READY, 6, 2),
             new Sample("count_ground", SampleScripts.COUNT_GROUND, 6, 2),
             new Sample("carrot_farm", SampleScripts.CARROT_FARM, 9, 2),
+            new Sample("pair_and_signal_harvest", SampleScripts.PAIR_AND_SIGNAL_HARVEST, 9, 2),
             new Sample("pumpkin_smart_harvest", SampleScripts.PUMPKIN_SMART_HARVEST, MAX_BOOKSHELVES, 3));
 
     /** Whether the sample at {@code index} is available with {@code bookshelfCount} bookshelves; false for bad indexes. */
