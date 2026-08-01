@@ -76,7 +76,7 @@ public interface DroneApi {
 
     /**
      * Read-only: true only if this plot's marker AND the marker it named both name each other back
-     * (mutual pairing).
+     * (mutual pairing). Once true, {@link #setOutput} also propagates to the paired marker.
      */
     boolean isPaired();
 
