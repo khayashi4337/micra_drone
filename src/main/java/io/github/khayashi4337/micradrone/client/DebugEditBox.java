@@ -65,8 +65,9 @@ final class DebugEditBox extends MultiLineEditBox {
     /** Drives the cursor blink; vanilla keeps the same clock privately, so this mirrors its {@code setFocused}. */
     private long focusedAtMs = Util.getMillis();
     // Rendering runs every frame but the script only changes when someone types, so the scan is
-    // cached against the exact String instance it came from (an unchanged value is reference-equal,
-    // making the check O(1) rather than another pass over the text).
+    // cached against the last value it ran on and only re-scanned when a String#equals check finds
+    // the text has actually changed - cheap for a script-sized string, and far cheaper than
+    // re-tokenizing every frame regardless.
     private String scannedValue;
     private List<Span> scannedSpans = List.of();
 
