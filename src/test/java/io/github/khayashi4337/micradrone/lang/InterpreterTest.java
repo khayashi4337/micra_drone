@@ -411,6 +411,30 @@ class InterpreterTest {
         assertTrue(ex.getMessage().contains("too long"), "expected the runaway-loop message, got: " + ex.getMessage());
     }
 
+    /**
+     * The general-purpose builtins (len/abs/min/max/random/str/list/set/dict) touch no DroneApi
+     * either, so a loop calling only those must trip the watchdog too - not just method calls.
+     */
+    @Test
+    void generalPurposeBuiltinOnlyLoopWithNoDroneApiCallsStillTripsTheRunawayWatchdog() {
+        MicraLangException ex = assertThrows(MicraLangException.class, () -> run("""
+                while True:
+                    x = list([1, 2, 3])
+                """));
+        assertTrue(ex.getMessage().contains("too long"), "expected the runaway-loop message, got: " + ex.getMessage());
+    }
+
+    /** A general-purpose builtin nested inside a method-call argument must not reset the counter either. */
+    @Test
+    void methodCallWithAGeneralPurposeBuiltinArgumentStillTripsTheRunawayWatchdog() {
+        MicraLangException ex = assertThrows(MicraLangException.class, () -> run("""
+                items = []
+                while True:
+                    items.append(str(1))
+                """));
+        assertTrue(ex.getMessage().contains("too long"), "expected the runaway-loop message, got: " + ex.getMessage());
+    }
+
     @Test
     void methodOnANumberRaises() {
         assertThrows(MicraLangException.class, () -> run("(5).append(1)\n"));

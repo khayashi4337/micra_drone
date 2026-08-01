@@ -22,6 +22,15 @@ import io.github.khayashi4337.micradrone.lang.ast.Stmt;
 public final class Interpreter {
     /** Number of statements allowed to execute with zero DroneApi calls before we assume a runaway loop. */
     private static final long RUNAWAY_STATEMENT_THRESHOLD = 1_000_000;
+    /**
+     * The {@code evalCall} case names under its "general-purpose builtins (no drone involved)"
+     * marker - these must NOT reset {@link #statementsSinceApiCall}. None of them touch DroneApi,
+     * and several ({@code str}/{@code list}/{@code set}) allocate, so a loop that only calls these
+     * (e.g. {@code while True: x = list([1])}) needs to keep counting toward the runaway threshold
+     * the same as pure arithmetic - otherwise it never trips and can exhaust the heap.
+     */
+    private static final Set<String> GENERAL_PURPOSE_BUILTINS =
+            Set.of("len", "abs", "min", "max", "random", "str", "list", "set", "dict");
     /** How deep {@link #stringify(Object, int)} descends into nested collections before giving up. */
     private static final int MAX_STRINGIFY_DEPTH = 8;
 
@@ -610,7 +619,9 @@ public final class Interpreter {
             case "range" -> throw new MicraLangException(call.line(), "range() can only be used in a for-loop");
             default -> throw new MicraLangException(call.line(), "unknown function '" + call.name() + "'");
         };
-        statementsSinceApiCall = 0;
+        if (!GENERAL_PURPOSE_BUILTINS.contains(call.name())) {
+            statementsSinceApiCall = 0;
+        }
         return result;
     }
 
