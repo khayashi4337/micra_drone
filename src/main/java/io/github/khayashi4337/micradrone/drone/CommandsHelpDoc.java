@@ -99,6 +99,19 @@ public final class CommandsHelpDoc {
             get_points("wheat")
                 指定した作物1種類だけの資源ポイント。
 
+            ■ コーナーマーカーからredstone信号を出す
+            set_output(True)
+            set_output(False)
+                このプロットのコーナーマーカーから、redstone信号(強さ15、
+                隣接する配線・ランプ・扉などに全方向へ届く)を出す/止める。
+                コーナーマーカーが無いプロットでは何も起きない。値は
+                スクリプトを止めても保たれる(次にTrue/Falseを渡すまで
+                そのまま)。
+
+            get_output()
+                今のredstone出力状態を調べる。戻り値: true/false。
+                コーナーマーカーが無ければfalse。
+
             ■ まわりのMinecraftの世界を見る（ワールドは変えない。すぐ結果が返る）
             ブロック名・バイオーム名はvanillaのものなら "dirt" のように短い名前で
             返る。MODが追加したものだけ "micradrone:rotten_pumpkin" のように

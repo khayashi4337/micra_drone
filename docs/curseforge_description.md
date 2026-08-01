@@ -73,7 +73,10 @@ own. Inspired by the Steam game
   before placing it to give it a friendly name instead (world-wide unique -
   a duplicate name is rejected with a chat message). Right-click the marker
   (the Shop screen) to see its current id before using it in a script with
-  `get_plot_id()`.
+  `get_plot_id()`. The marker also emits a redstone signal on every side
+  once a script calls `set_output(True)` — wire it into a lamp, a door, or
+  anything else redstone can drive, and read the current state back with
+  `get_output()`.
 - **Learn from the enchanting table** — right-click an enchanting table to
   open its normal vanilla screen, then drag a blank Script Scroll into its
   item slot: the screen switches to a picker offering starter scripts and a
