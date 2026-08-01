@@ -2,6 +2,7 @@ package io.github.khayashi4337.micradrone.drone;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 import io.github.khayashi4337.micradrone.drone.CornerMarkerNameLedger.MarkerPos;
 import net.minecraft.core.BlockPos;
@@ -44,6 +45,11 @@ public final class CornerMarkerNameRegistry extends SavedData {
     public void release(String name, BlockPos owner) {
         ledger.release(name, toMarkerPos(owner));
         setDirty();
+    }
+
+    /** Where {@code name} currently points, if anyone has claimed it - see pair_with()/get_plot_id(). */
+    public Optional<BlockPos> resolve(String name) {
+        return ledger.ownerOf(name).map(CornerMarkerNameRegistry::toBlockPos);
     }
 
     private static MarkerPos toMarkerPos(BlockPos pos) {
