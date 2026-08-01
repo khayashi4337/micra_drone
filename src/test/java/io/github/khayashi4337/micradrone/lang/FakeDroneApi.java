@@ -112,6 +112,11 @@ final class FakeDroneApi implements DroneApi {
     }
 
     @Override
+    public void doAFlip() {
+        calls.add("do_a_flip");
+    }
+
+    @Override
     public boolean canHarvest() {
         calls.add("can_harvest");
         return cropAge[x][y] >= matureAge;

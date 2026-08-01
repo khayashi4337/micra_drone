@@ -46,6 +46,29 @@ class LexerTest {
     }
 
     @Test
+    void bracketsAndDotAreTokenized() {
+        assertEquals(List.of(
+                TokenType.IDENT, TokenType.LBRACKET, TokenType.NUMBER, TokenType.RBRACKET,
+                TokenType.NEWLINE, TokenType.EOF
+        ), types("a[0]\n"));
+        assertEquals(List.of(
+                TokenType.LBRACE, TokenType.RBRACE, TokenType.NEWLINE, TokenType.EOF
+        ), types("{}\n"));
+        assertEquals(List.of(
+                TokenType.IDENT, TokenType.DOT, TokenType.IDENT, TokenType.LPAREN, TokenType.RPAREN,
+                TokenType.NEWLINE, TokenType.EOF
+        ), types("a.append()\n"));
+    }
+
+    /** The lexer must keep reading "1.5" as one number rather than splitting it on the new DOT token. */
+    @Test
+    void decimalPointStillBelongsToItsNumber() {
+        assertEquals(List.of(
+                TokenType.NUMBER, TokenType.NEWLINE, TokenType.EOF
+        ), types("1.5\n"));
+    }
+
+    @Test
     void tabIndentationIsRejected() {
         assertThrows(MicraLangException.class, () -> types("if True:\n\tx = 1\n"));
     }

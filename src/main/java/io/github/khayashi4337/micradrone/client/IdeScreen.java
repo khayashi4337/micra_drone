@@ -7,13 +7,17 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.MicraDroneClient;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
+import io.github.khayashi4337.micradrone.lang.CommandNames;
+import io.github.khayashi4337.micradrone.lang.Lexer;
 import io.github.khayashi4337.micradrone.drone.net.DebugCommandPayload;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
+import io.github.khayashi4337.micradrone.drone.net.RenameScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.RequestScriptSourcePayload;
 import io.github.khayashi4337.micradrone.drone.net.RunScriptPayload;
@@ -23,15 +27,19 @@ import io.github.khayashi4337.micradrone.drone.net.SelectScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.SetBreakpointsPayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.StopViewingPayload;
+import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.inventory.AnvilMenu;
 import net.neoforged.neoforge.network.PacketDistributor;
+import org.lwjgl.glfw.GLFW;
 
 /**
  * Fullscreen script IDE (issue #6) - the controller's ONLY screen (GUI-reduction follow-up
@@ -71,6 +79,10 @@ public class IdeScreen extends Screen {
     private static final int SHOP_BUTTON_HEIGHT = 14;
     private static final int BUTTON_HEIGHT = 20;
     private static final int ROW_GAP = 4;
+    /** Icon-only Run control above the editor (green square, white triangle) - see {@link PlayButton}. */
+    private static final int PLAY_BUTTON_SIZE = 20;
+    /** Tight gap between the Play/Step icon buttons on the title bar - they read as one control pair. */
+    private static final int ICON_GAP = 2;
     /** Width of the line-number/breakpoint gutter to the left of the editor. */
     private static final int GUTTER_WIDTH = 20;
     /** How often (client ticks) the plot size/direction is re-resolved from the blocks. */
@@ -79,6 +91,17 @@ public class IdeScreen extends Screen {
     // then log fills whatever's left.
     private static final int LIST_HEIGHT = 90;
     private static final int DESCRIPTION_HEIGHT = 28;
+
+    // Command autocomplete popup - see refreshAutocomplete/acceptAutocomplete/renderAutocompletePopup.
+    private static final List<String> AUTOCOMPLETE_CANDIDATES =
+            Stream.concat(CommandNames.ALL.stream(), Lexer.keywords().stream()).sorted().toList();
+    private static final int AUTOCOMPLETE_MAX_ROWS = 8;
+    private static final int AUTOCOMPLETE_ROW_HEIGHT = 10;
+    private static final int AUTOCOMPLETE_BACKGROUND = 0xF0202020;
+    private static final int AUTOCOMPLETE_SELECTED_BACKGROUND = 0xF0355C7D;
+
+    /** Double-clicking the title renames the script - max gap between the two clicks. */
+    private static final long DOUBLE_CLICK_WINDOW_MS = 500;
 
     private final BlockPos pos;
     private final IdeCameraController cameraController;
@@ -107,9 +130,35 @@ public class IdeScreen extends Screen {
     private final Set<Integer> breakpoints = new HashSet<>();
     private int debugState = DebugStatePayload.STATE_IDLE;
 
+    // Autocomplete popup state - see refreshAutocomplete/renderAutocompletePopup. Recomputed from
+    // the editor's real caret every frame rather than pushed from an edit callback, so the popup
+    // tracks wherever the caret actually is instead of a spot it was at when some edit landed.
+    // Position fields are filled in by the same render pass and read back by mouseClicked (safe: a
+    // click can't land before the popup it hits has been drawn at least once).
+    private String autocompleteWord = "";
+    private List<String> autocompleteMatches = List.of();
+    private int autocompleteSelected;
+    /**
+     * Set when the player closes the popup - Escape, a click outside it, or accepting a suggestion -
+     * and cleared by the next change to the editor's text (the value listener in {@link #init};
+     * that includes loading a different script, not just typing). Keyed on text changes rather than
+     * on the word under the caret so that merely moving the caret back into a half-typed word
+     * doesn't reopen a popup the player just dismissed.
+     */
+    private boolean autocompleteDismissed;
+    private int autocompletePopupX;
+    private int autocompletePopupY;
+    private int autocompletePopupWidth;
+
+    // Title rename (double-click): non-null while the inline EditBox is showing.
+    private EditBox renameBox;
+    private long lastTitleClickAtMs = -1;
+
     // Gutter geometry, computed in init() and reused by render()/mouseClicked().
     private int editorTop;
     private int editorHeight;
+    /** Right edge of the editor title bar (see {@link #renderEditorTitleBar}), computed in init(). */
+    private int titleBarRight;
 
     // List-mode state, refreshed from every DroneLogPayload regardless of whether list mode is
     // currently showing, so it's ready the instant the player opens it.
@@ -140,48 +189,63 @@ public class IdeScreen extends Screen {
         int leftW = this.width / 2 - MARGIN - ROW_GAP;
         int saveRowY = this.height - MARGIN - BUTTON_HEIGHT;
         int debugRowY = saveRowY - BUTTON_HEIGHT - ROW_GAP;
-        editorTop = TOP_Y;
-        editorHeight = debugRowY - ROW_GAP - TOP_Y;
+        editorTop = TOP_Y + PLAY_BUTTON_SIZE + ROW_GAP;
+        editorHeight = debugRowY - ROW_GAP - editorTop;
+        titleBarRight = leftX + leftW;
+
+        // Icon-only Run + Step controls, sitting side by side on the editor's title bar (see
+        // renderEditorTitleBar) - matches the reference game's own title bar. Run
+        // plays the SAVED script without touching unsaved editor changes, same behavior the old text
+        // "Run" button had; "Save & Run" below still does both. Step moved up here from the debug
+        // row below (was a duplicate control once an icon existed), so the debug row is now 3-wide,
+        // not 4.
+        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.run"),
+                        b -> PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptId)))
+                .bounds(leftX + GUTTER_WIDTH, TOP_Y, PLAY_BUTTON_SIZE, PLAY_BUTTON_SIZE)
+                .build(PlayButton::new));
+        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.debug_step"),
+                        b -> PacketDistributor.sendToServer(new DebugCommandPayload(pos, DebugCommandPayload.COMMAND_STEP)))
+                .bounds(leftX + GUTTER_WIDTH + PLAY_BUTTON_SIZE + ICON_GAP, TOP_Y, PLAY_BUTTON_SIZE, PLAY_BUTTON_SIZE)
+                .build(StepButton::new));
 
         editor = new DebugEditBox(this.font, leftX + GUTTER_WIDTH, editorTop, leftW - GUTTER_WIDTH, editorHeight,
                 Component.translatable("gui.micradrone.ide_screen.editor_placeholder"),
                 Component.translatable("gui.micradrone.ide_screen.editor"));
         editor.setCharacterLimit(DroneControllerBlockEntity.MAX_SCRIPT_CHARS);
         editor.setValue(editorText);
-        editor.setValueListener(text -> editorText = text);
+        editor.setValueListener(text -> {
+            editorText = text;
+            // Typing is the one thing that brings a dismissed popup back - see refreshAutocomplete.
+            autocompleteDismissed = false;
+        });
         editor.setBreakpointLines(breakpoints);
         addRenderableWidget(editor);
 
-        int debugW = (leftW - 3 * ROW_GAP) / 4;
+        // 3-way now: Step moved up to the title bar icon row above (see the StepButton added earlier
+        // in this method).
+        int debugW = (leftW - 2 * ROW_GAP) / 3;
         pauseResumeButton = addRenderableWidget(Button.builder(pauseResumeLabel(), b -> PacketDistributor.sendToServer(
                         new DebugCommandPayload(pos, debugState == DebugStatePayload.STATE_PAUSED
                                 ? DebugCommandPayload.COMMAND_RESUME : DebugCommandPayload.COMMAND_PAUSE)))
                 .bounds(leftX, debugRowY, debugW, BUTTON_HEIGHT).build());
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.debug_step"),
-                        b -> PacketDistributor.sendToServer(new DebugCommandPayload(pos, DebugCommandPayload.COMMAND_STEP)))
-                .bounds(leftX + debugW + ROW_GAP, debugRowY, debugW, BUTTON_HEIGHT).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.debug_step_out"),
                         b -> PacketDistributor.sendToServer(new DebugCommandPayload(pos, DebugCommandPayload.COMMAND_STEP_OUT)))
-                .bounds(leftX + 2 * (debugW + ROW_GAP), debugRowY, debugW, BUTTON_HEIGHT).build());
+                .bounds(leftX + debugW + ROW_GAP, debugRowY, debugW, BUTTON_HEIGHT).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.debug_stop"),
                         b -> PacketDistributor.sendToServer(new StopScriptPayload(pos)))
-                .bounds(leftX + 3 * (debugW + ROW_GAP), debugRowY, debugW, BUTTON_HEIGHT).build());
+                .bounds(leftX + 2 * (debugW + ROW_GAP), debugRowY, debugW, BUTTON_HEIGHT).build());
 
-        int buttonW = (leftW - 3 * ROW_GAP) / 4;
+        // 3-way now: the Run icon moved above the editor (see the PlayButton added earlier in this method).
+        int buttonW = (leftW - 2 * ROW_GAP) / 3;
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.save"), b -> save())
                 .bounds(leftX, saveRowY, buttonW, BUTTON_HEIGHT).build());
-        // Plain Run: runs the SAVED script without touching unsaved editor changes - handy when
-        // re-running a debug session repeatedly.
-        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.run"),
-                        b -> PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptId)))
-                .bounds(leftX + buttonW + ROW_GAP, saveRowY, buttonW, BUTTON_HEIGHT).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.save_run"), b -> {
                     save();
                     PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptId));
                 })
-                .bounds(leftX + 2 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
+                .bounds(leftX + buttonW + ROW_GAP, saveRowY, buttonW, BUTTON_HEIGHT).build());
         listButton = addRenderableWidget(Button.builder(listButtonLabel(), b -> toggleListMode())
-                .bounds(leftX + 3 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
+                .bounds(leftX + 2 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
 
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.shop"),
                         b -> MicraDroneClient.openShopScreen(pos))
@@ -261,6 +325,7 @@ public class IdeScreen extends Screen {
         scriptId = entry.id();
         displayName = entry.displayName();
         editorText = "";
+        autocompleteMatches = List.of();
         sourceRequested = true;
         PacketDistributor.sendToServer(new RequestScriptSourcePayload(pos, scriptId));
         listMode = false;
@@ -285,6 +350,7 @@ public class IdeScreen extends Screen {
         if (sourcePos.equals(this.pos) && sourceScriptName.equals(this.scriptId)) {
             editorText = source;
             editor.setValue(source);
+            autocompleteMatches = List.of();
         }
     }
 
@@ -315,6 +381,13 @@ public class IdeScreen extends Screen {
                     .orElse(scriptId);
             sourceRequested = true;
             PacketDistributor.sendToServer(new RequestScriptSourcePayload(pos, scriptId));
+        } else if (!scriptId.isEmpty()) {
+            // Keeps the title in sync with the server's authoritative name after a rename - the
+            // round trip lands here, in the very next snapshot (see commitRename/renameScript).
+            availableScripts.stream()
+                    .filter(entry -> entry.id().equals(scriptId))
+                    .findFirst()
+                    .ifPresent(entry -> displayName = entry.displayName());
         }
 
         if (listMode && scriptList != null) {
@@ -351,6 +424,41 @@ public class IdeScreen extends Screen {
         PacketDistributor.sendToServer(new SaveScriptPayload(pos, scriptId, editorText));
     }
 
+    /** Left edge of the title text within the title bar - shared by rendering, the click hit-test, and the rename box's position. */
+    private int titleTextX() {
+        return MARGIN + GUTTER_WIDTH + 2 * PLAY_BUTTON_SIZE + ICON_GAP + ROW_GAP;
+    }
+
+    /** Double-click the title to rename the script - an inline EditBox replaces the plain text. */
+    private void startRename() {
+        int x = titleTextX();
+        int width = Math.min(titleBarRight - x - ROW_GAP, 150);
+        renameBox = new EditBox(this.font, x, TOP_Y + 2, width, PLAY_BUTTON_SIZE - 4, Component.literal(""));
+        renameBox.setMaxLength(AnvilMenu.MAX_NAME_LENGTH);
+        renameBox.setValue(displayName);
+        addRenderableWidget(renameBox);
+        this.setFocused(renameBox);
+    }
+
+    /** Enter: sends the new name (if it actually changed) and closes the box; the server confirms via the next log snapshot. */
+    private void commitRename() {
+        String newName = renameBox.getValue().trim();
+        if (!newName.isEmpty() && !newName.equals(displayName)) {
+            PacketDistributor.sendToServer(new RenameScriptPayload(pos, scriptId, newName));
+            displayName = newName;
+        }
+        cancelRename();
+    }
+
+    /** Escape, or clicking away, or losing focus some other way: closes the box without sending anything. */
+    private void cancelRename() {
+        if (renameBox != null) {
+            removeWidget(renameBox);
+            renameBox = null;
+            this.setFocused(null);
+        }
+    }
+
     private int lineCount() {
         int lines = 1;
         for (int i = 0; i < editorText.length(); i++) {
@@ -361,9 +469,88 @@ public class IdeScreen extends Screen {
         return lines;
     }
 
-    /** Gutter clicks toggle a breakpoint on the clicked line; everything else goes to the widgets. */
+    /**
+     * Re-reads the word at the caret and refilters the suggestions - called once per frame from
+     * {@link #render}, so the popup follows the caret wherever it goes. Only ever suggests while the
+     * editor itself holds the keyboard: otherwise a popup left over from earlier would keep
+     * swallowing Up/Down/Enter meant for whatever the player moved on to.
+     */
+    private void refreshAutocomplete() {
+        String word = editor.isFocused() ? editor.wordBeforeCursor() : "";
+        if (!word.equals(autocompleteWord)) {
+            autocompleteWord = word;
+            autocompleteSelected = 0;
+        }
+        autocompleteMatches = word.isEmpty() || autocompleteDismissed ? List.of()
+                : AUTOCOMPLETE_CANDIDATES.stream()
+                        .filter(candidate -> candidate.startsWith(word) && !candidate.equals(word))
+                        .limit(AUTOCOMPLETE_MAX_ROWS)
+                        .toList();
+    }
+
+    /**
+     * Replaces the word at the caret with {@code candidate}, or reports false and changes nothing
+     * when the popup turns out to be stale.
+     *
+     * <p>Keystrokes arrive in batches rather than one per frame, so the list being read here can
+     * still describe the word as it was before an earlier key in the same batch edited it - a
+     * Backspace immediately followed by Enter would otherwise paste a suggestion for a word that no
+     * longer exists. Re-checking the live caret catches exactly that; returning false lets the
+     * caller leave the key unconsumed so it does its normal job instead.
+     */
+    private boolean acceptAutocomplete(String candidate) {
+        String word = editor.wordBeforeCursor();
+        if (word.isEmpty() || !candidate.startsWith(word)) {
+            autocompleteMatches = List.of();
+            return false;
+        }
+        editor.replaceWordBeforeCursor(candidate);
+        autocompleteMatches = List.of();
+        autocompleteDismissed = true;
+        return true;
+    }
+
+    /**
+     * Autocomplete popup clicks pick that row; a click anywhere else while it's showing just
+     * dismisses it (doesn't consume the click - it still reaches whatever else is under it).
+     * Double-clicking the title text starts a rename; a click outside the rename box while renaming
+     * cancels it (only Enter commits - see {@link #keyPressed}). Gutter clicks toggle
+     * a breakpoint on the clicked line; everything else goes to the widgets.
+     */
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (renameBox != null) {
+            boolean withinBox = mouseX >= renameBox.getX() && mouseX < renameBox.getX() + renameBox.getWidth()
+                    && mouseY >= renameBox.getY() && mouseY < renameBox.getY() + renameBox.getHeight();
+            if (!withinBox) {
+                cancelRename();
+            }
+        } else if (button == 0) {
+            int textX = titleTextX();
+            int textY = TOP_Y + (PLAY_BUTTON_SIZE - this.font.lineHeight) / 2;
+            int textWidth = this.font.width(displayName);
+            if (mouseX >= textX && mouseX < textX + textWidth
+                    && mouseY >= textY && mouseY < textY + this.font.lineHeight) {
+                long now = Util.getMillis();
+                if (now - lastTitleClickAtMs <= DOUBLE_CLICK_WINDOW_MS) {
+                    startRename();
+                } else {
+                    lastTitleClickAtMs = now;
+                }
+                return true;
+            }
+        }
+        if (!autocompleteMatches.isEmpty()) {
+            int popupHeight = autocompleteMatches.size() * AUTOCOMPLETE_ROW_HEIGHT;
+            if (button == 0 && mouseX >= autocompletePopupX && mouseX < autocompletePopupX + autocompletePopupWidth
+                    && mouseY >= autocompletePopupY && mouseY < autocompletePopupY + popupHeight) {
+                int row = (int) ((mouseY - autocompletePopupY) / AUTOCOMPLETE_ROW_HEIGHT);
+                acceptAutocomplete(autocompleteMatches.get(row));
+                return true;
+            }
+            autocompleteMatches = List.of();
+            autocompleteDismissed = true; // stays shut until the next keystroke, even if the caret lands mid-word
+        }
         if (button == 0 && mouseX >= MARGIN && mouseX < MARGIN + GUTTER_WIDTH
                 && mouseY >= editorTop && mouseY < editorTop + editorHeight) {
             int line = (int) ((mouseY - editorTop - editor.gutterTopPadding() + editor.gutterScroll())
@@ -380,9 +567,74 @@ public class IdeScreen extends Screen {
         return super.mouseClicked(mouseX, mouseY, button);
     }
 
+    /**
+     * While renaming (title double-clicked), Enter commits and Escape cancels - both consumed
+     * before reaching the rename box itself; everything else (typing, arrows, backspace) still
+     * flows through to it via {@code super.keyPressed} + {@link #setFocused}.
+     *
+     * <p>Otherwise, while the autocomplete popup is showing <em>and the editor holds the
+     * keyboard</em>: Up/Down move the selection and Escape dismisses it, all three consumed
+     * outright. Tab and Enter accept the highlighted suggestion, but are consumed only when it
+     * actually applied - {@link #acceptAutocomplete} refuses a stale one, and the key then falls
+     * through to {@code super.keyPressed}, where Enter inserts its newline as usual and Tab moves
+     * the screen's focus (vanilla's own handling of it - the editor itself ignores Tab).
+     * Up/Down/Escape/Tab are the same keys vanilla's {@code CommandSuggestions.SuggestionsList}
+     * binds; accepting with Enter as well is this editor's own addition. Key codes come from
+     * {@link GLFW} rather than raw numbers. Everything else - including all of these once the popup
+     * is empty or the editor is unfocused - goes to the focused widget as usual.
+     */
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (renameBox != null) {
+            switch (keyCode) {
+                case GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> {
+                    commitRename();
+                    return true;
+                }
+                case GLFW.GLFW_KEY_ESCAPE -> {
+                    cancelRename();
+                    return true;
+                }
+                default -> { }
+            }
+            return super.keyPressed(keyCode, scanCode, modifiers);
+        }
+        if (!autocompleteMatches.isEmpty() && editor.isFocused()) {
+            switch (keyCode) {
+                case GLFW.GLFW_KEY_UP -> {
+                    autocompleteSelected = Math.floorMod(autocompleteSelected - 1, autocompleteMatches.size());
+                    return true;
+                }
+                case GLFW.GLFW_KEY_DOWN -> {
+                    autocompleteSelected = Math.floorMod(autocompleteSelected + 1, autocompleteMatches.size());
+                    return true;
+                }
+                case GLFW.GLFW_KEY_TAB, GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> {
+                    // Leaves the key unconsumed when the suggestion turned out to be stale, so a
+                    // batched Backspace-then-Enter still inserts the newline the player asked for.
+                    if (acceptAutocomplete(autocompleteMatches.get(autocompleteSelected))) {
+                        return true;
+                    }
+                }
+                case GLFW.GLFW_KEY_ESCAPE -> {
+                    autocompleteMatches = List.of();
+                    autocompleteDismissed = true;
+                    return true;
+                }
+                default -> { }
+            }
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
     @Override
     public void tick() {
         super.tick();
+        // Failsafe: if focus was stolen or lost some other way while renaming, don't leave an
+        // orphaned, unfocused rename box on screen - close it (matches clicking away, see mouseClicked).
+        if (renameBox != null && !renameBox.isFocused()) {
+            cancelRename();
+        }
         if (this.minecraft == null || this.minecraft.level == null) {
             return;
         }
@@ -422,12 +674,32 @@ public class IdeScreen extends Screen {
         if (listMode) {
             guiGraphics.fill(listPanelX() - ROW_GAP, 0, this.width, this.height, 0xE0101010);
         }
+        renderEditorTitleBar(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         guiGraphics.drawCenteredString(this.font,
                 Component.translatable("gui.micradrone.ide_screen.heading", displayName),
                 this.width / 2, MARGIN, 0xFFFFFF);
         renderPointsHud(guiGraphics);
         renderGutter(guiGraphics);
+        refreshAutocomplete();
+        renderAutocompletePopup(guiGraphics);
+    }
+
+    /**
+     * Title-bar strip spanning the editor's width, drawn behind the Play and Step icons so they
+     * read as one header row (icons + script name) rather than floating buttons - like a code
+     * editor's title bar/toolbar, with room for more controls later. Both icon widgets are
+     * rendered afterward by {@code super.render}, painting over this bar's left end so they
+     * visually sit on top of it. The script name is skipped while a rename is in progress, since
+     * the rename box occupies that same spot.
+     */
+    private void renderEditorTitleBar(GuiGraphics guiGraphics) {
+        int barLeft = MARGIN + GUTTER_WIDTH;
+        guiGraphics.fill(barLeft, TOP_Y, titleBarRight, TOP_Y + PLAY_BUTTON_SIZE, 0xE0101010);
+        if (renameBox == null) {
+            int textY = TOP_Y + (PLAY_BUTTON_SIZE - this.font.lineHeight) / 2;
+            guiGraphics.drawString(this.font, displayName, titleTextX(), textY, 0xFFFFFF, false);
+        }
     }
 
     /**
@@ -472,9 +744,122 @@ public class IdeScreen extends Screen {
         }
     }
 
+    /**
+     * Command autocomplete popup, anchored to the editor's real caret ({@link DebugEditBox#cursorScreenX}
+     * /{@link DebugEditBox#cursorScreenY}, both derived from the same wrapped rows vanilla itself
+     * lays the text out on). Sits just under the caret's row, or above it when that would run off
+     * the bottom of the editor box.
+     */
+    private void renderAutocompletePopup(GuiGraphics guiGraphics) {
+        if (autocompleteMatches.isEmpty()) {
+            return;
+        }
+        int popupWidth = autocompleteMatches.stream().mapToInt(this.font::width).max().orElse(0) + 6;
+        int popupHeight = autocompleteMatches.size() * AUTOCOMPLETE_ROW_HEIGHT;
+        int rowTop = editor.cursorScreenY();
+        int x = editor.cursorScreenX();
+        int y = rowTop + DebugEditBox.LINE_HEIGHT + 1;
+        if (y + popupHeight > editorTop + editorHeight) {
+            y = rowTop - popupHeight - 1;
+        }
+        autocompletePopupX = x;
+        autocompletePopupY = y;
+        autocompletePopupWidth = popupWidth;
+
+        guiGraphics.fill(x, y, x + popupWidth, y + popupHeight, AUTOCOMPLETE_BACKGROUND);
+        for (int i = 0; i < autocompleteMatches.size(); i++) {
+            int rowY = y + i * AUTOCOMPLETE_ROW_HEIGHT;
+            if (i == autocompleteSelected) {
+                guiGraphics.fill(x, rowY, x + popupWidth, rowY + AUTOCOMPLETE_ROW_HEIGHT, AUTOCOMPLETE_SELECTED_BACKGROUND);
+            }
+            guiGraphics.drawString(this.font, autocompleteMatches.get(i), x + 3, rowY + 1, 0xFFFFFF, false);
+        }
+    }
+
     @Override
     public boolean isPauseScreen() {
         return false;
+    }
+
+    /**
+     * Shared look for the title bar's icon buttons (green square, white glyph) instead of a text
+     * label - matches the reference game's (The Farmer Was Replaced) title bar. No existing
+     * icon-button precedent in this mod, so it's a plain procedural {@link GuiGraphics#fill} draw
+     * rather than a new texture asset - simplest option for flat 2-color icons. Subclasses only
+     * need to draw their glyph; the background/hover fill is common.
+     */
+    private abstract static class IconButton extends Button {
+        private static final int BACKGROUND = 0xFF3E9142;
+        private static final int BACKGROUND_HOVER = 0xFF57B75B;
+        static final int GLYPH_COLOR = 0xFFFFFFFF;
+
+        IconButton(Button.Builder builder) {
+            super(builder);
+        }
+
+        @Override
+        protected final void renderWidget(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+            int x = getX();
+            int y = getY();
+            int w = getWidth();
+            int h = getHeight();
+            int background = isHoveredOrFocused() ? BACKGROUND_HOVER : BACKGROUND;
+            guiGraphics.fill(x, y, x + w, y + h, background);
+            drawGlyph(guiGraphics, x, y, w, h, background);
+        }
+
+        protected abstract void drawGlyph(GuiGraphics guiGraphics, int x, int y, int w, int h, int background);
+
+        /** Fills a right-pointing triangle (built from horizontal strips) inside the given bounds. */
+        static void fillTriangle(GuiGraphics guiGraphics, int left, int top, int right, int bottom, int color) {
+            int centerY = (top + bottom) / 2;
+            int halfHeight = (bottom - top) / 2;
+            if (halfHeight <= 0) {
+                return;
+            }
+            for (int row = top; row <= bottom; row++) {
+                int distanceFromCenter = Math.abs(row - centerY);
+                int rowRight = left + (right - left) * (halfHeight - distanceFromCenter) / halfHeight;
+                if (rowRight > left) {
+                    guiGraphics.fill(left, row, rowRight, row + 1, color);
+                }
+            }
+        }
+    }
+
+    /** Solid triangle - "run/play". */
+    private static final class PlayButton extends IconButton {
+        private static final int PADDING = 5;
+
+        PlayButton(Button.Builder builder) {
+            super(builder);
+        }
+
+        @Override
+        protected void drawGlyph(GuiGraphics guiGraphics, int x, int y, int w, int h, int background) {
+            fillTriangle(guiGraphics, x + PADDING, y + PADDING, x + w - PADDING, y + h - PADDING, GLYPH_COLOR);
+        }
+    }
+
+    /**
+     * Hollow/outline triangle - "step one instruction", distinct from Play's solid triangle. Drawn
+     * by filling a full triangle in the glyph color, then punching out a smaller triangle in the
+     * button's own current background color on top of it.
+     */
+    private static final class StepButton extends IconButton {
+        private static final int PADDING = 5;
+        private static final int OUTLINE = 2;
+
+        StepButton(Button.Builder builder) {
+            super(builder);
+        }
+
+        @Override
+        protected void drawGlyph(GuiGraphics guiGraphics, int x, int y, int w, int h, int background) {
+            fillTriangle(guiGraphics, x + PADDING, y + PADDING, x + w - PADDING, y + h - PADDING, GLYPH_COLOR);
+            fillTriangle(guiGraphics, x + PADDING + OUTLINE, y + PADDING + OUTLINE,
+                    x + w - PADDING - OUTLINE, y + h - PADDING - OUTLINE, background);
+        }
     }
 
     /**

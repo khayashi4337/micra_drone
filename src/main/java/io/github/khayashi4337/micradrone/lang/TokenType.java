@@ -11,6 +11,8 @@ public enum TokenType {
     EQUAL, EQUAL_EQUAL, BANG_EQUAL, LESS, GREATER, LESS_EQUAL, GREATER_EQUAL,
     PLUS, MINUS, STAR, SLASH, PERCENT,
     LPAREN, RPAREN, COLON, COMMA,
+    // collections: [] indexes and list literals, {} dict/set literals, . method calls
+    LBRACKET, RBRACKET, LBRACE, RBRACE, DOT,
 
     // structure
     NEWLINE, INDENT, DEDENT, EOF

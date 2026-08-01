@@ -7,6 +7,7 @@ import java.util.Optional;
 import io.github.khayashi4337.micradrone.drone.net.ScriptEntry;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.network.Filterable;
 import net.minecraft.world.Container;
@@ -149,6 +150,20 @@ final class ScriptChestLibrary {
         return true;
     }
 
+    /**
+     * Renames the scroll a scroll id points at - the same effect as a vanilla anvil rename (both set
+     * {@code CUSTOM_NAME}, see {@link #listScrolls}), just from the IDE title bar. False if the id
+     * no longer resolves to a scroll.
+     */
+    static boolean renameScroll(ServerLevel level, BlockPos controllerPos, String scrollId, String newName) {
+        Optional<ItemStack> stack = resolveScroll(level, controllerPos, scrollId);
+        if (stack.isEmpty()) {
+            return false;
+        }
+        stack.get().set(DataComponents.CUSTOM_NAME, Component.literal(newName));
+        return true;
+    }
+
     /** Every script scroll (written or blank) in {@code player}'s own inventory - see the class doc. */
     static List<ScriptEntry> listInventoryScrolls(Player player) {
         List<ScriptEntry> entries = new ArrayList<>();
@@ -189,6 +204,16 @@ final class ScriptChestLibrary {
             return false;
         }
         writeScrollSource(stack.get(), source);
+        return true;
+    }
+
+    /** {@link #renameScroll}, for an inventory scroll. */
+    static boolean renameInventoryScroll(Player player, String scrollId, String newName) {
+        Optional<ItemStack> stack = resolveInventoryScroll(player, scrollId);
+        if (stack.isEmpty()) {
+            return false;
+        }
+        stack.get().set(DataComponents.CUSTOM_NAME, Component.literal(newName));
         return true;
     }
 

@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Tokenizes Micra Drone script source into a flat token stream, synthesizing
@@ -35,6 +36,11 @@ public final class Lexer {
     public Lexer(String source) {
         this.source = source;
         this.indents.push(0);
+    }
+
+    /** Every reserved word the language recognizes - the editor autocomplete popup's other candidate source. */
+    public static Set<String> keywords() {
+        return KEYWORDS.keySet();
     }
 
     public List<Token> scan() {
@@ -201,6 +207,13 @@ public final class Lexer {
             case ')' -> addOneChar(TokenType.RPAREN);
             case ':' -> addOneChar(TokenType.COLON);
             case ',' -> addOneChar(TokenType.COMMA);
+            case '[' -> addOneChar(TokenType.LBRACKET);
+            case ']' -> addOneChar(TokenType.RBRACKET);
+            case '{' -> addOneChar(TokenType.LBRACE);
+            case '}' -> addOneChar(TokenType.RBRACE);
+            // Only ever reached for a lone '.', since number() consumes the decimal point of "1.5"
+            // itself (it requires a digit after the dot) before symbol() ever sees it.
+            case '.' -> addOneChar(TokenType.DOT);
             default -> throw new MicraLangException(line, "unexpected character '" + c + "'");
         }
     }

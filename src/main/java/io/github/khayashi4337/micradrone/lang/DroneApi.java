@@ -19,6 +19,13 @@ public interface DroneApi {
     /** Returns true if a mature crop was harvested. */
     boolean harvest();
 
+    /**
+     * A fun, no-effect action - matches the reference game (The Farmer Was Replaced), where it's
+     * paired with harvest() as the two commands a fresh plot starts with. Costs the same action
+     * pacing as move/till/plant/harvest; has no effect on the farm or points.
+     */
+    void doAFlip();
+
     /** Read-only: true if the crop under the drone is ready to harvest. */
     boolean canHarvest();
 

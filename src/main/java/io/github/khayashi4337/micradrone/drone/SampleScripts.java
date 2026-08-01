@@ -4,12 +4,23 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Ready-to-run example scripts seeded into every controller's script folder (see
- * {@link ScriptFileStore}), so trying the drone out doesn't require hand-writing a script first.
- * Each one is exercised against {@code FakeDroneApi} in {@code SampleScriptsTest} to catch
- * language-level mistakes before they ship.
+ * Ready-to-run example scripts, handed out one at a time by the enchanting table (see
+ * {@link SampleCatalog}, which decides what a given library unlocks and what it costs) so trying
+ * the drone out doesn't require hand-writing a script first. Each one is exercised against
+ * {@code FakeDroneApi} in {@code SampleScriptsTest} to catch language-level mistakes before they
+ * ship - that test is what {@link #ALL} exists for.
  */
 public final class SampleScripts {
+    public static final String FIRST_PROGRAM = """
+            # The very first program, straight out of The Farmer Was Replaced: harvest whatever the
+            # drone is standing on, then celebrate. do_a_flip() does nothing at all to the farm - it
+            # is purely for watching the drone tumble - which makes it a safe way to see a script
+            # really run, and to try a for-loop, before touching a single crop.
+            harvest()
+            for i in range(5):
+                do_a_flip()
+            """;
+
     public static final String MAIN = """
             # Write your drone script here, then click Run.
             print(get_world_size())
@@ -117,6 +128,43 @@ public final class SampleScripts {
             print(harvested)
             print("Wheat:")
             print(get_points("wheat"))
+            """;
+
+    public static final String COUNT_GROUND = """
+            # リストと辞書の練習。プロットを一周して、足元の地面を種類ごとに数える。
+            # 種類が何通りあるか分からなくても、辞書ならキーを増やしていくだけで数えられる。
+            size = get_world_size()
+            counts = {}
+            going_east = True
+            row = 0
+            while row < size:
+                col = 0
+                while col < size - 1:
+                    ground = get_ground()
+                    if ground in counts:
+                        counts[ground] = counts[ground] + 1
+                    else:
+                        counts[ground] = 1
+                    if going_east:
+                        move("east")
+                    else:
+                        move("west")
+                    col = col + 1
+                ground = get_ground()
+                if ground in counts:
+                    counts[ground] = counts[ground] + 1
+                else:
+                    counts[ground] = 1
+                if row < size - 1:
+                    move("south")
+                going_east = not going_east
+                row = row + 1
+            names = counts.keys()
+            print("見つけた地面の種類の数:")
+            print(len(names))
+            for name in names:
+                print(name)
+                print(counts[name])
             """;
 
     public static final String PLOT_ID = """
@@ -241,12 +289,14 @@ public final class SampleScripts {
 
     private static Map<String, String> buildAll() {
         Map<String, String> all = new LinkedHashMap<>();
+        all.put("first_program.mdrone", FIRST_PROGRAM);
         all.put("main.mdrone", MAIN);
         all.put("plot_id.mdrone", PLOT_ID);
         all.put("move_square.mdrone", MOVE_SQUARE);
         all.put("till_and_plant.mdrone", TILL_AND_PLANT);
         all.put("survey_plot.mdrone", SURVEY_PLOT);
         all.put("harvest_when_ready.mdrone", HARVEST_WHEN_READY);
+        all.put("count_ground.mdrone", COUNT_GROUND);
         all.put("carrot_farm.mdrone", CARROT_FARM);
         all.put("pumpkin_smart_harvest.mdrone", PUMPKIN_SMART_HARVEST);
         return Map.copyOf(all);

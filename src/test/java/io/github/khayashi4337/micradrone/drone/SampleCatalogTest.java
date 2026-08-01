@@ -9,18 +9,18 @@ import org.junit.jupiter.api.Test;
 class SampleCatalogTest {
 
     @Test
-    void withNoBookshelvesExactlyTheFourStarterEntriesAreUnlocked() {
+    void withNoBookshelvesExactlyTheStarterEntriesAreUnlocked() {
         long unlocked = 0;
         for (int i = 0; i < SampleCatalog.ALL.size(); i++) {
             if (SampleCatalog.isUnlocked(i, 0)) {
                 unlocked++;
             }
         }
-        assertEquals(4, unlocked, "help, main, plot_id, and move_square should need no bookshelves");
-        assertTrue(SampleCatalog.isUnlocked(0, 0));
-        assertTrue(SampleCatalog.isUnlocked(1, 0));
-        assertTrue(SampleCatalog.isUnlocked(2, 0));
-        assertTrue(SampleCatalog.isUnlocked(3, 0));
+        assertEquals(7, unlocked,
+                "the 3 help scrolls, first_program, main, plot_id, and move_square should need no bookshelves");
+        for (int i = 0; i < 7; i++) {
+            assertTrue(SampleCatalog.isUnlocked(i, 0), "index " + i);
+        }
     }
 
     @Test

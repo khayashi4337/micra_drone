@@ -36,4 +36,7 @@ public interface DroneGridState {
 
     /** True if this plot may plant {@code crop} - "wheat" always is; others need buying in the shop. */
     boolean isUnlocked(String crop);
+
+    /** Starts (or restarts) a one-shot cosmetic spin on the visible drone entity - see do_a_flip(). */
+    void triggerDroneFlip();
 }

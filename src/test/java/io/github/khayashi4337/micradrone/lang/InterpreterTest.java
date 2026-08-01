@@ -67,6 +67,419 @@ class InterpreterTest {
         assertEquals(List.of("0", "1", "2", "1", "2", "3", "0", "2", "4"), api.printed);
     }
 
+    // ---- collections ----
+
+    @Test
+    void listLiteralsIndexAndPrint() {
+        FakeDroneApi api = run("""
+                items = [1, 2, 3]
+                print(items)
+                print(items[0])
+                print(items[2])
+                """);
+        assertEquals(List.of("[1, 2, 3]", "1", "3"), api.printed);
+    }
+
+    @Test
+    void dictLiteralsLookUpAndPrint() {
+        FakeDroneApi api = run("""
+                costs = {"wheat": 20, "carrot": 15}
+                print(costs)
+                print(costs["wheat"])
+                """);
+        assertEquals(List.of("{\"wheat\": 20, \"carrot\": 15}", "20"), api.printed);
+    }
+
+    @Test
+    void emptyBracesAreAnEmptyDict() {
+        FakeDroneApi api = run("""
+                d = {}
+                print(d)
+                """);
+        assertEquals(List.of("{}"), api.printed);
+    }
+
+    @Test
+    void setLiteralsDropDuplicates() {
+        FakeDroneApi api = run("""
+                s = {1, 2, 2, 3}
+                print(s)
+                """);
+        assertEquals(List.of("{1, 2, 3}"), api.printed);
+    }
+
+    @Test
+    void indexAssignmentReplacesListItemsAndDictValues() {
+        FakeDroneApi api = run("""
+                items = [1, 2, 3]
+                items[1] = 99
+                print(items)
+                d = {}
+                d["a"] = 1
+                d["a"] = 2
+                print(d)
+                """);
+        assertEquals(List.of("[1, 99, 3]", "{\"a\": 2}"), api.printed);
+    }
+
+    @Test
+    void nestedListsIndexByChaining() {
+        FakeDroneApi api = run("""
+                grid = [[1, 2], [3, 4]]
+                print(grid[1][0])
+                """);
+        assertEquals(List.of("3"), api.printed);
+    }
+
+    /** Nesting has no fixed limit - indexing and index-assignment both chain as deep as the data goes. */
+    @Test
+    void threeDimensionalListsReadAndWrite() {
+        FakeDroneApi api = run("""
+                cube = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]]
+                print(cube[1][0][1])
+                cube[0][1][0] = 99
+                print(cube[0][1][0])
+                print(cube[0][1])
+                total = 0
+                for plane in cube:
+                    for row in plane:
+                        for cell in row:
+                            total = total + cell
+                print(total)
+                """);
+        assertEquals(List.of("6", "99", "[99, 4]", "132"), api.printed);
+    }
+
+    /** Building nesting up at runtime (rather than as one literal) must work the same way. */
+    @Test
+    void nestedListsCanBeBuiltAndMutatedThroughVariables() {
+        FakeDroneApi api = run("""
+                inner = [0, 0]
+                middle = [inner, inner]
+                outer = [middle]
+                outer[0][0][1] = 7
+                print(outer[0][0][1])
+                """);
+        assertEquals(List.of("7"), api.printed);
+    }
+
+    @Test
+    void forLoopsWalkListsSetsDictKeysAndStrings() {
+        FakeDroneApi api = run("""
+                for x in [1, 2]:
+                    print(x)
+                for k in {"a": 1}:
+                    print(k)
+                for c in "hi":
+                    print(c)
+                """);
+        assertEquals(List.of("1", "2", "a", "h", "i"), api.printed);
+    }
+
+    /** A body that appends to the very list it walks must not blow up - the loop sees the original items. */
+    @Test
+    void appendingDuringIterationDoesNotThrow() {
+        FakeDroneApi api = run("""
+                items = [1, 2]
+                seen = 0
+                for x in items:
+                    items[0] = 9
+                    seen = seen + 1
+                print(seen)
+                """);
+        assertEquals(List.of("2"), api.printed);
+    }
+
+    @Test
+    void inOperatorWorksOnEveryContainer() {
+        FakeDroneApi api = run("""
+                print(2 in [1, 2, 3])
+                print(5 in [1, 2, 3])
+                print("a" in {"a": 1})
+                print(1 in {1, 2})
+                print("ell" in "hello")
+                print(not 5 in [1, 2])
+                """);
+        assertEquals(List.of("True", "False", "True", "True", "True", "True"), api.printed);
+    }
+
+    @Test
+    void collectionsCompareByValue() {
+        FakeDroneApi api = run("""
+                print([1, 2] == [1, 2])
+                print([1, 2] == [2, 1])
+                print({"a": 1} == {"a": 1})
+                """);
+        assertEquals(List.of("True", "False", "True"), api.printed);
+    }
+
+    @Test
+    void emptyCollectionsAreFalsy() {
+        FakeDroneApi api = run("""
+                if []:
+                    print("no")
+                if not {}:
+                    print("empty dict is falsy")
+                if [1]:
+                    print("non-empty list is truthy")
+                """);
+        assertEquals(List.of("empty dict is falsy", "non-empty list is truthy"), api.printed);
+    }
+
+    /** Self-referencing collections must print, not blow the stack (a StackOverflowError would kill the thread silently). */
+    @Test
+    void selfReferencingListPrintsInsteadOfOverflowing() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        List<io.github.khayashi4337.micradrone.lang.ast.Stmt> program = new Parser(new Lexer("""
+                a = [1]
+                a[0] = a
+                print(a)
+                """).scan()).parseProgram();
+        new Interpreter(api).run(program);
+        assertEquals(1, api.printed.size());
+        assertTrue(api.printed.get(0).endsWith("...]]]]]]]]"), "expected the cycle to bottom out in an ellipsis");
+    }
+
+    // ---- general-purpose builtins ----
+
+    @Test
+    void lenCountsEveryContainer() {
+        FakeDroneApi api = run("""
+                print(len([1, 2, 3]))
+                print(len({"a": 1}))
+                print(len({1, 2}))
+                print(len("hello"))
+                print(len([]))
+                """);
+        assertEquals(List.of("3", "1", "2", "5", "0"), api.printed);
+    }
+
+    @Test
+    void absHandlesBothSigns() {
+        FakeDroneApi api = run("""
+                print(abs(-3))
+                print(abs(3))
+                print(abs(-2.5))
+                """);
+        assertEquals(List.of("3", "3", "2.5"), api.printed);
+    }
+
+    /** Python's two shapes: several arguments, or one collection to scan. */
+    @Test
+    void minAndMaxTakeArgumentsOrACollection() {
+        FakeDroneApi api = run("""
+                print(min(3, 1, 2))
+                print(max(3, 1, 2))
+                print(min([3, 1, 2]))
+                print(max([3, 1, 2]))
+                print(max({4, 9}))
+                """);
+        assertEquals(List.of("1", "3", "1", "3", "9"), api.printed);
+    }
+
+    @Test
+    void randomStaysWithinZeroToOne() {
+        FakeDroneApi api = run("""
+                for i in range(20):
+                    r = random()
+                    if r < 0:
+                        print("below")
+                    if r >= 1:
+                        print("above")
+                print("done")
+                """);
+        assertEquals(List.of("done"), api.printed);
+    }
+
+    @Test
+    void strTurnsValuesIntoText() {
+        FakeDroneApi api = run("""
+                print(str(5) + " items")
+                print(str(True))
+                print(str([1, 2]))
+                """);
+        assertEquals(List.of("5 items", "True", "[1, 2]"), api.printed);
+    }
+
+    @Test
+    void listAndSetConvertBetweenContainers() {
+        FakeDroneApi api = run("""
+                print(list({1, 1, 2}))
+                print(set([3, 3, 4]))
+                print(list("ab"))
+                print(list())
+                print(set())
+                print(dict())
+                """);
+        assertEquals(List.of("[1, 2]", "{3, 4}", "[\"a\", \"b\"]", "[]", "{}", "{}"), api.printed);
+    }
+
+    // ---- collection methods ----
+
+    @Test
+    void listsCanBeBuiltUpWithAppend() {
+        FakeDroneApi api = run("""
+                items = []
+                for i in range(4):
+                    items.append(i * 2)
+                print(items)
+                print(len(items))
+                print(max(items))
+                """);
+        assertEquals(List.of("[0, 2, 4, 6]", "4", "6"), api.printed);
+    }
+
+    @Test
+    void listPopRemoveAndClear() {
+        FakeDroneApi api = run("""
+                items = [1, 2, 3]
+                print(items.pop())
+                print(items)
+                items.remove(1)
+                print(items)
+                items.clear()
+                print(items)
+                """);
+        assertEquals(List.of("3", "[1, 2]", "[2]", "[]"), api.printed);
+    }
+
+    @Test
+    void setAddRemoveAndClear() {
+        FakeDroneApi api = run("""
+                seen = set()
+                seen.add("a")
+                seen.add("a")
+                seen.add("b")
+                print(seen)
+                print(len(seen))
+                seen.remove("a")
+                print(seen)
+                seen.clear()
+                print(len(seen))
+                """);
+        assertEquals(List.of("{\"a\", \"b\"}", "2", "{\"b\"}", "0"), api.printed);
+    }
+
+    @Test
+    void dictKeysValuesGetRemoveAndClear() {
+        FakeDroneApi api = run("""
+                counts = {}
+                counts["wheat"] = 3
+                counts["carrot"] = 1
+                print(counts.keys())
+                print(counts.values())
+                print(counts.get("wheat"))
+                print(counts.get("nope"))
+                print(counts.remove("wheat"))
+                print(counts)
+                counts.clear()
+                print(counts)
+                """);
+        assertEquals(List.of(
+                "[\"wheat\", \"carrot\"]", "[3, 1]", "3", "None", "3", "{\"carrot\": 1}", "{}"), api.printed);
+    }
+
+    /** Methods must chain off whatever an index produced, not just off a bare name. */
+    @Test
+    void methodsChainOffIndexedValues() {
+        FakeDroneApi api = run("""
+                grid = [[1], [2]]
+                grid[0].append(9)
+                print(grid)
+                """);
+        assertEquals(List.of("[[1, 9], [2]]"), api.printed);
+    }
+
+    @Test
+    void unknownMethodRaises() {
+        assertThrows(MicraLangException.class, () -> run("[1].sort()\n"));
+    }
+
+    /**
+     * A loop that only calls a memory-growing method (never touches DroneApi) must still trip the
+     * runaway-loop watchdog, not run forever growing the heap. Method calls used to reset the same
+     * counter evalCall does, so this loop never tripped it at all - confirmed by an out-of-memory
+     * repro before the fix.
+     */
+    @Test
+    void appendOnlyLoopWithNoDroneApiCallsStillTripsTheRunawayWatchdog() {
+        MicraLangException ex = assertThrows(MicraLangException.class, () -> run("""
+                items = []
+                while True:
+                    items.append(1)
+                """));
+        assertTrue(ex.getMessage().contains("too long"), "expected the runaway-loop message, got: " + ex.getMessage());
+    }
+
+    /**
+     * The general-purpose builtins (len/abs/min/max/random/str/list/set/dict) touch no DroneApi
+     * either, so a loop calling only those must trip the watchdog too - not just method calls.
+     */
+    @Test
+    void generalPurposeBuiltinOnlyLoopWithNoDroneApiCallsStillTripsTheRunawayWatchdog() {
+        MicraLangException ex = assertThrows(MicraLangException.class, () -> run("""
+                while True:
+                    x = list([1, 2, 3])
+                """));
+        assertTrue(ex.getMessage().contains("too long"), "expected the runaway-loop message, got: " + ex.getMessage());
+    }
+
+    /** A general-purpose builtin nested inside a method-call argument must not reset the counter either. */
+    @Test
+    void methodCallWithAGeneralPurposeBuiltinArgumentStillTripsTheRunawayWatchdog() {
+        MicraLangException ex = assertThrows(MicraLangException.class, () -> run("""
+                items = []
+                while True:
+                    items.append(str(1))
+                """));
+        assertTrue(ex.getMessage().contains("too long"), "expected the runaway-loop message, got: " + ex.getMessage());
+    }
+
+    @Test
+    void methodOnANumberRaises() {
+        assertThrows(MicraLangException.class, () -> run("(5).append(1)\n"));
+    }
+
+    @Test
+    void methodWithTheWrongArgumentCountRaises() {
+        assertThrows(MicraLangException.class, () -> run("[1].append()\n"));
+    }
+
+    @Test
+    void popOnAnEmptyListRaises() {
+        assertThrows(MicraLangException.class, () -> run("[].pop()\n"));
+    }
+
+    @Test
+    void lenOfANumberRaises() {
+        assertThrows(MicraLangException.class, () -> run("print(len(5))\n"));
+    }
+
+    @Test
+    void maxOfAnEmptyListRaises() {
+        assertThrows(MicraLangException.class, () -> run("print(max([]))\n"));
+    }
+
+    @Test
+    void listIndexOutOfRangeRaises() {
+        assertThrows(MicraLangException.class, () -> run("print([1, 2][5])\n"));
+    }
+
+    @Test
+    void missingDictKeyRaises() {
+        assertThrows(MicraLangException.class, () -> run("print({\"a\": 1}[\"b\"])\n"));
+    }
+
+    @Test
+    void loopingOverANumberRaises() {
+        assertThrows(MicraLangException.class, () -> run("for x in 5:\n    print(x)\n"));
+    }
+
+    @Test
+    void assigningToSomethingUnassignableRaises() {
+        assertThrows(MicraLangException.class, () -> run("1 = 2\n"));
+    }
+
     @Test
     void moveTillPlantHarvest() {
         FakeDroneApi api = run("""
@@ -75,6 +488,24 @@ class InterpreterTest {
                 harvest()
                 """);
         assertEquals(List.of("till", "plant:wheat", "harvest"), api.calls);
+    }
+
+    @Test
+    void doAFlipDispatchesAndReturnsNoneLikePrint() {
+        FakeDroneApi api = run("""
+                do_a_flip()
+                x = do_a_flip()
+                print(x)
+                """);
+        assertEquals(List.of("do_a_flip", "do_a_flip"), api.calls);
+        assertEquals(List.of("None"), api.printed);
+    }
+
+    @Test
+    void doAFlipRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                do_a_flip(1)
+                """));
     }
 
     @Test

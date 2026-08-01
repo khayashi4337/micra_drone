@@ -29,6 +29,18 @@ class SampleScriptsTest {
         }
     }
 
+    /** The beginner sample must stay harmless: one harvest attempt and five flips, nothing that alters the plot. */
+    @Test
+    void firstProgramHarvestsOnceThenFlipsFiveTimes() {
+        FakeDroneApi api = new FakeDroneApi(3);
+        api.setCropAge(0, 0, 3); // mature, so the harvest() actually does something
+
+        new Interpreter(api).run(parse(SampleScripts.FIRST_PROGRAM));
+
+        assertEquals(List.of("harvest", "do_a_flip", "do_a_flip", "do_a_flip", "do_a_flip", "do_a_flip"),
+                api.calls);
+    }
+
     @Test
     void tillAndPlantCoversEveryCellInThePlot() {
         FakeDroneApi api = new FakeDroneApi(3);
@@ -72,6 +84,16 @@ class SampleScriptsTest {
         assertEquals(9, plantCount, "every tilled cell should then be planted");
         assertTrue(api.printed.contains("plains"), "expected the surveyed biome to be reported");
         assertTrue(api.printed.contains("9"), "expected all 9 cells to be counted as planted");
+    }
+
+    /** The collections sample: an untilled 3x3 plot is dirt everywhere, so it must find exactly one kind, 9 times. */
+    @Test
+    void countGroundTalliesEveryCellByGroundType() {
+        FakeDroneApi api = new FakeDroneApi(3);
+
+        new Interpreter(api).run(parse(SampleScripts.COUNT_GROUND));
+
+        assertEquals(List.of("見つけた地面の種類の数:", "1", "dirt", "9"), api.printed);
     }
 
     @Test
