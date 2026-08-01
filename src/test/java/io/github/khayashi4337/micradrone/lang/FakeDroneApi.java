@@ -19,6 +19,9 @@ final class FakeDroneApi implements DroneApi {
     private String biome = "plains";
     private double light = 15;
     private String plotId = "";
+    private boolean output = false;
+    private String pairTarget = "";
+    private boolean pairedResult = false;
 
     final List<String> calls = new ArrayList<>();
     final List<String> printed = new ArrayList<>();
@@ -53,6 +56,14 @@ final class FakeDroneApi implements DroneApi {
 
     void setPlotId(String plotId) {
         this.plotId = plotId;
+    }
+
+    void setPairedResult(boolean paired) {
+        this.pairedResult = paired;
+    }
+
+    String pairTarget() {
+        return pairTarget;
     }
 
     int posXInt() { return x; }
@@ -153,6 +164,30 @@ final class FakeDroneApi implements DroneApi {
         // The fake only ever deals in one implicit crop ("wheat"), matching the real game's current
         // (wheat-only) state - see LiveFarmBlockAccess.POINTS_PER_WHEAT_HARVEST.
         return "wheat".equals(crop) ? points : 0;
+    }
+
+    @Override
+    public void setOutput(boolean powered) {
+        calls.add("set_output:" + powered);
+        output = powered;
+    }
+
+    @Override
+    public boolean getOutput() {
+        calls.add("get_output");
+        return output;
+    }
+
+    @Override
+    public void pairWith(String id) {
+        calls.add("pair_with:" + id);
+        pairTarget = id;
+    }
+
+    @Override
+    public boolean isPaired() {
+        calls.add("is_paired");
+        return pairedResult;
     }
 
     // ---- perception (issue #10) ----

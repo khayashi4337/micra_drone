@@ -509,6 +509,78 @@ class InterpreterTest {
     }
 
     @Test
+    void setOutputDispatchesAndGetOutputReadsBackTheSameFake() {
+        FakeDroneApi api = run("""
+                set_output(True)
+                print(get_output())
+                set_output(False)
+                print(get_output())
+                """);
+        assertEquals(List.of("set_output:true", "get_output", "set_output:false", "get_output"), api.calls);
+        assertEquals(List.of("True", "False"), api.printed);
+    }
+
+    @Test
+    void setOutputRejectsANonBooleanArgument() {
+        assertThrows(MicraLangException.class, () -> run("""
+                set_output(1)
+                """));
+    }
+
+    @Test
+    void setOutputRejectsTheWrongArgumentCount() {
+        assertThrows(MicraLangException.class, () -> run("""
+                set_output()
+                """));
+        assertThrows(MicraLangException.class, () -> run("""
+                set_output(True, False)
+                """));
+    }
+
+    @Test
+    void getOutputRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                get_output(True)
+                """));
+    }
+
+    @Test
+    void pairWithDispatchesTheIdAndIsPairedReadsBackWhateverTheFakeReports() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        api.setPairedResult(true);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                pair_with("north_field")
+                print(is_paired())
+                """).scan()).parseProgram());
+        assertEquals(List.of("pair_with:north_field", "is_paired"), api.calls);
+        assertEquals("north_field", api.pairTarget());
+        assertEquals(List.of("True"), api.printed);
+    }
+
+    @Test
+    void pairWithEmptyStringClearsThePairTarget() {
+        FakeDroneApi api = run("""
+                pair_with("north_field")
+                pair_with("")
+                """);
+        assertEquals("", api.pairTarget());
+    }
+
+    @Test
+    void pairWithRejectsANonStringArgument() {
+        assertThrows(MicraLangException.class, () -> run("""
+                pair_with(5)
+                """));
+    }
+
+    @Test
+    void isPairedRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                is_paired(True)
+                """));
+    }
+
+    @Test
     void moveFailsAtBoundaryAndReturnsFalse() {
         FakeDroneApi api = run("""
                 if move("north"):

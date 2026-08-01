@@ -113,8 +113,15 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private volatile int dirX = 1;
     private volatile int dirZ = 1;
     private volatile int groundYOffset = 0;
-    // True only once scanForCornerMarker has actually found a paired corner marker - see its use in
-    // serverTick, which must not ambient-boost growth in the size-5-toward-SE guess used otherwise.
+    // The Y offset of this plot's own Corner Marker (found by diagonal scan, see #cornerMarkerPos)
+    // from this controller (see CornerMarkerScan.PlotBounds#markerDy) - together with
+    // dirX/dirZ/worldSize this reconstructs the marker's exact BlockPos for redstone output, without
+    // a re-scan. Meaningless while plotConfirmed is false.
+    private volatile int markerDy = 0;
+    // True only once scanForCornerMarker has actually found this plot's own corner marker (by
+    // diagonal scan - a DIFFERENT relationship than pairedMarkerPos's mutual pair_with() partner) -
+    // see its use in serverTick, which must not ambient-boost growth in the size-5-toward-SE guess
+    // used otherwise.
     private volatile boolean plotConfirmed = false;
     // Belongs to this controller, not the plot's geometry: survives corner-marker re-scans on purpose.
     // Keyed by crop name (e.g. "wheat"); written on the main thread, read from the network/GUI push
@@ -217,6 +224,85 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
                 drone.startFlip();
             }
         }
+    }
+
+    /**
+     * set_output(): writes {@link CornerMarkerBlock#POWERED} directly (no NBT of our own - vanilla
+     * already persists BlockState across saves/reloads, the same way {@link DroneControllerBlock#ACTIVE}
+     * needs none) onto two different markers, each independently optional:
+     * <ol>
+     *   <li>this plot's OWN marker - the one diagonally scanned from this controller ({@link #cornerMarkerPos}) - unchanged from before pair_with() existed;</li>
+     *   <li>if a mutual pair_with() pairing holds (see {@link #pairedMarkerPos}), the OTHER plot's
+     *       paired-by-name partner marker too - wireless redstone between two markers that have named
+     *       each other, which may be anywhere in the world, not diagonally adjacent to anything here.</li>
+     * </ol>
+     * Silently skips whichever side (or both) isn't actually a corner marker right now - either could
+     * have been broken since the last scan/pairing.
+     */
+    @Override
+    public void setRedstoneOutput(boolean powered) {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        cornerMarkerPos().ifPresent(pos -> writeMarkerPowered(serverLevel, pos, powered));
+        pairedMarkerPos(serverLevel).ifPresent(pos -> writeMarkerPowered(serverLevel, pos, powered));
+    }
+
+    private static void writeMarkerPowered(ServerLevel serverLevel, BlockPos pos, boolean powered) {
+        BlockState state = serverLevel.getBlockState(pos);
+        if (state.is(MicraDrone.CORNER_MARKER_BLOCK.get())) {
+            serverLevel.setBlock(pos, state.setValue(CornerMarkerBlock.POWERED, powered), Block.UPDATE_ALL);
+        }
+    }
+
+    /** get_output(): reads the marker's current {@link CornerMarkerBlock#POWERED} state straight off the world. */
+    @Override
+    public boolean redstoneOutput() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+        return cornerMarkerPos()
+                .map(serverLevel::getBlockState)
+                .filter(state -> state.is(MicraDrone.CORNER_MARKER_BLOCK.get()))
+                .map(state -> state.getValue(CornerMarkerBlock.POWERED))
+                .orElse(false);
+    }
+
+    /** pair_with(): writes straight onto this plot's own marker's {@code pairedTargetId} - one-sided, see {@link #isPaired}. */
+    @Override
+    public void setPairTarget(String id) {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        cornerMarkerPos().flatMap(pos -> CornerMarkerBlockEntity.at(serverLevel, pos))
+                .ifPresent(mine -> mine.setPairedTargetId(id));
+    }
+
+    /** is_paired(): true only if {@link #pairedMarkerPos} actually resolves to something. */
+    @Override
+    public boolean isPaired() {
+        return level instanceof ServerLevel serverLevel && pairedMarkerPos(serverLevel).isPresent();
+    }
+
+    /**
+     * The mutually pair_with()-linked partner marker's position (a DIFFERENT relationship than
+     * {@link #cornerMarkerPos} - that one is this plot's own marker, found by diagonal scan; this one
+     * is whatever other marker, anywhere in the world, has named the same pair back), re-resolved
+     * fresh every call - nothing about a pairing is cached. Resolves this plot's own marker, follows
+     * its {@code pairedTargetId} (via {@link CornerMarkerBlockEntity#resolveId}, world-wide) to the
+     * OTHER marker, and only returns it if that one names this marker back too. Empty if this plot has
+     * no marker of its own, that marker has no pair target set, or the pairing isn't (yet, or anymore)
+     * mutual.
+     */
+    private Optional<BlockPos> pairedMarkerPos(ServerLevel serverLevel) {
+        Optional<CornerMarkerBlockEntity> mine = cornerMarkerPos().flatMap(pos -> CornerMarkerBlockEntity.at(serverLevel, pos));
+        if (mine.isEmpty() || mine.get().pairedTargetId().isEmpty()) {
+            return Optional.empty();
+        }
+        Optional<BlockPos> theirPos = CornerMarkerBlockEntity.resolveId(serverLevel, mine.get().pairedTargetId());
+        Optional<CornerMarkerBlockEntity> theirs = theirPos.flatMap(pos -> CornerMarkerBlockEntity.at(serverLevel, pos));
+        boolean mutual = theirs.isPresent() && theirs.get().pairedTargetId().equals(mine.get().displayId());
+        return mutual ? theirPos : Optional.empty();
     }
 
     /** Removes the visible drone entity, e.g. when this controller block is broken. */
@@ -345,9 +431,28 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         dirX = bounds.dirX();
         dirZ = bounds.dirZ();
         groundYOffset = bounds.groundYOffset();
+        markerDy = bounds.markerDy();
         // Ambient effects like the growth boost must never apply to the size-5-toward-SE guess used
         // when no marker has actually been placed/found - only to a plot the player explicitly marked.
         plotConfirmed = bounds.markerFound();
+    }
+
+    /**
+     * This plot's own Corner Marker's exact position - the one found by diagonal scan from this
+     * controller (a DIFFERENT relationship than {@link #pairedMarkerPos}'s mutual pair_with()
+     * partner, which can be any marker anywhere in the world) - reconstructed from the last
+     * {@link #scanForCornerMarker} (dirX/dirZ/worldSize/markerDy) rather than re-scanning, via
+     * {@link CornerMarkerScan.PlotBounds#markerOffset} - the same coordinate math
+     * {@code CornerMarkerScanTest} exercises, so a future change to it can't silently diverge between
+     * what's tested and what actually runs. Empty when this plot has no marker of its own
+     * ({@link #plotConfirmed} false).
+     */
+    private Optional<BlockPos> cornerMarkerPos() {
+        if (!plotConfirmed) {
+            return Optional.empty();
+        }
+        int[] offset = new CornerMarkerScan.PlotBounds(worldSize, dirX, dirZ, true, groundYOffset, markerDy).markerOffset();
+        return Optional.of(getBlockPos().offset(offset[0], offset[1], offset[2]));
     }
 
     /**
