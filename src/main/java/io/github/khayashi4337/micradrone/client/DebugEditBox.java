@@ -256,7 +256,7 @@ final class DebugEditBox extends MultiLineEditBox {
             if (start >= end) {
                 continue;
             }
-            cursorX = guiGraphics.drawString(font, value.substring(start, end), cursorX, y, colorOf(span.kind())) - 1;
+            cursorX = guiGraphics.drawString(font, value.substring(start, end), cursorX, y, colorOf(span.kind()));
         }
         return cursorX;
     }
