@@ -436,9 +436,11 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     /**
-     * The paired marker's exact position, reconstructed from the last {@link #scanForCornerMarker}
-     * (dirX/dirZ/worldSize/markerDy) rather than re-scanning - empty when no marker is currently
-     * paired ({@link #plotConfirmed} false).
+     * This plot's own Corner Marker's exact position - the one found by diagonal scan from this
+     * controller (a DIFFERENT relationship than {@link #pairedMarkerPos}'s mutual pair_with()
+     * partner, which can be any marker anywhere in the world) - reconstructed from the last
+     * {@link #scanForCornerMarker} (dirX/dirZ/worldSize/markerDy) rather than re-scanning. Empty when
+     * this plot has no marker of its own ({@link #plotConfirmed} false).
      */
     private Optional<BlockPos> cornerMarkerPos() {
         if (!plotConfirmed) {

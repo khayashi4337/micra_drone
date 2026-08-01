@@ -45,26 +45,30 @@ public interface DroneApi {
     double getPoints(String crop);
 
     /**
-     * Sets the paired Corner Marker's redstone output on (full power) or off - lets a script signal
-     * the world outside the plot (a lamp, a door, another contraption). Does nothing if no marker is
-     * currently paired with this plot. Persists until changed again, independent of whether a script
-     * is running.
+     * Sets this plot's own Corner Marker's redstone output on (full power) or off - lets a script
+     * signal the world outside the plot (a lamp, a door, another contraption). Does nothing if this
+     * plot has no marker (none placed, or none found on a diagonal). Persists until changed again,
+     * independent of whether a script is running. Once {@link #isPaired} is true, also propagates to
+     * the mutually-paired partner marker (which may be anywhere in the world, not diagonally adjacent
+     * to anything here) - see {@link #pairWith}.
      */
     void setOutput(boolean powered);
 
-    /** Read-only: the paired Corner Marker's current redstone output state (false if none is paired). */
+    /** Read-only: this plot's own marker's current redstone output state (false if it has no marker). */
     boolean getOutput();
 
     /**
-     * Declares (or, with "", clears) the id (see get_plot_id()) this plot's marker wants to pair
-     * with - one-sided by itself, see {@link #isPaired()}. Does nothing if no marker is currently
-     * paired with this plot.
+     * Declares (or, with "", clears) the id (see get_plot_id()) this plot's own marker wants to
+     * mutually pair with - a DIFFERENT relationship than "this plot's own marker" above (that one is
+     * always found by diagonal scan from the controller; a pair_with() target can be any marker
+     * anywhere in the world). One-sided by itself, see {@link #isPaired()}. Does nothing if this plot
+     * has no marker of its own.
      */
     void pairWith(String id);
 
     /**
-     * Read-only: true only if this plot's marker AND the marker it named both name each other back
-     * (mutual pairing). Once true, {@link #setOutput} also propagates to the paired marker.
+     * Read-only: true only if this plot's own marker AND the marker it named both name each other
+     * back (mutual pairing). Once true, {@link #setOutput} also propagates to the paired marker.
      */
     boolean isPaired();
 
@@ -91,9 +95,10 @@ public interface DroneApi {
     double getLight();
 
     /**
-     * Read-only: this plot's Corner Marker id - the friendly name if one was set via anvil, else a
-     * short form of its auto-assigned id (see {@code CornerMarkerBlockEntity#displayId}). Empty
-     * string if no marker is currently paired with this plot.
+     * Read-only: this plot's own Corner Marker's id - the friendly name if one was set via anvil, else
+     * a short form of its auto-assigned id (see {@code CornerMarkerBlockEntity#displayId}). Empty
+     * string if this plot has no marker (none placed, or none found on a diagonal). This is the id
+     * another plot's script would pass to {@link #pairWith}.
      */
     String getPlotId();
 

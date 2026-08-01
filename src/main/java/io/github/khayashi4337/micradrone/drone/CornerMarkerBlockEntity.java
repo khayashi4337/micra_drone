@@ -46,12 +46,15 @@ public class CornerMarkerBlockEntity extends BlockEntity {
     private int sequenceNumber = -1;
     private String friendlyName = "";
     /**
-     * The other marker's {@link #displayId} this marker wants to pair with (empty = none) - see
-     * pair_with()/is_paired(). One-sided by itself; {@link #isPairedWith} on the target checks
-     * whether the target has named this marker back before treating the pairing as real. Tied to
-     * this placed block, not the item: unlike {@code friendlyName}/{@code sequenceNumber}, does NOT
-     * round-trip through {@link #collectImplicitComponents} - a pairing is a relationship between two
-     * specific world positions, meaningless to carry onto a dropped/replanted item.
+     * The other marker's {@link #displayId} this marker wants to mutually pair with (empty = none) -
+     * see pair_with()/is_paired(). One-sided by itself; only reading this ONE field never tells you
+     * whether a pairing is actually mutual - that check (does the target marker's own
+     * {@code pairedTargetId} point back here) is done by
+     * {@code DroneControllerBlockEntity#pairedMarkerPos}, not by this class, since it needs to resolve
+     * and read a second, potentially-anywhere-in-the-world marker. Tied to this placed block, not the
+     * item: unlike {@code friendlyName}/{@code sequenceNumber}, does NOT round-trip through
+     * {@link #collectImplicitComponents} - a pairing is a relationship between two specific world
+     * positions, meaningless to carry onto a dropped/replanted item.
      */
     private String pairedTargetId = "";
 
