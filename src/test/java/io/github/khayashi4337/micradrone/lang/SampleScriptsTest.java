@@ -92,6 +92,27 @@ class SampleScriptsTest {
         assertEquals(List.of("harvest ready:", "False"), api.printed);
     }
 
+    @Test
+    void pairAndSignalHarvestAlwaysPairsWithNorthFieldRegardlessOfMaturity() {
+        FakeDroneApi api = new FakeDroneApi(3);
+        api.setPairedResult(true);
+
+        new Interpreter(api).run(parse(SampleScripts.PAIR_AND_SIGNAL_HARVEST));
+
+        assertEquals("north_field", api.pairTarget());
+        assertEquals(List.of("paired with north_field", "harvest ready:", "False"), api.printed);
+    }
+
+    @Test
+    void pairAndSignalHarvestReportsWhenNotYetPaired() {
+        FakeDroneApi api = new FakeDroneApi(3); // setPairedResult defaults to false
+
+        new Interpreter(api).run(parse(SampleScripts.PAIR_AND_SIGNAL_HARVEST));
+
+        assertEquals(List.of("not paired yet - run pair_with() on the other plot too", "harvest ready:", "False"),
+                api.printed);
+    }
+
     /**
      * The perception sample (issue #10) must actually branch on what it reads, not just call the
      * new commands: on an untilled plot every cell should take the "dirt -> till, then plant" path.
