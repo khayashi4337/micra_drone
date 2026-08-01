@@ -16,8 +16,9 @@ class SampleCatalogTest {
                 unlocked++;
             }
         }
-        assertEquals(5, unlocked, "help, first_program, main, plot_id, and move_square should need no bookshelves");
-        for (int i = 0; i < 5; i++) {
+        assertEquals(7, unlocked,
+                "the 3 help scrolls, first_program, main, plot_id, and move_square should need no bookshelves");
+        for (int i = 0; i < 7; i++) {
             assertTrue(SampleCatalog.isUnlocked(i, 0), "index " + i);
         }
     }

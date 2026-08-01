@@ -1,15 +1,20 @@
 package io.github.khayashi4337.micradrone.drone;
 
 /**
- * Static content for the command reference. Obtainable in-game as a help scroll from the
- * enchanting table (see {@link SampleCatalog}) - it lives in this Minecraft-free package (moved
- * from {@code client}) because the server writes it into scroll items. The leading "#" line makes
- * {@link ScriptFileStore#describeScript} produce a real description wherever the scroll is listed.
+ * Static content for the command reference, split into three scrolls (COMMANDS / ADVANCED /
+ * EDITOR_AND_SCROLLS) so each stays comfortably under {@link DroneControllerBlockEntity#MAX_SCRIPT_CHARS}
+ * with room to grow independently, instead of one scroll creeping toward the limit. Obtainable
+ * in-game as help scrolls from the enchanting table (see {@link SampleCatalog}) - it lives in this
+ * Minecraft-free package (moved from {@code client}) because the server writes it into scroll
+ * items. Each constant's leading "#" line makes {@link ScriptFileStore#describeScript} produce a
+ * real description wherever the scroll is listed.
  */
 public final class CommandsHelpDoc {
-    public static final String CONTENT = """
-            # コマンド一覧と文法のリファレンス(実行するスクリプトではない)
-            === MicraDrone スクリプト コマンド一覧 ===
+
+    /** Every command a script can call, plus the language's own syntax - what you need to write any script. */
+    public static final String COMMANDS = """
+            # コマンド一覧(1/3): 基本コマンドと文法のリファレンス(実行するスクリプトではない)
+            === MicraDrone スクリプト コマンド一覧 (1/3: 基本コマンドと文法) ===
 
             ■ ドローンを動かす（ワールドを変える。実行に少し時間がかかる）
             move("north" | "south" | "east" | "west")
@@ -23,7 +28,7 @@ public final class CommandsHelpDoc {
 
             plant("carrot")
                 耕地にニンジンを植える。ショップでcarrotをアンロックするまでは
-                常にfalseになる（アンロックの方法は下の「アンロックショップ」参照）。
+                常にfalseになる（アンロックの方法はヘルプ(2/3)の「アンロックショップ」参照）。
 
             plant("pumpkin")
                 耕地にカボチャの苗（つる）を植える。育ちきると本家vanillaの
@@ -107,6 +112,46 @@ public final class CommandsHelpDoc {
                 その名前、付けていなければ自動採番された短いIDが返る。
                 マーカーが見つからない場合は空文字列。複数のプロットを
                 持っているときにスクリプトから見分けるのに使える。
+
+            ■ ログに出力する
+            print(値)
+                コントローラのScripts画面のログ欄に1行追記する。数値・文字列・真偽値を渡せる。
+                注意: 文字列と数値を + で連結することはできない
+                (例: "points: " + get_points() はエラーになる。分けてprintする)。
+
+            ■ 文法（インデント方式、Python風）
+            - コメントは # から行末まで
+            - 変数への代入: x = 1
+            - 条件分岐: if 条件: / elif 条件: / else:
+            - 繰り返し: while 条件:
+            - 繰り返し（回数指定）: for i in range(5):
+            - 演算子: + - * / %、比較 == != < > <= >=、論理 and or not
+            - インデントは半角スペースのみ（タブは使えない）
+
+            ■ 使用例
+            till()
+            plant("wheat")
+            for i in range(4):
+                move("east")
+                till()
+                plant("wheat")
+
+            ■ 使用例（まわりを見て判断する）
+            ground = get_ground()
+            if ground == "farmland":
+                plant("wheat")
+            elif ground == "dirt":
+                till()
+                plant("wheat")
+            else:
+                print("ここには植えられない")
+                print(ground)
+            """;
+
+    /** Shop economics, giant-pumpkin fusion, and the collection types (list/dict/set) - past the basics. */
+    public static final String ADVANCED = """
+            # コマンド一覧(2/3): アンロックショップ・かぼちゃ融合・コレクション型のリファレンス(実行するスクリプトではない)
+            === MicraDrone スクリプト コマンド一覧 (2/3: ショップ・かぼちゃ融合・コレクション型) ===
 
             ■ アンロックショップ
             コーナーマーカーのブロックを右クリックするか、IDE画面右上の
@@ -194,40 +239,12 @@ public final class CommandsHelpDoc {
                 print(pair[1][1])      # → 7（別物のつもりでも同じもの）
             別々にしたいなら、[[0,0], [0,0]] のように書くか、
             ループの中で毎回新しく作ること。
+            """;
 
-            ■ ログに出力する
-            print(値)
-                コントローラのScripts画面のログ欄に1行追記する。数値・文字列・真偽値を渡せる。
-                注意: 文字列と数値を + で連結することはできない
-                (例: "points: " + get_points() はエラーになる。分けてprintする)。
-
-            ■ 文法（インデント方式、Python風）
-            - コメントは # から行末まで
-            - 変数への代入: x = 1
-            - 条件分岐: if 条件: / elif 条件: / else:
-            - 繰り返し: while 条件:
-            - 繰り返し（回数指定）: for i in range(5):
-            - 演算子: + - * / %、比較 == != < > <= >=、論理 and or not
-            - インデントは半角スペースのみ（タブは使えない）
-
-            ■ 使用例
-            till()
-            plant("wheat")
-            for i in range(4):
-                move("east")
-                till()
-                plant("wheat")
-
-            ■ 使用例（まわりを見て判断する）
-            ground = get_ground()
-            if ground == "farmland":
-                plant("wheat")
-            elif ground == "dirt":
-                till()
-                plant("wheat")
-            else:
-                print("ここには植えられない")
-                print(ground)
+    /** How to use the IDE and the script-scroll item itself - tooling, not the language. */
+    public static final String EDITOR_AND_SCROLLS = """
+            # コマンド一覧(3/3): IDEと巻物の使い方のリファレンス(実行するスクリプトではない)
+            === MicraDrone スクリプト コマンド一覧 (3/3: IDEと巻物の使い方) ===
 
             ■ エディタ（IDE）の使い方
             コントローラを右クリックすると開く画面。左半分がスクリプトを書く
