@@ -476,15 +476,18 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      * This plot's own Corner Marker's exact position - the one found by diagonal scan from this
      * controller (a DIFFERENT relationship than {@link #pairedMarkerPos}'s mutual pair_with()
      * partner, which can be any marker anywhere in the world) - reconstructed from the last
-     * {@link #scanForCornerMarker} (dirX/dirZ/worldSize/markerDy) rather than re-scanning. Empty when
-     * this plot has no marker of its own ({@link #plotConfirmed} false).
+     * {@link #scanForCornerMarker} (dirX/dirZ/worldSize/markerDy) rather than re-scanning, via
+     * {@link CornerMarkerScan.PlotBounds#markerOffset} - the same coordinate math
+     * {@code CornerMarkerScanTest} exercises, so a future change to it can't silently diverge between
+     * what's tested and what actually runs. Empty when this plot has no marker of its own
+     * ({@link #plotConfirmed} false).
      */
     private Optional<BlockPos> cornerMarkerPos() {
         if (!plotConfirmed) {
             return Optional.empty();
         }
-        int distance = worldSize + 1;
-        return Optional.of(getBlockPos().offset(dirX * distance, markerDy, dirZ * distance));
+        int[] offset = new CornerMarkerScan.PlotBounds(worldSize, dirX, dirZ, true, groundYOffset, markerDy).markerOffset();
+        return Optional.of(getBlockPos().offset(offset[0], offset[1], offset[2]));
     }
 
     /**
