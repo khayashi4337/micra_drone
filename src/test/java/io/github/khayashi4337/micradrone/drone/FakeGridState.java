@@ -13,6 +13,8 @@ final class FakeGridState implements DroneGridState {
     private final Set<String> unlockedCrops = new HashSet<>(Set.of("wheat"));
     private int flipCount;
     private boolean redstoneOutput;
+    private String pairTarget = "";
+    private boolean paired;
 
     FakeGridState(int size) {
         this.size = size;
@@ -95,5 +97,24 @@ final class FakeGridState implements DroneGridState {
     @Override
     public boolean redstoneOutput() {
         return redstoneOutput;
+    }
+
+    String pairTarget() {
+        return pairTarget;
+    }
+
+    /** Test-only: the real mutual-pairing check lives in DroneControllerBlockEntity (Minecraft-dependent). */
+    void setPairedForTest(boolean paired) {
+        this.paired = paired;
+    }
+
+    @Override
+    public void setPairTarget(String id) {
+        pairTarget = id;
+    }
+
+    @Override
+    public boolean isPaired() {
+        return paired;
     }
 }

@@ -256,6 +256,36 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
                 .orElse(false);
     }
 
+    /** pair_with(): writes straight onto the paired marker's own {@code pairedTargetId} - one-sided, see {@link #isPaired}. */
+    @Override
+    public void setPairTarget(String id) {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        cornerMarkerPos().flatMap(pos -> CornerMarkerBlockEntity.at(serverLevel, pos))
+                .ifPresent(mine -> mine.setPairedTargetId(id));
+    }
+
+    /**
+     * is_paired(): resolves this plot's own marker, follows its {@code pairedTargetId} (via
+     * {@link CornerMarkerBlockEntity#resolveId}, world-wide - the target can be any marker, not just
+     * one on a diagonal from some controller) to the OTHER marker, and checks that one names this
+     * marker back. Both sides are re-resolved fresh every call - nothing about a pairing is cached.
+     */
+    @Override
+    public boolean isPaired() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+        Optional<CornerMarkerBlockEntity> mine = cornerMarkerPos().flatMap(pos -> CornerMarkerBlockEntity.at(serverLevel, pos));
+        if (mine.isEmpty() || mine.get().pairedTargetId().isEmpty()) {
+            return false;
+        }
+        Optional<CornerMarkerBlockEntity> theirs = CornerMarkerBlockEntity.resolveId(serverLevel, mine.get().pairedTargetId())
+                .flatMap(pos -> CornerMarkerBlockEntity.at(serverLevel, pos));
+        return theirs.isPresent() && theirs.get().pairedTargetId().equals(mine.get().displayId());
+    }
+
     /** Removes the visible drone entity, e.g. when this controller block is broken. */
     public void discardDroneEntity() {
         if (level instanceof ServerLevel serverLevel) {

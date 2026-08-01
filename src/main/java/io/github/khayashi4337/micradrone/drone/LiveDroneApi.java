@@ -119,6 +119,16 @@ public final class LiveDroneApi implements DroneApi {
         return queryMainThread(grid::redstoneOutput);
     }
 
+    @Override
+    public void pairWith(String id) {
+        dispatch(() -> new Attempt(true, () -> grid.setPairTarget(id)));
+    }
+
+    @Override
+    public boolean isPaired() {
+        return queryMainThread(grid::isPaired);
+    }
+
     // ---- perception (GitHub issue #10) ----
     // All read-only, so they take canHarvest()'s route: a plain main-thread query with no pacing
     // delay. Reading the world costs a script nothing but the main-thread round-trip, which keeps

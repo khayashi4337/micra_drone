@@ -545,6 +545,42 @@ class InterpreterTest {
     }
 
     @Test
+    void pairWithDispatchesTheIdAndIsPairedReadsBackWhateverTheFakeReports() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        api.setPairedResult(true);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                pair_with("north_field")
+                print(is_paired())
+                """).scan()).parseProgram());
+        assertEquals(List.of("pair_with:north_field", "is_paired"), api.calls);
+        assertEquals("north_field", api.pairTarget());
+        assertEquals(List.of("True"), api.printed);
+    }
+
+    @Test
+    void pairWithEmptyStringClearsThePairTarget() {
+        FakeDroneApi api = run("""
+                pair_with("north_field")
+                pair_with("")
+                """);
+        assertEquals("", api.pairTarget());
+    }
+
+    @Test
+    void pairWithRejectsANonStringArgument() {
+        assertThrows(MicraLangException.class, () -> run("""
+                pair_with(5)
+                """));
+    }
+
+    @Test
+    void isPairedRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                is_paired(True)
+                """));
+    }
+
+    @Test
     void moveFailsAtBoundaryAndReturnsFalse() {
         FakeDroneApi api = run("""
                 if move("north"):

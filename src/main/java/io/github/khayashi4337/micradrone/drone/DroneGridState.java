@@ -48,4 +48,18 @@ public interface DroneGridState {
 
     /** Current redstone output state - false if no marker is paired, or none has been set yet. */
     boolean redstoneOutput();
+
+    /**
+     * pair_with(): declares (or, with "", clears) the id this plot's marker wants to pair with.
+     * One-sided by itself - see {@link #isPaired()}. Does nothing if no marker is paired with this
+     * plot.
+     */
+    void setPairTarget(String id);
+
+    /**
+     * is_paired(): true only if this plot's marker names some other marker AND that other marker
+     * names this one back (mutual). False if no marker is paired with this plot, no pair target has
+     * been set, or the target hasn't (yet) named this marker back.
+     */
+    boolean isPaired();
 }
