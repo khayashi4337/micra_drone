@@ -131,6 +131,38 @@ class InterpreterTest {
         assertEquals(List.of("3"), api.printed);
     }
 
+    /** Nesting has no fixed limit - indexing and index-assignment both chain as deep as the data goes. */
+    @Test
+    void threeDimensionalListsReadAndWrite() {
+        FakeDroneApi api = run("""
+                cube = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]]
+                print(cube[1][0][1])
+                cube[0][1][0] = 99
+                print(cube[0][1][0])
+                print(cube[0][1])
+                total = 0
+                for plane in cube:
+                    for row in plane:
+                        for cell in row:
+                            total = total + cell
+                print(total)
+                """);
+        assertEquals(List.of("6", "99", "[99, 4]", "132"), api.printed);
+    }
+
+    /** Building nesting up at runtime (rather than as one literal) must work the same way. */
+    @Test
+    void nestedListsCanBeBuiltAndMutatedThroughVariables() {
+        FakeDroneApi api = run("""
+                inner = [0, 0]
+                middle = [inner, inner]
+                outer = [middle]
+                outer[0][0][1] = 7
+                print(outer[0][0][1])
+                """);
+        assertEquals(List.of("7"), api.printed);
+    }
+
     @Test
     void forLoopsWalkListsSetsDictKeysAndStrings() {
         FakeDroneApi api = run("""
@@ -206,6 +238,90 @@ class InterpreterTest {
         new Interpreter(api).run(program);
         assertEquals(1, api.printed.size());
         assertTrue(api.printed.get(0).endsWith("...]]]]]]]]"), "expected the cycle to bottom out in an ellipsis");
+    }
+
+    // ---- general-purpose builtins ----
+
+    @Test
+    void lenCountsEveryContainer() {
+        FakeDroneApi api = run("""
+                print(len([1, 2, 3]))
+                print(len({"a": 1}))
+                print(len({1, 2}))
+                print(len("hello"))
+                print(len([]))
+                """);
+        assertEquals(List.of("3", "1", "2", "5", "0"), api.printed);
+    }
+
+    @Test
+    void absHandlesBothSigns() {
+        FakeDroneApi api = run("""
+                print(abs(-3))
+                print(abs(3))
+                print(abs(-2.5))
+                """);
+        assertEquals(List.of("3", "3", "2.5"), api.printed);
+    }
+
+    /** Python's two shapes: several arguments, or one collection to scan. */
+    @Test
+    void minAndMaxTakeArgumentsOrACollection() {
+        FakeDroneApi api = run("""
+                print(min(3, 1, 2))
+                print(max(3, 1, 2))
+                print(min([3, 1, 2]))
+                print(max([3, 1, 2]))
+                print(max({4, 9}))
+                """);
+        assertEquals(List.of("1", "3", "1", "3", "9"), api.printed);
+    }
+
+    @Test
+    void randomStaysWithinZeroToOne() {
+        FakeDroneApi api = run("""
+                for i in range(20):
+                    r = random()
+                    if r < 0:
+                        print("below")
+                    if r >= 1:
+                        print("above")
+                print("done")
+                """);
+        assertEquals(List.of("done"), api.printed);
+    }
+
+    @Test
+    void strTurnsValuesIntoText() {
+        FakeDroneApi api = run("""
+                print(str(5) + " items")
+                print(str(True))
+                print(str([1, 2]))
+                """);
+        assertEquals(List.of("5 items", "True", "[1, 2]"), api.printed);
+    }
+
+    @Test
+    void listAndSetConvertBetweenContainers() {
+        FakeDroneApi api = run("""
+                print(list({1, 1, 2}))
+                print(set([3, 3, 4]))
+                print(list("ab"))
+                print(list())
+                print(set())
+                print(dict())
+                """);
+        assertEquals(List.of("[1, 2]", "{3, 4}", "[\"a\", \"b\"]", "[]", "{}", "{}"), api.printed);
+    }
+
+    @Test
+    void lenOfANumberRaises() {
+        assertThrows(MicraLangException.class, () -> run("print(len(5))\n"));
+    }
+
+    @Test
+    void maxOfAnEmptyListRaises() {
+        assertThrows(MicraLangException.class, () -> run("print(max([]))\n"));
     }
 
     @Test

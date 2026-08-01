@@ -16,7 +16,9 @@ public final class CommandNames {
             "can_harvest", "is_rotten",
             "get_pos_x", "get_pos_y", "get_world_size", "get_points",
             "get_ground", "get_block_above", "get_time", "get_weather", "get_biome", "get_light", "get_plot_id",
-            "print", "range");
+            "print", "range",
+            // General-purpose, nothing to do with the drone - see Interpreter's "general-purpose builtins".
+            "len", "abs", "min", "max", "random", "str", "list", "dict", "set");
 
     private CommandNames() {
     }

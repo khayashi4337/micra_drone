@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -28,6 +29,8 @@ public final class Interpreter {
     /** Optional debugger (breakpoints/pause/step - see DebugController); null = no debugging overhead. */
     private final DebugController debug;
     private final Environment env = new Environment();
+    /** Backs {@code random()}. Unseeded on purpose - scripts that want repeatable runs shouldn't call it. */
+    private final Random random = new Random();
     private long statementsSinceApiCall = 0;
 
     public Interpreter(DroneApi api) {
@@ -432,11 +435,106 @@ public final class Interpreter {
                 api.print(stringify(eval(args.get(0))));
                 yield MicraNone.INSTANCE;
             }
+            // ---- general-purpose builtins (no drone involved) ----
+            case "len" -> {
+                requireArgCount(call, 1);
+                yield (double) lengthOf(argAt(call, 0), call.line());
+            }
+            case "abs" -> {
+                requireArgCount(call, 1);
+                yield Math.abs(asDouble(argAt(call, 0), call.line()));
+            }
+            case "min" -> extreme(call, true);
+            case "max" -> extreme(call, false);
+            case "random" -> {
+                requireArgCount(call, 0);
+                yield random.nextDouble();
+            }
+            case "str" -> {
+                requireArgCount(call, 1);
+                yield stringify(eval(args.get(0)));
+            }
+            case "list" -> {
+                requireArgCount(call, args.isEmpty() ? 0 : 1);
+                yield args.isEmpty() ? new ArrayList<>() : new ArrayList<>(collectionArg(call, "list"));
+            }
+            case "set" -> {
+                requireArgCount(call, args.isEmpty() ? 0 : 1);
+                yield args.isEmpty() ? new LinkedHashSet<>() : new LinkedHashSet<>(collectionArg(call, "set"));
+            }
+            case "dict" -> {
+                requireArgCount(call, 0);
+                yield new LinkedHashMap<>();
+            }
             case "range" -> throw new MicraLangException(call.line(), "range() can only be used in a for-loop");
             default -> throw new MicraLangException(call.line(), "unknown function '" + call.name() + "'");
         };
         statementsSinceApiCall = 0;
         return result;
+    }
+
+    /** {@code len(x)} - items in a collection, or characters in a string. */
+    private int lengthOf(Object v, int line) {
+        if (v instanceof Collection<?> c) return c.size();
+        if (v instanceof Map<?, ?> m) return m.size();
+        if (v instanceof String s) return s.length();
+        throw new MicraLangException(line, "len() expects a list, a set, a dict, or a string but got " + typeName(v));
+    }
+
+    /**
+     * {@code min}/{@code max}, in both of Python's shapes: several arguments
+     * ({@code max(1, 2, 3)}) or one collection to scan ({@code max(items)}).
+     */
+    private Object extreme(Expr.Call call, boolean wantSmallest) {
+        List<Object> candidates = new ArrayList<>();
+        if (call.args().size() == 1) {
+            Object only = eval(call.args().get(0));
+            if (only instanceof Collection<?> c) {
+                candidates.addAll(c);
+            } else {
+                candidates.add(only);
+            }
+        } else {
+            if (call.args().isEmpty()) {
+                throw new MicraLangException(call.line(), call.name() + "() needs at least one argument");
+            }
+            for (Expr arg : call.args()) {
+                candidates.add(eval(arg));
+            }
+        }
+        if (candidates.isEmpty()) {
+            throw new MicraLangException(call.line(), call.name() + "() got an empty collection");
+        }
+        Object best = candidates.get(0);
+        double bestValue = asDouble(best, call.line());
+        for (Object candidate : candidates) {
+            double value = asDouble(candidate, call.line());
+            if (wantSmallest ? value < bestValue : value > bestValue) {
+                best = candidate;
+                bestValue = value;
+            }
+        }
+        return best;
+    }
+
+    /** The single collection argument of {@code list(...)}/{@code set(...)}; a dict contributes its keys. */
+    private Collection<?> collectionArg(Expr.Call call, String name) {
+        Object value = eval(call.args().get(0));
+        if (value instanceof Collection<?> c) {
+            return c;
+        }
+        if (value instanceof Map<?, ?> m) {
+            return m.keySet();
+        }
+        if (value instanceof String s) {
+            List<Object> chars = new ArrayList<>(s.length());
+            for (int i = 0; i < s.length(); i++) {
+                chars.add(String.valueOf(s.charAt(i)));
+            }
+            return chars;
+        }
+        throw new MicraLangException(call.line(),
+                name + "() expects a list, a set, a dict, or a string but got " + typeName(value));
     }
 
     private Object argAt(Expr.Call call, int index) {
