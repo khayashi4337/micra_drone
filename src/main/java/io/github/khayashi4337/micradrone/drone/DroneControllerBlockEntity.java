@@ -1,6 +1,7 @@
 package io.github.khayashi4337.micradrone.drone;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
@@ -16,6 +17,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 import javax.annotation.Nullable;
+
+import com.mojang.authlib.GameProfile;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.drone.net.DebugCommandPayload;
@@ -41,13 +44,17 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.PlayerList;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.inventory.AnvilMenu;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.LevelResource;
+import net.neoforged.neoforge.common.util.FakePlayer;
+import net.neoforged.neoforge.common.util.FakePlayerFactory;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
@@ -141,6 +148,16 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private DroneScriptRunner scriptRunner;
     /** The visible {@link DroneEntity} tracked by UUID (entities aren't safe to hold direct references to across reloads). */
     private UUID droneEntityUuid;
+    /**
+     * cast_line()/reel_in(): the rod this controller's automated angling currently uses, persisted
+     * here (not on the {@link FakePlayer} itself - {@link FakePlayerFactory} caches instances in a
+     * plain in-memory map with no NBT round-trip, so anything held in its hand would be lost on
+     * server restart). Loaded into the resolved angler's main hand immediately before every fishing/
+     * anvil action and read back immediately after (durability damage, breaking, repair results),
+     * matching the "BlockEntity owns the source of truth" pattern {@code points}/{@code unlockedCrops}
+     * already use.
+     */
+    private ItemStack currentRod = ItemStack.EMPTY;
 
     // IDE debugger (issue #6). Breakpoints are per-controller and session-only (deliberately not
     // saved to NBT); the controller is recreated for every run with the current set applied.
@@ -206,6 +223,38 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             return null;
         }
         return level.getEntity(droneEntityUuid) instanceof DroneEntity drone ? drone : null;
+    }
+
+    /**
+     * cast_line()/reel_in()/repair_rod(): resolves this controller's "angler" - a headless
+     * {@link FakePlayer}, NeoForge's own utility for a server-side actor that real vanilla item logic
+     * (e.g. {@code FishingRodItem.use()}, {@code AnvilMenu}) can run against without a real network
+     * connection. Deliberately NOT spawned into the level via {@code addFreshEntity} - unlike
+     * {@link DroneEntity}, it has no appearance and is never meant to be seen; it is a plain Java
+     * actor, not world state. {@link FakePlayerFactory#get} itself caches by (level, profile) and
+     * explicitly documents "call this every time" as a valid usage - resolved fresh on every use
+     * rather than stored as a field, matching this class's general "resolve fresh, never cache
+     * position-derived state" idiom (see {@link #cornerMarkerPos}). Positioned at the drone's own
+     * grid cell each time, so a cast lands where the drone visibly stands. {@link #currentRod} - the
+     * only part of the angler's state this controller actually persists - is loaded into its main
+     * hand before returning; callers must read it back out (it may have taken durability damage or
+     * broken) once the action completes.
+     */
+    private FakePlayer resolveAngler(ServerLevel level) {
+        GameProfile profile = new GameProfile(anglerUuid(), "[MicraDrone Angler]");
+        FakePlayer angler = FakePlayerFactory.get(level, profile);
+        int[] offset = PlotGeometry.groundOffset(dirX, dirZ, gridX, gridY);
+        double x = getBlockPos().getX() + offset[0] + 0.5;
+        double y = getBlockPos().getY() + 1.0 + groundYOffset;
+        double z = getBlockPos().getZ() + offset[1] + 0.5;
+        angler.moveTo(x, y, z, 0.0F, 0.0F);
+        angler.setItemInHand(InteractionHand.MAIN_HAND, currentRod);
+        return angler;
+    }
+
+    /** A deterministic, per-controller-position UUID - so this controller always resolves the SAME cached angler. */
+    private UUID anglerUuid() {
+        return UUID.nameUUIDFromBytes(("micradrone:angler:" + getBlockPos().asLong()).getBytes(StandardCharsets.UTF_8));
     }
 
     /** do_a_flip(): a no-op action visually, other than spinning the visible drone once - see DroneEntity#startFlip. */
@@ -907,6 +956,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         // Absent on controllers saved before owner tracking existed - they simply have no owner
         // until someone next hits Run.
         ownerUuid = tag.hasUUID("OwnerUuid") ? tag.getUUID("OwnerUuid") : null;
+        currentRod = ItemStack.parseOptional(registries, tag.getCompound("CurrentRod"));
     }
 
     @Override
@@ -928,5 +978,6 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         if (ownerUuid != null) {
             tag.putUUID("OwnerUuid", ownerUuid);
         }
+        tag.put("CurrentRod", currentRod.save(registries));
     }
 }
