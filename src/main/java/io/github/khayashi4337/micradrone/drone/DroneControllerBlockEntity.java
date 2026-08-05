@@ -48,6 +48,8 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResultHolder;
 import net.minecraft.world.entity.projectile.FishingHook;
 import net.minecraft.world.inventory.AnvilMenu;
+import net.minecraft.world.inventory.ContainerLevelAccess;
+import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.FishingRodItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
@@ -391,6 +393,100 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             return -1;
         }
         return currentRod.getMaxDamage() - currentRod.getDamageValue();
+    }
+
+    /** is_anvil(): true if a real anvil (any damage state) touches one of this controller's 6 faces. */
+    @Override
+    public boolean isAnvil() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+        return AnvilLookup.findAnvil(serverLevel, getBlockPos()).isPresent();
+    }
+
+    /** get_repair_cost(): peeks the combine {@link #planRepair} sets up, without committing it. */
+    @Override
+    public double repairCost() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return -1;
+        }
+        return planRepair(serverLevel).map(plan -> (double) plan.menu().getCost()).orElse(-1.0);
+    }
+
+    /**
+     * repair_rod(): re-plans the same combine as {@link #repairCost}, and if the paying owner (see
+     * {@link #resolvePayingOwner}) can actually afford it, commits it - takes the spare rod from
+     * stock, then hands off to {@code AnvilMenu.onTake()} for the XP deduction and the anvil's own
+     * chance to chip/break, exactly as vanilla would for a player-driven repair.
+     */
+    @Override
+    public boolean repairRod() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+        Optional<ServerPlayer> payer = resolvePayingOwner();
+        if (payer.isEmpty()) {
+            return false;
+        }
+        Optional<AnvilAttempt> plan = planRepair(serverLevel);
+        if (plan.isEmpty()) {
+            return false;
+        }
+        Slot resultSlot = plan.get().menu().getSlot(AnvilMenu.RESULT_SLOT);
+        ItemStack resultStack = resultSlot.getItem();
+        if (!resultSlot.mayPickup(payer.get())) {
+            return false;
+        }
+        plan.get().spareLocation().take();
+        resultSlot.onTake(payer.get(), resultStack);
+        currentRod = resultStack;
+        setChanged();
+        return true;
+    }
+
+    /**
+     * Shared by {@link #repairCost}/{@link #repairRod}: headlessly builds a real {@link AnvilMenu}
+     * against {@link #currentRod} and a spare rod from {@link RodStock} (peeked, not yet removed from
+     * its container - only {@link #repairRod} actually takes it) and lets vanilla's own combine
+     * algorithm ({@code AnvilMenu.createResult()}, triggered automatically by filling the input
+     * slots) decide the result. Empty if there's no adjacent anvil, no current rod, no spare, or
+     * vanilla's own algorithm rejects the combination outright (result slot stays empty - e.g.
+     * incompatible enchantments).
+     */
+    private Optional<AnvilAttempt> planRepair(ServerLevel level) {
+        if (currentRod.isEmpty()) {
+            return Optional.empty();
+        }
+        Optional<BlockPos> anvilPos = AnvilLookup.findAnvil(level, getBlockPos());
+        Optional<RodStock.RodLocation> spare = RodStock.findSpareRod(level, getBlockPos());
+        if (anvilPos.isEmpty() || spare.isEmpty()) {
+            return Optional.empty();
+        }
+        RodStock.RodLocation spareLocation = spare.get();
+        ItemStack spareRod = spareLocation.container().getItem(spareLocation.slot());
+        FakePlayer angler = resolveAngler(level);
+        AnvilMenu menu = new AnvilMenu(0, angler.getInventory(), ContainerLevelAccess.create(level, anvilPos.get()));
+        menu.getSlot(AnvilMenu.INPUT_SLOT).set(currentRod);
+        menu.getSlot(AnvilMenu.ADDITIONAL_SLOT).set(spareRod);
+        if (menu.getSlot(AnvilMenu.RESULT_SLOT).getItem().isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(new AnvilAttempt(menu, spareLocation));
+    }
+
+    private record AnvilAttempt(AnvilMenu menu, RodStock.RodLocation spareLocation) {
+    }
+
+    /**
+     * The player who pays repair_rod()'s XP cost - this controller's existing owner (whoever last ran
+     * a script here, see {@link #ownerUuid}/{@link #resolveOwner}), same as every other place
+     * credit/cost already flows through this controller. Must be online AND within the same 32-block
+     * tether vanilla's own {@code FishingHook.shouldStopFishing()} uses to decide a player has
+     * wandered off - not a distance invented for this feature.
+     */
+    private Optional<ServerPlayer> resolvePayingOwner() {
+        return resolveOwner().filter(player -> player.distanceToSqr(
+                getBlockPos().getX() + 0.5, getBlockPos().getY() + 0.5, getBlockPos().getZ() + 0.5) <= 1024.0);
     }
 
     /** Removes the visible drone entity, e.g. when this controller block is broken. */

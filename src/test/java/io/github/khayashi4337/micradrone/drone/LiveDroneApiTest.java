@@ -270,4 +270,49 @@ class LiveDroneApiTest {
         gateway.pump();
         assertEquals(42.0, durability.get(2, TimeUnit.SECONDS));
     }
+
+    @Test
+    void isAnvilAndGetRepairCostAreImmediateMainThreadReadsWithNoPacingDelay() throws Exception {
+        FakeMainThreadGateway gateway = new FakeMainThreadGateway();
+        PacedActionQueue queue = new PacedActionQueue();
+        FakeGridState grid = new FakeGridState(5);
+        grid.setAnvil(true);
+        grid.setRepairCost(5);
+        LiveDroneApi api = newApi(gateway, queue, grid, new FakeFarmBlockAccess(), msg -> {});
+
+        Future<Boolean> anvil = worker.submit(api::isAnvil);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump();
+        assertTrue(anvil.get(2, TimeUnit.SECONDS));
+
+        Future<Double> cost = worker.submit(api::getRepairCost);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump();
+        assertEquals(5.0, cost.get(2, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void repairRodFailsImmediatelyWhenNotPossibleAndTakesFourTicksOnSuccess() throws Exception {
+        FakeMainThreadGateway gateway = new FakeMainThreadGateway();
+        PacedActionQueue queue = new PacedActionQueue();
+        FakeGridState grid = new FakeGridState(5);
+        LiveDroneApi api = newApi(gateway, queue, grid, new FakeFarmBlockAccess(), msg -> {});
+
+        Future<Boolean> impossible = worker.submit(api::repairRod);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump();
+        gateway.advanceTo(0, queue); // 0-tick delay on failure: ready at the same tick
+        assertFalse(impossible.get(2, TimeUnit.SECONDS));
+        assertEquals(0, grid.repairCount());
+
+        grid.setRepairPossible(true);
+        Future<Boolean> possible = worker.submit(api::repairRod);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump();
+        assertFalse(possible.isDone());
+        gateway.advanceTo(4, queue); // ACTION_DELAY_TICKS
+
+        assertTrue(possible.get(2, TimeUnit.SECONDS));
+        assertEquals(1, grid.repairCount());
+    }
 }

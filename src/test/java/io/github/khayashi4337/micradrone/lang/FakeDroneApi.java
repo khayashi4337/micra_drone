@@ -25,6 +25,9 @@ final class FakeDroneApi implements DroneApi {
     private boolean biting;
     private boolean openWaterCast;
     private double rodDurability = -1;
+    private boolean anvil;
+    private double repairCost = -1;
+    private boolean repairPossible;
 
     final List<String> calls = new ArrayList<>();
     final List<String> printed = new ArrayList<>();
@@ -79,6 +82,18 @@ final class FakeDroneApi implements DroneApi {
 
     void setRodDurability(double rodDurability) {
         this.rodDurability = rodDurability;
+    }
+
+    void setAnvil(boolean anvil) {
+        this.anvil = anvil;
+    }
+
+    void setRepairCost(double repairCost) {
+        this.repairCost = repairCost;
+    }
+
+    void setRepairPossible(boolean repairPossible) {
+        this.repairPossible = repairPossible;
     }
 
     int posXInt() { return x; }
@@ -281,5 +296,23 @@ final class FakeDroneApi implements DroneApi {
     public double getRodDurability() {
         calls.add("get_rod_durability");
         return rodDurability;
+    }
+
+    @Override
+    public boolean isAnvil() {
+        calls.add("is_anvil");
+        return anvil;
+    }
+
+    @Override
+    public double getRepairCost() {
+        calls.add("get_repair_cost");
+        return repairCost;
+    }
+
+    @Override
+    public boolean repairRod() {
+        calls.add("repair_rod");
+        return repairPossible;
     }
 }

@@ -99,4 +99,16 @@ public interface DroneApi {
 
     /** Read-only: the current rod's remaining uses, or -1 if no rod is currently held. */
     double getRodDurability();
+
+    // ---- automated anvil repair: heals the current rod by sacrificing a spare rod from stock,
+    // via a real (headless) anvil menu - see DroneControllerBlockEntity.
+
+    /** Read-only: true if a real anvil touches the controller. */
+    boolean isAnvil();
+
+    /** Read-only: XP-level cost to repair the current rod with a spare, or -1 if not currently possible. */
+    double getRepairCost();
+
+    /** Repairs the current rod using a spare from stock, if the plot owner can afford it. */
+    boolean repairRod();
 }

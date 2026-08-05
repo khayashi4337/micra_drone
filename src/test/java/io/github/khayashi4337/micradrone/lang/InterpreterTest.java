@@ -620,6 +620,48 @@ class InterpreterTest {
     }
 
     @Test
+    void anvilRepairCommandsReadAndActThroughTheApi() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                print(is_anvil())
+                print(get_repair_cost())
+                print(repair_rod())
+                """).scan()).parseProgram());
+        assertEquals(List.of("False", "-1", "False"), api.printed);
+
+        api.setAnvil(true);
+        api.setRepairCost(3);
+        api.setRepairPossible(true);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                print(is_anvil())
+                print(get_repair_cost())
+                print(repair_rod())
+                """).scan()).parseProgram());
+        assertEquals(List.of("False", "-1", "False", "True", "3", "True"), api.printed);
+    }
+
+    @Test
+    void isAnvilRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                is_anvil(1)
+                """));
+    }
+
+    @Test
+    void getRepairCostRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                get_repair_cost(1)
+                """));
+    }
+
+    @Test
+    void repairRodRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                repair_rod(1)
+                """));
+    }
+
+    @Test
     void moveFailsAtBoundaryAndReturnsFalse() {
         FakeDroneApi api = run("""
                 if move("north"):

@@ -189,6 +189,22 @@ public final class LiveDroneApi implements DroneApi {
         return queryMainThread(grid::rodDurability);
     }
 
+    @Override
+    public boolean isAnvil() {
+        return queryMainThread(grid::isAnvil);
+    }
+
+    @Override
+    public double getRepairCost() {
+        return queryMainThread(grid::repairCost);
+    }
+
+    @Override
+    public boolean repairRod() {
+        return dispatch(() -> new Attempt(grid.repairRod(), () -> {
+        }));
+    }
+
     /**
      * cast_line()/reel_in() decide success/failure by ACTUALLY performing the vanilla call
      * (unlike move/till/plant, there's no way to check "would this succeed" without doing it -

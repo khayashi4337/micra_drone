@@ -20,6 +20,10 @@ final class FakeGridState implements DroneGridState {
     private boolean biting;
     private boolean openWaterCast;
     private double rodDurability = -1;
+    private boolean anvil;
+    private double repairCost = -1;
+    private boolean repairPossible;
+    private int repairCount;
 
     FakeGridState(int size) {
         this.size = size;
@@ -165,5 +169,40 @@ final class FakeGridState implements DroneGridState {
     @Override
     public double rodDurability() {
         return rodDurability;
+    }
+
+    void setAnvil(boolean anvil) {
+        this.anvil = anvil;
+    }
+
+    void setRepairCost(double repairCost) {
+        this.repairCost = repairCost;
+    }
+
+    void setRepairPossible(boolean repairPossible) {
+        this.repairPossible = repairPossible;
+    }
+
+    int repairCount() {
+        return repairCount;
+    }
+
+    @Override
+    public boolean isAnvil() {
+        return anvil;
+    }
+
+    @Override
+    public double repairCost() {
+        return repairCost;
+    }
+
+    @Override
+    public boolean repairRod() {
+        if (!repairPossible) {
+            return false;
+        }
+        repairCount++;
+        return true;
     }
 }

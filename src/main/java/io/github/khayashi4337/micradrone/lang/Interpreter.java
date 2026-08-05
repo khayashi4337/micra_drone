@@ -608,6 +608,18 @@ public final class Interpreter {
                 requireArgCount(call, 0);
                 yield api.getRodDurability();
             }
+            case "is_anvil" -> {
+                requireArgCount(call, 0);
+                yield api.isAnvil();
+            }
+            case "get_repair_cost" -> {
+                requireArgCount(call, 0);
+                yield api.getRepairCost();
+            }
+            case "repair_rod" -> {
+                requireArgCount(call, 0);
+                yield api.repairRod();
+            }
             case "print" -> {
                 requireArgCount(call, 1);
                 api.print(stringify(eval(args.get(0))));

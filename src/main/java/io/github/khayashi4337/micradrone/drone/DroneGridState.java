@@ -73,4 +73,25 @@ public interface DroneGridState {
      * zero-durability state, so -1 is the unambiguous "no rod" sentinel).
      */
     double rodDurability();
+
+    // ---- automated anvil repair: heals the current rod (durability/enchantments) by sacrificing a
+    // spare from stock, via a real headless AnvilMenu - see DroneControllerBlockEntity.
+
+    /** Read-only: true if a real anvil (any damage state) touches one of this controller's 6 faces. */
+    boolean isAnvil();
+
+    /**
+     * Read-only: the XP-level cost vanilla's own anvil algorithm computes for repairing the current
+     * rod with a spare from stock, without touching either item. -1 if a repair isn't currently
+     * possible (no anvil, no current rod, no spare, or vanilla's own algorithm rejects the
+     * combination outright).
+     */
+    double repairCost();
+
+    /**
+     * repair_rod(): commits the same combine {@link #repairCost()} previews - consumes the spare rod
+     * from stock, deducts the plot owner's XP, and rolls the anvil's own chance to chip/break. False
+     * if a repair isn't currently possible, or the owner is offline/too far away/can't afford it.
+     */
+    boolean repairRod();
 }
