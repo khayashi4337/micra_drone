@@ -13,8 +13,8 @@ public final class CommandsHelpDoc {
 
     /** Every command a script can call, plus the language's own syntax - what you need to write any script. */
     public static final String COMMANDS = """
-            # コマンド一覧(1/3): 基本コマンドと文法のリファレンス(実行するスクリプトではない)
-            === MicraDrone スクリプト コマンド一覧 (1/3: 基本コマンドと文法) ===
+            # コマンド一覧(1/4): 基本コマンドと文法のリファレンス(実行するスクリプトではない)
+            === MicraDrone スクリプト コマンド一覧 (1/4: 基本コマンドと文法) ===
 
             ■ ドローンを動かす（ワールドを変える。実行に少し時間がかかる）
             move("north" | "south" | "east" | "west")
@@ -28,7 +28,7 @@ public final class CommandsHelpDoc {
 
             plant("carrot")
                 耕地にニンジンを植える。ショップでcarrotをアンロックするまでは
-                常にfalseになる（アンロックの方法はヘルプ(2/3)の「アンロックショップ」参照）。
+                常にfalseになる（アンロックの方法はヘルプ(2/4)の「アンロックショップ」参照）。
 
             plant("pumpkin")
                 耕地にカボチャの苗（つる）を植える。育ちきると本家vanillaの
@@ -150,8 +150,8 @@ public final class CommandsHelpDoc {
 
     /** Shop economics, giant-pumpkin fusion, and the collection types (list/dict/set) - past the basics. */
     public static final String ADVANCED = """
-            # コマンド一覧(2/3): アンロックショップ・かぼちゃ融合・コレクション型のリファレンス(実行するスクリプトではない)
-            === MicraDrone スクリプト コマンド一覧 (2/3: ショップ・かぼちゃ融合・コレクション型) ===
+            # コマンド一覧(2/4): アンロックショップ・かぼちゃ融合・コレクション型のリファレンス(実行するスクリプトではない)
+            === MicraDrone スクリプト コマンド一覧 (2/4: ショップ・かぼちゃ融合・コレクション型) ===
 
             ■ アンロックショップ
             コーナーマーカーのブロックを右クリックするか、IDE画面右上の
@@ -243,8 +243,8 @@ public final class CommandsHelpDoc {
 
     /** How to use the IDE and the script-scroll item itself - tooling, not the language. */
     public static final String EDITOR_AND_SCROLLS = """
-            # コマンド一覧(3/3): IDEと巻物の使い方のリファレンス(実行するスクリプトではない)
-            === MicraDrone スクリプト コマンド一覧 (3/3: IDEと巻物の使い方) ===
+            # コマンド一覧(3/4): IDEと巻物の使い方のリファレンス(実行するスクリプトではない)
+            === MicraDrone スクリプト コマンド一覧 (3/4: IDEと巻物の使い方) ===
 
             ■ エディタ（IDE）の使い方
             コントローラを右クリックすると開く画面。左半分がスクリプトを書く
@@ -297,6 +297,97 @@ public final class CommandsHelpDoc {
               書き込んでもらえる。周りに本棚を置くほど選べる候補が増える。
               テーブル周りの本棚位置にチェスト等を置いて書き込み済み巻物を
               入れておくと、それも複製候補としてラピス1個で選べる。
+            """;
+
+    /** Automated fishing and anvil repair - the mod's most advanced feature, kept as its own scroll. */
+    public static final String FISHING_AND_ANVIL = """
+            # コマンド一覧(4/4): 自動釣り・アンヴィル自動修理のリファレンス(実行するスクリプトではない)
+            === MicraDrone スクリプト コマンド一覧 (4/4: 自動釣り・アンヴィル自動修理) ===
+
+            釣りもアンヴィルでの修理も、ホッパーや溶岩などブロックの
+            ハック的な組み合わせには一切頼っていない。竿を投げる・巻く・
+            金床で合成する、という「本物の操作」をそのまま自動でやって
+            いるだけなので、アップデートで壊れにくい。
+
+            ■ 自動釣り
+            cast_line()
+                竿を投げる。竿を持っていない、またはすでに投げている
+                最中は失敗する。戻り値: 投げられたら true。
+
+            reel_in()
+                浮きを巻き上げる。魚がかかっていればそのまま釣れる
+                （戦利品テーブルは本家vanillaと同じ）。何も投げていない
+                ときは失敗する。戻り値: 成功したら true。
+                竿が折れて無くなったら、コントローラに隣接するチェスト・
+                シュルカーボックスから予備の竿を自動で補充する（後述）。
+
+            is_fishing()
+                浮きが今出ている（cast_line()が成功していてまだreel_in()
+                していない）かどうか。戻り値: true/false。
+
+            is_bobber_bobbing()
+                浮きが水面でぷかぷか浮いている状態かどうか。飛んでいる
+                途中や着水直後はfalse。戻り値: true/false。
+
+            did_fish_bite()
+                今まさに魚がかかっている（アタリの瞬間）かどうか。
+                これがtrueのときにreel_in()すると釣れやすい。
+                戻り値: true/false。
+
+            is_open_water_cast()
+                今の投げ方が「開けた水面」に対する正しい投げ方かどうか。
+                falseなら、狭い場所や陸に投げてしまっている可能性が
+                高いので、move()で場所を変えるとよい。戻り値: true/false。
+
+            get_rod_durability()
+                今持っている竿の残り耐久値。竿を持っていなければ -1。
+                大事な（エンチャント済みの）竿は、耐久が残り8以下に
+                なると次にreel_in()したタイミングで自動的にストックの
+                予備竿と入れ替わり、壊れる前に保管される（後述）。
+
+            ■ 竿ストック（予備の竿の置き場所）
+            コントローラの6方向のどこかに隣接させたチェスト・シュルカー
+            ボックスに minecraft:fishing_rod を入れておくと、そこが
+            「竿ストック」として自動で使われる。
+            - 竿が折れて手元に無くなったら、reel_in()のたびにストックから
+              1本自動で補充する。
+            - 持っている竿がエンチャント済みで、残り耐久が8以下になったら、
+              壊れる前にストックの1本と入れ替える（外した竿はストックの
+              その場所にそのまま残るので、なくならない）。
+            - アンヴィル自動修理（下記）の「合成用の竿」もこの同じストック
+              から探す。
+
+            ■ アンヴィル自動修理
+            is_anvil()
+                コントローラの6方向のどこかに本物のアンヴィル（欠け・
+                損傷した状態も含む）が隣接しているかどうか。
+                戻り値: true/false。
+
+            get_repair_cost()
+                今の竿と竿ストックの予備1本を金床で合成した場合の、
+                必要経験値レベルを調べる（実際には合成しない）。
+                アンヴィルが無い・竿が無い・ストックに予備が無い・
+                vanilla自身の合成ルールで組み合わせられない場合は -1。
+
+            repair_rod()
+                get_repair_cost()と同じ組み合わせを、実際に金床で合成する。
+                ストックの予備竿を1本消費し、経験値を支払い、
+                アンヴィル自身の欠け・破壊の判定もそのまま起こる
+                （vanillaの金床修理と完全に同じ）。経験値を払うのは
+                このプロットの「オーナー」（最後にこのコントローラで
+                スクリプトを実行させたプレイヤー）で、オンラインかつ
+                コントローラから32ブロック以内にいないと失敗する。
+                戻り値: 修理できたら true。
+
+            ■ 使用例（浮きが動いたら巻く、竿が減ったら金床で直す）
+            while True:
+                if not is_fishing():
+                    cast_line()
+                if did_fish_bite():
+                    reel_in()
+                if get_rod_durability() >= 0 and get_rod_durability() < 5:
+                    if is_anvil() and get_repair_cost() >= 0:
+                        repair_rod()
             """;
 
     private CommandsHelpDoc() {
