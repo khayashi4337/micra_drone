@@ -154,6 +154,39 @@ public final class LiveDroneApi implements DroneApi {
         logSink.accept(text);
     }
 
+    @Override
+    public boolean castLine() {
+        return dispatch(this::castAttempt);
+    }
+
+    @Override
+    public boolean reelIn() {
+        return dispatch(this::reelAttempt);
+    }
+
+    @Override
+    public boolean isFishing() {
+        return queryMainThread(grid::isFishing);
+    }
+
+    /**
+     * cast_line()/reel_in() decide success/failure by ACTUALLY performing the vanilla call
+     * (unlike move/till/plant, there's no way to check "would this succeed" without doing it -
+     * {@code FishingRodItem.use()} has no side-effect-free query form) - so, unlike every other
+     * paced action here, the mutation happens up front and {@link Attempt#apply} is a no-op.
+     * Pacing is still applied afterward, matching how every other world-changing command costs the
+     * same 4-tick delay.
+     */
+    private Attempt castAttempt() {
+        return new Attempt(grid.castLine(), () -> {
+        });
+    }
+
+    private Attempt reelAttempt() {
+        return new Attempt(grid.reelIn(), () -> {
+        });
+    }
+
     /**
      * Decides success/failure of {@code attempt} on the main thread right away, then defers the
      * actual mutation - and unblocking the caller - until the resulting pacing delay elapses.

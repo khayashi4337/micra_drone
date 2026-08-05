@@ -39,4 +39,22 @@ public interface DroneGridState {
 
     /** Starts (or restarts) a one-shot cosmetic spin on the visible drone entity - see do_a_flip(). */
     void triggerDroneFlip();
+
+    /**
+     * cast_line(): throws a real {@code FishingHook} the same way a player's right-click does (via
+     * the resolved angler - see {@code DroneControllerBlockEntity#resolveAngler}), so vanilla's own
+     * enchantment/physics/timing logic runs unmodified. False (no-op) if already fishing, or if this
+     * controller has no rod ({@link #currentRod}/task #66's swap logic decides that).
+     */
+    boolean castLine();
+
+    /**
+     * reel_in(): retrieves the currently-out hook the same way a player's second right-click does -
+     * real loot table roll, real durability damage, all vanilla. False (no-op) if not currently
+     * fishing (nothing was cast, or it was already reeled in).
+     */
+    boolean reelIn();
+
+    /** Read-only: true if a hook is currently out (cast_line() succeeded and reel_in() hasn't run yet). */
+    boolean isFishing();
 }

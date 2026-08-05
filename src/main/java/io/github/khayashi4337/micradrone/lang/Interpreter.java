@@ -580,6 +580,18 @@ public final class Interpreter {
                 requireArgCount(call, 0);
                 yield api.getPlotId();
             }
+            case "cast_line" -> {
+                requireArgCount(call, 0);
+                yield api.castLine();
+            }
+            case "reel_in" -> {
+                requireArgCount(call, 0);
+                yield api.reelIn();
+            }
+            case "is_fishing" -> {
+                requireArgCount(call, 0);
+                yield api.isFishing();
+            }
             case "print" -> {
                 requireArgCount(call, 1);
                 api.print(stringify(eval(args.get(0))));

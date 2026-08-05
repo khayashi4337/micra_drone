@@ -19,6 +19,8 @@ final class FakeDroneApi implements DroneApi {
     private String biome = "plains";
     private double light = 15;
     private String plotId = "";
+    private boolean hasRod;
+    private boolean fishing;
 
     final List<String> calls = new ArrayList<>();
     final List<String> printed = new ArrayList<>();
@@ -53,6 +55,10 @@ final class FakeDroneApi implements DroneApi {
 
     void setPlotId(String plotId) {
         this.plotId = plotId;
+    }
+
+    void setHasRod(boolean hasRod) {
+        this.hasRod = hasRod;
     }
 
     int posXInt() { return x; }
@@ -205,5 +211,31 @@ final class FakeDroneApi implements DroneApi {
     @Override
     public void print(String text) {
         printed.add(text);
+    }
+
+    @Override
+    public boolean castLine() {
+        calls.add("cast_line");
+        if (!hasRod || fishing) {
+            return false;
+        }
+        fishing = true;
+        return true;
+    }
+
+    @Override
+    public boolean reelIn() {
+        calls.add("reel_in");
+        if (!fishing) {
+            return false;
+        }
+        fishing = false;
+        return true;
+    }
+
+    @Override
+    public boolean isFishing() {
+        calls.add("is_fishing");
+        return fishing;
     }
 }

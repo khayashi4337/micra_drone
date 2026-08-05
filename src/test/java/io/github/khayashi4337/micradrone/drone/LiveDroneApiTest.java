@@ -192,4 +192,50 @@ class LiveDroneApiTest {
 
         assertFalse(result.get(2, TimeUnit.SECONDS));
     }
+
+    @Test
+    void castLineFailsWithoutARodTakesFourTicksAndUpdatesGridOnceItHasOne() throws Exception {
+        FakeMainThreadGateway gateway = new FakeMainThreadGateway();
+        PacedActionQueue queue = new PacedActionQueue();
+        FakeGridState grid = new FakeGridState(5);
+        LiveDroneApi api = newApi(gateway, queue, grid, new FakeFarmBlockAccess(), msg -> {});
+
+        Future<Boolean> withoutRod = worker.submit(api::castLine);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump();
+        gateway.advanceTo(0, queue); // 0-tick delay on failure: ready at the same tick
+        assertFalse(withoutRod.get(2, TimeUnit.SECONDS));
+        assertFalse(grid.isFishing());
+
+        grid.setHasRod(true);
+        Future<Boolean> withRod = worker.submit(api::castLine);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump();
+        assertFalse(withRod.isDone());
+        gateway.advanceTo(4, queue); // ACTION_DELAY_TICKS - the cast only counts as "landed" once this fires
+
+        assertTrue(withRod.get(2, TimeUnit.SECONDS));
+        assertTrue(grid.isFishing());
+
+        Future<Boolean> reeled = worker.submit(api::reelIn);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump();
+        gateway.advanceTo(8, queue);
+        assertTrue(reeled.get(2, TimeUnit.SECONDS));
+        assertFalse(grid.isFishing());
+    }
+
+    @Test
+    void isFishingIsAnImmediateMainThreadReadWithNoPacingDelay() throws Exception {
+        FakeMainThreadGateway gateway = new FakeMainThreadGateway();
+        PacedActionQueue queue = new PacedActionQueue();
+        FakeGridState grid = new FakeGridState(5);
+        LiveDroneApi api = newApi(gateway, queue, grid, new FakeFarmBlockAccess(), msg -> {});
+
+        Future<Boolean> result = worker.submit(api::isFishing);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump(); // no pacedQueue involvement needed: query completes as soon as it's run
+
+        assertFalse(result.get(2, TimeUnit.SECONDS));
+    }
 }

@@ -45,7 +45,9 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.PlayerList;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResultHolder;
 import net.minecraft.world.inventory.AnvilMenu;
+import net.minecraft.world.item.FishingRodItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
@@ -266,6 +268,56 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
                 drone.startFlip();
             }
         }
+    }
+
+    /**
+     * cast_line(): throws a real hook via the SAME method vanilla's own right-click dispatch calls
+     * ({@code FishingRodItem.use()}), so enchantments (Lure/Luck of the Sea, read off {@link #currentRod}
+     * inside that method) and the bite-timing state machine are entirely vanilla's, not reimplemented
+     * here. No-op (false) if there's no rod, or a hook is already out.
+     */
+    @Override
+    public boolean castLine() {
+        if (!(level instanceof ServerLevel serverLevel) || currentRod.isEmpty()) {
+            return false;
+        }
+        FakePlayer angler = resolveAngler(serverLevel);
+        if (angler.fishing != null || !(angler.getMainHandItem().getItem() instanceof FishingRodItem rodItem)) {
+            return false;
+        }
+        InteractionResultHolder<ItemStack> result = rodItem.use(serverLevel, angler, InteractionHand.MAIN_HAND);
+        currentRod = result.getObject();
+        setChanged();
+        return angler.fishing != null;
+    }
+
+    /**
+     * reel_in(): retrieves the currently-out hook via the same {@code FishingRodItem.use()} vanilla's
+     * second right-click calls - the real loot table roll and real durability damage happen inside
+     * that call, unmodified. No-op (false) if nothing is currently out.
+     */
+    @Override
+    public boolean reelIn() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+        FakePlayer angler = resolveAngler(serverLevel);
+        if (angler.fishing == null || !(angler.getMainHandItem().getItem() instanceof FishingRodItem rodItem)) {
+            return false;
+        }
+        InteractionResultHolder<ItemStack> result = rodItem.use(serverLevel, angler, InteractionHand.MAIN_HAND);
+        currentRod = result.getObject();
+        setChanged();
+        return true;
+    }
+
+    /** is_fishing()/internal guard: true while a hook thrown by {@link #castLine} is still out. */
+    @Override
+    public boolean isFishing() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+        return resolveAngler(serverLevel).fishing != null;
     }
 
     /** Removes the visible drone entity, e.g. when this controller block is broken. */

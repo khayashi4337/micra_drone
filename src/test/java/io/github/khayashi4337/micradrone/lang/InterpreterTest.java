@@ -509,6 +509,68 @@ class InterpreterTest {
     }
 
     @Test
+    void castLineFailsWithoutARodAndSucceedsOnceOneIsGiven() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                print(cast_line())
+                """).scan()).parseProgram());
+        assertEquals(List.of("False"), api.printed);
+
+        api.setHasRod(true);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                print(cast_line())
+                print(is_fishing())
+                """).scan()).parseProgram());
+        assertEquals(List.of("False", "True", "True"), api.printed);
+    }
+
+    @Test
+    void reelInFailsWithNothingOutAndSucceedsAfterACast() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        api.setHasRod(true);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                print(reel_in())
+                cast_line()
+                print(is_fishing())
+                print(reel_in())
+                print(is_fishing())
+                """).scan()).parseProgram());
+        assertEquals(List.of("False", "True", "True", "False"), api.printed);
+    }
+
+    @Test
+    void castLineFailsWhileAlreadyFishing() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        api.setHasRod(true);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                cast_line()
+                print(cast_line())
+                """).scan()).parseProgram());
+        assertEquals(List.of("False"), api.printed);
+    }
+
+    @Test
+    void castLineRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                cast_line(1)
+                """));
+    }
+
+    @Test
+    void reelInRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                reel_in(1)
+                """));
+    }
+
+    @Test
+    void isFishingRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                is_fishing(1)
+                """));
+    }
+
+    @Test
     void moveFailsAtBoundaryAndReturnsFalse() {
         FakeDroneApi api = run("""
                 if move("north"):

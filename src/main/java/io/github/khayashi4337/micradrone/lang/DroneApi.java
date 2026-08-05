@@ -75,4 +75,16 @@ public interface DroneApi {
 
     /** Appends text to the script's log panel. */
     void print(String text);
+
+    // ---- automated fishing: a real fishing rod, thrown by a real (headless) angler, so vanilla's
+    // own enchantment/loot-table/durability logic runs unmodified - see DroneControllerBlockEntity.
+
+    /** Throws a real hook the same way a right-click cast does. False if there's no rod, or one is already out. */
+    boolean castLine();
+
+    /** Retrieves the currently-out hook the same way a second right-click does. False if nothing is out. */
+    boolean reelIn();
+
+    /** Read-only: true while a hook thrown by cast_line() is still out (hasn't been reeled in yet). */
+    boolean isFishing();
 }

@@ -12,6 +12,10 @@ final class FakeGridState implements DroneGridState {
     private final Map<String, Long> pointsByCrop = new HashMap<>();
     private final Set<String> unlockedCrops = new HashSet<>(Set.of("wheat"));
     private int flipCount;
+    private boolean hasRod;
+    private boolean fishing;
+    private int castCount;
+    private int reelCount;
 
     FakeGridState(int size) {
         this.size = size;
@@ -84,5 +88,42 @@ final class FakeGridState implements DroneGridState {
     @Override
     public void triggerDroneFlip() {
         flipCount++;
+    }
+
+    void setHasRod(boolean hasRod) {
+        this.hasRod = hasRod;
+    }
+
+    int castCount() {
+        return castCount;
+    }
+
+    int reelCount() {
+        return reelCount;
+    }
+
+    @Override
+    public boolean castLine() {
+        if (!hasRod || fishing) {
+            return false;
+        }
+        fishing = true;
+        castCount++;
+        return true;
+    }
+
+    @Override
+    public boolean reelIn() {
+        if (!fishing) {
+            return false;
+        }
+        fishing = false;
+        reelCount++;
+        return true;
+    }
+
+    @Override
+    public boolean isFishing() {
+        return fishing;
     }
 }
