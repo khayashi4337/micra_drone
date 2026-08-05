@@ -343,10 +343,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     /** is_fishing()/internal guard: true while a hook thrown by {@link #castLine} is still out. */
     @Override
     public boolean isFishing() {
-        if (!(level instanceof ServerLevel serverLevel)) {
-            return false;
-        }
-        return resolveAngler(serverLevel).fishing != null;
+        return currentHook().isPresent();
     }
 
     /**
@@ -356,11 +353,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      */
     @Override
     public boolean isBobberBobbing() {
-        if (!(level instanceof ServerLevel serverLevel)) {
-            return false;
-        }
-        FishingHook hook = resolveAngler(serverLevel).fishing;
-        return hook != null && hook.currentState == FishingHook.FishHookState.BOBBING;
+        return currentHook().map(hook -> hook.currentState == FishingHook.FishHookState.BOBBING).orElse(false);
     }
 
     /**
@@ -369,21 +362,21 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      */
     @Override
     public boolean didFishBite() {
-        if (!(level instanceof ServerLevel serverLevel)) {
-            return false;
-        }
-        FishingHook hook = resolveAngler(serverLevel).fishing;
-        return hook != null && hook.biting;
+        return currentHook().map(hook -> hook.biting).orElse(false);
     }
 
     /** is_open_water_cast(): delegates to {@code FishingHook.isOpenWaterFishing()}, already public. */
     @Override
     public boolean isOpenWaterCast() {
+        return currentHook().map(FishingHook::isOpenWaterFishing).orElse(false);
+    }
+
+    /** Shared by the 4 read-only hook perception commands above: the angler's current hook, if any. */
+    private Optional<FishingHook> currentHook() {
         if (!(level instanceof ServerLevel serverLevel)) {
-            return false;
+            return Optional.empty();
         }
-        FishingHook hook = resolveAngler(serverLevel).fishing;
-        return hook != null && hook.isOpenWaterFishing();
+        return Optional.ofNullable(resolveAngler(serverLevel).fishing);
     }
 
     /** get_rod_durability(): remaining uses on {@link #currentRod}, or -1 if no rod is held. */
