@@ -284,6 +284,32 @@ public final class SampleScripts {
             print(get_points("pumpkin"))
             """;
 
+    public static final String AUTO_FISH_AND_REPAIR = """
+            # 自動釣り+アンヴィル自動修理のデモ。「投げる/巻く/直す」の判断だけをここに
+            # 書けばよく、竿の物理・戦利品・耐久値・アンヴィルの合成計算はすべて本物の
+            # vanillaロジックがそのまま行う(ホッパー等のブロックのハック的な組み合わせは
+            # 一切使っていない)。コントローラの隣接6面のどこかに minecraft:fishing_rod を
+            # 入れたチェスト等を置いておくこと。アンヴィル修理も使うなら本物のアンヴィルも
+            # 隣接させておく(どちらも無くても投げる/巻くだけは動く)。
+            caught = 0
+            repaired = 0
+            for i in range(20):
+                if not is_fishing():
+                    cast_line()
+                if did_fish_bite():
+                    if reel_in():
+                        caught = caught + 1
+                durability = get_rod_durability()
+                if durability >= 0 and durability < 10:
+                    if is_anvil() and get_repair_cost() >= 0:
+                        if repair_rod():
+                            repaired = repaired + 1
+            print("釣れた回数:")
+            print(caught)
+            print("修理した回数:")
+            print(repaired)
+            """;
+
     /** File name (with extension) -> content, in the order they should appear in the picker. */
     public static final Map<String, String> ALL = buildAll();
 
@@ -299,6 +325,7 @@ public final class SampleScripts {
         all.put("count_ground.mdrone", COUNT_GROUND);
         all.put("carrot_farm.mdrone", CARROT_FARM);
         all.put("pumpkin_smart_harvest.mdrone", PUMPKIN_SMART_HARVEST);
+        all.put("auto_fish_and_repair.mdrone", AUTO_FISH_AND_REPAIR);
         return Map.copyOf(all);
     }
 
