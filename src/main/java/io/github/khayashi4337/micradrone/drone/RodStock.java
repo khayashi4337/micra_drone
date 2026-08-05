@@ -51,5 +51,16 @@ final class RodStock {
         ItemStack take() {
             return container.removeItem(slot, 1);
         }
+
+        /**
+         * Replaces this slot's contents with {@code replacement} and returns what was there before -
+         * an in-place swap, so a rod being retired (still has some durability/enchantments left) is
+         * never lost: it lands exactly where the fresh rod it's trading places with came from.
+         */
+        ItemStack swap(ItemStack replacement) {
+            ItemStack previous = container.getItem(slot);
+            container.setItem(slot, replacement);
+            return previous;
+        }
     }
 }

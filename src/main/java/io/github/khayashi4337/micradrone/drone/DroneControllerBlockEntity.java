@@ -308,8 +308,34 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         }
         InteractionResultHolder<ItemStack> result = rodItem.use(serverLevel, angler, InteractionHand.MAIN_HAND);
         currentRod = result.getObject();
+        maybeSwapRod(serverLevel);
         setChanged();
         return true;
+    }
+
+    /**
+     * Rod durability margin below which reel_in() proactively retires an enchanted rod for a fresh
+     * one from stock, rather than risk it snapping (and its enchantments with it) on a future catch.
+     * Not a vanilla constant - there's no equivalent to borrow, so this is a small hand-picked buffer
+     * (a couple of catches' worth) rather than an arbitrary large number.
+     */
+    private static final int LOW_DURABILITY_MARGIN = 8;
+
+    /**
+     * Called after every reel_in(): if the rod just broke (now empty), pulls a spare from
+     * {@link RodStock}. Otherwise, if it's enchanted and running low on durability, proactively swaps
+     * it for a spare too - an in-place trade ({@link RodStock.RodLocation#swap}) so the retired rod
+     * is never discarded, just stashed exactly where the spare came from.
+     */
+    private void maybeSwapRod(ServerLevel level) {
+        if (currentRod.isEmpty()) {
+            RodStock.findSpareRod(level, getBlockPos()).ifPresent(spare -> currentRod = spare.take());
+            return;
+        }
+        boolean runningLow = currentRod.getMaxDamage() - currentRod.getDamageValue() <= LOW_DURABILITY_MARGIN;
+        if (currentRod.isEnchanted() && runningLow) {
+            RodStock.findSpareRod(level, getBlockPos()).ifPresent(spare -> currentRod = spare.swap(currentRod));
+        }
     }
 
     /** is_fishing()/internal guard: true while a hook thrown by {@link #castLine} is still out. */
