@@ -87,4 +87,16 @@ public interface DroneApi {
 
     /** Read-only: true while a hook thrown by cast_line() is still out (hasn't been reeled in yet). */
     boolean isFishing();
+
+    /** Read-only: true if a hook is out AND has landed in water (still flying through the air otherwise). */
+    boolean isBobberBobbing();
+
+    /** Read-only: true if a hook is out and a fish is currently biting (the active bite window). */
+    boolean didFishBite();
+
+    /** Read-only: true if the current cast landed in a valid open-water fishing spot. */
+    boolean isOpenWaterCast();
+
+    /** Read-only: the current rod's remaining uses, or -1 if no rod is currently held. */
+    double getRodDurability();
 }

@@ -169,6 +169,26 @@ public final class LiveDroneApi implements DroneApi {
         return queryMainThread(grid::isFishing);
     }
 
+    @Override
+    public boolean isBobberBobbing() {
+        return queryMainThread(grid::isBobberBobbing);
+    }
+
+    @Override
+    public boolean didFishBite() {
+        return queryMainThread(grid::didFishBite);
+    }
+
+    @Override
+    public boolean isOpenWaterCast() {
+        return queryMainThread(grid::isOpenWaterCast);
+    }
+
+    @Override
+    public double getRodDurability() {
+        return queryMainThread(grid::rodDurability);
+    }
+
     /**
      * cast_line()/reel_in() decide success/failure by ACTUALLY performing the vanilla call
      * (unlike move/till/plant, there's no way to check "would this succeed" without doing it -

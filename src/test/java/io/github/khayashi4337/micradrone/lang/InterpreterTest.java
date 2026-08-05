@@ -571,6 +571,55 @@ class InterpreterTest {
     }
 
     @Test
+    void fishingPerceptionCommandsReadStateFromTheApi() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                print(get_rod_durability())
+                """).scan()).parseProgram());
+        assertEquals(List.of("-1"), api.printed);
+
+        api.setBobbing(true);
+        api.setBiting(true);
+        api.setOpenWaterCast(true);
+        api.setRodDurability(10);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                print(is_bobber_bobbing())
+                print(did_fish_bite())
+                print(is_open_water_cast())
+                print(get_rod_durability())
+                """).scan()).parseProgram());
+        assertEquals(List.of("-1", "True", "True", "True", "10"), api.printed);
+    }
+
+    @Test
+    void isBobberBobbingRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                is_bobber_bobbing(1)
+                """));
+    }
+
+    @Test
+    void didFishBiteRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                did_fish_bite(1)
+                """));
+    }
+
+    @Test
+    void isOpenWaterCastRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                is_open_water_cast(1)
+                """));
+    }
+
+    @Test
+    void getRodDurabilityRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                get_rod_durability(1)
+                """));
+    }
+
+    @Test
     void moveFailsAtBoundaryAndReturnsFalse() {
         FakeDroneApi api = run("""
                 if move("north"):

@@ -57,4 +57,20 @@ public interface DroneGridState {
 
     /** Read-only: true if a hook is currently out (cast_line() succeeded and reel_in() hasn't run yet). */
     boolean isFishing();
+
+    /** Read-only: true if a hook is out AND has landed in water (still flying through the air otherwise). */
+    boolean isBobberBobbing();
+
+    /** Read-only: true if a hook is out and a fish is currently biting (the active bite window). */
+    boolean didFishBite();
+
+    /** Read-only: true if the current cast landed in a valid open-water fishing spot. */
+    boolean isOpenWaterCast();
+
+    /**
+     * Read-only: the current rod's remaining uses (max durability minus damage taken so far), or -1
+     * if no rod is currently held (a broken rod's stack becomes empty rather than reaching a real
+     * zero-durability state, so -1 is the unambiguous "no rod" sentinel).
+     */
+    double rodDurability();
 }

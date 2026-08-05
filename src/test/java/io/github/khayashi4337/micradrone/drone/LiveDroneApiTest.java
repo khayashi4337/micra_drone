@@ -238,4 +238,36 @@ class LiveDroneApiTest {
 
         assertFalse(result.get(2, TimeUnit.SECONDS));
     }
+
+    @Test
+    void fishingPerceptionReadsAreImmediateMainThreadReadsWithNoPacingDelay() throws Exception {
+        FakeMainThreadGateway gateway = new FakeMainThreadGateway();
+        PacedActionQueue queue = new PacedActionQueue();
+        FakeGridState grid = new FakeGridState(5);
+        grid.setBobbing(true);
+        grid.setBiting(true);
+        grid.setOpenWaterCast(true);
+        grid.setRodDurability(42);
+        LiveDroneApi api = newApi(gateway, queue, grid, new FakeFarmBlockAccess(), msg -> {});
+
+        Future<Boolean> bobbing = worker.submit(api::isBobberBobbing);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump();
+        assertTrue(bobbing.get(2, TimeUnit.SECONDS));
+
+        Future<Boolean> biting = worker.submit(api::didFishBite);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump();
+        assertTrue(biting.get(2, TimeUnit.SECONDS));
+
+        Future<Boolean> openWater = worker.submit(api::isOpenWaterCast);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump();
+        assertTrue(openWater.get(2, TimeUnit.SECONDS));
+
+        Future<Double> durability = worker.submit(api::getRodDurability);
+        gateway.awaitQueuedWork(2000);
+        gateway.pump();
+        assertEquals(42.0, durability.get(2, TimeUnit.SECONDS));
+    }
 }

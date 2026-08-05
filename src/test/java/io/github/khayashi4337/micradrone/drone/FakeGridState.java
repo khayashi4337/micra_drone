@@ -16,6 +16,10 @@ final class FakeGridState implements DroneGridState {
     private boolean fishing;
     private int castCount;
     private int reelCount;
+    private boolean bobbing;
+    private boolean biting;
+    private boolean openWaterCast;
+    private double rodDurability = -1;
 
     FakeGridState(int size) {
         this.size = size;
@@ -125,5 +129,41 @@ final class FakeGridState implements DroneGridState {
     @Override
     public boolean isFishing() {
         return fishing;
+    }
+
+    void setBobbing(boolean bobbing) {
+        this.bobbing = bobbing;
+    }
+
+    void setBiting(boolean biting) {
+        this.biting = biting;
+    }
+
+    void setOpenWaterCast(boolean openWaterCast) {
+        this.openWaterCast = openWaterCast;
+    }
+
+    void setRodDurability(double rodDurability) {
+        this.rodDurability = rodDurability;
+    }
+
+    @Override
+    public boolean isBobberBobbing() {
+        return bobbing;
+    }
+
+    @Override
+    public boolean didFishBite() {
+        return biting;
+    }
+
+    @Override
+    public boolean isOpenWaterCast() {
+        return openWaterCast;
+    }
+
+    @Override
+    public double rodDurability() {
+        return rodDurability;
     }
 }

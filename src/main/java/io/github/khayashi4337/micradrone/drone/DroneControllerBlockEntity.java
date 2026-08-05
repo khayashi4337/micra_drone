@@ -46,6 +46,7 @@ import net.minecraft.server.players.PlayerList;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResultHolder;
+import net.minecraft.world.entity.projectile.FishingHook;
 import net.minecraft.world.inventory.AnvilMenu;
 import net.minecraft.world.item.FishingRodItem;
 import net.minecraft.world.item.ItemStack;
@@ -318,6 +319,52 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             return false;
         }
         return resolveAngler(serverLevel).fishing != null;
+    }
+
+    /**
+     * is_bobber_bobbing(): reads {@code FishingHook.currentState} directly (exposed via Access
+     * Transformer) rather than re-deriving it - the FLYING/BOBBING transition is vanilla's own timing,
+     * not something worth reimplementing.
+     */
+    @Override
+    public boolean isBobberBobbing() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+        FishingHook hook = resolveAngler(serverLevel).fishing;
+        return hook != null && hook.currentState == FishingHook.FishHookState.BOBBING;
+    }
+
+    /**
+     * did_fish_bite(): reads {@code FishingHook.biting} directly (exposed via Access Transformer) -
+     * the same flag vanilla's own client bobber animation and reel timing key off of.
+     */
+    @Override
+    public boolean didFishBite() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+        FishingHook hook = resolveAngler(serverLevel).fishing;
+        return hook != null && hook.biting;
+    }
+
+    /** is_open_water_cast(): delegates to {@code FishingHook.isOpenWaterFishing()}, already public. */
+    @Override
+    public boolean isOpenWaterCast() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+        FishingHook hook = resolveAngler(serverLevel).fishing;
+        return hook != null && hook.isOpenWaterFishing();
+    }
+
+    /** get_rod_durability(): remaining uses on {@link #currentRod}, or -1 if no rod is held. */
+    @Override
+    public double rodDurability() {
+        if (currentRod.isEmpty()) {
+            return -1;
+        }
+        return currentRod.getMaxDamage() - currentRod.getDamageValue();
     }
 
     /** Removes the visible drone entity, e.g. when this controller block is broken. */

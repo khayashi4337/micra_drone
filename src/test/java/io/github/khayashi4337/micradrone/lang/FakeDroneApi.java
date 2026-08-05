@@ -21,6 +21,10 @@ final class FakeDroneApi implements DroneApi {
     private String plotId = "";
     private boolean hasRod;
     private boolean fishing;
+    private boolean bobbing;
+    private boolean biting;
+    private boolean openWaterCast;
+    private double rodDurability = -1;
 
     final List<String> calls = new ArrayList<>();
     final List<String> printed = new ArrayList<>();
@@ -59,6 +63,22 @@ final class FakeDroneApi implements DroneApi {
 
     void setHasRod(boolean hasRod) {
         this.hasRod = hasRod;
+    }
+
+    void setBobbing(boolean bobbing) {
+        this.bobbing = bobbing;
+    }
+
+    void setBiting(boolean biting) {
+        this.biting = biting;
+    }
+
+    void setOpenWaterCast(boolean openWaterCast) {
+        this.openWaterCast = openWaterCast;
+    }
+
+    void setRodDurability(double rodDurability) {
+        this.rodDurability = rodDurability;
     }
 
     int posXInt() { return x; }
@@ -237,5 +257,29 @@ final class FakeDroneApi implements DroneApi {
     public boolean isFishing() {
         calls.add("is_fishing");
         return fishing;
+    }
+
+    @Override
+    public boolean isBobberBobbing() {
+        calls.add("is_bobber_bobbing");
+        return bobbing;
+    }
+
+    @Override
+    public boolean didFishBite() {
+        calls.add("did_fish_bite");
+        return biting;
+    }
+
+    @Override
+    public boolean isOpenWaterCast() {
+        calls.add("is_open_water_cast");
+        return openWaterCast;
+    }
+
+    @Override
+    public double getRodDurability() {
+        calls.add("get_rod_durability");
+        return rodDurability;
     }
 }
