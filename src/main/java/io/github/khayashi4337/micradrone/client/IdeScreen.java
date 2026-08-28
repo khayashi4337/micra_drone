@@ -170,6 +170,7 @@ public class IdeScreen extends Screen {
     private String selectedScriptFromServer = "";
     private List<String> logLines = List.of();
     private Map<String, Long> pointsByCrop = Map.of();
+    private Set<String> unlockedCrops = Set.of();
     private ScriptListWidget scriptList;
     private MultiLineEditBox descriptionBox;
     private MultiLineEditBox logBox;
@@ -433,6 +434,16 @@ public class IdeScreen extends Screen {
         }
 
         @Override
+        public Map<String, Long> pointsByCrop() {
+            return pointsByCrop;
+        }
+
+        @Override
+        public Set<String> unlockedCrops() {
+            return unlockedCrops;
+        }
+
+        @Override
         public <T extends net.minecraft.client.gui.components.events.GuiEventListener
                 & net.minecraft.client.gui.components.Renderable
                 & net.minecraft.client.gui.narration.NarratableEntry> T addWidget(T widget) {
@@ -620,12 +631,13 @@ public class IdeScreen extends Screen {
      * hand - no fixed slot id exists anymore) resolves it to the server's current selection.
      */
     public void updateLog(BlockPos sourcePos, List<String> lines, Map<String, Long> newPointsByCrop,
-            List<ScriptEntry> scripts, String selectedScript, String alias) {
+            Set<String> newUnlockedCrops, List<ScriptEntry> scripts, String selectedScript, String alias) {
         if (!sourcePos.equals(this.pos)) {
             return;
         }
         logLines = lines;
         pointsByCrop = newPointsByCrop;
+        unlockedCrops = newUnlockedCrops;
         selectedScriptFromServer = selectedScript;
         if (!scripts.isEmpty()) {
             availableScripts = scripts;

@@ -895,7 +895,8 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             lines = List.copyOf(logBuffer);
         }
         PacketDistributor.sendToPlayer(player,
-                new DroneLogPayload(getBlockPos(), lines, pointsByCrop(), availableScriptsFor(player), selectedScript, alias));
+                new DroneLogPayload(getBlockPos(), lines, pointsByCrop(), Set.copyOf(unlockedCrops),
+                        availableScriptsFor(player), selectedScript, alias));
     }
 
     /** Registered as this block's {@link net.minecraft.world.level.block.entity.BlockEntityTicker}; server-side only. */

@@ -1,7 +1,12 @@
 package io.github.khayashi4337.micradrone.chat;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 /**
  * Assembles the text sent to claude -p for one chat turn: the player's question plus whatever
@@ -27,6 +32,15 @@ public final class ChatContextBuilder {
     }
 
     /**
+     * What this controller has earned and unlocked, plus what the shop still offers and at what
+     * price, so the AI can answer "can I farm carrots here?" from facts: {@code lockedOffers} maps
+     * an unlock id to its cost per crop (from UnlockShop.CATALOG minus {@code unlocked}).
+     */
+    public record PlotStatus(Set<String> unlocked, Map<String, Long> pointsByCrop,
+                             Map<String, Map<String, Long>> lockedOffers) {
+    }
+
+    /**
      * @param scriptText                 the editor's current (possibly unsaved) contents
      * @param commandReferenceExcerpt    CommandsHelpDoc text to ground the reply in real commands
      * @param logLines                   the controller's log buffer; the last {@code "error: "}-prefixed
@@ -37,6 +51,8 @@ public final class ChatContextBuilder {
      *                                    brand new CLI session that has no memory of its own
      * @param plot                       the plot's world placement (see {@link PlotInfo}); empty
      *                                    only when the screen has no level to read it from
+     * @param status                     unlocks/points/shop offers (see {@link PlotStatus}); empty
+     *                                    before the first server snapshot arrives
      */
     public record ChatContext(
             String scriptText,
@@ -44,7 +60,8 @@ public final class ChatContextBuilder {
             List<String> logLines,
             Optional<String> pendingRegionReferenceText,
             Optional<String> priorSummary,
-            Optional<PlotInfo> plot) {
+            Optional<PlotInfo> plot,
+            Optional<PlotStatus> status) {
     }
 
     public static String build(String userQuestion, ChatContext context) {
@@ -61,6 +78,7 @@ public final class ChatContextBuilder {
         sb.append("\n\n");
 
         context.plot().ifPresent(plot -> sb.append(describePlot(plot)).append("\n\n"));
+        context.status().ifPresent(status -> sb.append(describeStatus(status)).append("\n\n"));
 
         Optional<String> lastError = lastError(context.logLines());
         if (lastError.isPresent()) {
@@ -85,6 +103,32 @@ public final class ChatContextBuilder {
                 + (plot.controllerY() + plot.groundYOffset()) + ", z = " + plot.controllerZ() + " + (" + plot.dirZ() + ")*(1+gy)。作物はその1つ上(y+1)\n"
                 + "- move(\"east\") は gx+1、move(\"west\") は gx-1、move(\"south\") は gy+1、move(\"north\") は gy-1"
                 + "(ワールドの方角ではなく、上の式の gx/gy に対する増減)";
+    }
+
+    /** Unlocked set, points, and the shop's remaining offers with prices - sorted so the text is stable across turns. */
+    static String describeStatus(PlotStatus status) {
+        StringBuilder sb = new StringBuilder("このコントローラの状態:\n");
+        sb.append("- アンロック済み: ").append(String.join(", ", new TreeSet<>(status.unlocked()))).append('\n');
+        sb.append("- 所持ポイント: ");
+        if (status.pointsByCrop().isEmpty()) {
+            sb.append("(まだ無し)");
+        } else {
+            sb.append(new TreeMap<>(status.pointsByCrop()).entrySet().stream()
+                    .map(e -> e.getKey() + " " + e.getValue())
+                    .collect(Collectors.joining(", ")));
+        }
+        sb.append('\n');
+        if (status.lockedOffers().isEmpty()) {
+            sb.append("- 未購入のアンロック: 無し(全て購入済み)");
+        } else {
+            sb.append("- 未購入のアンロック(Shopで購入。未購入の作物は plant() が失敗する): ");
+            sb.append(new TreeMap<>(status.lockedOffers()).entrySet().stream()
+                    .map(e -> e.getKey() + " = " + new TreeMap<>(e.getValue()).entrySet().stream()
+                            .map(c -> c.getKey() + " " + c.getValue())
+                            .collect(Collectors.joining(" + ")))
+                    .collect(Collectors.joining(", ")));
+        }
+        return sb.toString();
     }
 
     /** The most recent {@code "error: "}-prefixed log line, with that prefix stripped. */

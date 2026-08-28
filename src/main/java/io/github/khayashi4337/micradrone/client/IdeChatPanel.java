@@ -2,8 +2,11 @@ package io.github.khayashi4337.micradrone.client;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import io.github.khayashi4337.micradrone.chat.ChatCompactor;
@@ -17,6 +20,7 @@ import io.github.khayashi4337.micradrone.chat.ControllerKey;
 import io.github.khayashi4337.micradrone.chat.DangerModeState;
 import io.github.khayashi4337.micradrone.drone.CommandsHelpDoc;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
+import io.github.khayashi4337.micradrone.drone.UnlockShop;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
@@ -75,6 +79,11 @@ final class IdeChatPanel {
         void undoLastApply();
 
         List<String> logLines();
+
+        /** The controller's harvest points and unlocked crops/features, from the last DroneLogPayload. */
+        Map<String, Long> pointsByCrop();
+
+        Set<String> unlockedCrops();
 
         <T extends GuiEventListener & Renderable & NarratableEntry> T addWidget(T widget);
 
@@ -388,9 +397,22 @@ final class IdeChatPanel {
         ChatContextBuilder.PlotInfo plot = new ChatContextBuilder.PlotInfo(
                 pos.getX(), pos.getY(), pos.getZ(),
                 bounds.worldSize(), bounds.dirX(), bounds.dirZ(), bounds.groundYOffset());
+        // Both the command reference and the shop/unlock/collections reference (help scrolls 1/3
+        // and 2/3): without the second, the AI happily planned carrot scripts on a plot that hadn't
+        // bought carrots yet (real-machine report). The plot's own unlock/points state goes along
+        // too, so it can say "carrot isn't unlocked here - Shop, 20 wheat" instead of guessing.
+        String reference = CommandsHelpDoc.COMMANDS + "\n" + CommandsHelpDoc.ADVANCED;
+        Map<String, Map<String, Long>> lockedOffers = new LinkedHashMap<>();
+        for (UnlockShop.Unlock unlock : UnlockShop.CATALOG) {
+            if (!host.unlockedCrops().contains(unlock.id())) {
+                lockedOffers.put(unlock.id(), unlock.cost());
+            }
+        }
+        ChatContextBuilder.PlotStatus status = new ChatContextBuilder.PlotStatus(
+                host.unlockedCrops(), host.pointsByCrop(), lockedOffers);
         ChatContextBuilder.ChatContext context = new ChatContextBuilder.ChatContext(
-                host.editorText(), CommandsHelpDoc.COMMANDS, host.logLines(), pendingRegion, priorSummary,
-                Optional.of(plot));
+                host.editorText(), reference, host.logLines(), pendingRegion, priorSummary,
+                Optional.of(plot), Optional.of(status));
         String prompt = ChatContextBuilder.build(question, context);
 
         ClaudeCliBridge.ClaudeCliOptions options = chatSession.cliSessionId() == null

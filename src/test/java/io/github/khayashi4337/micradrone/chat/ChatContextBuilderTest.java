@@ -14,7 +14,8 @@ import io.github.khayashi4337.micradrone.chat.ChatContextBuilder.ChatContext;
 class ChatContextBuilderTest {
 
     private static ChatContext contextOf(String script, List<String> logLines, Optional<String> region) {
-        return new ChatContext(script, "move(dir) / harvest() / ...", logLines, region, Optional.empty(), Optional.empty());
+        return new ChatContext(script, "move(dir) / harvest() / ...", logLines, region, Optional.empty(),
+                Optional.empty(), Optional.empty());
     }
 
     @Test
@@ -78,7 +79,7 @@ class ChatContextBuilderTest {
     @Test
     void includesThePriorSummaryWhenTheSessionWasCompacted() {
         ChatContext context = new ChatContext("x = 1", "ref", List.of(), Optional.empty(),
-                Optional.of("以前、収穫ループのバグを直した"), Optional.empty());
+                Optional.of("以前、収穫ループのバグを直した"), Optional.empty(), Optional.empty());
 
         String prompt = ChatContextBuilder.build("質問", context);
 
@@ -96,7 +97,7 @@ class ChatContextBuilderTest {
         // Controller at (-12,66,150), 5x5 plot extending toward +x/-z, ground one block below.
         ChatContextBuilder.PlotInfo plot = new ChatContextBuilder.PlotInfo(-12, 66, 150, 5, 1, -1, -1);
         ChatContext context = new ChatContext("x = 1", "ref", List.of(), Optional.empty(), Optional.empty(),
-                Optional.of(plot));
+                Optional.of(plot), Optional.empty());
 
         String prompt = ChatContextBuilder.build("質問", context);
 
@@ -105,5 +106,36 @@ class ChatContextBuilderTest {
         // y already folds in the ground offset (66 + -1), x/z keep the sign of dirX/dirZ visible.
         assertTrue(prompt.contains("x = -12 + (1)*(1+gx), y = 65, z = 150 + (-1)*(1+gy)"));
         assertTrue(prompt.contains("move(\"east\") は gx+1"));
+    }
+
+    @Test
+    void spellsOutUnlocksPointsAndWhatTheShopStillSells() {
+        ChatContextBuilder.PlotStatus status = new ChatContextBuilder.PlotStatus(
+                java.util.Set.of("wheat", "core_commands"),
+                java.util.Map.of("wheat", 186L, "carrot", 0L),
+                java.util.Map.of("carrot", java.util.Map.of("wheat", 20L),
+                        "pumpkin", java.util.Map.of("wheat", 30L, "carrot", 15L)));
+        ChatContext context = new ChatContext("x = 1", "ref", List.of(), Optional.empty(), Optional.empty(),
+                Optional.empty(), Optional.of(status));
+
+        String prompt = ChatContextBuilder.build("質問", context);
+
+        assertTrue(prompt.contains("- アンロック済み: core_commands, wheat"));
+        assertTrue(prompt.contains("- 所持ポイント: carrot 0, wheat 186"));
+        assertTrue(prompt.contains("carrot = wheat 20, pumpkin = carrot 15 + wheat 30"));
+        assertTrue(prompt.contains("未購入の作物は plant() が失敗する"));
+    }
+
+    @Test
+    void saysSoWhenEverythingIsAlreadyBought() {
+        ChatContextBuilder.PlotStatus status = new ChatContextBuilder.PlotStatus(
+                java.util.Set.of("wheat", "carrot", "pumpkin"), java.util.Map.of(), java.util.Map.of());
+        ChatContext context = new ChatContext("x = 1", "ref", List.of(), Optional.empty(), Optional.empty(),
+                Optional.empty(), Optional.of(status));
+
+        String prompt = ChatContextBuilder.build("質問", context);
+
+        assertTrue(prompt.contains("未購入のアンロック: 無し"));
+        assertTrue(prompt.contains("所持ポイント: (まだ無し)"));
     }
 }
