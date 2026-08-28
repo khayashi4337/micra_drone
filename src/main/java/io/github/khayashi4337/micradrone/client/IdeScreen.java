@@ -588,6 +588,72 @@ public class IdeScreen extends Screen {
         }
     }
 
+    // ---- Devkit test hooks -------------------------------------------------------------------
+    // Called only by a separate, unshipped test-automation companion mod (never part of the
+    // distributed jar) so the AI chat panel can be driven deterministically - a JSON API call
+    // instead of pixel-guessing 3D camera aim, which real-machine testing found synthetic mouse
+    // input can't drive (Minecraft/GLFW reads raw input directly). Every method name ends in
+    // "ForTesting" so a reviewer can immediately tell these aren't part of the normal UI flow.
+
+    public boolean isChatModeForTesting() {
+        return chatMode;
+    }
+
+    public boolean isChatSendInFlightForTesting() {
+        return chatSendInFlight;
+    }
+
+    public String getChatLogForTesting() {
+        return chatLogText();
+    }
+
+    public String getEditorTextForTesting() {
+        return editorText;
+    }
+
+    public int getLastAssistantCodeBlockCountForTesting() {
+        return lastAssistantCodeBlocks.size();
+    }
+
+    public boolean isDangerModeForTesting() {
+        return dangerMode.isEnabled();
+    }
+
+    /** Switches to the Chat tab if it isn't already showing - a no-op otherwise. */
+    public void openChatTabForTesting() {
+        if (!chatMode) {
+            toggleChatMode();
+        }
+    }
+
+    /** Types {@code text} into the chat input and sends it, opening the Chat tab first if needed. */
+    public void sendChatMessageForTesting(String text) {
+        openChatTabForTesting();
+        if (chatInputBox != null) {
+            chatInputBox.setValue(text);
+        }
+        sendChatMessage();
+    }
+
+    /** Same effect as clicking the Nth Insert button under the chat log. */
+    public void insertCodeBlockForTesting(int index) {
+        if (index >= 0 && index < lastAssistantCodeBlocks.size()) {
+            editorText = lastAssistantCodeBlocks.get(index).code();
+            editor.setValue(editorText);
+        }
+    }
+
+    public void setDangerModeForTesting(boolean enabled) {
+        dangerMode.setEnabled(enabled);
+        if (chatDangerButton != null) {
+            chatDangerButton.setMessage(dangerButtonLabel());
+        }
+    }
+
+    public void compactForTesting() {
+        compactChat();
+    }
+
     /**
      * Switches the editor to {@code entry} (list-mode click): tells the server it's now selected,
      * adopts its id/name locally right away (no need to wait for a round trip - the list already
