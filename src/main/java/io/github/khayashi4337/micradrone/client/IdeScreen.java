@@ -182,6 +182,8 @@ public class IdeScreen extends Screen {
     // reviewOriginalText. See LineDiff for why this replaced the old overwrite-on-Insert.
     private String reviewOriginalText;
     private LineDiff reviewDiff;
+    /** The script as it was before Danger ON's last unreviewed apply - non-null while that apply can still be undone. */
+    private String lastAutoApplyOriginal;
     /** Per-hunk "x Reject" marker rectangles from the last frame (null = hunk scrolled out of view), for hit-testing. */
     private final List<int[]> reviewHunkMarkerRects = new java.util.ArrayList<>();
     private static final int HUNK_MARKER_PADDING = 3;
@@ -411,6 +413,21 @@ public class IdeScreen extends Screen {
         }
 
         @Override
+        public void applyWithoutReview(String proposed) {
+            IdeScreen.this.applyWithoutReview(proposed);
+        }
+
+        @Override
+        public boolean canUndoLastApply() {
+            return lastAutoApplyOriginal != null;
+        }
+
+        @Override
+        public void undoLastApply() {
+            IdeScreen.this.undoLastApply();
+        }
+
+        @Override
         public List<String> logLines() {
             return logLines;
         }
@@ -532,6 +549,21 @@ public class IdeScreen extends Screen {
     /** Same effect as clicking the "x Reject" marker beside the Nth change block in the editor. */
     public void rejectHunkForTesting(int index) {
         rejectHunk(index);
+    }
+
+    /** Same effect as pressing Esc while "AI: thinking" is showing. */
+    public void cancelChatForTesting() {
+        chatPanel.cancelRoundTrip();
+    }
+
+    public boolean canUndoLastApplyForTesting() {
+        return lastAutoApplyOriginal != null;
+    }
+
+    /** Same effect as clicking "Undo AI change" after a Danger ON apply. */
+    public void undoLastApplyForTesting() {
+        undoLastApply();
+        rebuildWidgets();
     }
 
     public void setDangerModeForTesting(boolean enabled) {
@@ -674,6 +706,7 @@ public class IdeScreen extends Screen {
         }
         reviewOriginalText = editorText;
         reviewDiff = diff;
+        lastAutoApplyOriginal = null; // a fresh review supersedes any earlier one-step undo
         editor.setValue(diff.mergedText()); // the value listener mirrors this into editorText; endReview restores
         applyReviewDecorations();
     }
@@ -693,6 +726,29 @@ public class IdeScreen extends Screen {
 
     private void rejectReview() {
         endReview(reviewOriginalText);
+    }
+
+    /**
+     * Danger ON's counterpart of {@link #beginReview}: the proposal replaces the script outright,
+     * and the text it replaced is kept for one {@link #undoLastApply} - the safety net that lets
+     * the "just let the AI do it" mode stay recoverable.
+     */
+    private void applyWithoutReview(String proposed) {
+        if (proposed.equals(editorText)) {
+            return;
+        }
+        lastAutoApplyOriginal = editorText;
+        editorText = proposed;
+        editor.setValue(proposed);
+    }
+
+    private void undoLastApply() {
+        if (lastAutoApplyOriginal == null) {
+            return;
+        }
+        editorText = lastAutoApplyOriginal;
+        editor.setValue(editorText);
+        lastAutoApplyOriginal = null;
     }
 
     /**

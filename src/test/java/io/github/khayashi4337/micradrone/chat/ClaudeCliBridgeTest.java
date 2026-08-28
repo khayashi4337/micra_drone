@@ -75,6 +75,15 @@ class ClaudeCliBridgeTest {
     }
 
     @Test
+    void aCancelledResultIsNeitherASuccessNorMistakenForAnOrdinaryFailure() {
+        ClaudeCliBridge.ClaudeCliResult cancelled = ClaudeCliBridge.ClaudeCliResult.cancelled();
+        assertFalse(cancelled.success());
+        assertTrue(cancelled.isCancelled());
+        assertFalse(new ClaudeCliBridge.ClaudeCliResult(false, null, null, "claude CLI exited 1: boom").isCancelled());
+        assertFalse(new ClaudeCliBridge.ClaudeCliResult(true, "ok", "s", null).isCancelled());
+    }
+
+    @Test
     void nonWindowsLaunchIsUnwrapped() {
         List<String> logical = List.of("claude", "-p");
 

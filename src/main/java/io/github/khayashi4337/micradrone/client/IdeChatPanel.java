@@ -67,6 +67,13 @@ final class IdeChatPanel {
 
         void rejectReview();
 
+        /** Danger ON: the proposal goes straight into the editor, no review - kept undoable once. */
+        void applyWithoutReview(String proposed);
+
+        boolean canUndoLastApply();
+
+        void undoLastApply();
+
         List<String> logLines();
 
         <T extends GuiEventListener & Renderable & NarratableEntry> T addWidget(T widget);
@@ -92,6 +99,7 @@ final class IdeChatPanel {
     private static final int THINKING_COLOR = 0xFFD97757;
     private static final int THINKING_DOT_INTERVAL_TICKS = 5;   // 0.25s per step at 20 tps
     private static final int THINKING_MAX_DOTS = 3;
+    private static final int CANCEL_HINT_COLOR = 0xFF9A9A9A;
 
     private final Host host;
     private final ClaudeCliBridge claudeCliBridge = new ClaudeCliBridge(CLAUDE_EXECUTABLE);
@@ -109,6 +117,9 @@ final class IdeChatPanel {
     private String inputDraft = "";
     private int statusRowX;
     private int statusRowY;
+    private int statusRowWidth;
+    /** The question whose reply is in flight - removed from the transcript again if Esc cancels it. */
+    private String pendingQuestion;
     /** Client ticks since the panel was built; drives the thinking-dots animation. */
     private int animationTicks = 0;
 
@@ -142,6 +153,7 @@ final class IdeChatPanel {
         int insertRowY = inputRowY - ROW_GAP - INSERT_ROW_HEIGHT;
         statusRowY = insertRowY - ROW_GAP - STATUS_ROW_HEIGHT;
         statusRowX = rightX;
+        statusRowWidth = rightW;
         int logHeight = statusRowY - ROW_GAP - topY;
 
         logBox = new MultiLineEditBox(host.font(), rightX, topY, rightW, logHeight,
@@ -167,6 +179,14 @@ final class IdeChatPanel {
                                 host.rebuildWidgets();
                             })
                     .bounds(rightX + REVIEW_BUTTON_WIDTH + ROW_GAP, insertRowY, REVIEW_BUTTON_WIDTH, INSERT_ROW_HEIGHT).build());
+        } else if (host.canUndoLastApply()) {
+            // Danger ON applied the last reply straight into the editor; this is the one-step way back.
+            host.addWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_undo"),
+                            b -> {
+                                host.undoLastApply();
+                                host.rebuildWidgets();
+                            })
+                    .bounds(rightX, insertRowY, REVIEW_BUTTON_WIDTH, INSERT_ROW_HEIGHT).build());
         }
 
         inputBox = new EditBox(host.font(), rightX, inputRowY, rightW - SEND_BUTTON_WIDTH - ROW_GAP,
@@ -174,6 +194,7 @@ final class IdeChatPanel {
         inputBox.setMaxLength(INPUT_MAX_CHARS);
         inputBox.setValue(inputDraft); // a reply landing mid-typing rebuilds this panel; keep the draft
         inputBox.setResponder(text -> inputDraft = text);
+        inputBox.setEditable(!sendInFlight); // while a reply is in flight the box shows what was sent
         host.addWidget(inputBox);
         sendButton = host.addWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_send"),
                         b -> sendMessage())
@@ -210,8 +231,10 @@ final class IdeChatPanel {
         }
         int dots = (animationTicks / THINKING_DOT_INTERVAL_TICKS) % (THINKING_MAX_DOTS + 1);
         String text = Component.translatable("gui.micradrone.ide_screen.chat_thinking").getString() + ".".repeat(dots);
-        guiGraphics.drawString(host.font(), text, statusRowX, statusRowY + (STATUS_ROW_HEIGHT - host.font().lineHeight) / 2,
-                THINKING_COLOR);
+        int textY = statusRowY + (STATUS_ROW_HEIGHT - host.font().lineHeight) / 2;
+        guiGraphics.drawString(host.font(), text, statusRowX, textY, THINKING_COLOR);
+        String hint = Component.translatable("gui.micradrone.ide_screen.chat_cancel_hint").getString();
+        guiGraphics.drawString(host.font(), hint, statusRowX + statusRowWidth - host.font().width(hint), textY, CANCEL_HINT_COLOR);
     }
 
     /** Send and Compact both fire a CLI round trip, so both wait for the one in flight. */
@@ -238,14 +261,25 @@ final class IdeChatPanel {
         });
     }
 
-    /** Enter in the input box sends; everything else is left to the host. */
+    /** Esc while a reply is in flight cancels it; Enter in the input box sends; everything else is left to the host. */
     boolean handleKeyPressed(int keyCode) {
+        if (sendInFlight && keyCode == GLFW.GLFW_KEY_ESCAPE) {
+            cancelRoundTrip();
+            return true;
+        }
         if (inputBox != null && inputBox.isFocused()
                 && (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER)) {
             sendMessage();
             return true;
         }
         return false;
+    }
+
+    /** Stops the CLI round trip in flight; the result then arrives as cancelled (see onChatResult). */
+    void cancelRoundTrip() {
+        if (sendInFlight) {
+            claudeCliBridge.cancel();
+        }
     }
 
     private Component dangerButtonLabel() {
@@ -364,7 +398,10 @@ final class IdeChatPanel {
                 : new ClaudeCliBridge.ClaudeCliOptions(chatSession.cliSessionId(), false, dangerMode.toCliFlags(), mcpConfigPath.get());
 
         setRoundTripInFlight(true);
-        inputBox.setValue("");
+        // The question stays visible (read-only) in the box until the reply lands, so a typo can
+        // be spotted, Esc'd, and fixed in place instead of retyped from memory.
+        pendingQuestion = question;
+        inputBox.setEditable(false);
         chatSession.addMessage(new ChatMessage(ChatMessage.ROLE_USER, question, System.currentTimeMillis()));
         saveSession(); // the question outlives a game closed before the reply lands
         refreshTranscript();
@@ -401,20 +438,43 @@ final class IdeChatPanel {
         if (chatSession == null) {
             return; // never null once a send has started; kept as a guard against future reordering
         }
+        if (result.isCancelled()) {
+            // Esc: take the question back out of the transcript; it is still sitting in the input
+            // box (inputDraft) for the player to fix and resend.
+            List<ChatMessage> messages = chatSession.messages();
+            if (!messages.isEmpty() && ChatMessage.ROLE_USER.equals(messages.get(messages.size() - 1).role())
+                    && messages.get(messages.size() - 1).text().equals(pendingQuestion)) {
+                chatSession.replaceMessages(messages.subList(0, messages.size() - 1));
+            }
+            pendingQuestion = null;
+            saveSession();
+            refreshAfterTurn();
+            return;
+        }
+        pendingQuestion = null;
         if (result.success()) {
+            inputDraft = ""; // sent and answered - the box is free for the next question
             chatSession.addMessage(new ChatMessage(ChatMessage.ROLE_ASSISTANT, result.responseText(), System.currentTimeMillis()));
             if (result.sessionId() != null) {
                 chatSession.setCliSessionId(result.sessionId());
             }
             lastAssistantCodeBlocks = CodeBlockParser.parse(result.responseText());
             // Cursor's flow: by the time you read the reply, its code is already sitting in the
-            // editor as a pending diff - no Insert click. The first block is applied for review
-            // right away (Reject puts the script back untouched); nothing is applied on top of a
-            // review still open from a previous turn.
+            // editor - no Insert click. Safe mode shows it as a pending diff (Reject puts the
+            // script back untouched); Danger ON - the player's "I trust the AI with my machine"
+            // switch - applies it outright and offers a one-step Undo instead, for when
+            // confirming every change is the fatigue, not the help. Nothing is applied on top of
+            // a review still open from a previous turn.
             if (!lastAssistantCodeBlocks.isEmpty() && !host.isReviewing() && !host.isClosed()) {
-                host.beginReview(lastAssistantCodeBlocks.get(0).code());
+                String code = lastAssistantCodeBlocks.get(0).code();
+                if (dangerMode.isEnabled()) {
+                    host.applyWithoutReview(code);
+                } else {
+                    host.beginReview(code);
+                }
             }
         } else {
+            // The question stays in the box (inputDraft) so a transient failure is one Enter away from a retry.
             reportError(result.errorMessage());
             lastAssistantCodeBlocks = List.of();
         }
@@ -463,6 +523,10 @@ final class IdeChatPanel {
     private void onCompactResult(ClaudeCliBridge.ClaudeCliResult result) {
         setRoundTripInFlight(false);
         if (chatSession == null) {
+            return;
+        }
+        if (result.isCancelled()) {
+            refreshAfterTurn(); // nothing changed; just re-enable the buttons
             return;
         }
         if (result.success()) {

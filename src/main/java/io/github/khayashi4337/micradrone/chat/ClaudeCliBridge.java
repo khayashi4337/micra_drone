@@ -49,7 +49,21 @@ public final class ClaudeCliBridge {
     }
 
     public record ClaudeCliResult(boolean success, String responseText, String sessionId, String errorMessage) {
+        /** The errorMessage of a round trip the player stopped with {@link #cancel} - not a real failure. */
+        static final String CANCELLED_MESSAGE = "cancelled";
+
+        static ClaudeCliResult cancelled() {
+            return new ClaudeCliResult(false, null, null, CANCELLED_MESSAGE);
+        }
+
+        public boolean isCancelled() {
+            return !success && CANCELLED_MESSAGE.equals(errorMessage);
+        }
     }
+
+    /** The process of the round trip in flight, if any - what {@link #cancel} kills. */
+    private volatile Process inFlight;
+    private volatile boolean cancelRequested;
 
     private final String claudeExecutable;
     private final ExecutorService executor = Executors.newCachedThreadPool(r -> {
@@ -105,13 +119,30 @@ public final class ClaudeCliBridge {
     }
 
     public CompletableFuture<ClaudeCliResult> send(String prompt, ClaudeCliOptions options) {
+        cancelRequested = false;
         return CompletableFuture.supplyAsync(() -> runProcess(prompt, options), executor);
+    }
+
+    /**
+     * Stops the round trip in flight (Esc in the chat panel): its future then completes with
+     * {@link ClaudeCliResult#isCancelled}. Kills the whole tree, not just the top process - on
+     * Windows the launch goes through cmd.exe (see launchCommand), and destroying cmd.exe alone
+     * would leave the actual node/claude child running to completion.
+     */
+    public void cancel() {
+        cancelRequested = true;
+        Process process = inFlight;
+        if (process != null) {
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+            process.destroyForcibly();
+        }
     }
 
     private ClaudeCliResult runProcess(String prompt, ClaudeCliOptions options) {
         List<String> command = launchCommand(buildCommand(claudeExecutable, options));
         try {
             Process process = new ProcessBuilder(command).redirectErrorStream(false).start();
+            inFlight = process;
             // Drain stdout and stderr on their own threads from the moment the process starts.
             // Reading them one after another on this thread (the earlier shape) had two real
             // failure modes: a hung CLI blocked readAll() forever, so the waitFor timeout below never
@@ -126,7 +157,12 @@ public final class ClaudeCliBridge {
                 // Fall through: the exit code and stderr below say why, far better than "pipe closed".
             }
             boolean finished = process.waitFor(CLI_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            inFlight = null;
+            if (cancelRequested) {
+                return ClaudeCliResult.cancelled();
+            }
             if (!finished) {
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
                 process.destroyForcibly();
                 return new ClaudeCliResult(false, null, null, "claude CLI timed out after " + CLI_TIMEOUT_SECONDS + "s");
             }
@@ -137,8 +173,12 @@ public final class ClaudeCliBridge {
             }
             return ClaudeCliJson.parseResult(out);
         } catch (IOException | InterruptedException | ExecutionException e) {
+            inFlight = null;
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
+            }
+            if (cancelRequested) {
+                return ClaudeCliResult.cancelled();
             }
             return new ClaudeCliResult(false, null, null, String.valueOf(e.getMessage()));
         }
