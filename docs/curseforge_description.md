@@ -67,6 +67,10 @@ own. Inspired by the Steam game
   bookshelves (exactly like vanilla enchanting), for a lapis lazuli cost.
   You can also copy an already-written scroll sitting in a chest, shulker
   box, or chiseled bookshelf around the table for a flat 1 lapis.
+- **Write and run right away** — every controller carries its own built-in
+  script ("Controller script", first in the list), so a freshly placed
+  controller can be edited and run with nothing else in hand. Scrolls are
+  for carrying and sharing scripts.
 - **A script library you can carry** — store scrolls in a chest, shulker
   box, or chiseled bookshelf anywhere along the two axis lines from the
   controller toward the corner marker (no need to relocate it if you resize

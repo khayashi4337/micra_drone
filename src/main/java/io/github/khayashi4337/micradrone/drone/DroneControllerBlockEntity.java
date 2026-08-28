@@ -129,9 +129,19 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     // applyImplicitComponents, the same route vanilla chests use); the script folder on disk is
     // named after it, falling back to coordinates when blank - see ScriptFileStore#folderName.
     private volatile String alias = "";
-    // Empty until a script is actually picked (or saved/run) at least once - see ScriptId.isValidId,
-    // which rejects "" so an early redstone signal or right-click just logs/no-ops instead of crashing.
-    private volatile String selectedScript = "";
+    /**
+     * The script stored in this block itself (ScriptId.CONTROLLER_ID): the one target that always
+     * exists, so a freshly placed controller can be written to and run immediately. Before it
+     * existed, an IDE opened on a controller with no scroll selected accepted typing but Save/Run
+     * were refused with "invalid script id ''" and the text was lost on close (real-machine
+     * report). Scrolls stay the way to carry/share scripts; this is just the built-in one.
+     */
+    private volatile String builtInScript = "";
+    /** What the list shows for the built-in script - a fixed label, since it isn't an item with a hover name. */
+    static final String CONTROLLER_SCRIPT_DISPLAY_NAME = "Controller script";
+    // The built-in script is the default selection, so Save/Run and an early redstone signal all
+    // have a valid target from the moment the block is placed.
+    private volatile String selectedScript = ScriptId.CONTROLLER_ID;
     // Refreshed from the library containers in sendLogSnapshotTo (screen open); reused as-is by
     // every other push so routine log/points updates don't re-scan anything. On-disk .mdrone files
     // are no longer listed (GUI reduction, issue #7) - scripts live in items now; the file store
@@ -392,12 +402,20 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         if (!(level instanceof ServerLevel serverLevel)) {
             return Optional.empty();
         }
+        if (ScriptId.isControllerId(scriptName)) {
+            return Optional.of(builtInScript);
+        }
         if (ScriptId.isScrollId(scriptName)) {
             return ScriptChestLibrary.resolveScrollSource(serverLevel, getBlockPos(), scriptName);
         }
         if (ScriptId.isInventoryScrollId(scriptName)) {
-            return requester != null
-                    ? ScriptChestLibrary.resolveInventoryScrollSource(requester, scriptName)
+            // No requester (the redstone path): read from the controller's owner instead - the
+            // player who last ran it - so a lever re-runs the same inventory scroll the IDE's Run
+            // button just did, as long as that player is online and still holds it. Real-machine
+            // report: Run worked, the lever next to it said "could not read script 'inv:7'".
+            ServerPlayer reader = requester != null ? requester : resolveOwner().orElse(null);
+            return reader != null
+                    ? ScriptChestLibrary.resolveInventoryScrollSource(reader, scriptName)
                     : Optional.empty();
         }
         try {
@@ -448,7 +466,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             requester.sendSystemMessage(Component.literal("[ide] script too long (" + source.length() + " > " + MAX_SCRIPT_CHARS + " chars)"));
             return;
         }
-        if (ScriptId.isScrollId(scriptName)) {
+        if (ScriptId.isControllerId(scriptName)) {
+            builtInScript = source; // persisted with the block (see saveAdditional)
+        } else if (ScriptId.isScrollId(scriptName)) {
             // A chest scroll: write the edit back into the scroll item itself.
             if (!ScriptChestLibrary.saveScrollSource(serverLevel, getBlockPos(), scriptName, source)) {
                 requester.sendSystemMessage(Component.literal(
@@ -572,7 +592,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             return;
         }
         if (!ScriptId.isValidId(scriptName)) {
-            appendLog("[error] invalid script id '" + scriptName + "'");
+            appendLog(scriptName.isEmpty()
+                    ? "[error] no script selected - open List and pick one"
+                    : "[error] invalid script id '" + scriptName + "'");
             return;
         }
         clearLog();
@@ -587,7 +609,14 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
         Optional<String> loaded = loadScriptSource(requester, scriptName);
         if (loaded.isEmpty()) {
-            appendLog("[error] could not read script '" + scriptName + "' - missing scroll or file; reopen the screen to refresh the list");
+            if (requester == null && ScriptId.isInventoryScrollId(scriptName)) {
+                // The redstone path reads an inventory scroll from the controller's owner (see
+                // loadScriptSource); this is what's left when that owner is offline or moved it.
+                appendLog("[error] the inventory scroll " + scriptName + " isn't reachable from redstone right now"
+                        + " (its owner must be online and still holding it) - or select the Controller script");
+            } else {
+                appendLog("[error] could not read script '" + scriptName + "' - missing scroll or file; reopen the screen to refresh the list");
+            }
             return;
         }
         String source = loaded.get();
@@ -751,9 +780,17 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     private void refreshAvailableScripts(ServerLevel level) {
-        List<ScriptEntry> entries = new ArrayList<>(ScriptChestLibrary.listScrolls(level, getBlockPos()));
+        List<ScriptEntry> entries = new ArrayList<>();
+        // The built-in script always heads the list, so the list is never empty and a stale or
+        // blank selection always falls back to something that can actually be saved and run.
+        entries.add(new ScriptEntry(ScriptId.CONTROLLER_ID, CONTROLLER_SCRIPT_DISPLAY_NAME,
+                ScriptFileStore.describeScript(builtInScript, CONTROLLER_SCRIPT_DISPLAY_NAME), builtInScript.isBlank()));
+        entries.addAll(ScriptChestLibrary.listScrolls(level, getBlockPos()));
         availableScripts = List.copyOf(entries);
-        if (!entries.isEmpty() && entries.stream().noneMatch(entry -> entry.id().equals(selectedScript))) {
+        if (entries.stream().noneMatch(entry -> entry.id().equals(selectedScript))
+                && !ScriptId.isInventoryScrollId(selectedScript)) {
+            // Inventory scrolls aren't in this per-controller list (they're per player), so a
+            // selection of that shape is left alone rather than overridden.
             selectedScript = entries.get(0).id();
         }
     }
@@ -896,7 +933,13 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             pointsByCrop.put(crop, pointsTag.getLong(crop));
         }
         alias = tag.getString("Alias");
+        builtInScript = tag.getString("BuiltInScript"); // absent on older saves -> "" (empty script)
         selectedScript = tag.getString("SelectedScript");
+        if (selectedScript.isEmpty()) {
+            // Saves from before the built-in script existed could hold "" here; that used to make
+            // Save/Run fail until a scroll was picked. Fall back to the always-present script.
+            selectedScript = ScriptId.CONTROLLER_ID;
+        }
         unlockedCrops.clear();
         unlockedCrops.add("wheat");
         ListTag unlockedTag = tag.getList("UnlockedCrops", Tag.TAG_STRING);
@@ -918,6 +961,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         pointsByCrop.forEach(pointsTag::putLong);
         tag.put("PointsByCrop", pointsTag);
         tag.putString("Alias", alias);
+        tag.putString("BuiltInScript", builtInScript);
         tag.putString("SelectedScript", selectedScript);
         ListTag unlockedTag = new ListTag();
         unlockedCrops.forEach(crop -> unlockedTag.add(StringTag.valueOf(crop)));
