@@ -37,4 +37,15 @@ class ClientMainThreadDispatchTest {
                 }, 1000L));
         assertEquals("chunk not loaded", thrown.getCause().getMessage());
     }
+
+    @Test
+    void propagatesAnErrorThrownByTheTaskInsteadOfWaitingForTheTimeout() {
+        // An Error (a stale-jar NoSuchMethodError, say) is not a RuntimeException; it must still
+        // complete the future, or the caller would sit out the full timeout with no clue why.
+        RuntimeException thrown = assertThrows(RuntimeException.class,
+                () -> ClientMainThreadDispatch.runAndWait(IMMEDIATE, () -> {
+                    throw new NoSuchMethodError("IdeScreen.isChatModeForTesting()");
+                }, 10_000L));
+        assertEquals(NoSuchMethodError.class, thrown.getCause().getClass());
+    }
 }

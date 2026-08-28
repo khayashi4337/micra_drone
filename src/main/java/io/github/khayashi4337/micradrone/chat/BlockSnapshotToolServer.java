@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executors;
@@ -19,6 +20,9 @@ import com.sun.net.httpserver.HttpServer;
  * assigned port; JSON-RPC handling lives in McpProtocol so this class stays a thin socket wrapper.
  */
 public final class BlockSnapshotToolServer implements AutoCloseable {
+    /** JSON-RPC 2.0's standard code for a request body that isn't valid JSON. */
+    static final int PARSE_ERROR_CODE = -32700;
+
     private final HttpServer httpServer;
     private final BlockSnapshotReader reader;
 
@@ -75,8 +79,13 @@ public final class BlockSnapshotToolServer implements AutoCloseable {
                 out.write(payload);
             }
         } catch (RuntimeException malformedRequest) {
-            byte[] payload = ("{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32700,\"message\":\""
-                    + malformedRequest.getMessage() + "\"}}").getBytes(StandardCharsets.UTF_8);
+            // Built through MiniJson rather than string concatenation so a message containing a
+            // quote or backslash (the parser echoes offending input) can't produce invalid JSON.
+            Map<String, Object> error = new LinkedHashMap<>();
+            error.put("jsonrpc", "2.0");
+            error.put("id", null);
+            error.put("error", Map.of("code", PARSE_ERROR_CODE, "message", String.valueOf(malformedRequest.getMessage())));
+            byte[] payload = MiniJson.write(error).getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, payload.length);
             try (OutputStream out = exchange.getResponseBody()) {

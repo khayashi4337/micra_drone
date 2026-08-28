@@ -29,7 +29,10 @@ public final class ClientMainThreadDispatch {
         executor.execute(() -> {
             try {
                 future.complete(task.get());
-            } catch (RuntimeException e) {
+            } catch (Throwable e) {
+                // Throwable, not RuntimeException: an Error (NoClassDefFoundError, a stale-jar
+                // NoSuchMethodError) thrown on the render thread would otherwise leave this future
+                // hanging until the timeout - and, being uncaught there, could take the client down.
                 future.completeExceptionally(e);
             }
         });

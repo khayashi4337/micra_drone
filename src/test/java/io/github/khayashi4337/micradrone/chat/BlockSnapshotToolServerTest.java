@@ -89,6 +89,26 @@ class BlockSnapshotToolServerTest {
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
         assertEquals(200, response.statusCode());
-        assertTrue(response.body().contains("\"error\""));
+        // Parse it back rather than just grepping for "error": the parser's message echoes the
+        // offending input, so the body must stay valid JSON no matter what characters that holds.
+        @SuppressWarnings("unchecked")
+        Map<String, Object> parsed = (Map<String, Object>) MiniJson.parse(response.body());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> error = (Map<String, Object>) parsed.get("error");
+        assertEquals((double) BlockSnapshotToolServer.PARSE_ERROR_CODE, ((Number) error.get("code")).doubleValue());
+    }
+
+    @Test
+    void aParseErrorMessageContainingQuotesStillProducesValidJson() throws Exception {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(server.url()))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/call\", \"params\": \"oops\"}", StandardCharsets.UTF_8))
+                .build();
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, response.statusCode());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> parsed = (Map<String, Object>) MiniJson.parse(response.body());
+        assertTrue(parsed.containsKey("error"), response.body());
     }
 }
