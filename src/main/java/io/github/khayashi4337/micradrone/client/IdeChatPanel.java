@@ -419,6 +419,13 @@ final class IdeChatPanel {
                 chatSession.setCliSessionId(result.sessionId());
             }
             lastAssistantCodeBlocks = CodeBlockParser.parse(result.responseText());
+            // Cursor's flow: by the time you read the reply, its code is already sitting in the
+            // editor as a pending diff - no extra Insert click. The first block is applied for
+            // review right away (Reject puts the script back untouched); Insert #N stays for the
+            // rest, and nothing is applied on top of a review still open from a previous turn.
+            if (!lastAssistantCodeBlocks.isEmpty() && !host.isReviewing() && !host.isClosed()) {
+                host.beginReview(lastAssistantCodeBlocks.get(0).code());
+            }
         } else {
             reportError(result.errorMessage());
             lastAssistantCodeBlocks = List.of();
