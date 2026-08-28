@@ -19,6 +19,7 @@ import io.github.khayashi4337.micradrone.drone.CommandsHelpDoc;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.MultiLineEditBox;
@@ -77,6 +78,13 @@ final class IdeChatPanel {
     private static final int MAX_INSERT_BUTTONS = 3;
     private static final int ROW_GAP = IdeScreen.ROW_GAP;
     private static final String CLAUDE_EXECUTABLE = "claude";
+    // "AI: thinking..." status row under the transcript while a reply is in flight - the transcript
+    // itself is a vanilla MultiLineEditBox, which can't color part of its text, hence a separate row.
+    private static final int STATUS_ROW_HEIGHT = 12;
+    /** Claude's own accent orange, so the "thinking" line reads as the AI's rather than the mod's cyan. */
+    private static final int THINKING_COLOR = 0xFFD97757;
+    private static final int THINKING_DOT_INTERVAL_TICKS = 5;   // 0.25s per step at 20 tps
+    private static final int THINKING_MAX_DOTS = 3;
 
     private final Host host;
     private final ClaudeCliBridge claudeCliBridge = new ClaudeCliBridge(CLAUDE_EXECUTABLE);
@@ -88,9 +96,14 @@ final class IdeChatPanel {
     private MultiLineEditBox logBox;
     private EditBox inputBox;
     private Button sendButton;
+    private Button compactButton;
     private Button dangerButton;
     /** What the player has typed but not sent - restored across the rebuild a landing reply triggers. */
     private String inputDraft = "";
+    private int statusRowX;
+    private int statusRowY;
+    /** Client ticks since the panel was built; drives the thinking-dots animation. */
+    private int animationTicks = 0;
 
     IdeChatPanel(Host host) {
         this.host = host;
@@ -119,7 +132,9 @@ final class IdeChatPanel {
         int toggleRowY = bottomY - TOGGLE_ROW_HEIGHT;
         int inputRowY = toggleRowY - ROW_GAP - INPUT_ROW_HEIGHT;
         int insertRowY = inputRowY - ROW_GAP - INSERT_ROW_HEIGHT;
-        int logHeight = insertRowY - ROW_GAP - topY;
+        statusRowY = insertRowY - ROW_GAP - STATUS_ROW_HEIGHT;
+        statusRowX = rightX;
+        int logHeight = statusRowY - ROW_GAP - topY;
 
         logBox = new MultiLineEditBox(host.font(), rightX, topY, rightW, logHeight,
                 Component.translatable("gui.micradrone.ide_screen.chat_log_placeholder"),
@@ -156,9 +171,41 @@ final class IdeChatPanel {
                             dangerButton.setMessage(dangerButtonLabel());
                         })
                 .bounds(rightX, toggleRowY, toggleBtnW, TOGGLE_ROW_HEIGHT).build());
-        host.addWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_compact"),
+        compactButton = host.addWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_compact"),
                         b -> compact())
                 .bounds(rightX + toggleBtnW + ROW_GAP, toggleRowY, toggleBtnW, TOGGLE_ROW_HEIGHT).build());
+        compactButton.active = !sendInFlight;
+    }
+
+    /** Once per client tick (from IdeScreen#tick): advances the thinking-dots animation. */
+    void tick() {
+        animationTicks++;
+    }
+
+    /**
+     * Draws the "AI: thinking..." status row while a reply (or compact) is in flight - the dots
+     * grow one at a time and wrap, the usual "responding" cue. Drawn by IdeScreen after its widgets
+     * so it sits on top of the panel fill.
+     */
+    void render(GuiGraphics guiGraphics) {
+        if (!open || !sendInFlight) {
+            return;
+        }
+        int dots = (animationTicks / THINKING_DOT_INTERVAL_TICKS) % (THINKING_MAX_DOTS + 1);
+        String text = Component.translatable("gui.micradrone.ide_screen.chat_thinking").getString() + ".".repeat(dots);
+        guiGraphics.drawString(host.font(), text, statusRowX, statusRowY + (STATUS_ROW_HEIGHT - host.font().lineHeight) / 2,
+                THINKING_COLOR);
+    }
+
+    /** Send and Compact both fire a CLI round trip, so both wait for the one in flight. */
+    private void setRoundTripInFlight(boolean inFlight) {
+        sendInFlight = inFlight;
+        if (sendButton != null) {
+            sendButton.active = !inFlight;
+        }
+        if (compactButton != null) {
+            compactButton.active = !inFlight;
+        }
     }
 
     /**
@@ -299,10 +346,7 @@ final class IdeChatPanel {
                 ? ClaudeCliBridge.ClaudeCliOptions.freshSession(dangerMode.toCliFlags(), mcpConfigPath.get())
                 : new ClaudeCliBridge.ClaudeCliOptions(chatSession.cliSessionId(), false, dangerMode.toCliFlags(), mcpConfigPath.get());
 
-        sendInFlight = true;
-        if (sendButton != null) {
-            sendButton.active = false;
-        }
+        setRoundTripInFlight(true);
         inputBox.setValue("");
         chatSession.addMessage(new ChatMessage(ChatMessage.ROLE_USER, question, System.currentTimeMillis()));
         saveSession(); // the question outlives a game closed before the reply lands
@@ -336,7 +380,7 @@ final class IdeChatPanel {
 
     /** Runs back on the render thread (see {@link #sendMessage}) - safe to touch widget state here. */
     private void onChatResult(ClaudeCliBridge.ClaudeCliResult result) {
-        sendInFlight = false;
+        setRoundTripInFlight(false);
         if (chatSession == null) {
             return; // never null once a send has started; kept as a guard against future reordering
         }
@@ -387,16 +431,13 @@ final class IdeChatPanel {
         ClaudeCliBridge.ClaudeCliOptions options = new ClaudeCliBridge.ClaudeCliOptions(
                 chatSession.cliSessionId(), false, dangerMode.toCliFlags(), mcpConfigPath.get());
 
-        sendInFlight = true;
-        if (sendButton != null) {
-            sendButton.active = false;
-        }
+        setRoundTripInFlight(true);
         claudeCliBridge.send(ChatCompactor.COMPACT_REQUEST_PROMPT, options)
                 .thenAccept(result -> Minecraft.getInstance().execute(() -> onCompactResult(result)));
     }
 
     private void onCompactResult(ClaudeCliBridge.ClaudeCliResult result) {
-        sendInFlight = false;
+        setRoundTripInFlight(false);
         if (chatSession == null) {
             return;
         }

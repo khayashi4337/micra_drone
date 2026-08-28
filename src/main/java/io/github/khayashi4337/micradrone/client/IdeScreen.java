@@ -776,6 +776,7 @@ public class IdeScreen extends Screen {
     @Override
     public void tick() {
         super.tick();
+        chatPanel.tick();
         // Failsafe: if focus was stolen or lost some other way while renaming, don't leave an
         // orphaned, unfocused rename box on screen - close it (matches clicking away, see mouseClicked).
         if (renameBox != null && !renameBox.isFocused()) {
@@ -823,6 +824,7 @@ public class IdeScreen extends Screen {
         }
         renderEditorTitleBar(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
+        chatPanel.render(guiGraphics);
         guiGraphics.drawCenteredString(this.font,
                 Component.translatable("gui.micradrone.ide_screen.heading", displayName),
                 this.width / 2, MARGIN, 0xFFFFFF);

@@ -38,6 +38,7 @@
   "gui.micradrone.ide_screen.chat_input": "Chat message",
   "gui.micradrone.ide_screen.chat_send": "Send",
   "gui.micradrone.ide_screen.chat_insert": "Insert #%s",
+  "gui.micradrone.ide_screen.chat_thinking": "AI: thinking",
   "gui.micradrone.ide_screen.chat_danger_on": "Danger: ON",
   "gui.micradrone.ide_screen.chat_danger_off": "Danger: OFF",
   "gui.micradrone.ide_screen.chat_compact": "Compact",
