@@ -156,7 +156,14 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         BlockPos ground = groundPos();
         BlockPos above = cropPos();
         Block cropBlock = simpleCropBlockFor(crop);
-        if (cropBlock == null || !FarmCellRules.canPlant(crop, grid.isUnlocked(crop), readFacts(ground, above))) {
+        // Cell rules first (no side effects), then the permission: unlocked in the shop, or - the
+        // fallback - one real seed item taken from the owner's inventory right now. Taking it at
+        // decision time rather than in apply() keeps "a seed was spent" and "planting succeeded"
+        // the same event as far as the script's return value is concerned.
+        if (cropBlock == null || !FarmCellRules.canPlant(crop, true, readFacts(ground, above))) {
+            return Attempt.failure();
+        }
+        if (!grid.isUnlocked(crop) && !grid.takeSeedFromOwner(crop)) {
             return Attempt.failure();
         }
         return new Attempt(true, () -> level.setBlockAndUpdate(above, cropBlock.defaultBlockState()));

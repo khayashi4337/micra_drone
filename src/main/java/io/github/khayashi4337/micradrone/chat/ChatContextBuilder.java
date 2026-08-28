@@ -121,7 +121,8 @@ public final class ChatContextBuilder {
         if (status.lockedOffers().isEmpty()) {
             sb.append("- 未購入のアンロック: 無し(全て購入済み)");
         } else {
-            sb.append("- 未購入のアンロック(Shopで購入。未購入の作物は plant() が失敗する): ");
+            sb.append("- 未購入のアンロック(Shopで購入すると無料で植え放題。未購入でも、最後にRunした人の"
+                    + "インベントリに本物の種(ニンジンはニンジン、カボチャはカボチャの種)があれば1個消費して植えられる): ");
             sb.append(new TreeMap<>(status.lockedOffers()).entrySet().stream()
                     .map(e -> e.getKey() + " = " + new TreeMap<>(e.getValue()).entrySet().stream()
                             .map(c -> c.getKey() + " " + c.getValue())

@@ -84,7 +84,10 @@ own. Inspired by the Steam game
 - **Wheat, carrot, and pumpkin** — earn points per crop by harvesting (shown
   live at the top of the IDE screen), then spend them in an in-game shop
   (right-click the Corner Marker, or the IDE's Shop button) to unlock carrot
-  and pumpkin farming.
+  and pumpkin farming - unlocked crops plant for free, forever. Not unlocked
+  yet? `plant()` will still work if the player who last ran the controller
+  is carrying the real thing (carrots, pumpkin seeds), spending one per
+  planting.
 - **Giant pumpkins** — grow a full square of pumpkins at once and they fuse
   into a giant pumpkin patch for a large bonus payout on harvest.
   Pumpkins also have a ~20% chance to grow "rotten" and yield nothing when

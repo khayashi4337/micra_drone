@@ -123,7 +123,7 @@ class ChatContextBuilderTest {
         assertTrue(prompt.contains("- アンロック済み: core_commands, wheat"));
         assertTrue(prompt.contains("- 所持ポイント: carrot 0, wheat 186"));
         assertTrue(prompt.contains("carrot = wheat 20, pumpkin = carrot 15 + wheat 30"));
-        assertTrue(prompt.contains("未購入の作物は plant() が失敗する"));
+        assertTrue(prompt.contains("本物の種"));
     }
 
     @Test

@@ -85,4 +85,17 @@ final class FakeGridState implements DroneGridState {
     public void triggerDroneFlip() {
         flipCount++;
     }
+
+    /** Real seed items the fake "owner" is holding, per crop - what takeSeedFromOwner draws from. */
+    final Map<String, Integer> ownerSeeds = new java.util.HashMap<>();
+
+    @Override
+    public boolean takeSeedFromOwner(String crop) {
+        int have = ownerSeeds.getOrDefault(crop, 0);
+        if (have <= 0) {
+            return false;
+        }
+        ownerSeeds.put(crop, have - 1);
+        return true;
+    }
 }

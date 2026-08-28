@@ -42,6 +42,8 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.PlayerList;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.inventory.AnvilMenu;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -283,6 +285,28 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     @Override
     public boolean isUnlocked(String crop) {
         return unlockedCrops.contains(crop);
+    }
+
+    @Override
+    public boolean takeSeedFromOwner(String crop) {
+        Item seed = seedItemFor(crop);
+        if (seed == null) {
+            return false;
+        }
+        return resolveOwner()
+                .map(owner -> owner.getInventory().clearOrCountMatchingItems(
+                        stack -> stack.is(seed), 1, owner.inventoryMenu.getCraftSlots()) > 0)
+                .orElse(false);
+    }
+
+    /** The vanilla item a player would plant {@code crop} with by hand - what the not-unlocked fallback consumes. */
+    private static Item seedItemFor(String crop) {
+        return switch (crop) {
+            case "wheat" -> Items.WHEAT_SEEDS;
+            case "carrot" -> Items.CARROT;
+            case "pumpkin" -> Items.PUMPKIN_SEEDS;
+            default -> null;
+        };
     }
 
     /**
