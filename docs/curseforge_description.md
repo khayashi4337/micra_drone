@@ -38,17 +38,31 @@ own. Inspired by the Steam game
   top-down camera view of your plot filling the other half of the screen.
 - **AI chat, powered by your own claude CLI** — a Chat tab in the IDE talks
   directly to the copy of Claude Code already logged into your own machine
-  (no API key, no extra cost beyond your existing subscription). It sees
-  your current script, the command reference, and your last runtime error
-  automatically; any ```code block in its reply can be dropped into the
-  editor with one click. Runs in a locked-down safe mode by default (no
-  file/shell access at all) with a Danger toggle for full local-terminal
-  power when you want it. History is saved per controller and resumes next
-  time you open the tab, with a Compact button to summarize and start
-  fresh. A craftable Region Pointer wand (left-click a block for the start
-  corner, right-click for the end) lets you hand the AI a coordinate range
-  to talk about — and it can inspect the blocks in that range itself,
-  on demand, without you having to describe them.
+  (no API key, no extra cost beyond your existing subscription).
+  **Requirement:** Claude Code (the `claude` command) must be installed and
+  logged in on the PC running the game client (`npm install -g
+  @anthropic-ai/claude-code`, then `claude login` with a Claude Pro/Max
+  account). Nothing ships with the mod and nothing runs on the server.
+  Without it, the Chat tab tells you so on open and every other feature of
+  the mod works exactly as before. Every
+  question carries your current script, the command and shop reference,
+  your last runtime error, the plot's world-to-grid mapping, and what this
+  controller has unlocked and earned — so it knows carrots need the Shop
+  first. While it thinks you see "AI: thinking..." and can press Esc to
+  cancel (your text stays in the box to fix and resend). When the reply
+  contains code, the editor turns into a diff on the spot, Cursor-style:
+  removed lines red, added lines green, an "x Reject" beside each change
+  block, and "Accept rest" / "Reject all" in the Chat tab. Runs in a
+  locked-down safe mode by default (no file/shell access at all); the
+  Danger toggle gives it full local-terminal power AND applies its code
+  straight into the editor with a one-step "Undo AI change" — for when you'd
+  rather let it drive. History is saved per controller and per world and
+  resumes next time you open the tab, with a Compact button to summarize
+  and start fresh. A craftable Region Pointer wand (left-click a block for
+  the start corner, right-click for the end; the selection is drawn in the
+  world as a glowing box) hands the AI a coordinate range to talk about —
+  and it can inspect the blocks in that range itself, on demand, without
+  you having to describe them.
 - **Claim a plot** — place a Drone Controller and a Corner Marker on a
   diagonal to define a square farming area. The controller can be embedded
   flush with the farmland, or stood on the surface (the plot is
@@ -78,7 +92,11 @@ own. Inspired by the Steam game
   automatically. A blank scroll in the library shows up too, ready to write
   into straight from the list. Scrolls in your own inventory show up in the
   list as well, private to you. Run the selected script with a redstone
-  signal (a lever, for example) — no GUI required during normal play.
+  signal (a lever, for example) — no GUI required during normal play. (If
+  the selected script is a scroll in your inventory, the lever reads it
+  from whoever last ran the controller, so that player must be online and
+  still carrying it; pick the Controller script or a library scroll for
+  unattended setups.)
 - **The controller shows what it's doing** — a docked look while idle, an
   active look while a script is running, and it faces whoever placed it.
 - **Wheat, carrot, and pumpkin** — earn points per crop by harvesting (shown
@@ -123,6 +141,9 @@ Full command reference and playthrough notes: see the
 
 - Minecraft 1.21.1
 - NeoForge 21.1.238
+- Optional, for the AI chat tab only: Claude Code (the `claude` command)
+  installed and logged in on the client PC, with a Claude Pro/Max account.
+  Everything else works without it.
 
 ### Notes
 
