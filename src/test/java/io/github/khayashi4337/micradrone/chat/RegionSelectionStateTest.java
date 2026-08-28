@@ -50,6 +50,33 @@ class RegionSelectionStateTest {
     }
 
     @Test
+    void cornersAreReadableForTheInWorldPreview() {
+        RegionSelectionState state = new RegionSelectionState();
+        assertEquals(Optional.empty(), state.corner1());
+        assertEquals(Optional.empty(), state.corner2());
+
+        state.setCorner1(1, 64, 2);
+        assertEquals(Optional.of(new RegionSelectionState.Corner(1, 64, 2)), state.corner1());
+        assertEquals(Optional.empty(), state.corner2());
+
+        state.setCorner2(3, 65, 4);
+        assertEquals(Optional.of(new RegionSelectionState.Corner(3, 65, 4)), state.corner2());
+    }
+
+    @Test
+    void aNewStartCornerDropsTheOldEndCorner() {
+        RegionSelectionState state = new RegionSelectionState();
+        state.setCorner1(0, 0, 0);
+        state.setCorner2(5, 5, 5);
+
+        state.setCorner1(9, 9, 9);
+
+        assertFalse(state.hasSelection());
+        assertEquals(Optional.empty(), state.corner2());
+        assertEquals(Optional.empty(), state.consumeAsText());
+    }
+
+    @Test
     void reSelectingAfterAConsumeStartsFresh() {
         RegionSelectionState state = new RegionSelectionState();
         state.setCorner1(0, 0, 0);

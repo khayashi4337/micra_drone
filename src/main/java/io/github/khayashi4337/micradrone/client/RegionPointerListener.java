@@ -2,6 +2,7 @@ package io.github.khayashi4337.micradrone.client;
 
 import io.github.khayashi4337.micradrone.drone.RegionPointerItem;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -28,6 +29,10 @@ public final class RegionPointerListener {
         if (recordsSelection(event)) {
             BlockPos pos = event.getPos();
             RegionSelectionHolder.PENDING.setCorner1(pos.getX(), pos.getY(), pos.getZ());
+            // Action-bar status like Create's "first position set" - the box preview
+            // (RegionSelectionRenderer) shows where, this says what to do next.
+            event.getEntity().displayClientMessage(
+                    Component.translatable("micradrone.region_pointer.start_set", pos.getX(), pos.getY(), pos.getZ()), true);
         }
     }
 
@@ -40,7 +45,14 @@ public final class RegionPointerListener {
         event.setUseItem(TriState.FALSE);
         if (recordsSelection(event)) {
             BlockPos pos = event.getPos();
+            if (RegionSelectionHolder.PENDING.corner1().isEmpty()) {
+                event.getEntity().displayClientMessage(
+                        Component.translatable("micradrone.region_pointer.no_start"), true);
+                return;
+            }
             RegionSelectionHolder.PENDING.setCorner2(pos.getX(), pos.getY(), pos.getZ());
+            event.getEntity().displayClientMessage(
+                    Component.translatable("micradrone.region_pointer.end_set", pos.getX(), pos.getY(), pos.getZ()), true);
         }
     }
 
