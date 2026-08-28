@@ -84,6 +84,30 @@ class ClaudeCliBridgeTest {
     }
 
     @Test
+    void recognisesTheWaysAMissingCliShowsUpOnEachPlatform() {
+        assertTrue(ClaudeCliBridge.looksLikeCliNotFound(9009, "", "claude"));                       // cmd.exe: command not found
+        assertTrue(ClaudeCliBridge.looksLikeCliNotFound(1, "'claude' は、内部コマンドまたは外部コマンド、操作可能なプログラムまたはバッチ ファイルとして認識されていません。", "claude"));
+        // The same message as it actually arrives on a Japanese Windows: exit 1 + cp932 bytes read as UTF-8.
+        assertTrue(ClaudeCliBridge.looksLikeCliNotFound(1, "'claude' ���A����R�}���h", "claude"));
+        assertTrue(ClaudeCliBridge.looksLikeCliNotFound(-1, "Cannot run program \"claude\": error=2, No such file or directory", "claude"));
+        assertFalse(ClaudeCliBridge.looksLikeCliNotFound(1, "Error: not logged in", "claude"));
+        assertFalse(ClaudeCliBridge.looksLikeCliNotFound(0, "", "claude"));
+    }
+
+    @Test
+    void aMissingExecutableIsReportedAsNotFoundByBothTheProbeAndASend() throws Exception {
+        // Real subprocesses on purpose: this is the exact path a player without Claude Code hits.
+        ClaudeCliBridge bridge = new ClaudeCliBridge("micradrone-no-such-cli-xyz");
+
+        assertTrue(bridge.probeVersion().get(30, java.util.concurrent.TimeUnit.SECONDS).isEmpty());
+
+        ClaudeCliBridge.ClaudeCliResult result = bridge.send("hello",
+                ClaudeCliOptions.freshSession(List.of(), null)).get(30, java.util.concurrent.TimeUnit.SECONDS);
+        assertFalse(result.success());
+        assertEquals(ClaudeCliBridge.CLI_NOT_FOUND_MESSAGE, result.errorMessage());
+    }
+
+    @Test
     void nonWindowsLaunchIsUnwrapped() {
         List<String> logical = List.of("claude", "-p");
 

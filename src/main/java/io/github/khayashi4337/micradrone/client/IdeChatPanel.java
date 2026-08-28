@@ -109,6 +109,7 @@ final class IdeChatPanel {
     private static final int THINKING_DOT_INTERVAL_TICKS = 5;   // 0.25s per step at 20 tps
     private static final int THINKING_MAX_DOTS = 3;
     private static final int CANCEL_HINT_COLOR = 0xFF9A9A9A;
+    private static final int CLI_MISSING_COLOR = 0xFFFF6060;
 
     private final Host host;
     private final ClaudeCliBridge claudeCliBridge = new ClaudeCliBridge(CLAUDE_EXECUTABLE);
@@ -131,6 +132,10 @@ final class IdeChatPanel {
     private String pendingQuestion;
     /** Client ticks since the panel was built; drives the thinking-dots animation. */
     private int animationTicks = 0;
+    /** Result of the one-time {@code claude --version} probe: null = not probed yet / still running. */
+    private Boolean cliAvailable;
+    private String cliVersion = "";
+    private boolean cliProbeStarted;
 
     IdeChatPanel(Host host) {
         this.host = host;
@@ -156,6 +161,7 @@ final class IdeChatPanel {
      */
     void initWidgets(int rightX, int rightW, int topY, int bottomY) {
         ensureSessionLoaded();
+        probeCliOnce();
 
         int toggleRowY = bottomY - TOGGLE_ROW_HEIGHT;
         int inputRowY = toggleRowY - ROW_GAP - INPUT_ROW_HEIGHT;
@@ -230,12 +236,33 @@ final class IdeChatPanel {
     }
 
     /**
+     * The AI tab is a thin client for the player's OWN Claude Code install - nothing ships with
+     * the mod. So the first time the tab opens, {@code claude --version} is run once and the status
+     * row says either which version answered or, in red, that nothing did and how to install it -
+     * before the player types a question that would only come back as an error.
+     */
+    private void probeCliOnce() {
+        if (cliProbeStarted) {
+            return;
+        }
+        cliProbeStarted = true;
+        claudeCliBridge.probeVersion().thenAccept(version -> Minecraft.getInstance().execute(() -> {
+            cliAvailable = version.isPresent();
+            cliVersion = version.orElse("");
+        }));
+    }
+
+    /**
      * Draws the "AI: thinking..." status row while a reply (or compact) is in flight - the dots
      * grow one at a time and wrap, the usual "responding" cue. Drawn by IdeScreen after its widgets
      * so it sits on top of the panel fill.
      */
     void render(GuiGraphics guiGraphics) {
-        if (!open || !sendInFlight) {
+        if (!open) {
+            return;
+        }
+        if (!sendInFlight) {
+            renderCliStatus(guiGraphics);
             return;
         }
         int dots = (animationTicks / THINKING_DOT_INTERVAL_TICKS) % (THINKING_MAX_DOTS + 1);
@@ -244,6 +271,21 @@ final class IdeChatPanel {
         guiGraphics.drawString(host.font(), text, statusRowX, textY, THINKING_COLOR);
         String hint = Component.translatable("gui.micradrone.ide_screen.chat_cancel_hint").getString();
         guiGraphics.drawString(host.font(), hint, statusRowX + statusRowWidth - host.font().width(hint), textY, CANCEL_HINT_COLOR);
+    }
+
+    /** Idle status row: the probed CLI version in grey, or the install hint in red if there is none. */
+    private void renderCliStatus(GuiGraphics guiGraphics) {
+        if (cliAvailable == null) {
+            return;
+        }
+        int textY = statusRowY + (STATUS_ROW_HEIGHT - host.font().lineHeight) / 2;
+        if (cliAvailable) {
+            guiGraphics.drawString(host.font(),
+                    Component.translatable("gui.micradrone.ide_screen.chat_cli_ok", cliVersion).getString(),
+                    statusRowX, textY, CANCEL_HINT_COLOR);
+        } else {
+            guiGraphics.drawString(host.font(), ClaudeCliBridge.CLI_NOT_FOUND_MESSAGE, statusRowX, textY, CLI_MISSING_COLOR);
+        }
     }
 
     /** Send and Compact both fire a CLI round trip, so both wait for the one in flight. */

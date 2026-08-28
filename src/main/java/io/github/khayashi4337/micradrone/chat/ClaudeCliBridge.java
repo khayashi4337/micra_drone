@@ -33,6 +33,17 @@ public final class ClaudeCliBridge {
 
     /** How long one claude -p round trip may take before the bridge gives up and kills the process. */
     static final long CLI_TIMEOUT_SECONDS = 120;
+    /** {@code claude --version} is instant; anything longer than this means it isn't there in any usable form. */
+    static final long PROBE_TIMEOUT_SECONDS = 15;
+    /** cmd.exe's exit code for a command it couldn't find - what a missing claude.cmd looks like on Windows. */
+    static final int WINDOWS_COMMAND_NOT_FOUND_EXIT = 9009;
+    /**
+     * What the player sees instead of a raw exit code when the CLI simply isn't installed. The mod's
+     * AI tab is a thin client for the player's own Claude Code; without it the rest of the mod
+     * works exactly as before, so the message says how to get it rather than just "failed".
+     */
+    public static final String CLI_NOT_FOUND_MESSAGE =
+            "claude CLI not found - install Claude Code (npm install -g @anthropic-ai/claude-code), run 'claude login', then reopen Chat";
 
     /**
      * @param sessionId     the id to pass to --session-id (new) or --resume (continuing)
@@ -124,6 +135,54 @@ public final class ClaudeCliBridge {
     }
 
     /**
+     * Runs {@code claude --version} once: the version string if the CLI is installed and runnable,
+     * empty if not. The chat panel calls this when it opens so a missing install is announced up
+     * front, before the player types a question into the void.
+     */
+    public CompletableFuture<java.util.Optional<String>> probeVersion() {
+        return CompletableFuture.supplyAsync(() -> {
+            List<String> command = launchCommand(List.of(claudeExecutable, "--version"));
+            try {
+                Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+                Future<String> output = executor.submit(() -> readAll(process.getInputStream()));
+                if (!process.waitFor(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                    process.descendants().forEach(ProcessHandle::destroyForcibly);
+                    process.destroyForcibly();
+                    return java.util.Optional.<String>empty();
+                }
+                String text = output.get().trim();
+                return process.exitValue() == 0 && !text.isEmpty()
+                        ? java.util.Optional.of(text) : java.util.Optional.<String>empty();
+            } catch (IOException | InterruptedException | ExecutionException e) {
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+                return java.util.Optional.<String>empty();
+            }
+        }, executor);
+    }
+
+    /**
+     * True for the ways "there is no claude command" surfaces. Real-machine finding: on a Japanese
+     * Windows, {@code cmd.exe /c} exits with 1 (not the documented 9009) and prints its message in
+     * the OEM code page, which decodes as mojibake here - so neither the exit code nor the
+     * localized text can be relied on. What every cmd.exe locale does have in common is quoting
+     * the offending name in ASCII: {@code 'claude' は、内部コマンド...} / {@code 'claude' is not
+     * recognized...}. That quoted-name check, with no stdout at all, is the portable signal.
+     */
+    static boolean looksLikeCliNotFound(int exitCode, String stderrOrMessage, String executable) {
+        if (exitCode == WINDOWS_COMMAND_NOT_FOUND_EXIT) {
+            return true;
+        }
+        String text = stderrOrMessage == null ? "" : stderrOrMessage;
+        if (text.contains("error=2") || text.contains("No such file") || text.contains("not recognized")
+                || text.contains("認識されていません")) {
+            return true;
+        }
+        return exitCode != 0 && text.contains("'" + executable + "'");
+    }
+
+    /**
      * Stops the round trip in flight (Esc in the chat panel): its future then completes with
      * {@link ClaudeCliResult#isCancelled}. Kills the whole tree, not just the top process - on
      * Windows the launch goes through cmd.exe (see launchCommand), and destroying cmd.exe alone
@@ -169,6 +228,9 @@ public final class ClaudeCliBridge {
             String out = stdout.get();
             String err = stderr.get();
             if (process.exitValue() != 0) {
+                if (looksLikeCliNotFound(process.exitValue(), err, claudeExecutable)) {
+                    return new ClaudeCliResult(false, null, null, CLI_NOT_FOUND_MESSAGE);
+                }
                 return new ClaudeCliResult(false, null, null, "claude CLI exited " + process.exitValue() + ": " + err);
             }
             return ClaudeCliJson.parseResult(out);
@@ -179,6 +241,9 @@ public final class ClaudeCliBridge {
             }
             if (cancelRequested) {
                 return ClaudeCliResult.cancelled();
+            }
+            if (looksLikeCliNotFound(-1, e.getMessage(), claudeExecutable)) {
+                return new ClaudeCliResult(false, null, null, CLI_NOT_FOUND_MESSAGE);
             }
             return new ClaudeCliResult(false, null, null, String.valueOf(e.getMessage()));
         }

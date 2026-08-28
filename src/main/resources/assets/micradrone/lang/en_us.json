@@ -43,6 +43,7 @@
   "gui.micradrone.ide_screen.reviewing": "Reviewing AI change: green = added, red = removed. 'x Reject' turns down one block; 'Accept rest' applies what's left",
   "gui.micradrone.ide_screen.chat_thinking": "AI: thinking",
   "gui.micradrone.ide_screen.chat_cancel_hint": "Esc: cancel",
+  "gui.micradrone.ide_screen.chat_cli_ok": "claude CLI: %s",
   "gui.micradrone.ide_screen.chat_undo": "Undo AI change",
   "gui.micradrone.ide_screen.chat_danger_on": "Danger: ON",
   "gui.micradrone.ide_screen.chat_danger_off": "Danger: OFF",
