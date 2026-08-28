@@ -42,6 +42,9 @@ final class DebugEditBox extends MultiLineEditBox {
     static final int LINE_HEIGHT = 9;
     private static final int CURRENT_LINE_COLOR = 0x66FFD83D;   // translucent yellow
     private static final int BREAKPOINT_LINE_COLOR = 0x55CC3333; // translucent red
+    // AI-change review (git-diff colors): lines the proposal adds / lines it would remove.
+    private static final int DIFF_ADDED_LINE_COLOR = 0x5540C060;   // translucent green
+    private static final int DIFF_REMOVED_LINE_COLOR = 0x66C03030; // translucent red, a bit stronger
 
     // Monokai. DEFAULT covers variable names and whitespace; operators share the keyword color, and
     // numbers the constant color, the same way the original theme groups them.
@@ -62,6 +65,10 @@ final class DebugEditBox extends MultiLineEditBox {
     private final Font font;
     private int currentLine; // 1-based; 0 = no highlight
     private Set<Integer> breakpointLines = Set.of();
+    private Set<Integer> diffAddedLines = Set.of();
+    private Set<Integer> diffRemovedLines = Set.of();
+    /** While an AI change is under review the merged view must not be edited - its line map would drift. */
+    private boolean locked;
     /** Drives the cursor blink; vanilla keeps the same clock privately, so this mirrors its {@code setFocused}. */
     private long focusedAtMs = Util.getMillis();
     // Rendering runs every frame but the script only changes when someone types, so the scan is
@@ -90,6 +97,43 @@ final class DebugEditBox extends MultiLineEditBox {
 
     void setBreakpointLines(Set<Integer> lines) {
         this.breakpointLines = Set.copyOf(lines);
+    }
+
+    /** Colors the review view: {@code added} green, {@code removed} red (1-based lines of the merged text). */
+    void setDiffLines(Set<Integer> added, Set<Integer> removed) {
+        this.diffAddedLines = Set.copyOf(added);
+        this.diffRemovedLines = Set.copyOf(removed);
+    }
+
+    /** Refuses typing/paste while set; caret movement and selection still work so the review can be read. */
+    void setLocked(boolean locked) {
+        this.locked = locked;
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (locked && isEditingKey(keyCode, modifiers)) {
+            return true; // swallowed: the merged view is read-only until Accept/Reject
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
+    public boolean charTyped(char codePoint, int modifiers) {
+        if (locked) {
+            return true;
+        }
+        return super.charTyped(codePoint, modifiers);
+    }
+
+    /** Everything vanilla's MultilineTextField treats as an edit: backspace, delete, enter, and paste/cut. */
+    private static boolean isEditingKey(int keyCode, int modifiers) {
+        boolean ctrl = net.minecraft.client.gui.screens.Screen.hasControlDown();
+        return keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_BACKSPACE
+                || keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_DELETE
+                || keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER
+                || keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_KP_ENTER
+                || (ctrl && (keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_V || keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_X));
     }
 
     /**
@@ -177,6 +221,12 @@ final class DebugEditBox extends MultiLineEditBox {
 
     @Override
     protected void renderContents(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        for (int line : diffRemovedLines) {
+            drawLineBar(guiGraphics, line, DIFF_REMOVED_LINE_COLOR);
+        }
+        for (int line : diffAddedLines) {
+            drawLineBar(guiGraphics, line, DIFF_ADDED_LINE_COLOR);
+        }
         for (int line : breakpointLines) {
             if (line != currentLine) {
                 drawLineBar(guiGraphics, line, BREAKPOINT_LINE_COLOR);

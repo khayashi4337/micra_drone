@@ -55,8 +55,17 @@ final class IdeChatPanel {
 
         String editorText();
 
-        /** Insert: the reply's code block becomes the whole script. */
-        void replaceEditorText(String text);
+        /**
+         * Insert: shows {@code proposed} as a reviewable diff against the current script (green
+         * added / red removed lines in the editor) rather than overwriting it - see LineDiff.
+         */
+        void beginReview(String proposed);
+
+        boolean isReviewing();
+
+        void acceptReview();
+
+        void rejectReview();
 
         List<String> logLines();
 
@@ -144,12 +153,32 @@ final class IdeChatPanel {
 
         int insertBtnW = Math.min(INSERT_BUTTON_MAX_WIDTH,
                 (rightW - (MAX_INSERT_BUTTONS - 1) * ROW_GAP) / MAX_INSERT_BUTTONS);
-        for (int i = 0; i < Math.min(lastAssistantCodeBlocks.size(), MAX_INSERT_BUTTONS); i++) {
-            int blockIndex = i;
-            host.addWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_insert", i + 1),
-                            b -> insertCodeBlock(blockIndex))
-                    .bounds(rightX + i * (insertBtnW + ROW_GAP), insertRowY, insertBtnW, INSERT_ROW_HEIGHT)
-                    .build());
+        if (host.isReviewing()) {
+            // The Insert row turns into the review verdict while the diff is showing in the editor
+            // (Cursor's Accept / Reject pair).
+            host.addWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_accept"),
+                            b -> {
+                                host.acceptReview();
+                                host.rebuildWidgets();
+                            })
+                    .bounds(rightX, insertRowY, insertBtnW, INSERT_ROW_HEIGHT).build());
+            host.addWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_reject"),
+                            b -> {
+                                host.rejectReview();
+                                host.rebuildWidgets();
+                            })
+                    .bounds(rightX + insertBtnW + ROW_GAP, insertRowY, insertBtnW, INSERT_ROW_HEIGHT).build());
+        } else {
+            for (int i = 0; i < Math.min(lastAssistantCodeBlocks.size(), MAX_INSERT_BUTTONS); i++) {
+                int blockIndex = i;
+                host.addWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_insert", i + 1),
+                                b -> {
+                                    insertCodeBlock(blockIndex);
+                                    host.rebuildWidgets(); // swap this row to Accept / Reject
+                                })
+                        .bounds(rightX + i * (insertBtnW + ROW_GAP), insertRowY, insertBtnW, INSERT_ROW_HEIGHT)
+                        .build());
+            }
         }
 
         inputBox = new EditBox(host.font(), rightX, inputRowY, rightW - SEND_BUTTON_WIDTH - ROW_GAP,
@@ -450,10 +479,10 @@ final class IdeChatPanel {
         refreshAfterTurn();
     }
 
-    /** Same effect as clicking the Nth Insert button under the transcript. */
+    /** Same effect as clicking the Nth Insert button under the transcript: opens the diff review. */
     void insertCodeBlock(int index) {
         if (index >= 0 && index < lastAssistantCodeBlocks.size()) {
-            host.replaceEditorText(lastAssistantCodeBlocks.get(index).code());
+            host.beginReview(lastAssistantCodeBlocks.get(index).code());
         }
     }
 

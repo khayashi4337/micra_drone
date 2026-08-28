@@ -11,6 +11,7 @@ import java.util.stream.Stream;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.MicraDroneClient;
+import io.github.khayashi4337.micradrone.chat.LineDiff;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
 import io.github.khayashi4337.micradrone.lang.CommandNames;
@@ -79,6 +80,8 @@ public class IdeScreen extends Screen {
     private static final int SHOP_BUTTON_HEIGHT = 14;
     private static final int BUTTON_HEIGHT = 20;
     static final int ROW_GAP = 4; // package-private: IdeChatPanel lays out its rows with the same gap
+    /** Heading color while an AI change is under review - the same green the added lines use, so the two read as one state. */
+    private static final int REVIEW_HEADING_COLOR = 0xFF7EE08A;
     /** Icon-only Run control above the editor (green square, white triangle) - see {@link PlayButton}. */
     private static final int PLAY_BUTTON_SIZE = 20;
     /** Tight gap between the Play/Step icon buttons on the title bar - they read as one control pair. */
@@ -173,6 +176,12 @@ public class IdeScreen extends Screen {
 
     // The AI chat tab lives in its own class (IdeChatPanel); this screen only hosts it.
     private final IdeChatPanel chatPanel = new IdeChatPanel(new ChatHost());
+    // AI-change review (Cursor-style Apply): while non-null, the editor shows reviewDiff's merged
+    // view read-only, and Accept/Reject in the Chat tab resolve it to reviewProposedText /
+    // reviewOriginalText. See LineDiff for why this replaced the old overwrite-on-Insert.
+    private String reviewOriginalText;
+    private String reviewProposedText;
+    private LineDiff reviewDiff;
     /** Set by removed(): a late CLI reply must not rebuild (and re-aim the camera of) a closed screen. */
     private boolean closed = false;
 
@@ -224,6 +233,9 @@ public class IdeScreen extends Screen {
             autocompleteDismissed = false;
         });
         editor.setBreakpointLines(breakpoints);
+        if (isReviewing()) {
+            applyReviewDecorations(); // a rebuild (List/Chat toggles, a landing reply) recreates the editor
+        }
         addRenderableWidget(editor);
 
         // 3-way now: Step moved up to the title bar icon row above (see the StepButton added earlier
@@ -373,9 +385,23 @@ public class IdeScreen extends Screen {
         }
 
         @Override
-        public void replaceEditorText(String text) {
-            editorText = text;
-            editor.setValue(editorText);
+        public void beginReview(String proposed) {
+            IdeScreen.this.beginReview(proposed);
+        }
+
+        @Override
+        public boolean isReviewing() {
+            return IdeScreen.this.isReviewing();
+        }
+
+        @Override
+        public void acceptReview() {
+            IdeScreen.this.acceptReview();
+        }
+
+        @Override
+        public void rejectReview() {
+            IdeScreen.this.rejectReview();
         }
 
         @Override
@@ -422,6 +448,48 @@ public class IdeScreen extends Screen {
 
     public String getEditorTextForTesting() {
         return editorText;
+    }
+
+    /** The resolved edit/run target - "" while still unresolved (see updateLog). */
+    public String getScriptIdForTesting() {
+        return scriptId;
+    }
+
+    public boolean isReviewingForTesting() {
+        return isReviewing();
+    }
+
+    public void acceptReviewForTesting() {
+        acceptReview();
+        rebuildWidgets();
+    }
+
+    public void rejectReviewForTesting() {
+        rejectReview();
+        rebuildWidgets();
+    }
+
+    /** Same effect as typing {@code text} into the editor (replaces the whole script). */
+    public void setEditorTextForTesting(String text) {
+        editorText = text;
+        editor.setValue(text);
+    }
+
+    /** Same effect as clicking Save. */
+    public void saveForTesting() {
+        save();
+    }
+
+    /** The current script list as {@code id<TAB>displayName<TAB>description} lines, for the devkit's /scripts. */
+    public List<String> getAvailableScriptsForTesting() {
+        return availableScripts.stream()
+                .map(entry -> entry.id() + "\t" + entry.displayName() + "\t" + entry.description())
+                .toList();
+    }
+
+    /** Same effect as clicking {@code id}'s entry in List mode; a no-op for an id not in the list. */
+    public void selectScriptForTesting(String id) {
+        availableScripts.stream().filter(entry -> entry.id().equals(id)).findFirst().ifPresent(this::selectAndEdit);
     }
 
     public int getLastAssistantCodeBlockCountForTesting() {
@@ -564,7 +632,62 @@ public class IdeScreen extends Screen {
     }
 
     private void save() {
+        if (isReviewing()) {
+            return; // the editor holds the merged review view, not a script - Accept/Reject first (the heading says so)
+        }
         PacketDistributor.sendToServer(new SaveScriptPayload(pos, scriptId, editorText));
+    }
+
+    // ---- AI-change review ---------------------------------------------------------------------
+
+    boolean isReviewing() {
+        return reviewDiff != null;
+    }
+
+    /**
+     * Shows {@code proposed} as a line diff against the current script, in the editor itself: the
+     * original lines the proposal drops stay visible (red), the lines it adds appear in place
+     * (green), everything else reads as context. The editor is locked until Accept or Reject so the
+     * merged view can't drift from the diff that colors it. A proposal identical to the script is
+     * simply a no-op.
+     */
+    private void beginReview(String proposed) {
+        LineDiff diff = LineDiff.between(editorText, proposed);
+        if (!diff.hasChanges()) {
+            return;
+        }
+        reviewOriginalText = editorText;
+        reviewProposedText = proposed;
+        reviewDiff = diff;
+        editor.setValue(diff.mergedText()); // the value listener mirrors this into editorText; endReview restores
+        applyReviewDecorations();
+    }
+
+    private void applyReviewDecorations() {
+        editor.setDiffLines(new HashSet<>(reviewDiff.lineNumbersOf(LineDiff.Kind.ADDED)),
+                new HashSet<>(reviewDiff.lineNumbersOf(LineDiff.Kind.REMOVED)));
+        editor.setLocked(true);
+    }
+
+    private void acceptReview() {
+        endReview(reviewProposedText);
+    }
+
+    private void rejectReview() {
+        endReview(reviewOriginalText);
+    }
+
+    private void endReview(String finalText) {
+        if (!isReviewing()) {
+            return;
+        }
+        reviewDiff = null;
+        reviewOriginalText = null;
+        reviewProposedText = null;
+        editor.setDiffLines(Set.of(), Set.of());
+        editor.setLocked(false);
+        editorText = finalText;
+        editor.setValue(finalText);
     }
 
     /** Left edge of the title text within the title bar - shared by rendering, the click hit-test, and the rename box's position. */
@@ -825,9 +948,11 @@ public class IdeScreen extends Screen {
         renderEditorTitleBar(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         chatPanel.render(guiGraphics);
-        guiGraphics.drawCenteredString(this.font,
-                Component.translatable("gui.micradrone.ide_screen.heading", displayName),
-                this.width / 2, MARGIN, 0xFFFFFF);
+        Component heading = isReviewing()
+                ? Component.translatable("gui.micradrone.ide_screen.reviewing")
+                : Component.translatable("gui.micradrone.ide_screen.heading", displayName);
+        guiGraphics.drawCenteredString(this.font, heading, this.width / 2, MARGIN,
+                isReviewing() ? REVIEW_HEADING_COLOR : 0xFFFFFF);
         renderPointsHud(guiGraphics);
         renderGutter(guiGraphics);
         refreshAutocomplete();
