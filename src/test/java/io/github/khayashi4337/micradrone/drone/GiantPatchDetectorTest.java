@@ -103,4 +103,19 @@ class GiantPatchDetectorTest {
         assertEquals(5, GiantPatchDetector.classifyPosition(4, 2, 5)); // east edge, middle row
         assertEquals(8, GiantPatchDetector.classifyPosition(2, 2, 5)); // center
     }
+
+    @Test
+    void worldOrientedPositionFlipsWithThePlotDirectionSoCornersStayInWorldTerms() {
+        // A south-east plot (dirX=+1, dirZ=+1): local (0,0) really is the north-west corner.
+        assertEquals(0, GiantPatchDetector.worldOrientedPosition(0, 0, 3, 1, 1));
+        // A north-west plot (dirX=-1, dirZ=-1): local (0,0) sits at the world's south-east.
+        assertEquals(3, GiantPatchDetector.worldOrientedPosition(0, 0, 3, -1, -1));
+        // Mixed: west-extending, south-extending -> local (0,0) is the north-EAST corner.
+        assertEquals(1, GiantPatchDetector.worldOrientedPosition(0, 0, 3, -1, 1));
+        // Edges follow the same flip: the lx=0 column is the west edge only when dirX > 0.
+        assertEquals(4, GiantPatchDetector.worldOrientedPosition(0, 1, 3, 1, 1));
+        assertEquals(5, GiantPatchDetector.worldOrientedPosition(0, 1, 3, -1, 1));
+        // The center never moves.
+        assertEquals(8, GiantPatchDetector.worldOrientedPosition(1, 1, 3, -1, -1));
+    }
 }

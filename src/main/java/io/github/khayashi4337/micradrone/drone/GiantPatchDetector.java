@@ -57,9 +57,12 @@ final class GiantPatchDetector {
     }
 
     /**
-     * Which of the 9 giant-pumpkin block variants a cell at local (lx, ly) within a side x side patch
+     * Which of the 9 giant-pumpkin block variants a cell at (lx, ly) within a side x side patch
      * should show: 4 corners, 4 edges, 1 center - tileable, so patches bigger than 3x3 reuse the same
-     * 9 positions rather than needing one variant per possible patch size.
+     * 9 positions rather than needing one variant per possible patch size. With lx/ly in world
+     * orientation (see {@link #worldOrientedPosition}) the ids read: 0 NW, 1 NE, 2 SW, 3 SE corner;
+     * 4 W, 5 E, 6 N, 7 S edge; 8 center - the order GiantPumpkinBlock's blockstate maps its nine
+     * top textures by.
      */
     static int classifyPosition(int lx, int ly, int side) {
         boolean atMinX = lx == 0;
@@ -75,5 +78,19 @@ final class GiantPatchDetector {
         if (atMinY) return 6;
         if (atMaxY) return 7;
         return 8;
+    }
+
+    /**
+     * {@link #classifyPosition} for a cell at patch-local grid coords (lx, ly), corrected for the
+     * plot's direction: grid x runs along world X times dirX and grid y along world Z times dirZ
+     * (see PlotGeometry#groundOffset), so a plot that extends west/north from its controller has its
+     * lx = 0 column on the *east* side. The textures are drawn in world terms (a north-west corner,
+     * a north edge), so the position must be too - otherwise a west-facing plot's rounded corners
+     * would point into the patch.
+     */
+    static int worldOrientedPosition(int lx, int ly, int side, int dirX, int dirZ) {
+        int wx = dirX > 0 ? lx : side - 1 - lx;
+        int wz = dirZ > 0 ? ly : side - 1 - ly;
+        return classifyPosition(wx, wz, side);
     }
 }

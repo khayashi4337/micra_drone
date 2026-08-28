@@ -10,11 +10,13 @@ import net.minecraft.world.level.block.state.properties.IntegerProperty;
  * LiveFarmBlockAccess#applyGiantPumpkinPatch/#attemptGiantPumpkinHarvest). Never placed by a player -
  * the mod places and clears it itself, so it isn't registered with a BlockItem or a recipe.
  *
- * <p>POSITION (0-8) marks where in the patch a given cell sits: 4 corners, 4 edges, 1 center (see
- * GiantPatchDetector#classifyPosition), so patches larger than 3x3 tile the same 9 positions instead
- * of needing one variant per possible patch size. All 9 currently render identically (reusing
- * vanilla's own pumpkin texture - see the block model - since this mod has no custom art assets); the
- * property exists so distinct per-position textures can be dropped in later with no Java/logic changes.
+ * <p>POSITION (0-8) marks where in the patch a given cell sits, in world orientation: 0 NW, 1 NE,
+ * 2 SW, 3 SE corner; 4 W, 5 E, 6 N, 7 S edge; 8 center (see
+ * GiantPatchDetector#worldOrientedPosition), so patches larger than 3x3 tile the same 9 positions
+ * instead of needing one variant per possible patch size. Each position has its own top texture
+ * (tools/pumpkin_pipeline.py derives all nine from one function) rather than one corner/edge texture
+ * rotated by the blockstate, because the pumpkin's ribs have to run north-south across the whole
+ * patch - a rotated edge tile would have them running east-west.
  */
 public class GiantPumpkinBlock extends Block {
     public static final IntegerProperty POSITION = IntegerProperty.create("position", 0, 8);

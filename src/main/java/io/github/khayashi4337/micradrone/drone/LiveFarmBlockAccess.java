@@ -356,7 +356,7 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
                 int gy = patch.originGy() + ly;
                 int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), gx, gy);
                 BlockPos above = origin.offset(offset[0], grid.groundYOffset() + 1, offset[1]);
-                int position = GiantPatchDetector.classifyPosition(lx, ly, patch.side());
+                int position = GiantPatchDetector.worldOrientedPosition(lx, ly, patch.side(), grid.dirX(), grid.dirZ());
                 level.setBlockAndUpdate(above, giantPumpkin.setValue(GiantPumpkinBlock.POSITION, position));
             }
         }

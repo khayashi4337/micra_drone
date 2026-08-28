@@ -1,4 +1,7 @@
 {
-  "parent": "minecraft:block/pumpkin_stem_stage1",
-  "render_type": "minecraft:cutout"
+  "parent": "minecraft:block/crop",
+  "render_type": "minecraft:cutout",
+  "textures": {
+    "crop": "micradrone:block/pumpkin_crop_stage1"
+  }
 }
