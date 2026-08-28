@@ -24,6 +24,6 @@ public final class ChatCompactor {
      */
     public static void applySummary(ChatSession session, String summaryText) {
         session.setCliSessionId(null);
-        session.replaceMessages(List.of(new ChatMessage("summary", summaryText, System.currentTimeMillis())));
+        session.replaceMessages(List.of(new ChatMessage(ChatMessage.ROLE_SUMMARY, summaryText, System.currentTimeMillis())));
     }
 }

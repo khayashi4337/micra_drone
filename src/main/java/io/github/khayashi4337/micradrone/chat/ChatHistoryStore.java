@@ -9,14 +9,32 @@ import java.util.List;
 
 /**
  * Reads/writes a controller's chat transcript, one plain-text file per {@link ControllerKey}
- * under the world save's {@code micradrone/chat/} directory - same {@code Path}/{@code Files}
- * convention as {@code ScriptFileStore}, no JSON dependency. Client-local only: never synced to
- * the server, per the confirmed requirement.
+ * inside a per-world directory under the client's game folder ({@code micradrone/chat/<world>/},
+ * see {@link #worldDirectoryName}) - same {@code Path}/{@code Files} convention as
+ * {@code ScriptFileStore}, no JSON dependency. Client-local only: never synced to the server, per
+ * the confirmed requirement, which is also why it lives under the game folder rather than any
+ * world save.
  */
 public final class ChatHistoryStore {
     private static final String FIELD_SEPARATOR = "\t";
+    private static final String UNKNOWN_WORLD_DIRECTORY = "unknown";
 
     private ChatHistoryStore() {
+    }
+
+    /**
+     * A filesystem-safe directory name for one world, derived from something unique to it (a
+     * save folder name, a server address). {@link ControllerKey} only covers dimension + position,
+     * so without this a controller at (10,64,10) in one save would share its transcript with one
+     * at the same spot in another save or on a server. Every character outside
+     * {@code [A-Za-z0-9._-]} becomes {@code _}; a blank id falls back to a fixed name rather than
+     * an empty path segment.
+     */
+    public static String worldDirectoryName(String rawWorldId) {
+        if (rawWorldId == null || rawWorldId.isBlank()) {
+            return UNKNOWN_WORLD_DIRECTORY;
+        }
+        return rawWorldId.replaceAll("[^A-Za-z0-9._-]", "_");
     }
 
     /** The session on disk for {@code key}, or a fresh empty one if there's nothing there yet. */

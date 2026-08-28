@@ -48,9 +48,12 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.multiplayer.ServerData;
+import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.inventory.AnvilMenu;
+import net.minecraft.world.level.storage.LevelResource;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.lwjgl.glfw.GLFW;
 
@@ -189,6 +192,11 @@ public class IdeScreen extends Screen {
     private static final int CHAT_INSERT_ROW_HEIGHT = 16;
     private static final int CHAT_INPUT_ROW_HEIGHT = 20;
     private static final int CHAT_TOGGLE_ROW_HEIGHT = 20;
+    private static final int CHAT_INPUT_MAX_CHARS = 2000;
+    private static final int CHAT_SEND_BUTTON_WIDTH = 60;
+    private static final int CHAT_INSERT_BUTTON_MAX_WIDTH = 90;
+    /** A reply realistically offers one code block, occasionally a couple of alternatives. */
+    private static final int CHAT_MAX_INSERT_BUTTONS = 3;
     private static final String CLAUDE_EXECUTABLE = "claude";
 
     private boolean chatMode = false;
@@ -201,6 +209,10 @@ public class IdeScreen extends Screen {
     private EditBox chatInputBox;
     private Button chatSendButton;
     private Button chatDangerButton;
+    /** What the player has typed but not sent - restored across the rebuild a landing reply triggers. */
+    private String chatInputDraft = "";
+    /** Set by removed(): a late CLI reply must not rebuild (and re-aim the camera of) a closed screen. */
+    private boolean closed = false;
 
     private CornerMarkerScan.PlotBounds bounds = new CornerMarkerScan.PlotBounds(
             DroneControllerBlockEntity.DEFAULT_WORLD_SIZE, 1, 1, false, 0);
@@ -355,9 +367,8 @@ public class IdeScreen extends Screen {
     }
 
     /**
-     * Builds the right-half AI chat panel: transcript, per-response Insert buttons (up to 3 - a
-     * reply realistically offers one, occasionally a couple of alternatives), the message input
-     * row, and the danger/compact toggle row.
+     * Builds the right-half AI chat panel: transcript, per-response Insert buttons (up to
+     * {@link #CHAT_MAX_INSERT_BUTTONS}), the message input row, and the danger/compact toggle row.
      */
     private void initChatModeWidgets(int rightX, int rightW) {
         ensureChatSessionLoaded();
@@ -374,10 +385,11 @@ public class IdeScreen extends Screen {
         chatLogBox.setValue(chatLogText());
         addRenderableWidget(chatLogBox);
 
-        int insertBtnW = Math.min(90, (rightW - 2 * ROW_GAP) / 3);
-        for (int i = 0; i < Math.min(lastAssistantCodeBlocks.size(), 3); i++) {
+        int insertBtnW = Math.min(CHAT_INSERT_BUTTON_MAX_WIDTH,
+                (rightW - (CHAT_MAX_INSERT_BUTTONS - 1) * ROW_GAP) / CHAT_MAX_INSERT_BUTTONS);
+        for (int i = 0; i < Math.min(lastAssistantCodeBlocks.size(), CHAT_MAX_INSERT_BUTTONS); i++) {
             int blockIndex = i;
-            addRenderableWidget(Button.builder(Component.literal("Insert #" + (i + 1)), b -> {
+            addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_insert", i + 1), b -> {
                         editorText = lastAssistantCodeBlocks.get(blockIndex).code();
                         editor.setValue(editorText);
                     })
@@ -385,14 +397,16 @@ public class IdeScreen extends Screen {
                     .build());
         }
 
-        int sendBtnW = 60;
-        chatInputBox = new EditBox(this.font, rightX, inputRowY, rightW - sendBtnW - ROW_GAP, CHAT_INPUT_ROW_HEIGHT,
-                Component.translatable("gui.micradrone.ide_screen.chat_input"));
-        chatInputBox.setMaxLength(2000);
+        chatInputBox = new EditBox(this.font, rightX, inputRowY, rightW - CHAT_SEND_BUTTON_WIDTH - ROW_GAP,
+                CHAT_INPUT_ROW_HEIGHT, Component.translatable("gui.micradrone.ide_screen.chat_input"));
+        chatInputBox.setMaxLength(CHAT_INPUT_MAX_CHARS);
+        chatInputBox.setValue(chatInputDraft); // a reply landing mid-typing rebuilds this panel; keep the draft
+        chatInputBox.setResponder(text -> chatInputDraft = text);
         addRenderableWidget(chatInputBox);
         chatSendButton = addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_send"),
                         b -> sendChatMessage())
-                .bounds(rightX + rightW - sendBtnW, inputRowY, sendBtnW, CHAT_INPUT_ROW_HEIGHT).build());
+                .bounds(rightX + rightW - CHAT_SEND_BUTTON_WIDTH, inputRowY, CHAT_SEND_BUTTON_WIDTH, CHAT_INPUT_ROW_HEIGHT)
+                .build());
         chatSendButton.active = !chatSendInFlight;
 
         int toggleBtnW = (rightW - ROW_GAP) / 2;
@@ -450,8 +464,28 @@ public class IdeScreen extends Screen {
         chatSession = ChatHistoryStore.load(chatHistoryDir(), key);
     }
 
+    /**
+     * {@code micradrone/chat/<world>/} under the game directory (client-local, never a world save).
+     * The per-world folder is what keeps a controller at, say, (10,64,10) in one save from sharing
+     * a transcript with one at the same spot in another save or on a server - ControllerKey only
+     * covers dimension + position. Vanilla's own precedent for naming "the world I'm in" is
+     * Minecraft#archiveProfilingReport (level name locally, ServerData remotely); this uses the save
+     * folder and the server address rather than the display names, since those are the unique ones.
+     */
     private Path chatHistoryDir() {
-        return this.minecraft.gameDirectory.toPath().resolve("micradrone").resolve("chat");
+        return this.minecraft.gameDirectory.toPath().resolve("micradrone").resolve("chat")
+                .resolve(ChatHistoryStore.worldDirectoryName(currentWorldId()));
+    }
+
+    private String currentWorldId() {
+        IntegratedServer local = this.minecraft.getSingleplayerServer();
+        if (local != null) {
+            // LevelResource.ROOT is "." so the raw path ends in "/."; normalize() before taking the
+            // last segment, or every save would come out as ".".
+            return local.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize().getFileName().toString();
+        }
+        ServerData remote = this.minecraft.getCurrentServer();
+        return remote != null ? remote.ip : "";
     }
 
     private void saveChatSession() {
@@ -472,8 +506,8 @@ public class IdeScreen extends Screen {
         }
         return chatSession.messages().stream()
                 .map(m -> switch (m.role()) {
-                    case "user" -> "You: " + m.text();
-                    case "assistant" -> "AI: " + m.text();
+                    case ChatMessage.ROLE_USER -> "You: " + m.text();
+                    case ChatMessage.ROLE_ASSISTANT -> "AI: " + m.text();
                     default -> "[summary] " + m.text();
                 })
                 .collect(Collectors.joining("\n\n"));
@@ -502,52 +536,90 @@ public class IdeScreen extends Screen {
         if (chatSession == null) {
             return;
         }
+        Optional<String> mcpConfigPath = mcpConfigPathOrReportError();
+        if (mcpConfigPath.isEmpty()) {
+            return; // nothing consumed yet - the question and any pending region survive for a retry
+        }
 
         Optional<String> pendingRegion = RegionSelectionHolder.PENDING.consumeAsText();
         Optional<String> priorSummary = chatSession.messages().stream()
-                .filter(m -> "summary".equals(m.role()))
+                .filter(m -> ChatMessage.ROLE_SUMMARY.equals(m.role()))
                 .map(ChatMessage::text)
                 .findFirst();
         ChatContextBuilder.ChatContext context = new ChatContextBuilder.ChatContext(
                 editorText, CommandsHelpDoc.COMMANDS, logLines, pendingRegion, priorSummary);
         String prompt = ChatContextBuilder.build(question, context);
 
-        String mcpConfigPath = ChatToolServerLifecycle.ensureRunningAndConfigPath();
         ClaudeCliBridge.ClaudeCliOptions options = chatSession.cliSessionId() == null
-                ? ClaudeCliBridge.ClaudeCliOptions.freshSession(dangerMode.toCliFlags(), mcpConfigPath)
-                : new ClaudeCliBridge.ClaudeCliOptions(chatSession.cliSessionId(), false, dangerMode.toCliFlags(), mcpConfigPath);
+                ? ClaudeCliBridge.ClaudeCliOptions.freshSession(dangerMode.toCliFlags(), mcpConfigPath.get())
+                : new ClaudeCliBridge.ClaudeCliOptions(chatSession.cliSessionId(), false, dangerMode.toCliFlags(), mcpConfigPath.get());
 
         chatSendInFlight = true;
         if (chatSendButton != null) {
             chatSendButton.active = false;
         }
         chatInputBox.setValue("");
-        chatSession.addMessage(new ChatMessage("user", question, System.currentTimeMillis()));
+        chatSession.addMessage(new ChatMessage(ChatMessage.ROLE_USER, question, System.currentTimeMillis()));
+        saveChatSession(); // the question outlives a game closed before the reply lands
         refreshChatLogText();
 
         claudeCliBridge.send(prompt, options)
                 .thenAccept(result -> Minecraft.getInstance().execute(() -> onChatResult(result)));
     }
 
+    /**
+     * The --mcp-config path for this turn, starting the loopback tool server on first use. A
+     * startup failure (loopback bind refused, unwritable game directory) is reported into the
+     * transcript like any other failed turn instead of escaping a button handler - an uncaught
+     * exception there takes the whole client down with a crash report.
+     */
+    private Optional<String> mcpConfigPathOrReportError() {
+        try {
+            return Optional.of(ChatToolServerLifecycle.ensureRunningAndConfigPath());
+        } catch (RuntimeException toolServerDown) {
+            Throwable cause = toolServerDown.getCause();
+            String detail = cause != null ? toolServerDown.getMessage() + ": " + cause : toolServerDown.toString();
+            reportChatError(detail);
+            return Optional.empty();
+        }
+    }
+
+    private void reportChatError(String detail) {
+        chatSession.addMessage(new ChatMessage(ChatMessage.ROLE_ASSISTANT, "(error) " + detail, System.currentTimeMillis()));
+        refreshChatLogText();
+    }
+
     /** Runs back on the render thread (see {@link #sendChatMessage}) - safe to touch screen state here. */
     private void onChatResult(ClaudeCliBridge.ClaudeCliResult result) {
         chatSendInFlight = false;
         if (chatSession == null) {
-            return; // the screen was closed (or a new session started) while the CLI was working
+            return; // never null once a send has started; kept as a guard against future reordering
         }
         if (result.success()) {
-            chatSession.addMessage(new ChatMessage("assistant", result.responseText(), System.currentTimeMillis()));
+            chatSession.addMessage(new ChatMessage(ChatMessage.ROLE_ASSISTANT, result.responseText(), System.currentTimeMillis()));
             if (result.sessionId() != null) {
                 chatSession.setCliSessionId(result.sessionId());
             }
             lastAssistantCodeBlocks = CodeBlockParser.parse(result.responseText());
         } else {
-            chatSession.addMessage(new ChatMessage("assistant", "(error) " + result.errorMessage(), System.currentTimeMillis()));
+            reportChatError(result.errorMessage());
             lastAssistantCodeBlocks = List.of();
         }
         saveChatSession();
-        if (chatMode) {
-            rebuildWidgets(); // re-renders the Insert-button row and re-enables Send
+        refreshChatPanelAfterTurn();
+    }
+
+    /**
+     * Rebuilds the Chat tab (Insert-button row, Send re-enabled) - unless this screen has already
+     * been closed. rebuildWidgets() re-runs init(), and init() re-aims the IDE camera; on a closed
+     * screen that would steal the player's viewpoint with nothing left to hand it back (the T-16
+     * "close mid-send" case - found by reading Screen#rebuildWidgets, and the guard verified on a
+     * real machine via the devkit's cameraOnPlayer probe). The reply itself was still saved by the
+     * caller, so reopening the IDE shows it.
+     */
+    private void refreshChatPanelAfterTurn() {
+        if (chatMode && !closed) {
+            rebuildWidgets();
         }
     }
 
@@ -562,9 +634,12 @@ public class IdeScreen extends Screen {
                 || this.minecraft == null || this.minecraft.level == null) {
             return;
         }
-        String mcpConfigPath = ChatToolServerLifecycle.ensureRunningAndConfigPath();
+        Optional<String> mcpConfigPath = mcpConfigPathOrReportError();
+        if (mcpConfigPath.isEmpty()) {
+            return;
+        }
         ClaudeCliBridge.ClaudeCliOptions options = new ClaudeCliBridge.ClaudeCliOptions(
-                chatSession.cliSessionId(), false, dangerMode.toCliFlags(), mcpConfigPath);
+                chatSession.cliSessionId(), false, dangerMode.toCliFlags(), mcpConfigPath.get());
 
         chatSendInFlight = true;
         if (chatSendButton != null) {
@@ -582,10 +657,10 @@ public class IdeScreen extends Screen {
         if (result.success()) {
             ChatCompactor.applySummary(chatSession, result.responseText());
             saveChatSession();
+        } else {
+            reportChatError(result.errorMessage()); // a silent no-op looked like a frozen button
         }
-        if (chatMode) {
-            rebuildWidgets();
-        }
+        refreshChatPanelAfterTurn();
     }
 
     // ---- Devkit test hooks -------------------------------------------------------------------
@@ -1003,6 +1078,7 @@ public class IdeScreen extends Screen {
     /** Called when this screen is closed or replaced - the viewpoint must always come back. */
     @Override
     public void removed() {
+        closed = true;
         if (this.minecraft != null) {
             cameraController.restore(this.minecraft);
         }

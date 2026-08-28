@@ -72,6 +72,21 @@ class ChatHistoryStoreTest {
     }
 
     @Test
+    void worldDirectoryNameKeepsSafeCharactersAndReplacesEverythingElse() {
+        assertEquals("kuni6", ChatHistoryStore.worldDirectoryName("kuni6"));
+        assertEquals("New_World-2", ChatHistoryStore.worldDirectoryName("New World-2"));
+        assertEquals("play.example.com_25565", ChatHistoryStore.worldDirectoryName("play.example.com:25565"));
+        assertEquals("a_b_c", ChatHistoryStore.worldDirectoryName("a/b\\c"));
+    }
+
+    @Test
+    void worldDirectoryNameNeverYieldsAnEmptyPathSegment() {
+        assertEquals("unknown", ChatHistoryStore.worldDirectoryName(""));
+        assertEquals("unknown", ChatHistoryStore.worldDirectoryName("   "));
+        assertEquals("unknown", ChatHistoryStore.worldDirectoryName(null));
+    }
+
+    @Test
     void serializeThenParseRoundTripsSpecialCharactersInMessageText() {
         ChatSession session = ChatSession.empty(OVERWORLD_KEY);
         session.addMessage(new ChatMessage("assistant", "back\\slash, tab\t, newline\n end", 42L));
