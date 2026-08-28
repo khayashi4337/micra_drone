@@ -65,4 +65,20 @@ class ClaudeCliBridgeTest {
         assertTrue(options.isNewSession());
         assertEquals(36, options.sessionId().length()); // UUID string length
     }
+
+    @Test
+    void windowsLaunchWrapsThroughCmdExeSoPathextResolvesTheCmdWrapper() {
+        List<String> logical = List.of("claude", "-p");
+        List<String> launch = ClaudeCliBridge.launchCommand(logical, "Windows 11");
+
+        assertEquals(List.of("cmd.exe", "/c", "claude", "-p"), launch);
+    }
+
+    @Test
+    void nonWindowsLaunchIsUnwrapped() {
+        List<String> logical = List.of("claude", "-p");
+
+        assertEquals(logical, ClaudeCliBridge.launchCommand(logical, "Mac OS X"));
+        assertEquals(logical, ClaudeCliBridge.launchCommand(logical, "Linux"));
+    }
 }

@@ -74,12 +74,35 @@ public final class ClaudeCliBridge {
         return cmd;
     }
 
+    /**
+     * Wraps {@code logicalCommand} for actual process launch. Real-machine testing found
+     * {@code ProcessBuilder} fails outright on Windows for a bare "claude" (exit: file not found) -
+     * npm installs it as claude.cmd (a batch wrapper) with no claude.exe, and unlike a real shell,
+     * ProcessBuilder/CreateProcess does not consult PATHEXT to resolve that. Routing through
+     * {@code cmd.exe /c} makes the launch behave exactly like a player typing "claude ..." at a
+     * prompt, on whatever extension the CLI actually ships as - not just today's .cmd wrapper.
+     */
+    private static List<String> launchCommand(List<String> logicalCommand) {
+        return launchCommand(logicalCommand, System.getProperty("os.name", ""));
+    }
+
+    static List<String> launchCommand(List<String> logicalCommand, String osName) {
+        if (!osName.toLowerCase(java.util.Locale.ROOT).contains("win")) {
+            return logicalCommand;
+        }
+        List<String> wrapped = new ArrayList<>();
+        wrapped.add("cmd.exe");
+        wrapped.add("/c");
+        wrapped.addAll(logicalCommand);
+        return wrapped;
+    }
+
     public CompletableFuture<ClaudeCliResult> send(String prompt, ClaudeCliOptions options) {
         return CompletableFuture.supplyAsync(() -> runProcess(prompt, options), executor);
     }
 
     private ClaudeCliResult runProcess(String prompt, ClaudeCliOptions options) {
-        List<String> command = buildCommand(claudeExecutable, options);
+        List<String> command = launchCommand(buildCommand(claudeExecutable, options));
         try {
             Process process = new ProcessBuilder(command).redirectErrorStream(false).start();
             try (OutputStream stdin = process.getOutputStream()) {
