@@ -513,9 +513,10 @@ public class IdeScreen extends Screen {
         chatPanel.typeAndSend(text);
     }
 
-    /** Same effect as clicking the Nth Insert button under the chat log. */
+    /** Same effect as clicking the Nth Insert button under the chat log (including the row swap to Accept/Reject). */
     public void insertCodeBlockForTesting(int index) {
         chatPanel.insertCodeBlock(index);
+        rebuildWidgets();
     }
 
     public void setDangerModeForTesting(boolean enabled) {
