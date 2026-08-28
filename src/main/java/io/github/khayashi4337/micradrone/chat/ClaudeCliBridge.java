@@ -7,10 +7,14 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Spawns claude -p as a subprocess and talks JSON over stdin/stdout - the mechanics SPK-1/SPK-2
@@ -26,6 +30,9 @@ public final class ClaudeCliBridge {
     static final String MCP_SERVER_NAME = "micradrone";
     static final String MCP_TOOL_NAME = "get_block_snapshot";
     static final String MCP_ALLOWED_TOOL = "mcp__" + MCP_SERVER_NAME + "__" + MCP_TOOL_NAME;
+
+    /** How long one claude -p round trip may take before the bridge gives up and kills the process. */
+    static final long CLI_TIMEOUT_SECONDS = 120;
 
     /**
      * @param sessionId     the id to pass to --session-id (new) or --resume (continuing)
@@ -87,7 +94,7 @@ public final class ClaudeCliBridge {
     }
 
     static List<String> launchCommand(List<String> logicalCommand, String osName) {
-        if (!osName.toLowerCase(java.util.Locale.ROOT).contains("win")) {
+        if (!osName.toLowerCase(Locale.ROOT).contains("win")) {
             return logicalCommand;
         }
         List<String> wrapped = new ArrayList<>();
@@ -105,21 +112,31 @@ public final class ClaudeCliBridge {
         List<String> command = launchCommand(buildCommand(claudeExecutable, options));
         try {
             Process process = new ProcessBuilder(command).redirectErrorStream(false).start();
+            // Drain stdout and stderr on their own threads from the moment the process starts.
+            // Reading them one after another on this thread (the earlier shape) had two real
+            // failure modes: a hung CLI blocked readAll() forever, so the waitFor timeout below never
+            // got its turn and the chat's Send button stayed disabled for the rest of the session;
+            // and a chatty stderr could fill its pipe and deadlock the child while stdout was still
+            // being read. The executor is a cached pool, so submitting from inside a task is fine.
+            Future<String> stdout = executor.submit(() -> readAll(process.getInputStream()));
+            Future<String> stderr = executor.submit(() -> readAll(process.getErrorStream()));
             try (OutputStream stdin = process.getOutputStream()) {
                 stdin.write(prompt.getBytes(StandardCharsets.UTF_8));
+            } catch (IOException childExitedBeforeReadingStdin) {
+                // Fall through: the exit code and stderr below say why, far better than "pipe closed".
             }
-            String stdout = readAll(process.getInputStream());
-            String stderr = readAll(process.getErrorStream());
-            boolean finished = process.waitFor(120, java.util.concurrent.TimeUnit.SECONDS);
+            boolean finished = process.waitFor(CLI_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
-                return new ClaudeCliResult(false, null, null, "claude CLI timed out after 120s");
+                return new ClaudeCliResult(false, null, null, "claude CLI timed out after " + CLI_TIMEOUT_SECONDS + "s");
             }
+            String out = stdout.get();
+            String err = stderr.get();
             if (process.exitValue() != 0) {
-                return new ClaudeCliResult(false, null, null, "claude CLI exited " + process.exitValue() + ": " + stderr);
+                return new ClaudeCliResult(false, null, null, "claude CLI exited " + process.exitValue() + ": " + err);
             }
-            return ClaudeCliJson.parseResult(stdout);
-        } catch (IOException | InterruptedException e) {
+            return ClaudeCliJson.parseResult(out);
+        } catch (IOException | InterruptedException | ExecutionException e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
