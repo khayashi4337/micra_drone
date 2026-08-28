@@ -36,6 +36,19 @@ own. Inspired by the Steam game
   the editor's title bar, rename-in-place by double-clicking the script name,
   a debugger with breakpoints and step/step-out, a script list, and a live
   top-down camera view of your plot filling the other half of the screen.
+- **AI chat, powered by your own claude CLI** — a Chat tab in the IDE talks
+  directly to the copy of Claude Code already logged into your own machine
+  (no API key, no extra cost beyond your existing subscription). It sees
+  your current script, the command reference, and your last runtime error
+  automatically; any ```code block in its reply can be dropped into the
+  editor with one click. Runs in a locked-down safe mode by default (no
+  file/shell access at all) with a Danger toggle for full local-terminal
+  power when you want it. History is saved per controller and resumes next
+  time you open the tab, with a Compact button to summarize and start
+  fresh. A craftable Region Pointer wand (left-click a block for the start
+  corner, right-click for the end) lets you hand the AI a coordinate range
+  to talk about — and it can inspect the blocks in that range itself,
+  on demand, without you having to describe them.
 - **Claim a plot** — place a Drone Controller and a Corner Marker on a
   diagonal to define a square farming area. The controller can be embedded
   flush with the farmland, or stood on the surface (the plot is
