@@ -546,8 +546,13 @@ public class IdeScreen extends Screen {
                 .filter(m -> ChatMessage.ROLE_SUMMARY.equals(m.role()))
                 .map(ChatMessage::text)
                 .findFirst();
+        // bounds is the same client-side CornerMarkerScan result the 3D camera uses (see rescanPlot),
+        // so the mapping the AI gets matches what the server will actually drive.
+        ChatContextBuilder.PlotInfo plot = new ChatContextBuilder.PlotInfo(
+                pos.getX(), pos.getY(), pos.getZ(),
+                bounds.worldSize(), bounds.dirX(), bounds.dirZ(), bounds.groundYOffset());
         ChatContextBuilder.ChatContext context = new ChatContextBuilder.ChatContext(
-                editorText, CommandsHelpDoc.COMMANDS, logLines, pendingRegion, priorSummary);
+                editorText, CommandsHelpDoc.COMMANDS, logLines, pendingRegion, priorSummary, Optional.of(plot));
         String prompt = ChatContextBuilder.build(question, context);
 
         ClaudeCliBridge.ClaudeCliOptions options = chatSession.cliSessionId() == null
