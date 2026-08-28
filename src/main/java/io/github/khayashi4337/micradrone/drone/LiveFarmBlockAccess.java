@@ -14,14 +14,12 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
-import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.BonemealableBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CropBlock;
 import net.minecraft.world.level.block.FarmBlock;
-import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
@@ -42,12 +40,6 @@ import io.github.khayashi4337.micradrone.drone.GiantPatchDetector.Patch;
 public final class LiveFarmBlockAccess implements FarmBlockAccess {
     /** Flat rate for every crop for now; a per-crop table can replace this if crops need to differ. */
     private static final long POINTS_PER_HARVEST = 1;
-    /**
-     * Matches the original game: "about 1 in 5 (~20%) pumpkins die right as they finish growing"
-     * (thefarmerwasreplaced.wiki.gg/wiki/Pumpkins, confirmed via live web research). See
-     * {@link #maybeRotAFreshPumpkin}.
-     */
-    private static final float PUMPKIN_ROT_CHANCE = 0.2f;
 
     private final Level level;
     private final BlockPos origin;
@@ -170,21 +162,19 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     }
 
     /**
-     * Crops whose block-placement is a plain "set the block to its default (age 0) state" - this
-     * covers wheat and carrot (a CropBlock placed directly) and, just as simply, pumpkin: vanilla
-     * plants a PumpkinStemBlock (AGE 0-7, same shape as CropBlock) on the cell, which - once fully
-     * grown via boostGrowth()'s generic BonemealableBlock handling below - pops an actual Pumpkin
-     * block onto a free adjacent farmland/dirt cell on its own, using vanilla's own StemBlock logic
-     * (verified in decompiled sources; not reimplemented here). Deliberately a method, not a static
-     * field: eagerly initializing a Minecraft-typed static field (or even referencing certain
-     * Minecraft interfaces via instanceof) can break this class's verification on the test sourceSet
-     * - see PlotGeometry, which exists specifically to stay unaffected by that.
+     * Every crop is a CropBlock placed directly at its default (age 0) state: vanilla's wheat and
+     * carrot, and this mod's own {@link PumpkinCropBlock} (see its javadoc for why vanilla's
+     * pumpkin stem - which fruits onto a *neighbouring* cell - could not stand in for the original
+     * game's ripen-in-place pumpkin). Deliberately a method, not a static field: eagerly
+     * initializing a Minecraft-typed static field (or even referencing certain Minecraft interfaces
+     * via instanceof) can break this class's verification on the test sourceSet - see PlotGeometry,
+     * which exists specifically to stay unaffected by that.
      */
     private static Block simpleCropBlockFor(String crop) {
         return switch (crop) {
             case "wheat" -> Blocks.WHEAT;
             case "carrot" -> Blocks.CARROTS;
-            case "pumpkin" -> Blocks.PUMPKIN_STEM;
+            case "pumpkin" -> MicraDrone.PUMPKIN_CROP_BLOCK.get();
             default -> null;
         };
     }
@@ -252,11 +242,15 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         return found;
     }
 
+    /**
+     * Blocks.PUMPKIN is kept alongside the mod's own crop only for worlds saved before the crop
+     * existed: a vanilla pumpkin a stem had already dropped inside a plot stays harvestable (1 pt).
+     */
     private static String cropNameOf(Block block) {
         if (block == Blocks.CARROTS) {
             return "carrot";
         }
-        if (block == Blocks.PUMPKIN) {
+        if (block instanceof PumpkinCropBlock || block == Blocks.PUMPKIN) {
             return "pumpkin";
         }
         return "wheat"; // covers Blocks.WHEAT and, defensively, anything unexpected
@@ -269,11 +263,9 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     }
 
     /**
-     * A cell counts as harvestable once its CropBlock (wheat/carrot) reaches max age, or - for
-     * pumpkin - once an actual Pumpkin block exists there at all (the fruit itself has no growth
-     * stages; only the stem that spawned it did), or once it's part of a giant-pumpkin patch, or -
-     * matching the original game - once it's a rotten pumpkin (harvestable, just yields nothing; see
-     * attemptHarvest).
+     * A cell counts as harvestable once its CropBlock (wheat/carrot/pumpkin) reaches max age, or
+     * once it's part of a giant-pumpkin patch, or - matching the original game - once it's a rotten
+     * pumpkin (harvestable, just yields nothing; see attemptHarvest). Blocks.PUMPKIN: see cropNameOf.
      */
     private static boolean isMatureCrop(BlockState state) {
         if (state.getBlock() instanceof CropBlock crop) {
@@ -283,12 +275,16 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
                 || state.is(MicraDrone.ROTTEN_PUMPKIN_BLOCK.get());
     }
 
+    /** A ripe, non-rotten pumpkin - the only thing a giant patch is built from. Blocks.PUMPKIN: see cropNameOf. */
+    private static boolean isRipePumpkin(BlockState state) {
+        return (state.getBlock() instanceof PumpkinCropBlock crop && crop.isMaxAge(state)) || state.is(Blocks.PUMPKIN);
+    }
+
     /**
      * Ages up every immature crop standing on actual farmland within the plot by one bonemeal-style
-     * jump, via the generic {@link BonemealableBlock} interface both CropBlock (wheat/carrot) and
-     * StemBlock (pumpkin) implement - so this needs no per-crop-type special casing, and for pumpkin
-     * specifically, reaching max age through this same call is what makes vanilla's own StemBlock
-     * logic pop an actual Pumpkin block onto a free neighboring cell (see simpleCropBlockFor's note).
+     * jump, via the generic {@link BonemealableBlock} interface every CropBlock implements - so this
+     * needs no per-crop-type special casing (pumpkin's 20% rot-on-ripening lives inside
+     * {@link PumpkinCropBlock#performBonemeal} itself, so it fires through this path too).
      * Called periodically from {@link DroneControllerBlockEntity#serverTick} - only once a corner
      * marker has confirmed the plot (see {@code plotConfirmed} there) - to make the claimed area grow
      * faster than vanilla, independent of whether a script is currently running. The farmland check
@@ -319,10 +315,9 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
                 if (state.getBlock() instanceof BonemealableBlock bonemealable
                         && bonemealable.isValidBonemealTarget(level, above, state)) {
                     bonemealable.performBonemeal(serverLevel, serverLevel.getRandom(), above, state);
-                    maybeRotAFreshPumpkin(above, serverLevel.getRandom());
-                    state = level.getBlockState(above); // may have just matured into a fruit (or rotted)
+                    state = level.getBlockState(above); // may have just ripened (or rotted)
                 }
-                maturePumpkin[gx][gy] = state.is(Blocks.PUMPKIN);
+                maturePumpkin[gx][gy] = isRipePumpkin(state);
             }
         }
         applyGiantPumpkinPatch(maturePumpkin);
@@ -337,26 +332,6 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     private void waterPlot(BlockPos ground, BlockState groundState) {
         if (groundState.getValue(FarmBlock.MOISTURE) < FarmBlock.MAX_MOISTURE) {
             level.setBlock(ground, groundState.setValue(FarmBlock.MOISTURE, FarmBlock.MAX_MOISTURE), 2);
-        }
-    }
-
-    /**
-     * If {@code stemPos} just turned into an ATTACHED_PUMPKIN_STEM (vanilla's own sign that its
-     * StemBlock just popped a fresh Pumpkin onto the neighboring cell its FACING points at - see
-     * StemBlock.randomTick, not reimplemented here), rolls the original game's ~20% "grew defective"
-     * chance and, on a hit, swaps that fresh Pumpkin for {@link MicraDrone#ROTTEN_PUMPKIN_BLOCK}
-     * instead. Matches the original: dying only ever happens right as a pumpkin finishes growing,
-     * never before.
-     */
-    private void maybeRotAFreshPumpkin(BlockPos stemPos, RandomSource random) {
-        BlockState stemNowState = level.getBlockState(stemPos);
-        if (!stemNowState.is(Blocks.ATTACHED_PUMPKIN_STEM)) {
-            return;
-        }
-        Direction facing = stemNowState.getValue(HorizontalDirectionalBlock.FACING);
-        BlockPos fruitPos = stemPos.relative(facing);
-        if (level.getBlockState(fruitPos).is(Blocks.PUMPKIN) && random.nextFloat() < PUMPKIN_ROT_CHANCE) {
-            level.setBlockAndUpdate(fruitPos, MicraDrone.ROTTEN_PUMPKIN_BLOCK.get().defaultBlockState());
         }
     }
 

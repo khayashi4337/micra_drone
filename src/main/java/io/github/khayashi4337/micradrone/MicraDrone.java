@@ -13,6 +13,7 @@ import io.github.khayashi4337.micradrone.drone.DroneControllerBlock;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
 import io.github.khayashi4337.micradrone.drone.DroneEntity;
 import io.github.khayashi4337.micradrone.drone.GiantPumpkinBlock;
+import io.github.khayashi4337.micradrone.drone.PumpkinCropBlock;
 import io.github.khayashi4337.micradrone.drone.RegionPointerItem;
 import io.github.khayashi4337.micradrone.drone.ScriptScrollItem;
 import io.github.khayashi4337.micradrone.drone.ScrollEnchanter;
@@ -45,9 +46,11 @@ import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.material.MapColor;
+import net.minecraft.world.level.material.PushReaction;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.Mod;
@@ -115,17 +118,30 @@ public class MicraDrone {
     public static final DeferredItem<RegionPointerItem> REGION_POINTER_ITEM =
             ITEMS.registerItem("region_pointer", RegionPointerItem::new, new Item.Properties().stacksTo(1));
 
+    // The mod's own pumpkin crop (see PumpkinCropBlock for why vanilla's stem couldn't be used).
+    // Properties mirror vanilla Blocks.WHEAT/CARROTS exactly - noCollission in particular, so the
+    // drone (which flies at crop height) passes through it like it does through wheat. The mod
+    // plants/clears it itself; no BlockItem/recipe (pumpkin seeds are the pick-block item, via
+    // CropBlock#getBaseSeedId).
+    public static final DeferredBlock<PumpkinCropBlock> PUMPKIN_CROP_BLOCK = BLOCKS.registerBlock(
+            "pumpkin_crop", PumpkinCropBlock::new,
+            BlockBehaviour.Properties.of().mapColor(MapColor.PLANT).noCollission().randomTicks()
+                    .instabreak().sound(SoundType.CROP).pushReaction(PushReaction.DESTROY));
+
     // Purely decorative reskin for a giant-pumpkin fusion patch (see LiveFarmBlockAccess). The mod
-    // places/clears it itself; no BlockItem/recipe, players never obtain it directly.
+    // places/clears it itself; no BlockItem/recipe, players never obtain it directly. noCollission
+    // for the same reason as PUMPKIN_CROP_BLOCK: it stands where a crop stood, at the drone's height.
     public static final DeferredBlock<GiantPumpkinBlock> GIANT_PUMPKIN_BLOCK = BLOCKS.registerBlock(
             "giant_pumpkin", GiantPumpkinBlock::new,
-            BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_ORANGE).strength(1.0f));
+            BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_ORANGE).noCollission().strength(1.0f)
+                    .pushReaction(PushReaction.DESTROY));
 
     // Stands in for a pumpkin that grew defective (~20% chance, matching the original game - see
-    // LiveFarmBlockAccess). Plain block like CORNER_MARKER_BLOCK: no custom class needed. The mod
-    // places/clears it itself; no BlockItem/recipe.
+    // PumpkinCropBlock). Plain block like CORNER_MARKER_BLOCK: no custom class needed. The mod
+    // places/clears it itself; no BlockItem/recipe. noCollission, same reason as above.
     public static final DeferredBlock<net.minecraft.world.level.block.Block> ROTTEN_PUMPKIN_BLOCK =
-            BLOCKS.registerSimpleBlock("rotten_pumpkin", BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_BROWN).strength(1.0f));
+            BLOCKS.registerSimpleBlock("rotten_pumpkin", BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_BROWN)
+                    .noCollission().strength(1.0f).pushReaction(PushReaction.DESTROY));
 
     // Create a Deferred Register to hold EntityTypes which will all be registered under the "micradrone" namespace
     public static final DeferredRegister<EntityType<?>> ENTITY_TYPES = DeferredRegister.create(Registries.ENTITY_TYPE, MODID);

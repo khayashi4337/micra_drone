@@ -1,6 +1,7 @@
 {
   "block.micradrone.drone_controller": "Drone Controller",
   "block.micradrone.corner_marker": "Corner Marker",
+  "block.micradrone.pumpkin_crop": "Pumpkin",
   "block.micradrone.giant_pumpkin": "Giant Pumpkin",
   "block.micradrone.rotten_pumpkin": "Rotten Pumpkin",
   "item.micradrone.script_scroll": "Script Scroll",

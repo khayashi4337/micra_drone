@@ -31,13 +31,10 @@ public final class CommandsHelpDoc {
                 常にfalseになる（アンロックの方法はヘルプ(2/3)の「アンロックショップ」参照）。
 
             plant("pumpkin")
-                耕地にカボチャの苗（つる）を植える。育ちきると本家vanillaの
-                仕組みでとなりの空いたマスに実(カボチャ本体)が生える
-                （どのマスに生えるかはランダムなので、苗の周りは空けておく
-                といい）。harvest()は実が生えたマスで呼ぶ必要がある
-                （苗のマスでは常に失敗する）。実る瞬間、約20%の確率で
-                「腐ったかぼちゃ」になり、harvest()しても何も得られない
-                （本家 The Farmer Was Replaced と同じ仕様）。腐っているかは
+                耕地にカボチャを植える。小麦やニンジンと同じく、植えたその
+                マスで育って実る（本家 The Farmer Was Replaced と同じ）。
+                実る瞬間、約20%の確率で「腐ったかぼちゃ」になり、harvest()
+                しても何も得られない（これも本家と同じ仕様）。腐っているかは
                 is_rotten()で調べられる。腐ったマスにそのままplant()すると
                 上書きして植え直せる（harvestは不要）。ショップでpumpkinを
                 アンロックするまでは常にfalseになる。
@@ -88,8 +85,8 @@ public final class CommandsHelpDoc {
 
             get_block_above()
                 地面の上、ドローンと同じマスにあるブロック名。作物がある
-                ならその名前（"wheat", "carrots", "pumpkin_stem", "pumpkin"
-                など）、何も無ければ "air"。
+                ならその名前（"wheat", "carrots", "micradrone:pumpkin_crop",
+                "micradrone:giant_pumpkin" など）、何も無ければ "air"。
 
             get_time()
                 ワールドの1日の中での時刻（tick、0〜23999）。

@@ -17,13 +17,16 @@ import net.minecraft.client.model.geom.ModelLayerLocation;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.FastColor;
 import net.minecraft.world.inventory.EnchantmentMenu;
+import net.minecraft.world.level.block.CropBlock;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.EntityRenderersEvent;
+import net.neoforged.neoforge.client.event.RegisterColorHandlersEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
@@ -54,6 +57,22 @@ public class MicraDroneClient {
     @SubscribeEvent
     static void registerLayerDefinitions(EntityRenderersEvent.RegisterLayerDefinitions event) {
         event.registerLayerDefinition(DRONE_MODEL_LAYER, DroneModel::createBodyLayer);
+    }
+
+    /**
+     * Placeholder look for {@link MicraDrone#PUMPKIN_CROP_BLOCK} until it gets its own art: its
+     * growth-stage models wrap vanilla's pumpkin_stem_stage* models (see
+     * assets/micradrone/models/block/pumpkin_crop_stage*.json), whose faces carry tintindex 0 and
+     * so render grey/white unless a block color is registered. This is vanilla's own stem tint
+     * formula (BlockColors.createDefault for PUMPKIN_STEM/MELON_STEM, decompiled 1.21.1 source):
+     * sprout green darkening toward brown as AGE rises.
+     */
+    @SubscribeEvent
+    static void registerBlockColors(RegisterColorHandlersEvent.Block event) {
+        event.register((state, level, pos, tintIndex) -> {
+            int age = state.getValue(CropBlock.AGE);
+            return FastColor.ARGB32.color(age * 32, 255 - age * 8, age * 4);
+        }, MicraDrone.PUMPKIN_CROP_BLOCK.get());
     }
 
     @SubscribeEvent
