@@ -52,3 +52,13 @@ AIチャット支援機能のWave 0スパイク。「クライアントJVM内に
   委譲、未ロード領域の扱い)はT-7bで別途検証する。
 - danger時の`--dangerously-skip-permissions`との組み合わせ(この場合は
   `--allowedTools`を明示しなくても呼べるはずだが未実測、T-9で確認)。
+
+## 追記(T-7実装後、2026-08-28): 自前のJava実装でも実機検証済み
+
+T-7で実装した`BlockSnapshotToolServer`(JDK標準`com.sun.net.httpserver.HttpServer`
++ 自前のMCP JSON-RPCハンドリング`McpProtocol`、外部ライブラリ非依存)を実際に
+起動し、本物の`claude -p`から接続させて`get_block_snapshot`を呼ばせたところ、
+Node.js公式SDK版と同じく成功した。応答に仕込んだ目印文字列
+(`JAVA-SPIKE-PROOF: block at (7,64,9) is minecraft:farmland...`)がそのまま
+返ってきたことを確認済み。**「Java側でMCPプロトコルを正しく実装できるか」
+という残存リスクも、これで実証レベルまで解消した。**

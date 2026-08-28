@@ -52,4 +52,30 @@ class MiniJsonTest {
     void malformedJsonThrowsRatherThanReturningPartialData() {
         assertThrows(RuntimeException.class, () -> MiniJson.parse("{\"a\": }"));
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void writeThenParseRoundTripsAMixedStructure() {
+        Map<String, Object> original = new java.util.LinkedHashMap<>();
+        original.put("text", "line1\nline2 \"quoted\"");
+        original.put("n", 42);
+        original.put("flag", true);
+        original.put("nothing", null);
+        original.put("list", List.of(1, 2, 3));
+
+        String json = MiniJson.write(original);
+        Map<String, Object> parsed = (Map<String, Object>) MiniJson.parse(json);
+
+        assertEquals("line1\nline2 \"quoted\"", parsed.get("text"));
+        assertEquals(42.0, parsed.get("n"));
+        assertEquals(Boolean.TRUE, parsed.get("flag"));
+        assertNull(parsed.get("nothing"));
+        assertEquals(List.of(1.0, 2.0, 3.0), parsed.get("list"));
+    }
+
+    @Test
+    void writeProducesWholeNumbersWithoutADecimalPoint() {
+        assertEquals("42", MiniJson.write(42));
+        assertEquals("42", MiniJson.write(42.0));
+    }
 }
