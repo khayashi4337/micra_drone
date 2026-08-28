@@ -19,16 +19,23 @@ public final class ChatContextBuilder {
      * @param logLines                   the controller's log buffer; the last {@code "error: "}-prefixed
      *                                    line, if any, becomes the "last error" context
      * @param pendingRegionReferenceText RegionSelectionState#consumeAsText's result, if any
+     * @param priorSummary               ChatCompactor#applySummary's result, if this session was
+     *                                    ever compacted - carried forward since compacting starts a
+     *                                    brand new CLI session that has no memory of its own
      */
     public record ChatContext(
             String scriptText,
             String commandReferenceExcerpt,
             List<String> logLines,
-            Optional<String> pendingRegionReferenceText) {
+            Optional<String> pendingRegionReferenceText,
+            Optional<String> priorSummary) {
     }
 
     public static String build(String userQuestion, ChatContext context) {
         StringBuilder sb = new StringBuilder();
+        context.priorSummary().ifPresent(summary ->
+                sb.append("これまでの会話の要約:\n").append(summary).append("\n\n"));
+
         sb.append("現在のスクリプト:\n```\n");
         sb.append(context.scriptText().isBlank() ? "(空)" : context.scriptText());
         sb.append("\n```\n\n");

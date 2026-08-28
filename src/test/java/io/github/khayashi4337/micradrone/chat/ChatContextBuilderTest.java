@@ -14,7 +14,7 @@ import io.github.khayashi4337.micradrone.chat.ChatContextBuilder.ChatContext;
 class ChatContextBuilderTest {
 
     private static ChatContext contextOf(String script, List<String> logLines, Optional<String> region) {
-        return new ChatContext(script, "move(dir) / harvest() / ...", logLines, region);
+        return new ChatContext(script, "move(dir) / harvest() / ...", logLines, region, Optional.empty());
     }
 
     @Test
@@ -67,5 +67,21 @@ class ChatContextBuilderTest {
     @Test
     void lastErrorHelperReturnsEmptyForNoLogLines() {
         assertEquals(Optional.empty(), ChatContextBuilder.lastError(List.of()));
+    }
+
+    @Test
+    void omitsTheSummarySectionWhenSessionWasNeverCompacted() {
+        ChatContext context = contextOf("x = 1", List.of(), Optional.empty());
+        assertFalse(ChatContextBuilder.build("質問", context).contains("これまでの会話の要約"));
+    }
+
+    @Test
+    void includesThePriorSummaryWhenTheSessionWasCompacted() {
+        ChatContext context = new ChatContext("x = 1", "ref", List.of(), Optional.empty(),
+                Optional.of("以前、収穫ループのバグを直した"));
+
+        String prompt = ChatContextBuilder.build("質問", context);
+
+        assertTrue(prompt.contains("これまでの会話の要約:\n以前、収穫ループのバグを直した"));
     }
 }
