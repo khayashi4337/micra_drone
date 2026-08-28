@@ -5,6 +5,7 @@ import io.github.khayashi4337.micradrone.client.DroneRenderer;
 import io.github.khayashi4337.micradrone.client.EnchantScrollScreen;
 import io.github.khayashi4337.micradrone.client.EnchantTableWatcher;
 import io.github.khayashi4337.micradrone.client.IdeScreen;
+import io.github.khayashi4337.micradrone.client.RegionPointerListener;
 import io.github.khayashi4337.micradrone.client.ShopScreen;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
@@ -40,6 +41,7 @@ public class MicraDroneClient {
         // ("Expected @SubscribeEvent method ... to NOT be static") - confirmed by a real-machine
         // crash the first time this was tried directly here. See EnchantTableWatcher's own javadoc.
         NeoForge.EVENT_BUS.register(new EnchantTableWatcher());
+        NeoForge.EVENT_BUS.register(new RegionPointerListener());
     }
 
     @SubscribeEvent

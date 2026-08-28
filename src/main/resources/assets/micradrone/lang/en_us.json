@@ -5,6 +5,8 @@
   "block.micradrone.rotten_pumpkin": "Rotten Pumpkin",
   "item.micradrone.script_scroll": "Script Scroll",
   "item.micradrone.script_scroll.tooltip": "Right-click away from a block to write; use a blank scroll on an enchanting table to receive a sample script",
+  "item.micradrone.region_pointer": "Region Pointer",
+  "item.micradrone.region_pointer.tooltip": "Left-click a block to set the start corner, right-click another to set the end corner - the AI chat picks up the selection when you next open it",
   "gui.micradrone.enchant_scroll.title": "Inscribe a Script Scroll",
   "gui.micradrone.enchant_scroll.bookshelves": "Bookshelves: %s / %s",
   "gui.micradrone.enchant_scroll.cost": "%s lapis",

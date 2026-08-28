@@ -13,6 +13,7 @@ import io.github.khayashi4337.micradrone.drone.DroneControllerBlock;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
 import io.github.khayashi4337.micradrone.drone.DroneEntity;
 import io.github.khayashi4337.micradrone.drone.GiantPumpkinBlock;
+import io.github.khayashi4337.micradrone.drone.RegionPointerItem;
 import io.github.khayashi4337.micradrone.drone.ScriptScrollItem;
 import io.github.khayashi4337.micradrone.drone.ScrollEnchanter;
 import io.github.khayashi4337.micradrone.drone.net.DebugCommandPayload;
@@ -108,6 +109,11 @@ public class MicraDrone {
     // to 1, matching vanilla's own WritableBookItem (Items.WRITABLE_BOOK).
     public static final DeferredItem<ScriptScrollItem> SCRIPT_SCROLL_ITEM =
             ITEMS.registerItem("script_scroll", ScriptScrollItem::new, new Item.Properties().stacksTo(1));
+
+    // AI chat's WorldEdit-style region-reference wand (see RegionPointerItem/RegionPointerListener).
+    // Stacks to 1, like ScriptScrollItem - a tool the player holds and reuses, not a stackable good.
+    public static final DeferredItem<RegionPointerItem> REGION_POINTER_ITEM =
+            ITEMS.registerItem("region_pointer", RegionPointerItem::new, new Item.Properties().stacksTo(1));
 
     // Purely decorative reskin for a giant-pumpkin fusion patch (see LiveFarmBlockAccess). The mod
     // places/clears it itself; no BlockItem/recipe, players never obtain it directly.
