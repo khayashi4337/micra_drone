@@ -175,6 +175,9 @@ public class MicraDrone {
             event.accept(DRONE_CONTROLLER_ITEM);
             event.accept(CORNER_MARKER_ITEM);
             event.accept(SCRIPT_SCROLL_ITEM);
+            // JEI builds its ingredient list from creative tabs: an item in no tab is hidden there,
+            // and so is its recipe - which is exactly how the pointer's recipe "didn't work" at first.
+            event.accept(REGION_POINTER_ITEM);
         }
     }
 
