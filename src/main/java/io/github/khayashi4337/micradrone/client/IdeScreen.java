@@ -1,9 +1,12 @@
 package io.github.khayashi4337.micradrone.client;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
@@ -11,6 +14,16 @@ import java.util.stream.Stream;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.MicraDroneClient;
+import io.github.khayashi4337.micradrone.chat.ChatCompactor;
+import io.github.khayashi4337.micradrone.chat.ChatContextBuilder;
+import io.github.khayashi4337.micradrone.chat.ChatHistoryStore;
+import io.github.khayashi4337.micradrone.chat.ChatMessage;
+import io.github.khayashi4337.micradrone.chat.ChatSession;
+import io.github.khayashi4337.micradrone.chat.ClaudeCliBridge;
+import io.github.khayashi4337.micradrone.chat.CodeBlockParser;
+import io.github.khayashi4337.micradrone.chat.ControllerKey;
+import io.github.khayashi4337.micradrone.chat.DangerModeState;
+import io.github.khayashi4337.micradrone.drone.CommandsHelpDoc;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
 import io.github.khayashi4337.micradrone.lang.CommandNames;
@@ -171,6 +184,24 @@ public class IdeScreen extends Screen {
     private MultiLineEditBox descriptionBox;
     private MultiLineEditBox logBox;
 
+    // AI chat panel state (Wave 5 GUI integration). One ClaudeCliBridge/DangerModeState per screen
+    // instance is enough - there's no per-controller CLI process, only a per-controller ChatSession.
+    private static final int CHAT_INSERT_ROW_HEIGHT = 16;
+    private static final int CHAT_INPUT_ROW_HEIGHT = 20;
+    private static final int CHAT_TOGGLE_ROW_HEIGHT = 20;
+    private static final String CLAUDE_EXECUTABLE = "claude";
+
+    private boolean chatMode = false;
+    private final ClaudeCliBridge claudeCliBridge = new ClaudeCliBridge(CLAUDE_EXECUTABLE);
+    private final DangerModeState dangerMode = new DangerModeState();
+    private ChatSession chatSession;
+    private boolean chatSendInFlight = false;
+    private List<CodeBlockParser.CodeBlock> lastAssistantCodeBlocks = List.of();
+    private MultiLineEditBox chatLogBox;
+    private EditBox chatInputBox;
+    private Button chatSendButton;
+    private Button chatDangerButton;
+
     private CornerMarkerScan.PlotBounds bounds = new CornerMarkerScan.PlotBounds(
             DroneControllerBlockEntity.DEFAULT_WORLD_SIZE, 1, 1, false, 0);
     private int tickCounter = 0;
@@ -235,8 +266,9 @@ public class IdeScreen extends Screen {
                         b -> PacketDistributor.sendToServer(new StopScriptPayload(pos)))
                 .bounds(leftX + 2 * (debugW + ROW_GAP), debugRowY, debugW, BUTTON_HEIGHT).build());
 
-        // 3-way now: the Run icon moved above the editor (see the PlayButton added earlier in this method).
-        int buttonW = (leftW - 2 * ROW_GAP) / 3;
+        // 4-way now: the Run icon moved above the editor (see the PlayButton added earlier in this
+        // method); Chat is the AI chat panel's tab, alongside List (GUI-reduction follow-up).
+        int buttonW = (leftW - 3 * ROW_GAP) / 4;
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.save"), b -> save())
                 .bounds(leftX, saveRowY, buttonW, BUTTON_HEIGHT).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.save_run"), b -> {
@@ -246,6 +278,8 @@ public class IdeScreen extends Screen {
                 .bounds(leftX + buttonW + ROW_GAP, saveRowY, buttonW, BUTTON_HEIGHT).build());
         listButton = addRenderableWidget(Button.builder(listButtonLabel(), b -> toggleListMode())
                 .bounds(leftX + 2 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
+        addRenderableWidget(Button.builder(chatButtonLabel(), b -> toggleChatMode())
+                .bounds(leftX + 3 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
 
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.shop"),
                         b -> MicraDroneClient.openShopScreen(pos))
@@ -254,6 +288,8 @@ public class IdeScreen extends Screen {
 
         if (listMode) {
             initListModeWidgets(listPanelX(), listPanelWidth());
+        } else if (chatMode) {
+            initChatModeWidgets(listPanelX(), listPanelWidth());
         }
 
         if (this.minecraft != null && this.minecraft.level != null) {
@@ -307,12 +343,249 @@ public class IdeScreen extends Screen {
 
     private void toggleListMode() {
         listMode = !listMode;
+        if (listMode) {
+            chatMode = false;
+        }
         rebuildWidgets();
     }
 
     private Component listButtonLabel() {
         return Component.translatable(listMode
                 ? "gui.micradrone.ide_screen.list_close" : "gui.micradrone.ide_screen.list_open");
+    }
+
+    /**
+     * Builds the right-half AI chat panel: transcript, per-response Insert buttons (up to 3 - a
+     * reply realistically offers one, occasionally a couple of alternatives), the message input
+     * row, and the danger/compact toggle row.
+     */
+    private void initChatModeWidgets(int rightX, int rightW) {
+        ensureChatSessionLoaded();
+
+        int bottomY = editorTop + editorHeight;
+        int toggleRowY = bottomY - CHAT_TOGGLE_ROW_HEIGHT;
+        int inputRowY = toggleRowY - ROW_GAP - CHAT_INPUT_ROW_HEIGHT;
+        int insertRowY = inputRowY - ROW_GAP - CHAT_INSERT_ROW_HEIGHT;
+        int logHeight = insertRowY - ROW_GAP - editorTop;
+
+        chatLogBox = new MultiLineEditBox(this.font, rightX, editorTop, rightW, logHeight,
+                Component.translatable("gui.micradrone.ide_screen.chat_log_placeholder"),
+                Component.translatable("gui.micradrone.ide_screen.chat_log"));
+        chatLogBox.setValue(chatLogText());
+        addRenderableWidget(chatLogBox);
+
+        int insertBtnW = Math.min(90, (rightW - 2 * ROW_GAP) / 3);
+        for (int i = 0; i < Math.min(lastAssistantCodeBlocks.size(), 3); i++) {
+            int blockIndex = i;
+            addRenderableWidget(Button.builder(Component.literal("Insert #" + (i + 1)), b -> {
+                        editorText = lastAssistantCodeBlocks.get(blockIndex).code();
+                        editor.setValue(editorText);
+                    })
+                    .bounds(rightX + i * (insertBtnW + ROW_GAP), insertRowY, insertBtnW, CHAT_INSERT_ROW_HEIGHT)
+                    .build());
+        }
+
+        int sendBtnW = 60;
+        chatInputBox = new EditBox(this.font, rightX, inputRowY, rightW - sendBtnW - ROW_GAP, CHAT_INPUT_ROW_HEIGHT,
+                Component.translatable("gui.micradrone.ide_screen.chat_input"));
+        chatInputBox.setMaxLength(2000);
+        addRenderableWidget(chatInputBox);
+        chatSendButton = addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_send"),
+                        b -> sendChatMessage())
+                .bounds(rightX + rightW - sendBtnW, inputRowY, sendBtnW, CHAT_INPUT_ROW_HEIGHT).build());
+        chatSendButton.active = !chatSendInFlight;
+
+        int toggleBtnW = (rightW - ROW_GAP) / 2;
+        chatDangerButton = addRenderableWidget(Button.builder(dangerButtonLabel(),
+                        b -> {
+                            dangerMode.toggle();
+                            chatDangerButton.setMessage(dangerButtonLabel());
+                        })
+                .bounds(rightX, toggleRowY, toggleBtnW, CHAT_TOGGLE_ROW_HEIGHT).build());
+        addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_compact"),
+                        b -> compactChat())
+                .bounds(rightX + toggleBtnW + ROW_GAP, toggleRowY, toggleBtnW, CHAT_TOGGLE_ROW_HEIGHT).build());
+    }
+
+    /**
+     * Chat is the AI panel's tab, mutually exclusive with List (only one right-half panel shows at
+     * a time). Opening it (not closing) consumes RegionSelectionHolder's pending selection - the
+     * WorldEdit-style pointer item's corners, if any were picked since the last time chat was
+     * opened - and drops the coordinate text straight into the input box.
+     */
+    private void toggleChatMode() {
+        boolean turningOn = !chatMode;
+        chatMode = turningOn;
+        if (turningOn) {
+            listMode = false;
+        }
+        rebuildWidgets();
+        if (turningOn) {
+            RegionSelectionHolder.PENDING.consumeAsText()
+                    .ifPresent(region -> {
+                        if (chatInputBox != null) {
+                            chatInputBox.setValue(region + " ");
+                        }
+                    });
+        }
+    }
+
+    private Component chatButtonLabel() {
+        return Component.translatable(chatMode
+                ? "gui.micradrone.ide_screen.chat_close" : "gui.micradrone.ide_screen.chat_open");
+    }
+
+    private Component dangerButtonLabel() {
+        return Component.translatable(dangerMode.isEnabled()
+                ? "gui.micradrone.ide_screen.chat_danger_on" : "gui.micradrone.ide_screen.chat_danger_off");
+    }
+
+    /** Loads this controller's chat history on first use (resume across screen reopens - see ChatHistoryStore). */
+    private void ensureChatSessionLoaded() {
+        if (chatSession != null || this.minecraft == null || this.minecraft.level == null) {
+            return;
+        }
+        ControllerKey key = new ControllerKey(this.minecraft.level.dimension().location().toString(),
+                pos.getX(), pos.getY(), pos.getZ());
+        chatSession = ChatHistoryStore.load(chatHistoryDir(), key);
+    }
+
+    private Path chatHistoryDir() {
+        return this.minecraft.gameDirectory.toPath().resolve("micradrone").resolve("chat");
+    }
+
+    private void saveChatSession() {
+        if (chatSession == null || this.minecraft == null) {
+            return;
+        }
+        try {
+            ChatHistoryStore.save(chatHistoryDir(), chatSession);
+        } catch (IOException ignoredBestEffort) {
+            // Losing one turn's persistence isn't worth interrupting the chat over - it'll save
+            // again on the next successful turn.
+        }
+    }
+
+    private String chatLogText() {
+        if (chatSession == null) {
+            return "";
+        }
+        return chatSession.messages().stream()
+                .map(m -> switch (m.role()) {
+                    case "user" -> "You: " + m.text();
+                    case "assistant" -> "AI: " + m.text();
+                    default -> "[summary] " + m.text();
+                })
+                .collect(Collectors.joining("\n\n"));
+    }
+
+    private void refreshChatLogText() {
+        if (chatLogBox != null) {
+            chatLogBox.setValue(chatLogText());
+        }
+    }
+
+    /**
+     * Sends the input box's text as one chat turn: builds the prompt (script + command reference +
+     * last error + any pending region reference), dispatches it on ClaudeCliBridge's background
+     * executor, and disables the Send button until the response (or failure) lands.
+     */
+    private void sendChatMessage() {
+        if (chatSendInFlight || chatInputBox == null || this.minecraft == null || this.minecraft.level == null) {
+            return;
+        }
+        String question = chatInputBox.getValue().trim();
+        if (question.isEmpty()) {
+            return;
+        }
+        ensureChatSessionLoaded();
+        if (chatSession == null) {
+            return;
+        }
+
+        Optional<String> pendingRegion = RegionSelectionHolder.PENDING.consumeAsText();
+        Optional<String> priorSummary = chatSession.messages().stream()
+                .filter(m -> "summary".equals(m.role()))
+                .map(ChatMessage::text)
+                .findFirst();
+        ChatContextBuilder.ChatContext context = new ChatContextBuilder.ChatContext(
+                editorText, CommandsHelpDoc.COMMANDS, logLines, pendingRegion, priorSummary);
+        String prompt = ChatContextBuilder.build(question, context);
+
+        String mcpConfigPath = ChatToolServerLifecycle.ensureRunningAndConfigPath();
+        ClaudeCliBridge.ClaudeCliOptions options = chatSession.cliSessionId() == null
+                ? ClaudeCliBridge.ClaudeCliOptions.freshSession(dangerMode.toCliFlags(), mcpConfigPath)
+                : new ClaudeCliBridge.ClaudeCliOptions(chatSession.cliSessionId(), false, dangerMode.toCliFlags(), mcpConfigPath);
+
+        chatSendInFlight = true;
+        if (chatSendButton != null) {
+            chatSendButton.active = false;
+        }
+        chatInputBox.setValue("");
+        chatSession.addMessage(new ChatMessage("user", question, System.currentTimeMillis()));
+        refreshChatLogText();
+
+        claudeCliBridge.send(prompt, options)
+                .thenAccept(result -> Minecraft.getInstance().execute(() -> onChatResult(result)));
+    }
+
+    /** Runs back on the render thread (see {@link #sendChatMessage}) - safe to touch screen state here. */
+    private void onChatResult(ClaudeCliBridge.ClaudeCliResult result) {
+        chatSendInFlight = false;
+        if (chatSession == null) {
+            return; // the screen was closed (or a new session started) while the CLI was working
+        }
+        if (result.success()) {
+            chatSession.addMessage(new ChatMessage("assistant", result.responseText(), System.currentTimeMillis()));
+            if (result.sessionId() != null) {
+                chatSession.setCliSessionId(result.sessionId());
+            }
+            lastAssistantCodeBlocks = CodeBlockParser.parse(result.responseText());
+        } else {
+            chatSession.addMessage(new ChatMessage("assistant", "(error) " + result.errorMessage(), System.currentTimeMillis()));
+            lastAssistantCodeBlocks = List.of();
+        }
+        saveChatSession();
+        if (chatMode) {
+            rebuildWidgets(); // re-renders the Insert-button row and re-enables Send
+        }
+    }
+
+    /**
+     * Manual compact (T-4b/ChatCompactor): asks claude -p to summarize the still-open session, then
+     * replaces the local transcript with just that summary and drops the CLI session id so the next
+     * send starts fresh - see ChatCompactor's javadoc for why starting fresh is what actually saves
+     * cost, rather than summarizing in place.
+     */
+    private void compactChat() {
+        if (chatSendInFlight || chatSession == null || chatSession.cliSessionId() == null
+                || this.minecraft == null || this.minecraft.level == null) {
+            return;
+        }
+        String mcpConfigPath = ChatToolServerLifecycle.ensureRunningAndConfigPath();
+        ClaudeCliBridge.ClaudeCliOptions options = new ClaudeCliBridge.ClaudeCliOptions(
+                chatSession.cliSessionId(), false, dangerMode.toCliFlags(), mcpConfigPath);
+
+        chatSendInFlight = true;
+        if (chatSendButton != null) {
+            chatSendButton.active = false;
+        }
+        claudeCliBridge.send(ChatCompactor.COMPACT_REQUEST_PROMPT, options)
+                .thenAccept(result -> Minecraft.getInstance().execute(() -> onCompactResult(result)));
+    }
+
+    private void onCompactResult(ClaudeCliBridge.ClaudeCliResult result) {
+        chatSendInFlight = false;
+        if (chatSession == null) {
+            return;
+        }
+        if (result.success()) {
+            ChatCompactor.applySummary(chatSession, result.responseText());
+            saveChatSession();
+        }
+        if (chatMode) {
+            rebuildWidgets();
+        }
     }
 
     /**
@@ -585,6 +858,11 @@ public class IdeScreen extends Screen {
      */
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (chatInputBox != null && chatInputBox.isFocused()
+                && (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER)) {
+            sendChatMessage();
+            return true;
+        }
         if (renameBox != null) {
             switch (keyCode) {
                 case GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> {
@@ -671,7 +949,7 @@ public class IdeScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        if (listMode) {
+        if (listMode || chatMode) {
             guiGraphics.fill(listPanelX() - ROW_GAP, 0, this.width, this.height, 0xE0101010);
         }
         renderEditorTitleBar(guiGraphics);
