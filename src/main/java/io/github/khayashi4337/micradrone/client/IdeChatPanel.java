@@ -82,9 +82,7 @@ final class IdeChatPanel {
     private static final int TOGGLE_ROW_HEIGHT = 20;
     private static final int INPUT_MAX_CHARS = 2000;
     private static final int SEND_BUTTON_WIDTH = 60;
-    private static final int INSERT_BUTTON_MAX_WIDTH = 90;
-    /** A reply realistically offers one code block, occasionally a couple of alternatives. */
-    private static final int MAX_INSERT_BUTTONS = 3;
+    private static final int REVIEW_BUTTON_WIDTH = 90;
     private static final int ROW_GAP = IdeScreen.ROW_GAP;
     private static final String CLAUDE_EXECUTABLE = "claude";
     // "AI: thinking..." status row under the transcript while a reply is in flight - the transcript
@@ -132,8 +130,9 @@ final class IdeChatPanel {
     }
 
     /**
-     * Builds the panel's widgets into the host: transcript, Insert buttons (up to
-     * {@link #MAX_INSERT_BUTTONS}), the message input row, and the danger/compact toggle row.
+     * Builds the panel's widgets into the host: transcript, the Accept/Reject row (only while a
+     * reply's code is under review in the editor), the message input row, and the danger/compact
+     * toggle row.
      */
     void initWidgets(int rightX, int rightW, int topY, int bottomY) {
         ensureSessionLoaded();
@@ -151,34 +150,23 @@ final class IdeChatPanel {
         logBox.setValue(transcriptText());
         host.addWidget(logBox);
 
-        int insertBtnW = Math.min(INSERT_BUTTON_MAX_WIDTH,
-                (rightW - (MAX_INSERT_BUTTONS - 1) * ROW_GAP) / MAX_INSERT_BUTTONS);
         if (host.isReviewing()) {
-            // The Insert row turns into the review verdict while the diff is showing in the editor
-            // (Cursor's Accept / Reject pair).
+            // The review verdict row (Cursor's Accept / Reject pair). A reply's code lands in the
+            // editor as a pending diff on its own (see onChatResult), so there is no Insert button:
+            // Accept applies whatever blocks haven't been rejected individually in the editor,
+            // Reject drops the whole proposal.
             host.addWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_accept"),
                             b -> {
                                 host.acceptReview();
                                 host.rebuildWidgets();
                             })
-                    .bounds(rightX, insertRowY, insertBtnW, INSERT_ROW_HEIGHT).build());
+                    .bounds(rightX, insertRowY, REVIEW_BUTTON_WIDTH, INSERT_ROW_HEIGHT).build());
             host.addWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_reject"),
                             b -> {
                                 host.rejectReview();
                                 host.rebuildWidgets();
                             })
-                    .bounds(rightX + insertBtnW + ROW_GAP, insertRowY, insertBtnW, INSERT_ROW_HEIGHT).build());
-        } else {
-            for (int i = 0; i < Math.min(lastAssistantCodeBlocks.size(), MAX_INSERT_BUTTONS); i++) {
-                int blockIndex = i;
-                host.addWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_insert", i + 1),
-                                b -> {
-                                    insertCodeBlock(blockIndex);
-                                    host.rebuildWidgets(); // swap this row to Accept / Reject
-                                })
-                        .bounds(rightX + i * (insertBtnW + ROW_GAP), insertRowY, insertBtnW, INSERT_ROW_HEIGHT)
-                        .build());
-            }
+                    .bounds(rightX + REVIEW_BUTTON_WIDTH + ROW_GAP, insertRowY, REVIEW_BUTTON_WIDTH, INSERT_ROW_HEIGHT).build());
         }
 
         inputBox = new EditBox(host.font(), rightX, inputRowY, rightW - SEND_BUTTON_WIDTH - ROW_GAP,
@@ -420,9 +408,9 @@ final class IdeChatPanel {
             }
             lastAssistantCodeBlocks = CodeBlockParser.parse(result.responseText());
             // Cursor's flow: by the time you read the reply, its code is already sitting in the
-            // editor as a pending diff - no extra Insert click. The first block is applied for
-            // review right away (Reject puts the script back untouched); Insert #N stays for the
-            // rest, and nothing is applied on top of a review still open from a previous turn.
+            // editor as a pending diff - no Insert click. The first block is applied for review
+            // right away (Reject puts the script back untouched); nothing is applied on top of a
+            // review still open from a previous turn.
             if (!lastAssistantCodeBlocks.isEmpty() && !host.isReviewing() && !host.isClosed()) {
                 host.beginReview(lastAssistantCodeBlocks.get(0).code());
             }
@@ -486,8 +474,8 @@ final class IdeChatPanel {
         refreshAfterTurn();
     }
 
-    /** Same effect as clicking the Nth Insert button under the transcript: opens the diff review. */
-    void insertCodeBlock(int index) {
+    /** Opens the diff review for the reply's Nth code block - what onChatResult does for block 0 automatically. */
+    void reviewCodeBlock(int index) {
         if (index >= 0 && index < lastAssistantCodeBlocks.size()) {
             host.beginReview(lastAssistantCodeBlocks.get(index).code());
         }

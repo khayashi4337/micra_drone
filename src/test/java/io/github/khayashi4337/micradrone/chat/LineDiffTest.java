@@ -57,6 +57,39 @@ class LineDiffTest {
     }
 
     @Test
+    void hunksAreTheContiguousChangeBlocksOfTheMergedView() {
+        // a / b->B / c / (append d): merged = a, b(-), B(+), c, d(+) -> hunks [2..3] and [5..5]
+        LineDiff diff = LineDiff.between("a\nb\nc", "a\nB\nc\nd");
+        assertEquals(List.of(new LineDiff.Hunk(2, 3), new LineDiff.Hunk(5, 5)), diff.hunks());
+    }
+
+    @Test
+    void rejectingOneHunkKeepsItsOldLinesAndDropsItsNewOnesWhileTheRestStaysUnderReview() {
+        LineDiff diff = LineDiff.between("a\nb\nc", "a\nB\nc\nd");
+
+        LineDiff afterReject = diff.rejectHunk(0);
+
+        assertEquals("a\nb\nc\nd", afterReject.mergedText());
+        assertEquals(List.of(new LineDiff.Hunk(4, 4)), afterReject.hunks());
+        assertEquals(List.of(4), afterReject.lineNumbersOf(Kind.ADDED));
+        assertEquals("a\nb\nc\nd", afterReject.acceptedText());
+    }
+
+    @Test
+    void acceptedTextIsEverythingButTheRemovedLines() {
+        LineDiff diff = LineDiff.between("a\nb\nc", "a\nB\nc\nd");
+        assertEquals("a\nB\nc\nd", diff.acceptedText());
+    }
+
+    @Test
+    void rejectingEveryHunkLeavesNoChanges() {
+        LineDiff diff = LineDiff.between("a\nb\nc", "a\nB\nc\nd");
+        LineDiff none = diff.rejectHunk(1).rejectHunk(0);
+        assertFalse(none.hasChanges());
+        assertEquals("a\nb\nc", none.acceptedText());
+    }
+
+    @Test
     void blankLinesAreDiffedLikeAnyOtherLine() {
         LineDiff diff = LineDiff.between("a\n\nb", "a\nb");
         assertEquals(List.of(2), diff.lineNumbersOf(Kind.REMOVED));

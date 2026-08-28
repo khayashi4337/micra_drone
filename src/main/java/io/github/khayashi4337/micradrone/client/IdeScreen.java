@@ -176,12 +176,18 @@ public class IdeScreen extends Screen {
 
     // The AI chat tab lives in its own class (IdeChatPanel); this screen only hosts it.
     private final IdeChatPanel chatPanel = new IdeChatPanel(new ChatHost());
-    // AI-change review (Cursor-style Apply): while non-null, the editor shows reviewDiff's merged
-    // view read-only, and Accept/Reject in the Chat tab resolve it to reviewProposedText /
+    // AI-change review (Cursor-style Apply): while reviewDiff is non-null, the editor shows its
+    // merged view read-only. "x Reject" beside a block drops that block from reviewDiff; the Chat
+    // tab's "Accept rest" applies reviewDiff.acceptedText(), "Reject all" restores
     // reviewOriginalText. See LineDiff for why this replaced the old overwrite-on-Insert.
     private String reviewOriginalText;
-    private String reviewProposedText;
     private LineDiff reviewDiff;
+    /** Per-hunk "x Reject" marker rectangles from the last frame (null = hunk scrolled out of view), for hit-testing. */
+    private final List<int[]> reviewHunkMarkerRects = new java.util.ArrayList<>();
+    private static final int HUNK_MARKER_PADDING = 3;
+    private static final int HUNK_MARKER_INSET = 8;   // clear of the editor's scrollbar
+    private static final int HUNK_MARKER_BACKGROUND = 0xE0402020;
+    private static final int HUNK_MARKER_TEXT_COLOR = 0xFFFF7070;
     /** Set by removed(): a late CLI reply must not rebuild (and re-aim the camera of) a closed screen. */
     private boolean closed = false;
 
@@ -513,10 +519,19 @@ public class IdeScreen extends Screen {
         chatPanel.typeAndSend(text);
     }
 
-    /** Same effect as clicking the Nth Insert button under the chat log (including the row swap to Accept/Reject). */
+    /** Opens the review for the reply's Nth code block (block 0 opens on its own when a reply lands). */
     public void insertCodeBlockForTesting(int index) {
-        chatPanel.insertCodeBlock(index);
+        chatPanel.reviewCodeBlock(index);
         rebuildWidgets();
+    }
+
+    public int getReviewHunkCountForTesting() {
+        return isReviewing() ? reviewDiff.hunks().size() : 0;
+    }
+
+    /** Same effect as clicking the "x Reject" marker beside the Nth change block in the editor. */
+    public void rejectHunkForTesting(int index) {
+        rejectHunk(index);
     }
 
     public void setDangerModeForTesting(boolean enabled) {
@@ -658,7 +673,6 @@ public class IdeScreen extends Screen {
             return;
         }
         reviewOriginalText = editorText;
-        reviewProposedText = proposed;
         reviewDiff = diff;
         editor.setValue(diff.mergedText()); // the value listener mirrors this into editorText; endReview restores
         applyReviewDecorations();
@@ -670,12 +684,75 @@ public class IdeScreen extends Screen {
         editor.setLocked(true);
     }
 
+    /** Accept applies every block not already rejected on its own - not the raw proposal. */
     private void acceptReview() {
-        endReview(reviewProposedText);
+        if (isReviewing()) {
+            endReview(reviewDiff.acceptedText());
+        }
     }
 
     private void rejectReview() {
         endReview(reviewOriginalText);
+    }
+
+    /**
+     * Turns down one change block (the "x Reject" marker beside it in the editor) and keeps the
+     * rest under review; once nothing is left the review closes on the original script. The
+     * Chat tab is rebuilt so its Accept/Reject row follows.
+     */
+    private void rejectHunk(int index) {
+        if (!isReviewing() || index < 0 || index >= reviewDiff.hunks().size()) {
+            return;
+        }
+        LineDiff remaining = reviewDiff.rejectHunk(index);
+        if (!remaining.hasChanges()) {
+            endReview(reviewOriginalText);
+            rebuildWidgets();
+            return;
+        }
+        reviewDiff = remaining;
+        editor.setValue(remaining.mergedText());
+        applyReviewDecorations();
+    }
+
+    /**
+     * Draws an "x Reject" marker at the right edge of each change block's first line and records
+     * its rectangle for {@link #mouseClicked} - the per-block control Cursor puts beside each
+     * hunk. Scrolls with the text; blocks scrolled out of the editor get no marker.
+     */
+    private void renderReviewHunkMarkers(GuiGraphics guiGraphics) {
+        reviewHunkMarkerRects.clear();
+        if (!isReviewing()) {
+            return;
+        }
+        String label = Component.translatable("gui.micradrone.ide_screen.reject_hunk").getString();
+        int markerWidth = this.font.width(label) + 2 * HUNK_MARKER_PADDING;
+        int right = editor.getX() + editor.getWidth() - HUNK_MARKER_INSET;
+        int firstTextY = editorTop + editor.gutterTopPadding();
+        int scroll = (int) editor.gutterScroll();
+        List<LineDiff.Hunk> hunks = reviewDiff.hunks();
+        for (int i = 0; i < hunks.size(); i++) {
+            int y = firstTextY + (hunks.get(i).firstLine() - 1) * DebugEditBox.LINE_HEIGHT - scroll;
+            if (y < editorTop || y + DebugEditBox.LINE_HEIGHT > editorTop + editorHeight) {
+                reviewHunkMarkerRects.add(null);
+                continue;
+            }
+            int[] rect = {right - markerWidth, y - 1, right, y + DebugEditBox.LINE_HEIGHT};
+            reviewHunkMarkerRects.add(rect);
+            guiGraphics.fill(rect[0], rect[1], rect[2], rect[3], HUNK_MARKER_BACKGROUND);
+            guiGraphics.drawString(this.font, label, rect[0] + HUNK_MARKER_PADDING, y, HUNK_MARKER_TEXT_COLOR, false);
+        }
+    }
+
+    /** Index of the hunk marker under the mouse, or -1. */
+    private int hunkMarkerAt(double mouseX, double mouseY) {
+        for (int i = 0; i < reviewHunkMarkerRects.size(); i++) {
+            int[] r = reviewHunkMarkerRects.get(i);
+            if (r != null && mouseX >= r[0] && mouseX < r[2] && mouseY >= r[1] && mouseY < r[3]) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private void endReview(String finalText) {
@@ -684,7 +761,6 @@ public class IdeScreen extends Screen {
         }
         reviewDiff = null;
         reviewOriginalText = null;
-        reviewProposedText = null;
         editor.setDiffLines(Set.of(), Set.of());
         editor.setLocked(false);
         editorText = finalText;
@@ -786,6 +862,13 @@ public class IdeScreen extends Screen {
      */
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (button == 0 && isReviewing()) {
+            int hunk = hunkMarkerAt(mouseX, mouseY);
+            if (hunk >= 0) {
+                rejectHunk(hunk);
+                return true;
+            }
+        }
         if (renameBox != null) {
             boolean withinBox = mouseX >= renameBox.getX() && mouseX < renameBox.getX() + renameBox.getWidth()
                     && mouseY >= renameBox.getY() && mouseY < renameBox.getY() + renameBox.getHeight();
@@ -956,6 +1039,7 @@ public class IdeScreen extends Screen {
                 isReviewing() ? REVIEW_HEADING_COLOR : 0xFFFFFF);
         renderPointsHud(guiGraphics);
         renderGutter(guiGraphics);
+        renderReviewHunkMarkers(guiGraphics);
         refreshAutocomplete();
         renderAutocompletePopup(guiGraphics);
     }

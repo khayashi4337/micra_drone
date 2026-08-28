@@ -23,6 +23,13 @@ public final class LineDiff {
     public record Line(String text, Kind kind) {
     }
 
+    /**
+     * One contiguous block of change in the merged view (1-based, inclusive line numbers) - the
+     * unit a player can reject on its own, like a hunk in a git diff / a change block in Cursor.
+     */
+    public record Hunk(int firstLine, int lastLine) {
+    }
+
     private final List<Line> lines;
 
     private LineDiff(List<Line> lines) {
@@ -98,6 +105,63 @@ public final class LineDiff {
 
     public boolean hasChanges() {
         return lines.stream().anyMatch(line -> line.kind() != Kind.SAME);
+    }
+
+    /** The change blocks, top to bottom: maximal runs of non-SAME lines. */
+    public List<Hunk> hunks() {
+        List<Hunk> hunks = new ArrayList<>();
+        int start = -1;
+        for (int i = 0; i < lines.size(); i++) {
+            boolean changed = lines.get(i).kind() != Kind.SAME;
+            if (changed && start < 0) {
+                start = i;
+            } else if (!changed && start >= 0) {
+                hunks.add(new Hunk(start + 1, i));
+                start = -1;
+            }
+        }
+        if (start >= 0) {
+            hunks.add(new Hunk(start + 1, lines.size()));
+        }
+        return hunks;
+    }
+
+    /**
+     * The review with hunk {@code index} (see {@link #hunks}) turned down: its removed lines are
+     * kept as they were, its added lines are dropped. Everything else stays under review, so the
+     * player can reject the blocks they dislike one by one and then accept the rest in one go.
+     */
+    public LineDiff rejectHunk(int index) {
+        Hunk hunk = hunks().get(index);
+        List<Line> out = new ArrayList<>();
+        for (int i = 0; i < lines.size(); i++) {
+            Line line = lines.get(i);
+            int number = i + 1;
+            if (number < hunk.firstLine() || number > hunk.lastLine()) {
+                out.add(line);
+            } else if (line.kind() == Kind.REMOVED) {
+                out.add(new Line(line.text(), Kind.SAME));
+            }
+            // ADDED lines inside the hunk are simply left out.
+        }
+        return new LineDiff(out);
+    }
+
+    /** What the script becomes if every remaining change is accepted: all lines except the removed ones. */
+    public String acceptedText() {
+        StringBuilder sb = new StringBuilder();
+        boolean first = true;
+        for (Line line : lines) {
+            if (line.kind() == Kind.REMOVED) {
+                continue;
+            }
+            if (!first) {
+                sb.append('\n');
+            }
+            first = false;
+            sb.append(line.text());
+        }
+        return sb.toString();
     }
 
     /** An empty script is zero lines, not one empty line - so a blank editor diffs as pure additions. */
