@@ -3,11 +3,13 @@ package io.github.khayashi4337.micradrone.drone;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
 import io.github.khayashi4337.micradrone.drone.GiantPatchDetector.Patch;
+import io.github.khayashi4337.micradrone.drone.GiantPatchDetector.Square;
 
 class GiantPatchDetectorTest {
 
@@ -117,5 +119,125 @@ class GiantPatchDetectorTest {
         assertEquals(5, GiantPatchDetector.worldOrientedPosition(0, 1, 3, -1, 1));
         // The center never moves.
         assertEquals(8, GiantPatchDetector.worldOrientedPosition(1, 1, 3, -1, -1));
+    }
+
+    // ---- findAllSquares: the incremental, multi-patch partition ----
+
+    @Test
+    void twoDisjointSquaresAreBothFound() {
+        List<Patch> patches = GiantPatchDetector.findAllSquares(gridOf(
+                "XX...",
+                "XX...",
+                "..XXX",
+                "..XXX",
+                "..XXX"));
+        assertEquals(List.of(new Patch(3, 2, 2), new Patch(2, 0, 0)), patches);
+    }
+
+    @Test
+    void aTwoByFourStripIsTwoSeparateTwoByTwosNotOneBigPatch() {
+        // The old flood-fill harvest would have read these 8 cells as sqrt(8) ~ 3 -> 27 points.
+        List<Patch> patches = GiantPatchDetector.findAllSquares(gridOf(
+                "XXXX",
+                "XXXX",
+                "....",
+                "...."));
+        assertEquals(List.of(new Patch(2, 0, 0), new Patch(2, 0, 2)), patches); // gridOf: rows are gx, columns gy
+    }
+
+    @Test
+    void aThreeByThreeThatCompletesAroundAnOlderTwoByTwoWinsAsAWhole() {
+        // Every cell of the old 2x2 is ripe (fused cells count as ripe), so the pass sees one 3x3.
+        List<Patch> patches = GiantPatchDetector.findAllSquares(gridOf(
+                "XXX.",
+                "XXX.",
+                "XXX.",
+                "...."));
+        assertEquals(List.of(new Patch(3, 0, 0)), patches);
+    }
+
+    @Test
+    void anLShapeIsTheBigSquarePlusWhateverSquaresFitInTheRest() {
+        // gridOf: rows are gx, columns gy. The 3x3 goes first, then the two 2x2s left in each arm.
+        List<Patch> patches = GiantPatchDetector.findAllSquares(gridOf(
+                "XXXXX",
+                "XXXXX",
+                "XXX..",
+                "XX...",
+                "XX..."));
+        assertEquals(List.of(new Patch(3, 0, 0), new Patch(2, 0, 3), new Patch(2, 3, 0)), patches);
+    }
+
+    @Test
+    void aFullPlotIsOnePatchWorthTheOriginalGamesSixNSquared() {
+        boolean[][] full = new boolean[7][7];
+        for (boolean[] row : full) java.util.Arrays.fill(row, true);
+        List<Patch> patches = GiantPatchDetector.findAllSquares(full);
+        assertEquals(List.of(new Patch(7, 0, 0)), patches);
+        assertEquals(294, GiantPatchDetector.bonusPoints(7));
+    }
+
+    @Test
+    void loneRipeCellsAreLeftOutOfEveryPatch() {
+        List<Patch> patches = GiantPatchDetector.findAllSquares(gridOf(
+                "X.X",
+                ".X.",
+                "X.X"));
+        assertEquals(List.of(), patches);
+    }
+
+    // ---- resolveSquare: reading a square back from its POSITION markers ----
+
+    /** rows[z].charAt(x): a POSITION digit, or '.' for a cell with no giant pumpkin. */
+    private static GiantPatchDetector.PositionLookup markers(String... rows) {
+        return (x, z) -> {
+            if (z < 0 || z >= rows.length || x < 0 || x >= rows[z].length()) {
+                return GiantPatchDetector.NOT_GIANT;
+            }
+            char c = rows[z].charAt(x);
+            return c == '.' ? GiantPatchDetector.NOT_GIANT : c - '0';
+        };
+    }
+
+    @Test
+    void resolvesTheSameSquareFromAnyOfItsCells() {
+        GiantPatchDetector.PositionLookup lookup = markers(
+                ".....",
+                ".061.",
+                ".485.",
+                ".273.",
+                ".....");
+        Square expected = new Square(1, 1, 3);
+        assertEquals(Optional.of(expected), GiantPatchDetector.resolveSquare(lookup, 2, 2, 64)); // center
+        assertEquals(Optional.of(expected), GiantPatchDetector.resolveSquare(lookup, 1, 1, 64)); // NW corner
+        assertEquals(Optional.of(expected), GiantPatchDetector.resolveSquare(lookup, 3, 3, 64)); // SE corner
+        assertEquals(Optional.of(expected), GiantPatchDetector.resolveSquare(lookup, 3, 2, 64)); // E edge
+    }
+
+    @Test
+    void twoTouchingSquaresAreToldApartByTheirBoundaryMarkers() {
+        GiantPatchDetector.PositionLookup lookup = markers(
+                "0101",
+                "2323");
+        assertEquals(Optional.of(new Square(0, 0, 2)), GiantPatchDetector.resolveSquare(lookup, 1, 1, 64));
+        assertEquals(Optional.of(new Square(2, 0, 2)), GiantPatchDetector.resolveSquare(lookup, 2, 0, 64));
+    }
+
+    @Test
+    void aSquareWithAHoleOrANonGiantStartIsNotASquare() {
+        GiantPatchDetector.PositionLookup holed = markers(
+                "061",
+                "4.5",
+                "273");
+        assertEquals(Optional.empty(), GiantPatchDetector.resolveSquare(holed, 0, 0, 64));
+        assertEquals(Optional.empty(), GiantPatchDetector.resolveSquare(holed, 1, 1, 64));
+        // Markers that never reach a north-west corner (a stray row of north-edge cells).
+        assertEquals(Optional.empty(), GiantPatchDetector.resolveSquare(markers("6666"), 2, 0, 64));
+    }
+
+    @Test
+    void resolveSquareGivesUpAtMaxSideInsteadOfWalkingForever() {
+        GiantPatchDetector.PositionLookup endlessWestEdge = (x, z) -> GiantPatchDetector.POS_E;
+        assertEquals(Optional.empty(), GiantPatchDetector.resolveSquare(endlessWestEdge, 0, 0, 8));
     }
 }
