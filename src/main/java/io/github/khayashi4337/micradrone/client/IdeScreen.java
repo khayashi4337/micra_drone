@@ -514,6 +514,11 @@ public class IdeScreen extends Screen {
         save();
     }
 
+    /** Same effect as clicking the play button: runs the saved copy of the current script (does not save first). */
+    public void runForTesting() {
+        PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptId));
+    }
+
     /** The current script list as {@code id<TAB>displayName<TAB>description} lines, for the devkit's /scripts. */
     public List<String> getAvailableScriptsForTesting() {
         return availableScripts.stream()
