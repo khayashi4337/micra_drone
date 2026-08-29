@@ -349,8 +349,8 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
      * Re-partitions every ripe pumpkin in the plot (fused cells included) into fused squares (see
      * GiantPatchDetector#findAllSquares) and repaints the plot to match: cells in a square become
      * {@link MicraDrone#GIANT_PUMPKIN_BLOCK} with the POSITION marker for their spot, and fused cells
-     * that no square covers any more (a bigger square just formed around part of an older one, or a
-     * player broke something) revert to ordinary ripe pumpkins. Only states that actually differ are
+     * that no square covers any more (a bigger square just formed around part of an older one, leaving
+     * a sliver of it outside) revert to ordinary ripe pumpkins. Only states that actually differ are
      * written, so a stable plot costs no block updates. Deliberately a simplification of the original
      * game's "grew together with zero deaths" rule: this only checks which cells are ripe right now,
      * not growth history. Only ever called from boostGrowth(), which is itself only active once a

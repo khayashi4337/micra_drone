@@ -5,6 +5,7 @@ import java.util.Optional;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.IntegerProperty;
@@ -27,11 +28,11 @@ import io.github.khayashi4337.micradrone.drone.GiantPatchDetector.Square;
  * of the patch's geometry: GiantPatchDetector#resolveSquare reads a whole square back from them,
  * which is how harvest() knows the side length without a BlockEntity.
  *
- * <p>Breaking a cell by hand (or anything else outside the mod's own harvest/fusion passes) undoes
- * the fusion: the rest of the patch reverts to ordinary ripe pumpkins, no points, no drops. The
- * original game has no such thing as breaking a giant pumpkin from outside a script, so this is the
- * mod's own rule: a broken patch is simply no longer a square, and the pumpkins that were in it are
- * still ripe pumpkins.
+ * <p>A fused patch is one pumpkin, not a stack of blocks: breaking any cell by hand (or anything
+ * else outside the mod's own harvest/fusion passes) destroys the whole patch - every cell goes,
+ * no points, no drops. The original game has no such thing as breaking a giant pumpkin from
+ * outside a script, so this is the mod's own rule, chosen so the giant reads as a single object
+ * the way it looks.
  */
 public class GiantPumpkinBlock extends Block {
     public static final IntegerProperty POSITION = IntegerProperty.create("position", 0, 8);
@@ -41,7 +42,7 @@ public class GiantPumpkinBlock extends Block {
     /**
      * Set while the mod itself is repainting or harvesting a patch (server main thread only, the
      * only place blocks change), so those bulk edits don't look like a player breaking cells and
-     * trigger the unfuse in {@link #onRemove}.
+     * trigger the whole-patch destruction in {@link #onRemove}.
      */
     private static boolean patchMutationInProgress;
 
@@ -104,7 +105,7 @@ public class GiantPumpkinBlock extends Block {
                 for (int lz = 0; lz < s.side(); lz++) {
                     BlockPos cell = new BlockPos(s.originX() + lx, pos.getY(), s.originZ() + lz);
                     if (!cell.equals(pos) && level.getBlockState(cell).getBlock() instanceof GiantPumpkinBlock) {
-                        level.setBlockAndUpdate(cell, ripePumpkinState());
+                        level.setBlockAndUpdate(cell, Blocks.AIR.defaultBlockState());
                     }
                 }
             }
