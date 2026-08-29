@@ -639,7 +639,8 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
                 appendLog("[error] the inventory scroll " + scriptName + " isn't reachable from redstone right now"
                         + " (its owner must be online and still holding it) - or select the Controller script");
             } else {
-                appendLog("[error] could not read script '" + scriptName + "' - missing scroll or file; reopen the screen to refresh the list");
+                appendLog("[error] could not read script '" + scriptName + "' - missing scroll or file;"
+                        + " reopen the screen to refresh the list, or pick the Controller script (it needs no scroll)");
             }
             return;
         }
@@ -792,13 +793,27 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     /**
-     * Sent when the IDE's list mode opens, so it immediately shows log/points/alias history and an
-     * up-to-date script list instead of starting blank.
+     * Sent when the IDE opens (and when its list mode opens), so it immediately shows log/points/
+     * alias history and an up-to-date script list instead of starting blank - and so the IDE's
+     * edit target is something {@code requester} can actually load and save right now.
      */
     public void sendLogSnapshotTo(ServerPlayer requester) {
         addViewer(requester);
         if (level instanceof ServerLevel serverLevel) {
             refreshAvailableScripts(serverLevel);
+        }
+        if (ScriptId.isInventoryScrollId(selectedScript)
+                && ScriptChestLibrary.resolveInventoryScroll(requester, selectedScript).isEmpty()) {
+            // The selection points into an inventory slot that, for this player right now, holds
+            // no scroll: it was moved or used up since it was picked, or a different player is
+            // opening the same controller. refreshAvailableScripts deliberately leaves inventory
+            // selections alone (they're per player), so this is the one place they get checked.
+            // Fall back to the always-present built-in script rather than open the IDE on a target
+            // that can neither load nor save - real-machine report: the IDE opened on a long-gone
+            // 'inv:33', and everything typed "on the controller" was refused until a scroll in
+            // hand was picked instead, which made it look as if a scroll were required at all.
+            selectedScript = ScriptId.CONTROLLER_ID;
+            setChanged();
         }
         pushLogSnapshotTo(requester);
     }
