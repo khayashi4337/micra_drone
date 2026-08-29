@@ -106,11 +106,14 @@ own. Inspired by the Steam game
   yet? `plant()` will still work if the player who last ran the controller
   is carrying the real thing (carrots, pumpkin seeds), spending one per
   planting.
-- **Giant pumpkins** — grow a full square of pumpkins at once and they fuse
-  into a giant pumpkin patch for a large bonus payout on harvest.
-  Pumpkins also have a ~20% chance to grow "rotten" and yield nothing when
-  harvested (matches the source game) — check `is_rotten()` before you
-  harvest to farm efficiently.
+- **Giant pumpkins** — pumpkins ripen on the tile they were planted on
+  (like the source game, not like vanilla stems), and a full square of
+  ripe ones fuses into one giant pumpkin: harvest any tile and the whole
+  square pays out n³ points (6n² from 6x6 up) instead of 1 per tile.
+  About 1 in 5 pumpkins grows "rotten" instead (matches the source game):
+  it yields nothing and blocks the fusion, so the game is to spot it with
+  `is_rotten()` and `plant()` straight over it, then wait for the whole
+  square before harvesting.
 - **Advancements** — a dedicated advancement tab tracks obtaining the
   controller and marker, unlocking each crop, and harvest-count milestones
   (10 / 100 / 1000) per crop.

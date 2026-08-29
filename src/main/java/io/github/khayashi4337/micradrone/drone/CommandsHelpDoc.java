@@ -39,9 +39,20 @@ public final class CommandsHelpDoc {
                 上書きして植え直せる（harvestは不要）。ショップでpumpkinを
                 アンロックするまでは常にfalseになる。
 
+            plant() が false になる条件（全作物共通）
+                ・地面が farmland でない（先に till() する）
+                ・上のマスが空でない（air / 腐ったかぼちゃ / 古い vanilla の
+                  カボチャの苗 以外が乗っている）
+                ・その作物が未アンロックで、手持ちの種も無い
+                ・知らない作物名
+
             harvest()
                 育ちきった作物を収穫する。腐ったかぼちゃの場合は成功しても
                 ポイントは入らない。戻り値: 成功したら true。
+                古いバージョンで植えた vanilla のカボチャの苗
+                （"pumpkin_stem" / "attached_pumpkin_stem"）も harvest() で
+                片付けられる（ポイント0）。vanilla のカボチャの実（"pumpkin"）
+                は 1 ポイントで収穫できる。
 
             do_a_flip()
                 ドローンが宙返りを1回する。畑にもポイントにも一切影響しない、
@@ -52,11 +63,14 @@ public final class CommandsHelpDoc {
             ■ 状態を調べる（ワールドは変えない。すぐ結果が返る）
             can_harvest()
                 今いるマスの作物が収穫できる状態かを調べる。戻り値: true/false。
+                何も無いマス・育ちきっていないマスでは false。
 
             is_rotten()
                 今いるマスが「腐ったかぼちゃ」かどうかを調べる。戻り値: true/false。
-                効率よくポイントを稼ぐには、収穫前にこれでチェックして
-                外れを避けるのがコツ。
+                空のマスや他の作物のマスでは false。腐ったマスが1つでもあると
+                その正方形は巨大化できない（本家と同じ）ので、見つけ次第
+                plant("pumpkin") で植え直すのがハイスコアのコツ。harvest()
+                する必要はない（0ポイントで1アクション無駄になるだけ）。
 
             get_pos_x()
             get_pos_y()
@@ -84,9 +98,15 @@ public final class CommandsHelpDoc {
                 スクリプトが書ける。
 
             get_block_above()
-                地面の上、ドローンと同じマスにあるブロック名。作物がある
-                ならその名前（"wheat", "carrots", "micradrone:pumpkin_crop",
-                "micradrone:giant_pumpkin" など）、何も無ければ "air"。
+                地面の上、ドローンと同じマスにあるブロック名。何も無ければ
+                "air"。作物の名前は次の通り（育ち具合で名前は変わらない、
+                育ったかは can_harvest() で見る）:
+                  "wheat" / "carrots"                  小麦 / ニンジン
+                  "micradrone:pumpkin_crop"           かぼちゃ（育成中も成熟も同じ名前）
+                  "micradrone:rotten_pumpkin"         腐ったかぼちゃ
+                  "micradrone:giant_pumpkin"          巨大かぼちゃ（正方形内の全マスで同じ名前）
+                  "pumpkin_stem" / "attached_pumpkin_stem" / "pumpkin"
+                                                      古いバージョンの vanilla の苗・実
 
             get_time()
                 ワールドの1日の中での時刻（tick、0〜23999）。
@@ -165,7 +185,10 @@ public final class CommandsHelpDoc {
             なると、自動的に見た目の違う「巨大かぼちゃ」ブロックに変わる。
             その中のどこか1マスでharvest()を呼ぶと、正方形全体をまとめて収穫
             したことになり、一辺nマスなら n×n×n ポイント(n=6以上は n×n×6)を
-            まとめてpumpkinに加算する。普通に1マスずつ収穫するより効率がいい。
+            まとめてpumpkinに加算する。1マスずつ収穫すると1マス1ポイントなので、
+            かぼちゃのスコアはほぼこの融合で決まる（7x7なら 294 ポイント）。
+            腐ったマスは融合を止めるので、is_rotten() で見つけ次第 plant() で
+            植え直し、全マスが実るまで harvest() を我慢するのが本家流の戦略。
 
             ■ まとめて入れ物に入れる（リスト・辞書・集合）
             値を1つずつ変数に入れる代わりに、まとめて持てる入れ物が3種類ある。

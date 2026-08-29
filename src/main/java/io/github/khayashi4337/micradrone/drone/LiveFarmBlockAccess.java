@@ -65,8 +65,9 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         BlockState aboveState = level.getBlockState(above);
         // A rotten pumpkin counts as "empty" for planting purposes: per the original game, "planting
         // a new plant in its place automatically removes the dead pumpkin, so there is no need to
-        // harvest it" - no separate clear step, plant() just overwrites it.
-        boolean clearable = aboveState.isAir() || aboveState.is(MicraDrone.ROTTEN_PUMPKIN_BLOCK.get());
+        // harvest it" - no separate clear step, plant() just overwrites it. A leftover vanilla stem
+        // (see isLegacyStem) is treated the same way so old plots can be replanted by script.
+        boolean clearable = aboveState.isAir() || isYieldlessClutter(aboveState);
         return new CellFacts(
                 groundState.is(BlockTags.DIRT),
                 groundState.is(Blocks.FARMLAND),
@@ -77,6 +78,24 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     @Override
     public boolean isRotten() {
         return level.getBlockState(cropPos()).is(MicraDrone.ROTTEN_PUMPKIN_BLOCK.get());
+    }
+
+    /**
+     * The vanilla pumpkin stem (bare or attached) that plant("pumpkin") used to put down before
+     * {@link PumpkinCropBlock} existed. Worlds saved back then still have them, and a stem never
+     * "ripens" on its own cell (its fruit pops onto a neighbour), so without this a script could
+     * neither harvest nor till nor plant over one - the cell was simply stuck.
+     */
+    private static boolean isLegacyStem(BlockState state) {
+        return state.is(Blocks.PUMPKIN_STEM) || state.is(Blocks.ATTACHED_PUMPKIN_STEM);
+    }
+
+    /**
+     * Things a cell can hold that harvest() clears for no points and plant() may overwrite: a
+     * rotten pumpkin (the original game's dead pumpkin) or a leftover vanilla stem.
+     */
+    private static boolean isYieldlessClutter(BlockState state) {
+        return state.is(MicraDrone.ROTTEN_PUMPKIN_BLOCK.get()) || isLegacyStem(state);
     }
 
     // ---- perception (GitHub issue #10) ----
@@ -191,8 +210,9 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
             return Attempt.failure();
         }
         // Matches the original game: a dead pumpkin can be harvested (the attempt succeeds) but
-        // "won't drop anything when harvested" - no points, just clear the cell.
-        if (aboveState.is(MicraDrone.ROTTEN_PUMPKIN_BLOCK.get())) {
+        // "won't drop anything when harvested" - no points, just clear the cell. A leftover
+        // vanilla stem gets the same treatment (see isLegacyStem).
+        if (isYieldlessClutter(aboveState)) {
             return new Attempt(true, () -> level.setBlockAndUpdate(above, Blocks.AIR.defaultBlockState()));
         }
         String cropName = cropNameOf(aboveState.getBlock());
@@ -265,14 +285,15 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     /**
      * A cell counts as harvestable once its CropBlock (wheat/carrot/pumpkin) reaches max age, or
      * once it's part of a giant-pumpkin patch, or - matching the original game - once it's a rotten
-     * pumpkin (harvestable, just yields nothing; see attemptHarvest). Blocks.PUMPKIN: see cropNameOf.
+     * pumpkin (harvestable, just yields nothing; see attemptHarvest), or a leftover vanilla stem
+     * (same: clears for nothing). Blocks.PUMPKIN: see cropNameOf.
      */
     private static boolean isMatureCrop(BlockState state) {
         if (state.getBlock() instanceof CropBlock crop) {
             return crop.isMaxAge(state);
         }
         return state.is(Blocks.PUMPKIN) || state.is(MicraDrone.GIANT_PUMPKIN_BLOCK.get())
-                || state.is(MicraDrone.ROTTEN_PUMPKIN_BLOCK.get());
+                || isYieldlessClutter(state);
     }
 
     /** A ripe, non-rotten pumpkin - the only thing a giant patch is built from. Blocks.PUMPKIN: see cropNameOf. */
