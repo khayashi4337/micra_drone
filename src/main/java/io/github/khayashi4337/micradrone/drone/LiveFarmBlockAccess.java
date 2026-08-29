@@ -192,8 +192,9 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
             return Attempt.failure();
         }
         return new Attempt(true, () -> {
-            // Planting over a rotten pumpkin (or a leftover stem) clears it first, with the crumbs
-            // and squelch clearing it by harvest() gets - so the replant is visible from a distance.
+            // Planting over a rotten pumpkin (or a leftover stem) clears it first, with the same
+            // crumbs and squelch that clearing it by harvest() gets - so the replant is visible
+            // from a distance.
             if (isYieldlessClutter(level.getBlockState(above))) {
                 clearCrop(above);
             }

@@ -54,8 +54,9 @@ final class PumpkinEffects {
 
     /**
      * Clears a cell the way a player breaking it would look and sound (vanilla's crumbs + the
-     * block's break sound via Level#destroyBlock), minus the drops. Used both for each cell of a
-     * collapsing giant and for an ordinary harvest() - where before the crop just went silently.
+     * block's break sound via Level#destroyBlock), minus the drops. Used for each cell of a
+     * collapsing giant, for an ordinary harvest(), and for plant() clearing a rotten pumpkin or a
+     * leftover stem it plants over - all places where before the crop just went silently.
      */
     static void breakCell(ServerLevel level, BlockPos cell) {
         level.destroyBlock(cell, false);
