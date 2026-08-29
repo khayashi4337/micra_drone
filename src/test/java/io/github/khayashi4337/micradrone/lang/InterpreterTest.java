@@ -573,6 +573,21 @@ class InterpreterTest {
     }
 
     @Test
+    void measureReportsTheGiantPumpkinSideUnderTheDroneAndZeroElsewhere() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        api.setGiantSide(1, 0, 3);
+        List<io.github.khayashi4337.micradrone.lang.ast.Stmt> program = new Parser(new Lexer("""
+                print(measure())
+                move("east")
+                print(measure())
+                if measure() >= 3:
+                    print("big enough")
+                """).scan()).parseProgram();
+        new Interpreter(api).run(program);
+        assertEquals(List.of("0", "3", "big enough"), api.printed);
+    }
+
+    @Test
     void harvestingARottenCellSucceedsWithoutAwardingPoints() {
         FakeDroneApi api = new FakeDroneApi(5);
         api.setRotten(0, 0, true);

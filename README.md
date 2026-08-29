@@ -200,7 +200,7 @@ print("planted the whole plot")
 ```
 
 `move()` / `till()` / `plant()` / `harvest()` でドローンを動かし畑を耕す。
-`can_harvest()` / `is_rotten()` / `get_pos_x()` / `get_points()` などの
+`can_harvest()` / `is_rotten()` / `measure()` / `get_pos_x()` / `get_points()` などの
 読み取り系コマンドで状況を判断する。詳しい一覧は、エンチャントテーブルで
 授かれる3本のヘルプ巻物（1/3 基本コマンド、2/3 ショップ・コレクション型、
 3/3 IDEと巻物の使い方）で確認できる（いずれも本棚0冊・ラピス1個で

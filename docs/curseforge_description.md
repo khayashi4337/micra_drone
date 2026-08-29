@@ -17,7 +17,7 @@ own. Inspired by the Steam game
 
 - **A real (tiny) programming language** — variables, `if`/`elif`/`else`,
   `while`, `for i in range(...)`, comments, and a handful of drone commands
-  (`move`, `till`, `plant`, `harvest`, `can_harvest`, `is_rotten`,
+  (`move`, `till`, `plant`, `harvest`, `can_harvest`, `is_rotten`, `measure`,
   `get_points`, `print`, `do_a_flip`, ...), plus perception commands that read
   the world around the drone (`get_ground`, `get_block_above`, `get_time`,
   `get_weather`, `get_biome`, `get_light`, `get_plot_id`). Scripts are written on a

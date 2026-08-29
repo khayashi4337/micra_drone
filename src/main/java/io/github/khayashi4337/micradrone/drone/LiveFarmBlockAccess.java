@@ -80,6 +80,21 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     }
 
     /**
+     * Reads the square back from the POSITION markers, exactly the way harvest() will (see
+     * attemptGiantPumpkinHarvest), so what measure() reports is what a harvest would pay for: a
+     * cell whose markers no longer describe a whole square counts as the lone pumpkin harvest()
+     * would treat it as (1). A cell mid-collapse is not a pumpkin any more (0).
+     */
+    @Override
+    public int giantPumpkinSide() {
+        BlockPos above = cropPos();
+        if (!GiantPumpkinBlock.isFusedCell(level.getBlockState(above))) {
+            return 0;
+        }
+        return GiantPumpkinBlock.squareAt(level, above).map(Square::side).orElse(1);
+    }
+
+    /**
      * The vanilla pumpkin stem (bare or attached) that plant("pumpkin") used to put down before
      * {@link PumpkinCropBlock} existed. Worlds saved back then still have them, and a stem never
      * "ripens" on its own cell (its fruit pops onto a neighbour), so without this a script could

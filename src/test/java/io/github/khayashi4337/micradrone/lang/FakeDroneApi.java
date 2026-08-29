@@ -13,6 +13,8 @@ final class FakeDroneApi implements DroneApi {
     private final int[][] cropAge;
     private final int matureAge = 3;
     private final boolean[][] rotten;
+    /** 0 = not part of a giant pumpkin, otherwise the side length measure() reports there. */
+    private final int[][] giantSide;
     private long points = 0;
     private long dayTime = 6000; // noon
     private String weather = "clear";
@@ -28,6 +30,7 @@ final class FakeDroneApi implements DroneApi {
         this.tilled = new boolean[size][size];
         this.cropAge = new int[size][size];
         this.rotten = new boolean[size][size];
+        this.giantSide = new int[size][size];
         for (int[] row : cropAge) java.util.Arrays.fill(row, -1);
     }
 
@@ -37,6 +40,11 @@ final class FakeDroneApi implements DroneApi {
 
     void setRotten(int atX, int atY, boolean isRotten) {
         rotten[atX][atY] = isRotten;
+    }
+
+    /** Pretends the cell is part of a fused giant pumpkin of the given side (0 = not giant). */
+    void setGiantSide(int atX, int atY, int side) {
+        giantSide[atX][atY] = side;
     }
 
     void setWeather(String weather) {
@@ -126,6 +134,12 @@ final class FakeDroneApi implements DroneApi {
     public boolean isRotten() {
         calls.add("is_rotten");
         return rotten[x][y];
+    }
+
+    @Override
+    public double measure() {
+        calls.add("measure");
+        return giantSide[x][y];
     }
 
     @Override

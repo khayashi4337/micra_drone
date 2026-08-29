@@ -85,6 +85,11 @@ public final class LiveDroneApi implements DroneApi {
     }
 
     @Override
+    public double measure() {
+        return queryMainThread(farm::giantPumpkinSide);
+    }
+
+    @Override
     public double getPosX() {
         return grid.gridX();
     }

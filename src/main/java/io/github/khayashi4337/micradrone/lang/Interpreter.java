@@ -529,6 +529,10 @@ public final class Interpreter {
                 requireArgCount(call, 0);
                 yield api.isRotten();
             }
+            case "measure" -> {
+                requireArgCount(call, 0);
+                yield api.measure();
+            }
             case "get_pos_x" -> {
                 requireArgCount(call, 0);
                 yield api.getPosX();
