@@ -41,9 +41,14 @@ final class PumpkinEffects {
     private PumpkinEffects() {
     }
 
-    /** A giant pumpkin cracking open (broken by hand): once, at the cell the player hit, before the ripple starts. */
+    /**
+     * A giant pumpkin cracking open (broken by hand): once, at the cell the player hit, before the
+     * ripple starts. The pumpkin's own break sound (vanilla pumpkins are SoundType.WOOD), only
+     * deeper for a bigger pumpkin - a pottery/glass shatter was tried first and read as far too
+     * hard and brittle for something organic.
+     */
     static void giantCrack(ServerLevel level, BlockPos at, int side) {
-        level.playSound(null, at, SoundEvents.DECORATED_POT_SHATTER, SoundSource.BLOCKS, FULL_VOLUME,
+        level.playSound(null, at, SoundEvents.WOOD_BREAK, SoundSource.BLOCKS, FULL_VOLUME,
                 PumpkinEffectTuning.pitchForSide(side));
     }
 
