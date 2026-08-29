@@ -129,22 +129,38 @@ class SampleScriptsTest {
         assertEquals(List.of("carrots harvested:", "1", "Carrot points:", "0"), api.printed);
     }
 
+    /**
+     * The original game's pumpkin strategy: replant rotten cells straight away, never harvest a
+     * lone ripe pumpkin - wait for the whole plot so it fuses into one giant patch.
+     */
     @Test
-    void pumpkinSmartHarvestSkipsWastedHarvestCallsOnRottenCells() {
+    void pumpkinSmartHarvestReplantsRottenCellsAndHoldsOffHarvestingUntilTheWholePlotIsRipe() {
         FakeDroneApi api = new FakeDroneApi(3);
-        api.setCropAge(0, 0, 3); // mature, ready to harvest normally
+        api.setCropAge(0, 0, 3); // ripe - must be left standing, not harvested on its own
         api.setRotten(1, 0, true); // rotten - must be replanted, never harvested
 
         new Interpreter(api).run(parse(SampleScripts.PUMPKIN_SMART_HARVEST));
 
         long harvestCount = api.calls.stream().filter("harvest"::equals).count();
         long plantCount = api.calls.stream().filter("plant:pumpkin"::equals).count();
-        assertEquals(1, harvestCount, "the rotten cell must not trigger a wasted harvest() call");
-        assertEquals(9, plantCount, "expected a plant(\"pumpkin\") attempt on every one of the 9 cells");
-        assertEquals(List.of(
-                "good pumpkins harvested:", "1",
-                "rotten pumpkins skipped (replanted without wasting harvest):", "1",
-                "Pumpkin points:", "0"
-        ), api.printed);
+        assertEquals(0, harvestCount, "nothing may be harvested while the plot is still growing");
+        assertEquals(8, plantCount, "the rotten cell and the 7 empty cells get planted; the ripe one is left alone");
+        assertEquals(List.of("planted:", "8", "ripe:", "1", "Pumpkin points:", "0"), api.printed);
+    }
+
+    @Test
+    void pumpkinSmartHarvestHarvestsExactlyOnceWhenEveryCellIsRipe() {
+        FakeDroneApi api = new FakeDroneApi(3);
+        for (int x = 0; x < 3; x++) {
+            for (int y = 0; y < 3; y++) {
+                api.setCropAge(x, y, 3);
+            }
+        }
+
+        new Interpreter(api).run(parse(SampleScripts.PUMPKIN_SMART_HARVEST));
+
+        long harvestCount = api.calls.stream().filter("harvest"::equals).count();
+        assertEquals(1, harvestCount, "one harvest() on any cell takes the whole fused patch");
+        assertTrue(api.printed.contains("all ripe - harvesting the giant pumpkin:"));
     }
 }

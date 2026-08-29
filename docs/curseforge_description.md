@@ -108,8 +108,10 @@ own. Inspired by the Steam game
   planting.
 - **Giant pumpkins** — pumpkins ripen on the tile they were planted on
   (like the source game, not like vanilla stems), and a full square of
-  ripe ones fuses into one giant pumpkin: harvest any tile and the whole
-  square pays out n³ points (6n² from 6x6 up) instead of 1 per tile.
+  ripe ones fuses into one giant pumpkin that keeps growing as its
+  neighbours ripen (2x2 → 3x3 → … → the whole plot): harvest any tile and
+  the whole square pays out n³ points (6n² from 6x6 up) instead of 1 per
+  tile.
   About 1 in 5 pumpkins grows "rotten" instead (matches the source game):
   it yields nothing and blocks the fusion, so the game is to spot it with
   `is_rotten()` and `plant()` straight over it, then wait for the whole
