@@ -131,17 +131,19 @@ public class MicraDrone {
     // Purely decorative reskin for a giant-pumpkin fusion patch (see LiveFarmBlockAccess). The mod
     // places/clears it itself; no BlockItem/recipe, players never obtain it directly. noCollission
     // for the same reason as PUMPKIN_CROP_BLOCK: it stands where a crop stood, at the drone's height.
+    // SoundType.WOOD is what vanilla Blocks.PUMPKIN uses, so a crumbling cell sounds like a pumpkin.
     public static final DeferredBlock<GiantPumpkinBlock> GIANT_PUMPKIN_BLOCK = BLOCKS.registerBlock(
             "giant_pumpkin", GiantPumpkinBlock::new,
             BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_ORANGE).noCollission().strength(1.0f)
-                    .pushReaction(PushReaction.DESTROY));
+                    .sound(SoundType.WOOD).pushReaction(PushReaction.DESTROY));
 
     // Stands in for a pumpkin that grew defective (~20% chance, matching the original game - see
     // PumpkinCropBlock). Plain block like CORNER_MARKER_BLOCK: no custom class needed. The mod
-    // places/clears it itself; no BlockItem/recipe. noCollission, same reason as above.
+    // places/clears it itself; no BlockItem/recipe. noCollission, same reason as above. Squelches
+    // (SoundType.SLIME_BLOCK) rather than cracks when cleared, so it sounds as rotten as it looks.
     public static final DeferredBlock<net.minecraft.world.level.block.Block> ROTTEN_PUMPKIN_BLOCK =
             BLOCKS.registerSimpleBlock("rotten_pumpkin", BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_BROWN)
-                    .noCollission().strength(1.0f).pushReaction(PushReaction.DESTROY));
+                    .noCollission().strength(1.0f).sound(SoundType.SLIME_BLOCK).pushReaction(PushReaction.DESTROY));
 
     // Create a Deferred Register to hold EntityTypes which will all be registered under the "micradrone" namespace
     public static final DeferredRegister<EntityType<?>> ENTITY_TYPES = DeferredRegister.create(Registries.ENTITY_TYPE, MODID);

@@ -59,6 +59,7 @@ public class PumpkinCropBlock extends CropBlock {
         BlockState now = level.getBlockState(pos);
         if (now.is(this) && isMaxAge(now) && random.nextFloat() < ROT_CHANCE) {
             level.setBlockAndUpdate(pos, MicraDrone.ROTTEN_PUMPKIN_BLOCK.get().defaultBlockState());
+            PumpkinEffects.rot(level, pos);
         }
     }
 }

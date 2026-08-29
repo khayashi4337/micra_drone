@@ -116,6 +116,11 @@ own. Inspired by the Steam game
   it yields nothing and blocks the fusion, so the game is to spot it with
   `is_rotten()` and `plant()` straight over it, then wait for the whole
   square before harvesting.
+  Every pumpkin event has its own sight and sound - fusion sparkles and
+  chimes, a harvested giant bursts into crumbs with a level-up jingle, a
+  rotting one puffs smoke, and a giant broken by hand cracks open and
+  crumbles outward ring by ring (the bigger the pumpkin, the deeper the
+  sound).
 - **Advancements** — a dedicated advancement tab tracks obtaining the
   controller and marker, unlocking each crop, and harvest-count milestones
   (10 / 100 / 1000) per crop.

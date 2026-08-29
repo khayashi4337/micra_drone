@@ -3,11 +3,13 @@ package io.github.khayashi4337.micradrone.drone;
 import java.util.Optional;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
+import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.level.block.state.properties.IntegerProperty;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
@@ -32,10 +34,19 @@ import io.github.khayashi4337.micradrone.drone.GiantPatchDetector.Square;
  * else outside the mod's own harvest/fusion passes) destroys the whole patch - every cell goes,
  * no points, no drops. The original game has no such thing as breaking a giant pumpkin from
  * outside a script, so this is the mod's own rule, chosen so the giant reads as a single object
- * the way it looks.
+ * the way it looks. It also has to *look* like one object breaking, so the other cells don't
+ * vanish in the same tick: the break cracks the pumpkin open (PumpkinEffects#giantCrack), then
+ * the rest crumbles outward from the broken cell ring by ring, each cell with vanilla's break
+ * crumbs and sound (see {@link #tick}). While that runs the doomed cells carry COLLAPSING, which
+ * takes them out of every other rule here - {@link #isFusedCell} is false for them, so they can't
+ * be harvested for points, re-fused, or reverted to a ripe crop in the few ticks before they go.
+ * Blockstate JSON doesn't mention COLLAPSING: a variant key that omits a property matches every
+ * value of it (vanilla's bell.json omits its powered property the same way).
  */
 public class GiantPumpkinBlock extends Block {
     public static final IntegerProperty POSITION = IntegerProperty.create("position", 0, 8);
+    /** Set on the remaining cells of a hand-broken patch until their scheduled crumble tick removes them. */
+    public static final BooleanProperty COLLAPSING = BooleanProperty.create("collapsing");
     /** Upper bound on a patch side when walking POSITION markers - plots are far smaller than this. */
     private static final int MAX_PATCH_SIDE = 64;
 
@@ -48,12 +59,14 @@ public class GiantPumpkinBlock extends Block {
 
     public GiantPumpkinBlock(Properties properties) {
         super(properties);
-        registerDefaultState(stateDefinition.any().setValue(POSITION, GiantPatchDetector.POS_NW));
+        registerDefaultState(stateDefinition.any()
+                .setValue(POSITION, GiantPatchDetector.POS_NW)
+                .setValue(COLLAPSING, false));
     }
 
     @Override
     protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
-        builder.add(POSITION);
+        builder.add(POSITION, COLLAPSING);
     }
 
     /** Runs {@code edit} with the unfuse-on-remove reaction switched off - the mod's own patch edits. */
@@ -73,10 +86,19 @@ public class GiantPumpkinBlock extends Block {
         return crop.getStateForAge(crop.getMaxAge());
     }
 
+    /**
+     * A live cell of a fused patch - the only thing the score, the fusion pass and the marker walk
+     * count as "giant pumpkin". A cell mid-collapse is still this block for a few ticks but no
+     * longer part of any pumpkin.
+     */
+    static boolean isFusedCell(BlockState state) {
+        return state.getBlock() instanceof GiantPumpkinBlock && !state.getValue(COLLAPSING);
+    }
+
     /** POSITION of the giant-pumpkin block at (x, y, z), or {@link GiantPatchDetector#NOT_GIANT}. */
     static int positionAt(Level level, int x, int y, int z) {
         BlockState state = level.getBlockState(new BlockPos(x, y, z));
-        return state.getBlock() instanceof GiantPumpkinBlock ? state.getValue(POSITION) : GiantPatchDetector.NOT_GIANT;
+        return isFusedCell(state) ? state.getValue(POSITION) : GiantPatchDetector.NOT_GIANT;
     }
 
     /** The square the giant-pumpkin block at {@code pos} belongs to, read from the POSITION markers around it. */
@@ -88,8 +110,9 @@ public class GiantPumpkinBlock extends Block {
     @Override
     protected void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
         super.onRemove(state, level, pos, newState, movedByPiston);
-        if (level.isClientSide() || newState.is(this) || patchMutationInProgress) {
-            return; // a POSITION repaint, or one of the mod's own bulk edits - not a player
+        if (!(level instanceof ServerLevel serverLevel) || newState.is(this) || patchMutationInProgress
+                || state.getValue(COLLAPSING)) {
+            return; // a POSITION repaint, one of the mod's own bulk edits, or a cell already crumbling - not a player
         }
         // This cell is already gone from the level, so answer its old POSITION for it ourselves.
         int removedPosition = state.getValue(POSITION);
@@ -100,15 +123,26 @@ public class GiantPumpkinBlock extends Block {
             return;
         }
         Square s = square.get();
-        withPatchMutation(() -> {
-            for (int lx = 0; lx < s.side(); lx++) {
-                for (int lz = 0; lz < s.side(); lz++) {
-                    BlockPos cell = new BlockPos(s.originX() + lx, pos.getY(), s.originZ() + lz);
-                    if (!cell.equals(pos) && level.getBlockState(cell).getBlock() instanceof GiantPumpkinBlock) {
-                        level.setBlockAndUpdate(cell, Blocks.AIR.defaultBlockState());
-                    }
+        PumpkinEffects.giantCrack(serverLevel, pos, s.side());
+        for (int lx = 0; lx < s.side(); lx++) {
+            for (int lz = 0; lz < s.side(); lz++) {
+                BlockPos cell = new BlockPos(s.originX() + lx, pos.getY(), s.originZ() + lz);
+                BlockState other = level.getBlockState(cell);
+                if (!cell.equals(pos) && isFusedCell(other)) {
+                    // Same block, new state: onRemove sees newState.is(this) and does nothing.
+                    level.setBlock(cell, other.setValue(COLLAPSING, true), Block.UPDATE_CLIENTS);
+                    int ring = PumpkinEffectTuning.collapseRing(pos.getX(), pos.getZ(), cell.getX(), cell.getZ());
+                    level.scheduleTick(cell, this, PumpkinEffectTuning.collapseDelayTicks(ring));
                 }
             }
-        });
+        }
+    }
+
+    /** The scheduled crumble of one collapsing cell (see {@link #onRemove}); only ever scheduled for COLLAPSING cells. */
+    @Override
+    protected void tick(BlockState state, ServerLevel level, BlockPos pos, RandomSource random) {
+        if (state.getValue(COLLAPSING)) {
+            PumpkinEffects.breakCell(level, pos);
+        }
     }
 }
