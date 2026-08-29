@@ -35,4 +35,17 @@ public final class ChatToolServerLifecycle {
         }
         return mcpConfigPath;
     }
+
+    /**
+     * Stops the HTTP server and clears the singleton. The server's threads are daemon threads so
+     * the JVM exits fine without this, but calling it on client shutdown avoids leaving a listening
+     * socket open across Minecraft's own reload paths (e.g. F3+T resource reload).
+     */
+    public static synchronized void shutdown() {
+        if (server != null) {
+            server.close();
+            server = null;
+            mcpConfigPath = null;
+        }
+    }
 }

@@ -952,6 +952,24 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         super.loadAdditional(tag, registries);
         gridX = tag.getInt("GridX");
         gridY = tag.getInt("GridY");
+        // Plot geometry: persisted so a server restart doesn't reset worldSize/dir/groundYOffset
+        // to the size-5-SE guess, which would silently stop boostGrowth (plotConfirmed=false) until
+        // the next scanForCornerMarker. Absent on older saves -> defaults remain (see field decls).
+        if (tag.contains("WorldSize")) {
+            worldSize = tag.getInt("WorldSize");
+        }
+        if (tag.contains("DirX")) {
+            dirX = tag.getInt("DirX");
+        }
+        if (tag.contains("DirZ")) {
+            dirZ = tag.getInt("DirZ");
+        }
+        if (tag.contains("GroundYOffset")) {
+            groundYOffset = tag.getInt("GroundYOffset");
+        }
+        if (tag.contains("PlotConfirmed")) {
+            plotConfirmed = tag.getBoolean("PlotConfirmed");
+        }
         pointsByCrop.clear();
         CompoundTag pointsTag = tag.getCompound("PointsByCrop");
         for (String crop : pointsTag.getAllKeys()) {
@@ -982,6 +1000,11 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         super.saveAdditional(tag, registries);
         tag.putInt("GridX", gridX);
         tag.putInt("GridY", gridY);
+        tag.putInt("WorldSize", worldSize);
+        tag.putInt("DirX", dirX);
+        tag.putInt("DirZ", dirZ);
+        tag.putInt("GroundYOffset", groundYOffset);
+        tag.putBoolean("PlotConfirmed", plotConfirmed);
         CompoundTag pointsTag = new CompoundTag();
         pointsByCrop.forEach(pointsTag::putLong);
         tag.put("PointsByCrop", pointsTag);

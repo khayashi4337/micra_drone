@@ -34,7 +34,13 @@ public final class ChatHistoryStore {
         if (rawWorldId == null || rawWorldId.isBlank()) {
             return UNKNOWN_WORLD_DIRECTORY;
         }
-        return rawWorldId.replaceAll("[^A-Za-z0-9._-]", "_");
+        String sanitized = rawWorldId.replaceAll("[^A-Za-z0-9._-]", "_");
+        // "." and ".." are path-traversal segments that resolve() would treat as parent/current
+        // directory - reject them so a server address of ".." can't escape micradrone/chat/.
+        if (sanitized.equals(".") || sanitized.equals("..")) {
+            return UNKNOWN_WORLD_DIRECTORY;
+        }
+        return sanitized;
     }
 
     /** The session on disk for {@code key}, or a fresh empty one if there's nothing there yet. */

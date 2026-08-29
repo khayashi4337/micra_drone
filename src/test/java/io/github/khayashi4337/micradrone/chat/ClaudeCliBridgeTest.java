@@ -71,7 +71,22 @@ class ClaudeCliBridgeTest {
         List<String> logical = List.of("claude", "-p");
         List<String> launch = ClaudeCliBridge.launchCommand(logical, "Windows 11");
 
-        assertEquals(List.of("cmd.exe", "/c", "claude", "-p"), launch);
+        // cmd.exe /c with a single quoted command string (outer quotes stripped by cmd's /c rule)
+        assertEquals(List.of("cmd.exe", "/c", "\"claude -p\""), launch);
+    }
+
+    @Test
+    void windowsLaunchQuotesArgsWithCmdMetacharactersToPreventInjection() {
+        // A path containing & must be quoted so cmd.exe doesn't treat it as a command separator
+        List<String> logical = List.of("claude", "--mcp-config", "C:\\path&evil\\mcp-config.json");
+        List<String> launch = ClaudeCliBridge.launchCommand(logical, "Windows 11");
+
+        assertEquals(3, launch.size());
+        assertEquals("cmd.exe", launch.get(0));
+        assertEquals("/c", launch.get(1));
+        // The & inside the path is inside double quotes, so cmd.exe treats it as a literal character
+        assertTrue(launch.get(2).contains("\"C:\\path&evil\\mcp-config.json\""),
+                "expected the &-containing path to be quoted, got: " + launch.get(2));
     }
 
     @Test

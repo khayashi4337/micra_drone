@@ -333,6 +333,16 @@ final class IdeChatPanel {
         }
     }
 
+    /**
+     * Called from {@link IdeScreen#removed} when the IDE screen closes: cancels any in-flight CLI
+     * round trip and shuts down the bridge's background executor so repeated open/close cycles
+     * don't accumulate idle threads.
+     */
+    void close() {
+        cancelRoundTrip();
+        claudeCliBridge.close();
+    }
+
     private Component dangerButtonLabel() {
         return Component.translatable(dangerMode.isEnabled()
                 ? "gui.micradrone.ide_screen.chat_danger_on" : "gui.micradrone.ide_screen.chat_danger_off");

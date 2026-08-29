@@ -113,6 +113,12 @@ public final class ClaudeCliBridge {
      * ProcessBuilder/CreateProcess does not consult PATHEXT to resolve that. Routing through
      * {@code cmd.exe /c} makes the launch behave exactly like a player typing "claude ..." at a
      * prompt, on whatever extension the CLI actually ships as - not just today's .cmd wrapper.
+     *
+     * <p>The command is built as a single properly-quoted string and passed as one argument to
+     * {@code cmd.exe /c}, wrapped in an extra pair of outer quotes. ProcessBuilder's list form
+     * joins args with spaces without quoting individual ones, so a path containing cmd.exe
+     * metacharacters ({@code &}, {@code |}, {@code >}, …) would be interpreted as shell syntax
+     * (command injection). The quoting here ensures every arg survives cmd.exe's parser intact.
      */
     private static List<String> launchCommand(List<String> logicalCommand) {
         return launchCommand(logicalCommand, System.getProperty("os.name", ""));
@@ -122,11 +128,34 @@ public final class ClaudeCliBridge {
         if (!osName.toLowerCase(Locale.ROOT).contains("win")) {
             return logicalCommand;
         }
-        List<String> wrapped = new ArrayList<>();
-        wrapped.add("cmd.exe");
-        wrapped.add("/c");
-        wrapped.addAll(logicalCommand);
-        return wrapped;
+        StringBuilder cmdline = new StringBuilder();
+        for (String arg : logicalCommand) {
+            if (!cmdline.isEmpty()) {
+                cmdline.append(' ');
+            }
+            cmdline.append(quoteForCmd(arg));
+        }
+        // Outer quotes: cmd.exe /c strips the first and last quote when the string starts with one
+        // (rule 2 of its /C quote handling), which preserves the inner per-arg quoting intact.
+        return List.of("cmd.exe", "/c", "\"" + cmdline + "\"");
+    }
+
+    /** Characters cmd.exe treats as syntax outside of double quotes. */
+    private static final String CMD_SPECIAL_CHARS = "&|<>()^%!\" \t";
+
+    /**
+     * Wraps {@code arg} in double quotes if it contains any cmd.exe metacharacter, doubling
+     * internal double quotes for cmd.exe's escaping convention. Args without special chars are
+     * returned as-is so the command line stays readable in logs.
+     */
+    private static String quoteForCmd(String arg) {
+        if (arg.isEmpty()) {
+            return "\"\"";
+        }
+        if (arg.chars().noneMatch(c -> CMD_SPECIAL_CHARS.indexOf(c) >= 0)) {
+            return arg;
+        }
+        return "\"" + arg.replace("\"", "\"\"") + "\"";
     }
 
     public CompletableFuture<ClaudeCliResult> send(String prompt, ClaudeCliOptions options) {
@@ -148,6 +177,7 @@ public final class ClaudeCliBridge {
                 if (!process.waitFor(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                     process.descendants().forEach(ProcessHandle::destroyForcibly);
                     process.destroyForcibly();
+                    output.cancel(true);
                     return java.util.Optional.<String>empty();
                 }
                 String text = output.get().trim();
@@ -195,6 +225,16 @@ public final class ClaudeCliBridge {
             process.descendants().forEach(ProcessHandle::destroyForcibly);
             process.destroyForcibly();
         }
+    }
+
+    /**
+     * Shuts down the background executor and cancels any in-flight round trip. Called when the
+     * IDE screen that owns this bridge is closed, so repeated open/close cycles don't accumulate
+     * idle threads (the cached pool keeps them alive otherwise).
+     */
+    public void close() {
+        cancel();
+        executor.shutdownNow();
     }
 
     private ClaudeCliResult runProcess(String prompt, ClaudeCliOptions options) {

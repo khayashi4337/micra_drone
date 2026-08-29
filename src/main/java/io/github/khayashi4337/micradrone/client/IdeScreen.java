@@ -1087,6 +1087,7 @@ public class IdeScreen extends Screen {
     @Override
     public void removed() {
         closed = true;
+        chatPanel.close();
         if (this.minecraft != null) {
             cameraController.restore(this.minecraft);
         }
