@@ -13,7 +13,11 @@ public interface DroneApi {
     /** Returns true if the ground was tilled into farmland. */
     boolean till();
 
-    /** Returns true if the crop was planted. crop is currently only "wheat". */
+    /**
+     * Returns true if the crop was planted. crop is "wheat", "carrot", or "pumpkin" - carrot and
+     * pumpkin also work unlocked-or-not as long as the controller's owner is carrying one real
+     * seed of that crop (consumed on success).
+     */
     boolean plant(String crop);
 
     /** Returns true if a mature crop was harvested. */
