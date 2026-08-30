@@ -1,7 +1,12 @@
 package io.github.khayashi4337.micradrone.client;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
+
+import org.lwjgl.glfw.GLFW;
 
 import io.github.khayashi4337.micradrone.lang.SyntaxHighlighter;
 import io.github.khayashi4337.micradrone.lang.SyntaxHighlighter.Kind;
@@ -11,6 +16,8 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.client.gui.components.MultilineTextField;
+import net.minecraft.client.gui.components.Whence;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.network.chat.Component;
 
@@ -78,9 +85,82 @@ final class DebugEditBox extends MultiLineEditBox {
     private String scannedValue;
     private List<Span> scannedSpans = List.of();
 
+    /**
+     * Undo/redo (Ctrl+Z / Ctrl+Y, also Ctrl+Shift+Z) - vanilla's {@code MultilineTextField} has no
+     * history at all, so an editing slip in a long script was unrecoverable (real-machine report).
+     * A {@link Snapshot} of the text and caret is taken before every edit that actually changes the
+     * value (see {@link #recordingEdits}); undo pops one back and pushes the current state onto the
+     * redo side, redo the reverse. Granularity is one edit event per step - one typed character,
+     * one Backspace, one paste, one Tab, one autocomplete accept - which is simple and predictable,
+     * if a little chatty on Ctrl+Z after a long burst of typing. Any wholesale replacement of the
+     * text from outside ({@link #setValue}: a script loaded from the server, an AI review view
+     * opening or closing) starts a new document, so history is cleared there.
+     */
+    private record Snapshot(String value, int cursor) {
+    }
+
+    private static final int MAX_UNDO_HISTORY = 200;
+    private final Deque<Snapshot> undoStack = new ArrayDeque<>();
+    private final Deque<Snapshot> redoStack = new ArrayDeque<>();
+
     DebugEditBox(Font font, int x, int y, int width, int height, Component placeholder, Component message) {
         super(font, x, y, width, height, placeholder, message);
         this.font = font;
+    }
+
+    /** External replacement of the whole text (a different script, a review view) - not an undoable edit, a new document. */
+    @Override
+    public void setValue(String fullText) {
+        super.setValue(fullText);
+        undoStack.clear();
+        redoStack.clear();
+    }
+
+    /**
+     * Runs {@code edit} and, if it changed the text, records the pre-edit state as an undo step
+     * (and, as with any editor, forgets the redo branch - a fresh edit after an undo is a new
+     * timeline). Edits that change nothing (Delete at the very end, an empty paste) leave history
+     * untouched, so Ctrl+Z never appears to "do nothing".
+     */
+    private boolean recordingEdits(BooleanSupplier edit) {
+        String before = textField.value();
+        int cursorBefore = textField.cursor();
+        boolean handled = edit.getAsBoolean();
+        if (!textField.value().equals(before)) {
+            undoStack.push(new Snapshot(before, cursorBefore));
+            while (undoStack.size() > MAX_UNDO_HISTORY) {
+                undoStack.removeLast();
+            }
+            redoStack.clear();
+        }
+        return handled;
+    }
+
+    private void undo() {
+        if (undoStack.isEmpty()) {
+            return;
+        }
+        redoStack.push(new Snapshot(textField.value(), textField.cursor()));
+        restore(undoStack.pop());
+    }
+
+    private void redo() {
+        if (redoStack.isEmpty()) {
+            return;
+        }
+        undoStack.push(new Snapshot(textField.value(), textField.cursor()));
+        restore(redoStack.pop());
+    }
+
+    /**
+     * Straight onto {@code textField}, not through {@link #setValue} (which would wipe the very
+     * history being walked). {@code MultilineTextField#setValue} parks the caret at the end, so the
+     * recorded caret is put back afterwards; the value listener fires as for any edit, which keeps
+     * {@code IdeScreen}'s own copy of the text, its draft cache, and breakpoint line tracking in step.
+     */
+    private void restore(Snapshot snapshot) {
+        textField.setValue(snapshot.value());
+        textField.seekCursor(Whence.ABSOLUTE, snapshot.cursor());
     }
 
     @Override
@@ -130,11 +210,25 @@ final class DebugEditBox extends MultiLineEditBox {
         if (locked && isEditingKey(keyCode, modifiers)) {
             return true; // swallowed: the merged view is read-only until Accept/Reject
         }
-        if (keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_TAB && !locked) {
-            textField.insertText(TAB_AS_SPACES);
-            return true;
+        if (!locked && Screen.hasControlDown()) {
+            // Ctrl+Z undo; Ctrl+Y or Ctrl+Shift+Z redo - the two redo bindings desktop editors
+            // split between (Windows / macOS-and-Linux convention), both honoured.
+            if (keyCode == GLFW.GLFW_KEY_Z && !Screen.hasShiftDown()) {
+                undo();
+                return true;
+            }
+            if (keyCode == GLFW.GLFW_KEY_Y || (keyCode == GLFW.GLFW_KEY_Z && Screen.hasShiftDown())) {
+                redo();
+                return true;
+            }
         }
-        return super.keyPressed(keyCode, scanCode, modifiers);
+        return recordingEdits(() -> {
+            if (keyCode == GLFW.GLFW_KEY_TAB && !locked) {
+                textField.insertText(TAB_AS_SPACES);
+                return true;
+            }
+            return super.keyPressed(keyCode, scanCode, modifiers);
+        });
     }
 
     @Override
@@ -142,7 +236,7 @@ final class DebugEditBox extends MultiLineEditBox {
         if (locked) {
             return true;
         }
-        return super.charTyped(codePoint, modifiers);
+        return recordingEdits(() -> super.charTyped(codePoint, modifiers));
     }
 
     /** Everything vanilla's MultilineTextField treats as an edit: backspace, delete, enter, and paste/cut. */
@@ -190,11 +284,14 @@ final class DebugEditBox extends MultiLineEditBox {
         if (textField.hasSelection()) {
             return;
         }
-        int wordLength = wordBeforeCursor().length();
-        if (wordLength > 0) {
-            textField.deleteText(-wordLength);
-        }
-        textField.insertText(replacement);
+        recordingEdits(() -> { // one undo step for the whole accept, not delete-then-insert
+            int wordLength = wordBeforeCursor().length();
+            if (wordLength > 0) {
+                textField.deleteText(-wordLength);
+            }
+            textField.insertText(replacement);
+            return true;
+        });
     }
 
     /** Screen X of the caret - where {@code IdeScreen} anchors the autocomplete popup. */
