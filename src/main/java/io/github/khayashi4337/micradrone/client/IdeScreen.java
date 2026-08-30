@@ -11,6 +11,7 @@ import java.util.stream.Stream;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.MicraDroneClient;
+import io.github.khayashi4337.micradrone.chat.BreakpointRetargeting;
 import io.github.khayashi4337.micradrone.chat.LineDiff;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
@@ -237,7 +238,9 @@ public class IdeScreen extends Screen {
         editor.setCharacterLimit(DroneControllerBlockEntity.MAX_SCRIPT_CHARS);
         editor.setValue(editorText);
         editor.setValueListener(text -> {
+            String previousText = editorText;
             editorText = text;
+            retargetBreakpoints(previousText, text);
             // Typing is the one thing that brings a dismissed popup back - see refreshAutocomplete.
             autocompleteDismissed = false;
         });
@@ -988,6 +991,25 @@ public class IdeScreen extends Screen {
             return true;
         }
         return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    /**
+     * Keeps each breakpoint on the statement it was set on when editing inserts or removes lines
+     * above it - without this, a breakpoint was pinned to a raw line number, so pressing Enter a few
+     * lines up silently detached it from the code it was meant for (real-machine report: "a
+     * breakpoint doesn't follow along when the script reflows"). The actual line-matching lives in
+     * {@link BreakpointRetargeting#retarget}, which is Minecraft-free and unit-tested; this just owns
+     * the field and the network side-effect of telling the server, and only does either when the
+     * result actually differs from what's already set.
+     */
+    private void retargetBreakpoints(String previousText, String newText) {
+        Set<Integer> retargeted = BreakpointRetargeting.retarget(breakpoints, previousText, newText);
+        if (!retargeted.equals(breakpoints)) {
+            breakpoints.clear();
+            breakpoints.addAll(retargeted);
+            editor.setBreakpointLines(breakpoints);
+            PacketDistributor.sendToServer(new SetBreakpointsPayload(pos, breakpoints.stream().sorted().toList()));
+        }
     }
 
     /**
