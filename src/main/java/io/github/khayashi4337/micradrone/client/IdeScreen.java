@@ -95,6 +95,13 @@ public class IdeScreen extends Screen {
     // then log fills whatever's left.
     private static final int LIST_HEIGHT = 90;
     private static final int DESCRIPTION_HEIGHT = 28;
+    // Camera-mode log strip over the bottom of the plot view - see renderLogOverlay.
+    private static final int LOG_OVERLAY_ROWS = 6;
+    private static final int LOG_OVERLAY_ROW_HEIGHT = 10;
+    private static final int LOG_OVERLAY_PADDING = 3;
+    private static final int LOG_OVERLAY_BACKGROUND = 0xB0101010;
+    private static final int LOG_OVERLAY_HEADING_COLOR = 0xFFA0A0A0;
+    private static final int LOG_OVERLAY_TEXT_COLOR = 0xFFF0F0F0;
 
     // Command autocomplete popup - see refreshAutocomplete/acceptAutocomplete/renderAutocompletePopup.
     private static final List<String> AUTOCOMPLETE_CANDIDATES =
@@ -1188,6 +1195,7 @@ public class IdeScreen extends Screen {
         guiGraphics.drawCenteredString(this.font, heading, this.width / 2, MARGIN,
                 isReviewing() ? REVIEW_HEADING_COLOR : 0xFFFFFF);
         renderPointsHud(guiGraphics);
+        renderLogOverlay(guiGraphics);
         renderGutter(guiGraphics);
         renderReviewHunkMarkers(guiGraphics);
         refreshAutocomplete();
@@ -1226,6 +1234,41 @@ public class IdeScreen extends Screen {
                 .map(entry -> cropDisplayName(entry.getKey()) + ": " + entry.getValue())
                 .collect(Collectors.joining("   "));
         guiGraphics.drawCenteredString(this.font, text, this.width / 2, POINTS_Y, 0xFFFFFF);
+    }
+
+    /**
+     * The script's {@code print()} output, as a translucent strip over the bottom of the plot view
+     * in camera mode. Until now the log only existed inside list mode's third box, so in the mode
+     * a player actually watches the drone from - and in the Chat tab - there was no way to see
+     * what a running script printed at all (real-machine report). List mode keeps its full,
+     * scrollable box; this shows just the newest {@link #LOG_OVERLAY_ROWS} lines, newest at the
+     * bottom, the way a console tail reads, and draws nothing while there is nothing to show so an
+     * idle plot view stays uncluttered. Lines wider than the strip are cut to fit rather than
+     * wrapped, so the row count (and the strip's height) stays fixed. The same
+     * {@link #logLines} snapshot list mode uses, refreshed by every {@link #updateLog}.
+     */
+    private void renderLogOverlay(GuiGraphics guiGraphics) {
+        if (listMode || chatPanel.isOpen() || logLines.isEmpty()) {
+            return;
+        }
+        int left = listPanelX();
+        int right = left + listPanelWidth();
+        int bottom = editorTop + editorHeight;
+        int rows = Math.min(LOG_OVERLAY_ROWS, logLines.size());
+        int headingHeight = LOG_OVERLAY_ROW_HEIGHT;
+        int top = bottom - (LOG_OVERLAY_PADDING * 2 + headingHeight + rows * LOG_OVERLAY_ROW_HEIGHT);
+        guiGraphics.fill(left, top, right, bottom, LOG_OVERLAY_BACKGROUND);
+        int textX = left + LOG_OVERLAY_PADDING;
+        int maxTextWidth = right - left - LOG_OVERLAY_PADDING * 2;
+        int y = top + LOG_OVERLAY_PADDING;
+        guiGraphics.drawString(this.font, Component.translatable("gui.micradrone.drone_screen.log"),
+                textX, y, LOG_OVERLAY_HEADING_COLOR, false);
+        y += headingHeight;
+        for (String line : logLines.subList(logLines.size() - rows, logLines.size())) {
+            guiGraphics.drawString(this.font, this.font.plainSubstrByWidth(line, maxTextWidth),
+                    textX, y, LOG_OVERLAY_TEXT_COLOR, false);
+            y += LOG_OVERLAY_ROW_HEIGHT;
+        }
     }
 
     private static String cropDisplayName(String cropName) {
