@@ -295,11 +295,20 @@ public class IdeScreen extends Screen {
                 .bounds(leftX + GUTTER_WIDTH + PLAY_BUTTON_SIZE + ICON_GAP, TOP_Y, PLAY_BUTTON_SIZE, PLAY_BUTTON_SIZE)
                 .build(StepButton::new));
 
+        DebugEditBox previousEditor = editor;
         editor = new DebugEditBox(this.font, leftX + GUTTER_WIDTH, editorTop, leftW - GUTTER_WIDTH, editorHeight,
                 Component.translatable("gui.micradrone.ide_screen.editor_placeholder"),
                 Component.translatable("gui.micradrone.ide_screen.editor"));
         editor.setCharacterLimit(DroneControllerBlockEntity.MAX_SCRIPT_CHARS);
         editor.setValue(editorText);
+        // init() runs again on every List/Chat toggle, every arriving AI reply, and every window
+        // resize - all of which build a new editor widget and would otherwise throw the undo history
+        // away with the old one. Typing, opening Chat to ask about it, then pressing Ctrl+Z is an
+        // ordinary thing to do, so the history has to outlive the widget the same way editorText and
+        // the breakpoint set already do. Must come after setValue above, which clears history by
+        // design (see DebugEditBox#setValue); adoptHistoryFrom checks the text still matches, so a
+        // rebuild that loads a different script genuinely starts fresh.
+        editor.adoptHistoryFrom(previousEditor);
         editor.setValueListener(text -> {
             editorText = text;
             // Mid-review the editor shows a merged diff view (red/green markup), not real script text
@@ -669,6 +678,14 @@ public class IdeScreen extends Screen {
         scriptId = entry.id();
         displayName = entry.displayName();
         editorText = "";
+        // The rebuild below hands the new editor widget its predecessor's undo history whenever the
+        // text matches (see DebugEditBox#adoptHistoryFrom) - and here it always will, because the
+        // line above blanks editorText while the old widget may also be blank. Switching away from
+        // a script the player had just emptied would then carry that script's history into this
+        // one, and a Ctrl+Z would file its old text as this script's unsaved draft, overwriting
+        // what the server is about to send. Only this method knows a genuinely different script is
+        // being loaded, so it says so outright.
+        editor.clearHistory();
         autocompleteMatches = List.of();
         sourceRequested = true;
         PacketDistributor.sendToServer(new RequestScriptSourcePayload(pos, scriptId));
