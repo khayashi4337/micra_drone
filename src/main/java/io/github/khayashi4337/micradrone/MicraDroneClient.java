@@ -123,7 +123,8 @@ public class MicraDroneClient {
     /** Registered as the DebugStatePayload handler: drives the IDE's line highlight and debug buttons. */
     public static void handleDebugState(DebugStatePayload payload, IPayloadContext context) {
         if (Minecraft.getInstance().screen instanceof IdeScreen screen) {
-            screen.updateDebugState(payload.pos(), payload.state(), payload.currentLine(), payload.breakpoints());
+            screen.updateDebugState(payload.pos(), payload.state(), payload.currentLine(), payload.breakpoints(),
+                    payload.breakpointRevision());
         }
     }
 
