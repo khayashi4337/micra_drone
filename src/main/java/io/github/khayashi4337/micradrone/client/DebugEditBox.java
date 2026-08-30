@@ -242,6 +242,11 @@ final class DebugEditBox extends MultiLineEditBox {
         this.currentLine = line;
     }
 
+    /** The line the yellow bar is on; 0 when nothing is highlighted. */
+    int currentLine() {
+        return currentLine;
+    }
+
     void setBreakpointLines(Set<Integer> lines) {
         this.breakpointLines = Set.copyOf(lines);
     }

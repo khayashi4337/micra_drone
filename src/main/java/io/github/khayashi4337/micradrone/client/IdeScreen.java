@@ -690,6 +690,42 @@ public class IdeScreen extends Screen {
         chatPanel.compact();
     }
 
+    /** The lines carrying a red gutter dot, ascending. */
+    public List<Integer> getBreakpointsForTesting() {
+        return breakpoints.stream().sorted().toList();
+    }
+
+    /**
+     * Same effect as clicking the gutter beside {@code line} - including being ignored for a line
+     * the script doesn't have. Exists because the gutter is a few pixels wide and its position
+     * moves with the GUI scale, which made clicking it by coordinate the least reliable step in
+     * real-machine breakpoint testing.
+     */
+    public void toggleBreakpointForTesting(int line) {
+        toggleBreakpoint(line);
+    }
+
+    /** One of the {@code DebugStatePayload.STATE_*} constants, as last reported by the server. */
+    public int getDebugStateForTesting() {
+        return debugState;
+    }
+
+    /** The line the yellow "executing now" bar is on; 0 when the script isn't stopped on one. */
+    public int getCurrentLineForTesting() {
+        return editor.currentLine();
+    }
+
+    /**
+     * Same effect as pressing one of the debugger buttons; {@code command} is a
+     * {@code DebugCommandPayload.COMMAND_*} constant. Whether one applies is the server's call, so
+     * this never has to check first: with nothing running it drops Pause/Resume/Step Out, but Step
+     * starts a fresh run paused before the first statement - see
+     * {@code DroneControllerBlockEntity#debugCommand}.
+     */
+    public void sendDebugCommandForTesting(int command) {
+        PacketDistributor.sendToServer(new DebugCommandPayload(pos, command));
+    }
+
     /**
      * Switches the editor to {@code entry} (list-mode click): tells the server it's now selected,
      * adopts its id/name locally right away (no need to wait for a round trip - the list already
@@ -1144,13 +1180,7 @@ public class IdeScreen extends Screen {
                 && mouseY >= editorTop && mouseY < editorTop + editorHeight) {
             int line = (int) ((mouseY - editorTop - editor.gutterTopPadding() + editor.gutterScroll())
                     / DebugEditBox.LINE_HEIGHT) + 1;
-            if (line >= 1 && line <= lineCount()) {
-                if (!breakpoints.remove(line)) {
-                    breakpoints.add(line);
-                }
-                editor.setBreakpointLines(breakpoints);
-                sendBreakpoints();
-            }
+            toggleBreakpoint(line);
             return true;
         }
         boolean handled = super.mouseClicked(mouseX, mouseY, button);
@@ -1165,6 +1195,24 @@ public class IdeScreen extends Screen {
             setFocused(editor);
         }
         return handled;
+    }
+
+    /**
+     * Adds {@code line} to the breakpoints if it isn't one, removes it if it is, and tells the
+     * server the new whole set. Silently does nothing for a line the script doesn't have, so a
+     * gutter click below the last line is ignored rather than setting a breakpoint that can never
+     * be hit. The only place a person's toggle enters the set, so the gutter click and the devkit
+     * hook cannot drift apart in what they send.
+     */
+    private void toggleBreakpoint(int line) {
+        if (line < 1 || line > lineCount()) {
+            return;
+        }
+        if (!breakpoints.remove(line)) {
+            breakpoints.add(line);
+        }
+        editor.setBreakpointLines(breakpoints);
+        sendBreakpoints();
     }
 
     /**
