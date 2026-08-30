@@ -95,7 +95,11 @@ public class IdeScreen extends Screen {
     // then log fills whatever's left.
     private static final int LIST_HEIGHT = 90;
     private static final int DESCRIPTION_HEIGHT = 28;
+    /** Labels both places the log appears: list mode's box and camera mode's strip (see {@link #renderLogOverlay}). */
+    private static final String LOG_LABEL_KEY = "gui.micradrone.drone_screen.log";
     // Camera-mode log strip over the bottom of the plot view - see renderLogOverlay.
+    // Changing LOG_OVERLAY_ROWS means changing "最新6行" in README.md and in help scrolls 1/3
+    // (print()) and 3/3 (the editor section) too - the number is quoted there in prose.
     private static final int LOG_OVERLAY_ROWS = 6;
     private static final int LOG_OVERLAY_ROW_HEIGHT = 10;
     private static final int LOG_OVERLAY_PADDING = 3;
@@ -396,7 +400,7 @@ public class IdeScreen extends Screen {
         int logHeight = editorTop + editorHeight - y;
         logBox = new MultiLineEditBox(this.font, rightX, y, rightW, logHeight,
                 Component.translatable("gui.micradrone.drone_screen.log_placeholder"),
-                Component.translatable("gui.micradrone.drone_screen.log"));
+                Component.translatable(LOG_LABEL_KEY));
         logBox.setValue(String.join("\n", logLines));
         addRenderableWidget(logBox);
     }
@@ -1265,7 +1269,7 @@ public class IdeScreen extends Screen {
         int textX = left + LOG_OVERLAY_PADDING;
         int maxTextWidth = right - left - LOG_OVERLAY_PADDING * 2;
         int y = top + LOG_OVERLAY_PADDING;
-        guiGraphics.drawString(this.font, Component.translatable("gui.micradrone.drone_screen.log"),
+        guiGraphics.drawString(this.font, Component.translatable(LOG_LABEL_KEY),
                 textX, y, LOG_OVERLAY_HEADING_COLOR, false);
         y += headingHeight;
         for (String line : logLines.subList(logLines.size() - rows, logLines.size())) {
