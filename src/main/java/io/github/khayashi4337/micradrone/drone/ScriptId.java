@@ -14,17 +14,28 @@ package io.github.khayashi4337.micradrone.drone;
  *       specific player's inventory at use time, same "stale id fails loudly" idiom as chest
  *       scrolls - and since it's always resolved against whichever player is asking, never another
  *       player's inventory, this id shape is meaningless without a player in hand.</li>
+ *   <li>The controller's own script: the fixed id {@link #CONTROLLER_ID}. Every controller has
+ *       one, stored in its block entity, so a freshly placed controller can be written to and run
+ *       straight away - before this existed, an IDE opened on a controller with no scroll selected
+ *       accepted typing but had nowhere to save (real-machine report: "スクリプトが書き込めなく
+ *       なっている"). Scrolls remain the way to carry and share scripts.</li>
  * </ul>
- * (A fourth shape, the id of a scroll slotted directly into the controller block, existed for issue
- * #7's jukebox-style slot; the GUI-reduction follow-up replaced it with plain list selection - see
- * {@code DroneControllerBlockEntity#selectedScript} - so that shape no longer exists.)
+ * (Issue #7's jukebox-style slot once used a similar fixed id for a scroll physically inserted
+ * into the block; the GUI-reduction follow-up removed the slot. The controller script is not an
+ * item - nothing to insert or eject.)
  * Minecraft-free so the parsing/validation rules are unit-testable.
  */
 public final class ScriptId {
+    /** The id of the script stored in the controller block itself - always present, never an item. */
+    public static final String CONTROLLER_ID = "controller";
     private static final String SCROLL_PREFIX = "scroll:";
     private static final String INVENTORY_PREFIX = "inv:";
 
     private ScriptId() {
+    }
+
+    public static boolean isControllerId(String id) {
+        return CONTROLLER_ID.equals(id);
     }
 
     public static String scrollId(int chestIndex, int slot) {
@@ -69,9 +80,9 @@ public final class ScriptId {
         return parseNonNegativeInt(id.substring(INVENTORY_PREFIX.length()));
     }
 
-    /** True for every id shape the server accepts from the network: a valid file name, a scroll id, or an inventory scroll id. */
+    /** True for every id shape the server accepts from the network: the controller script, a valid file name, a scroll id, or an inventory scroll id. */
     public static boolean isValidId(String id) {
-        return ScriptFileStore.isValidScriptName(id) || isScrollId(id) || isInventoryScrollId(id);
+        return isControllerId(id) || ScriptFileStore.isValidScriptName(id) || isScrollId(id) || isInventoryScrollId(id);
     }
 
     private static int[] parse(String id) {

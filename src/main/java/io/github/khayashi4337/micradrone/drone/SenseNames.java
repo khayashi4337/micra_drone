@@ -7,7 +7,7 @@ package io.github.khayashi4337.micradrone.drone;
  * that class's note on Minecraft references breaking verification on the test sourceSet - which also
  * makes these rules directly unit-testable.
  */
-final class SenseNames {
+public final class SenseNames {
     /** Minecraft's own namespace; stripped from names so scripts can write the everyday {@code "dirt"}. */
     private static final String VANILLA_NAMESPACE = "minecraft";
 
@@ -21,9 +21,10 @@ final class SenseNames {
      * {@code ("minecraft", "farmland") -> "farmland"}, but {@code ("micradrone", "rotten_pumpkin") ->
      * "micradrone:rotten_pumpkin"}. Vanilla blocks/biomes - all a script realistically compares
      * against - stay short and readable, while anything from a mod keeps its namespace so two mods'
-     * same-named blocks can never collide into one script-visible name.
+     * same-named blocks can never collide into one script-visible name. Public: also reused by
+     * chat/LiveBlockSnapshotReader (AI chat's get_block_snapshot tool) for the same reason.
      */
-    static String simplify(String namespace, String path) {
+    public static String simplify(String namespace, String path) {
         return VANILLA_NAMESPACE.equals(namespace) ? path : namespace + ":" + path;
     }
 

@@ -6,6 +6,7 @@ final class FakeFarmBlockAccess implements FarmBlockAccess {
     private String plantedCrop = null;
     private boolean mature = false;
     private boolean rotten = false;
+    private int giantPumpkinSide = 0;
 
     void setMature(boolean mature) {
         this.mature = mature;
@@ -58,6 +59,11 @@ final class FakeFarmBlockAccess implements FarmBlockAccess {
     @Override
     public boolean isRotten() {
         return rotten;
+    }
+
+    @Override
+    public int giantPumpkinSide() {
+        return giantPumpkinSide;
     }
 
     // ---- perception (issue #10) ----

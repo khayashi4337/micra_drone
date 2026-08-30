@@ -240,46 +240,48 @@ public final class SampleScripts {
             """;
 
     public static final String PUMPKIN_SMART_HARVEST = """
-            # Verification script for the Phase 3 rework: plants pumpkin across the plot (unlock it
-            # first via the Corner Marker shop) and, every time you Run it, checks is_rotten() before
-            # harvesting. About 1 in 5 pumpkins grow defective - harvesting one earns nothing, so
-            # skipping straight to plant() on a rotten cell (no wasted harvest() call) is the efficient
-            # move. Re-run this periodically as the plot grows to watch rotten_skipped tick up.
+            # 本家 The Farmer Was Replaced 流のかぼちゃ(ショップで pumpkin を解放してから):
+            # 全面に植えて、腐ったマス(約1/5)は見つけ次第そのまま植え直し、全マスが実って
+            # 1つの巨大かぼちゃに融合するまで収穫を我慢する。最後に1マスで harvest() すると
+            # 一辺 n で n*n*n ポイント(n が 6 以上なら n*n*6)がまとめて入る。1マスずつ収穫
+            # すると1ポイントなので、かぼちゃのスコアはほぼこれで決まる。
+            # 1回の Run で畑を1周する。育つのを待ちながら、Run(またはレバー)を繰り返すこと。
             size = get_world_size()
             going_east = True
             row = 0
-            harvested = 0
-            rotten_skipped = 0
+            planted = 0
+            ripe = 0
             while row < size:
                 col = 0
-                while col < size - 1:
-                    till()
-                    if is_rotten():
-                        rotten_skipped = rotten_skipped + 1
+                while col < size:
+                    if get_ground() != "farmland":
+                        till()
+                    above = get_block_above()
+                    if above == "pumpkin":
+                        harvest()   # 古いバージョンの vanilla の実は1ポイントで片付ける
+                        above = "air"
+                    if is_rotten() or above == "air" or above == "pumpkin_stem" or above == "attached_pumpkin_stem":
+                        plant("pumpkin")   # 腐り・空き・古い苗は plant() でそのまま上書きできる
+                        planted = planted + 1
                     elif can_harvest():
-                        if harvest():
-                            harvested = harvested + 1
-                    plant("pumpkin")
-                    if going_east:
-                        move("east")
-                    else:
-                        move("west")
+                        ripe = ripe + 1
+                    if col < size - 1:
+                        if going_east:
+                            move("east")
+                        else:
+                            move("west")
                     col = col + 1
-                till()
-                if is_rotten():
-                    rotten_skipped = rotten_skipped + 1
-                elif can_harvest():
-                    if harvest():
-                        harvested = harvested + 1
-                plant("pumpkin")
                 if row < size - 1:
                     move("south")
                 going_east = not going_east
                 row = row + 1
-            print("good pumpkins harvested:")
-            print(harvested)
-            print("rotten pumpkins skipped (replanted without wasting harvest):")
-            print(rotten_skipped)
+            print("planted:")
+            print(planted)
+            print("ripe:")
+            print(ripe)
+            if ripe == size * size:
+                print("all ripe - harvesting the giant pumpkin:")
+                print(harvest())
             print("Pumpkin points:")
             print(get_points("pumpkin"))
             """;

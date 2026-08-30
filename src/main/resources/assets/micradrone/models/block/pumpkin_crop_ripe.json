@@ -1,0 +1,7 @@
+{
+  "parent": "minecraft:block/cube_column",
+  "textures": {
+    "end": "micradrone:block/pumpkin_crop_top",
+    "side": "micradrone:block/pumpkin_crop_side"
+  }
+}

@@ -13,7 +13,7 @@ import java.util.List;
 public final class CommandNames {
     public static final List<String> ALL = List.of(
             "move", "till", "plant", "harvest", "do_a_flip",
-            "can_harvest", "is_rotten",
+            "can_harvest", "is_rotten", "measure",
             "get_pos_x", "get_pos_y", "get_world_size", "get_points",
             "get_ground", "get_block_above", "get_time", "get_weather", "get_biome", "get_light", "get_plot_id",
             "print", "range",

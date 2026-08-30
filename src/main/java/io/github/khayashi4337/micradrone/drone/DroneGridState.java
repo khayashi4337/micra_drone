@@ -37,6 +37,15 @@ public interface DroneGridState {
     /** True if this plot may plant {@code crop} - "wheat" always is; others need buying in the shop. */
     boolean isUnlocked(String crop);
 
+    /**
+     * The fallback for a crop that is NOT unlocked: takes one real seed item for {@code crop}
+     * (a carrot, pumpkin seeds) out of the controller owner's inventory and returns true, or
+     * returns false if the owner is offline or has none. The shop unlock stays the "game" way -
+     * free planting forever - but a player holding actual carrots may plant them too (林さん's
+     * call: prefer the game's mechanism, accept real items when that isn't there).
+     */
+    boolean takeSeedFromOwner(String crop);
+
     /** Starts (or restarts) a one-shot cosmetic spin on the visible drone entity - see do_a_flip(). */
     void triggerDroneFlip();
 }

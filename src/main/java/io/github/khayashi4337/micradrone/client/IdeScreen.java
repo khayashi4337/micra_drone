@@ -11,6 +11,7 @@ import java.util.stream.Stream;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.MicraDroneClient;
+import io.github.khayashi4337.micradrone.chat.LineDiff;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
 import io.github.khayashi4337.micradrone.lang.CommandNames;
@@ -78,7 +79,9 @@ public class IdeScreen extends Screen {
     private static final int SHOP_BUTTON_WIDTH = 50;
     private static final int SHOP_BUTTON_HEIGHT = 14;
     private static final int BUTTON_HEIGHT = 20;
-    private static final int ROW_GAP = 4;
+    static final int ROW_GAP = 4; // package-private: IdeChatPanel lays out its rows with the same gap
+    /** Heading color while an AI change is under review - the same green the added lines use, so the two read as one state. */
+    private static final int REVIEW_HEADING_COLOR = 0xFF7EE08A;
     /** Icon-only Run control above the editor (green square, white triangle) - see {@link PlayButton}. */
     private static final int PLAY_BUTTON_SIZE = 20;
     /** Tight gap between the Play/Step icon buttons on the title bar - they read as one control pair. */
@@ -167,9 +170,29 @@ public class IdeScreen extends Screen {
     private String selectedScriptFromServer = "";
     private List<String> logLines = List.of();
     private Map<String, Long> pointsByCrop = Map.of();
+    private Set<String> unlockedCrops = Set.of();
     private ScriptListWidget scriptList;
     private MultiLineEditBox descriptionBox;
     private MultiLineEditBox logBox;
+
+    // The AI chat tab lives in its own class (IdeChatPanel); this screen only hosts it.
+    private final IdeChatPanel chatPanel = new IdeChatPanel(new ChatHost());
+    // AI-change review (Cursor-style Apply): while reviewDiff is non-null, the editor shows its
+    // merged view read-only. "x Reject" beside a block drops that block from reviewDiff; the Chat
+    // tab's "Accept rest" applies reviewDiff.acceptedText(), "Reject all" restores
+    // reviewOriginalText. See LineDiff for why this replaced the old overwrite-on-Insert.
+    private String reviewOriginalText;
+    private LineDiff reviewDiff;
+    /** The script as it was before Danger ON's last unreviewed apply - non-null while that apply can still be undone. */
+    private String lastAutoApplyOriginal;
+    /** Per-hunk "x Reject" marker rectangles from the last frame (null = hunk scrolled out of view), for hit-testing. */
+    private final List<int[]> reviewHunkMarkerRects = new java.util.ArrayList<>();
+    private static final int HUNK_MARKER_PADDING = 3;
+    private static final int HUNK_MARKER_INSET = 8;   // clear of the editor's scrollbar
+    private static final int HUNK_MARKER_BACKGROUND = 0xE0402020;
+    private static final int HUNK_MARKER_TEXT_COLOR = 0xFFFF7070;
+    /** Set by removed(): a late CLI reply must not rebuild (and re-aim the camera of) a closed screen. */
+    private boolean closed = false;
 
     private CornerMarkerScan.PlotBounds bounds = new CornerMarkerScan.PlotBounds(
             DroneControllerBlockEntity.DEFAULT_WORLD_SIZE, 1, 1, false, 0);
@@ -219,6 +242,9 @@ public class IdeScreen extends Screen {
             autocompleteDismissed = false;
         });
         editor.setBreakpointLines(breakpoints);
+        if (isReviewing()) {
+            applyReviewDecorations(); // a rebuild (List/Chat toggles, a landing reply) recreates the editor
+        }
         addRenderableWidget(editor);
 
         // 3-way now: Step moved up to the title bar icon row above (see the StepButton added earlier
@@ -235,8 +261,9 @@ public class IdeScreen extends Screen {
                         b -> PacketDistributor.sendToServer(new StopScriptPayload(pos)))
                 .bounds(leftX + 2 * (debugW + ROW_GAP), debugRowY, debugW, BUTTON_HEIGHT).build());
 
-        // 3-way now: the Run icon moved above the editor (see the PlayButton added earlier in this method).
-        int buttonW = (leftW - 2 * ROW_GAP) / 3;
+        // 4-way now: the Run icon moved above the editor (see the PlayButton added earlier in this
+        // method); Chat is the AI chat panel's tab, alongside List (GUI-reduction follow-up).
+        int buttonW = (leftW - 3 * ROW_GAP) / 4;
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.save"), b -> save())
                 .bounds(leftX, saveRowY, buttonW, BUTTON_HEIGHT).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.save_run"), b -> {
@@ -246,6 +273,8 @@ public class IdeScreen extends Screen {
                 .bounds(leftX + buttonW + ROW_GAP, saveRowY, buttonW, BUTTON_HEIGHT).build());
         listButton = addRenderableWidget(Button.builder(listButtonLabel(), b -> toggleListMode())
                 .bounds(leftX + 2 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
+        addRenderableWidget(Button.builder(chatPanel.tabButtonLabel(), b -> toggleChatMode())
+                .bounds(leftX + 3 * (buttonW + ROW_GAP), saveRowY, buttonW, BUTTON_HEIGHT).build());
 
         addRenderableWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.shop"),
                         b -> MicraDroneClient.openShopScreen(pos))
@@ -254,6 +283,8 @@ public class IdeScreen extends Screen {
 
         if (listMode) {
             initListModeWidgets(listPanelX(), listPanelWidth());
+        } else if (chatPanel.isOpen()) {
+            chatPanel.initWidgets(listPanelX(), listPanelWidth(), editorTop, editorTop + editorHeight);
         }
 
         if (this.minecraft != null && this.minecraft.level != null) {
@@ -307,12 +338,256 @@ public class IdeScreen extends Screen {
 
     private void toggleListMode() {
         listMode = !listMode;
+        if (listMode) {
+            chatPanel.setOpen(false);
+        }
         rebuildWidgets();
     }
 
     private Component listButtonLabel() {
         return Component.translatable(listMode
                 ? "gui.micradrone.ide_screen.list_close" : "gui.micradrone.ide_screen.list_open");
+    }
+
+    /**
+     * Chat is the AI panel's tab, mutually exclusive with List (only one right-half panel shows at
+     * a time). Opening it (not closing) also hands the panel the pointer item's pending region
+     * selection - see IdeChatPanel#consumePendingRegionIntoInput.
+     */
+    private void toggleChatMode() {
+        boolean turningOn = !chatPanel.isOpen();
+        chatPanel.setOpen(turningOn);
+        if (turningOn) {
+            listMode = false;
+        }
+        rebuildWidgets();
+        if (turningOn) {
+            chatPanel.consumePendingRegionIntoInput();
+        }
+    }
+
+    /** What IdeChatPanel needs from this screen - kept private so none of it leaks into the public API. */
+    private final class ChatHost implements IdeChatPanel.Host {
+        @Override
+        public Minecraft minecraft() {
+            return IdeScreen.this.minecraft;
+        }
+
+        @Override
+        public net.minecraft.client.gui.Font font() {
+            return IdeScreen.this.font;
+        }
+
+        @Override
+        public BlockPos controllerPos() {
+            return pos;
+        }
+
+        @Override
+        public CornerMarkerScan.PlotBounds plotBounds() {
+            return bounds;
+        }
+
+        @Override
+        public String editorText() {
+            return editorText;
+        }
+
+        @Override
+        public void beginReview(String proposed) {
+            IdeScreen.this.beginReview(proposed);
+        }
+
+        @Override
+        public boolean isReviewing() {
+            return IdeScreen.this.isReviewing();
+        }
+
+        @Override
+        public void acceptReview() {
+            IdeScreen.this.acceptReview();
+        }
+
+        @Override
+        public void rejectReview() {
+            IdeScreen.this.rejectReview();
+        }
+
+        @Override
+        public void applyWithoutReview(String proposed) {
+            IdeScreen.this.applyWithoutReview(proposed);
+        }
+
+        @Override
+        public boolean canUndoLastApply() {
+            return lastAutoApplyOriginal != null;
+        }
+
+        @Override
+        public void undoLastApply() {
+            IdeScreen.this.undoLastApply();
+        }
+
+        @Override
+        public List<String> logLines() {
+            return logLines;
+        }
+
+        @Override
+        public Map<String, Long> pointsByCrop() {
+            return pointsByCrop;
+        }
+
+        @Override
+        public Set<String> unlockedCrops() {
+            return unlockedCrops;
+        }
+
+        @Override
+        public <T extends net.minecraft.client.gui.components.events.GuiEventListener
+                & net.minecraft.client.gui.components.Renderable
+                & net.minecraft.client.gui.narration.NarratableEntry> T addWidget(T widget) {
+            return addRenderableWidget(widget);
+        }
+
+        @Override
+        public void rebuildWidgets() {
+            IdeScreen.this.rebuildWidgets();
+        }
+
+        @Override
+        public boolean isClosed() {
+            return closed;
+        }
+    }
+
+    // ---- Devkit test hooks -------------------------------------------------------------------
+    // Called only by a separate, unshipped test-automation companion mod (never part of the
+    // distributed jar) so the AI chat panel can be driven deterministically - a JSON API call
+    // instead of pixel-guessing 3D camera aim, which real-machine testing found synthetic mouse
+    // input can't drive (Minecraft/GLFW reads raw input directly). Every method name ends in
+    // "ForTesting" so a reviewer can immediately tell these aren't part of the normal UI flow.
+
+    public boolean isChatModeForTesting() {
+        return chatPanel.isOpen();
+    }
+
+    public boolean isChatSendInFlightForTesting() {
+        return chatPanel.isSendInFlight();
+    }
+
+    public String getChatLogForTesting() {
+        return chatPanel.transcriptText();
+    }
+
+    public String getEditorTextForTesting() {
+        return editorText;
+    }
+
+    /** The resolved edit/run target - "" while still unresolved (see updateLog). */
+    public String getScriptIdForTesting() {
+        return scriptId;
+    }
+
+    public boolean isReviewingForTesting() {
+        return isReviewing();
+    }
+
+    public void acceptReviewForTesting() {
+        acceptReview();
+        rebuildWidgets();
+    }
+
+    public void rejectReviewForTesting() {
+        rejectReview();
+        rebuildWidgets();
+    }
+
+    /** Same effect as typing {@code text} into the editor (replaces the whole script). */
+    public void setEditorTextForTesting(String text) {
+        editorText = text;
+        editor.setValue(text);
+    }
+
+    /** Same effect as clicking Save. */
+    public void saveForTesting() {
+        save();
+    }
+
+    /** Same effect as clicking the play button: runs the saved copy of the current script (does not save first). */
+    public void runForTesting() {
+        PacketDistributor.sendToServer(new RunScriptPayload(pos, scriptId));
+    }
+
+    /** The current script list as {@code id<TAB>displayName<TAB>description} lines, for the devkit's /scripts. */
+    public List<String> getAvailableScriptsForTesting() {
+        return availableScripts.stream()
+                .map(entry -> entry.id() + "\t" + entry.displayName() + "\t" + entry.description())
+                .toList();
+    }
+
+    /** Same effect as clicking {@code id}'s entry in List mode; a no-op for an id not in the list. */
+    public void selectScriptForTesting(String id) {
+        availableScripts.stream().filter(entry -> entry.id().equals(id)).findFirst().ifPresent(this::selectAndEdit);
+    }
+
+    public int getLastAssistantCodeBlockCountForTesting() {
+        return chatPanel.codeBlockCount();
+    }
+
+    public boolean isDangerModeForTesting() {
+        return chatPanel.isDangerMode();
+    }
+
+    /** Switches to the Chat tab if it isn't already showing - a no-op otherwise. */
+    public void openChatTabForTesting() {
+        if (!chatPanel.isOpen()) {
+            toggleChatMode();
+        }
+    }
+
+    /** Types {@code text} into the chat input and sends it, opening the Chat tab first if needed. */
+    public void sendChatMessageForTesting(String text) {
+        openChatTabForTesting();
+        chatPanel.typeAndSend(text);
+    }
+
+    /** Opens the review for the reply's Nth code block (block 0 opens on its own when a reply lands). */
+    public void insertCodeBlockForTesting(int index) {
+        chatPanel.reviewCodeBlock(index);
+        rebuildWidgets();
+    }
+
+    public int getReviewHunkCountForTesting() {
+        return isReviewing() ? reviewDiff.hunks().size() : 0;
+    }
+
+    /** Same effect as clicking the "x Reject" marker beside the Nth change block in the editor. */
+    public void rejectHunkForTesting(int index) {
+        rejectHunk(index);
+    }
+
+    /** Same effect as pressing Esc while "AI: thinking" is showing. */
+    public void cancelChatForTesting() {
+        chatPanel.cancelRoundTrip();
+    }
+
+    public boolean canUndoLastApplyForTesting() {
+        return lastAutoApplyOriginal != null;
+    }
+
+    /** Same effect as clicking "Undo AI change" after a Danger ON apply. */
+    public void undoLastApplyForTesting() {
+        undoLastApply();
+        rebuildWidgets();
+    }
+
+    public void setDangerModeForTesting(boolean enabled) {
+        chatPanel.setDangerMode(enabled);
+    }
+
+    public void compactForTesting() {
+        chatPanel.compact();
     }
 
     /**
@@ -361,12 +636,13 @@ public class IdeScreen extends Screen {
      * hand - no fixed slot id exists anymore) resolves it to the server's current selection.
      */
     public void updateLog(BlockPos sourcePos, List<String> lines, Map<String, Long> newPointsByCrop,
-            List<ScriptEntry> scripts, String selectedScript, String alias) {
+            Set<String> newUnlockedCrops, List<ScriptEntry> scripts, String selectedScript, String alias) {
         if (!sourcePos.equals(this.pos)) {
             return;
         }
         logLines = lines;
         pointsByCrop = newPointsByCrop;
+        unlockedCrops = newUnlockedCrops;
         selectedScriptFromServer = selectedScript;
         if (!scripts.isEmpty()) {
             availableScripts = scripts;
@@ -421,7 +697,147 @@ public class IdeScreen extends Screen {
     }
 
     private void save() {
+        if (isReviewing()) {
+            return; // the editor holds the merged review view, not a script - Accept/Reject first (the heading says so)
+        }
         PacketDistributor.sendToServer(new SaveScriptPayload(pos, scriptId, editorText));
+    }
+
+    // ---- AI-change review ---------------------------------------------------------------------
+
+    boolean isReviewing() {
+        return reviewDiff != null;
+    }
+
+    /**
+     * Shows {@code proposed} as a line diff against the current script, in the editor itself: the
+     * original lines the proposal drops stay visible (red), the lines it adds appear in place
+     * (green), everything else reads as context. The editor is locked until Accept or Reject so the
+     * merged view can't drift from the diff that colors it. A proposal identical to the script is
+     * simply a no-op.
+     */
+    private void beginReview(String proposed) {
+        LineDiff diff = LineDiff.between(editorText, proposed);
+        if (!diff.hasChanges()) {
+            return;
+        }
+        reviewOriginalText = editorText;
+        reviewDiff = diff;
+        lastAutoApplyOriginal = null; // a fresh review supersedes any earlier one-step undo
+        editor.setValue(diff.mergedText()); // the value listener mirrors this into editorText; endReview restores
+        applyReviewDecorations();
+    }
+
+    private void applyReviewDecorations() {
+        editor.setDiffLines(new HashSet<>(reviewDiff.lineNumbersOf(LineDiff.Kind.ADDED)),
+                new HashSet<>(reviewDiff.lineNumbersOf(LineDiff.Kind.REMOVED)));
+        editor.setLocked(true);
+    }
+
+    /** Accept applies every block not already rejected on its own - not the raw proposal. */
+    private void acceptReview() {
+        if (isReviewing()) {
+            endReview(reviewDiff.acceptedText());
+        }
+    }
+
+    private void rejectReview() {
+        endReview(reviewOriginalText);
+    }
+
+    /**
+     * Danger ON's counterpart of {@link #beginReview}: the proposal replaces the script outright,
+     * and the text it replaced is kept for one {@link #undoLastApply} - the safety net that lets
+     * the "just let the AI do it" mode stay recoverable.
+     */
+    private void applyWithoutReview(String proposed) {
+        if (proposed.equals(editorText)) {
+            return;
+        }
+        lastAutoApplyOriginal = editorText;
+        editorText = proposed;
+        editor.setValue(proposed);
+    }
+
+    private void undoLastApply() {
+        if (lastAutoApplyOriginal == null) {
+            return;
+        }
+        editorText = lastAutoApplyOriginal;
+        editor.setValue(editorText);
+        lastAutoApplyOriginal = null;
+    }
+
+    /**
+     * Turns down one change block (the "x Reject" marker beside it in the editor) and keeps the
+     * rest under review; once nothing is left the review closes on the original script. The
+     * Chat tab is rebuilt so its Accept/Reject row follows.
+     */
+    private void rejectHunk(int index) {
+        if (!isReviewing() || index < 0 || index >= reviewDiff.hunks().size()) {
+            return;
+        }
+        LineDiff remaining = reviewDiff.rejectHunk(index);
+        if (!remaining.hasChanges()) {
+            endReview(reviewOriginalText);
+            rebuildWidgets();
+            return;
+        }
+        reviewDiff = remaining;
+        editor.setValue(remaining.mergedText());
+        applyReviewDecorations();
+    }
+
+    /**
+     * Draws an "x Reject" marker at the right edge of each change block's first line and records
+     * its rectangle for {@link #mouseClicked} - the per-block control Cursor puts beside each
+     * hunk. Scrolls with the text; blocks scrolled out of the editor get no marker.
+     */
+    private void renderReviewHunkMarkers(GuiGraphics guiGraphics) {
+        reviewHunkMarkerRects.clear();
+        if (!isReviewing()) {
+            return;
+        }
+        String label = Component.translatable("gui.micradrone.ide_screen.reject_hunk").getString();
+        int markerWidth = this.font.width(label) + 2 * HUNK_MARKER_PADDING;
+        int right = editor.getX() + editor.getWidth() - HUNK_MARKER_INSET;
+        int firstTextY = editorTop + editor.gutterTopPadding();
+        int scroll = (int) editor.gutterScroll();
+        List<LineDiff.Hunk> hunks = reviewDiff.hunks();
+        for (int i = 0; i < hunks.size(); i++) {
+            int y = firstTextY + (hunks.get(i).firstLine() - 1) * DebugEditBox.LINE_HEIGHT - scroll;
+            if (y < editorTop || y + DebugEditBox.LINE_HEIGHT > editorTop + editorHeight) {
+                reviewHunkMarkerRects.add(null);
+                continue;
+            }
+            int[] rect = {right - markerWidth, y - 1, right, y + DebugEditBox.LINE_HEIGHT};
+            reviewHunkMarkerRects.add(rect);
+            guiGraphics.fill(rect[0], rect[1], rect[2], rect[3], HUNK_MARKER_BACKGROUND);
+            guiGraphics.drawString(this.font, label, rect[0] + HUNK_MARKER_PADDING, y, HUNK_MARKER_TEXT_COLOR, false);
+        }
+    }
+
+    /** Index of the hunk marker under the mouse, or -1. */
+    private int hunkMarkerAt(double mouseX, double mouseY) {
+        for (int i = 0; i < reviewHunkMarkerRects.size(); i++) {
+            int[] r = reviewHunkMarkerRects.get(i);
+            if (r != null && mouseX >= r[0] && mouseX < r[2] && mouseY >= r[1] && mouseY < r[3]) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private void endReview(String finalText) {
+        if (!isReviewing()) {
+            return;
+        }
+        reviewDiff = null;
+        reviewOriginalText = null;
+        editor.setDiffLines(Set.of(), Set.of());
+        editor.setLocked(false);
+        editorText = finalText;
+        editor.setValue(finalText);
     }
 
     /** Left edge of the title text within the title bar - shared by rendering, the click hit-test, and the rename box's position. */
@@ -519,6 +935,13 @@ public class IdeScreen extends Screen {
      */
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (button == 0 && isReviewing()) {
+            int hunk = hunkMarkerAt(mouseX, mouseY);
+            if (hunk >= 0) {
+                rejectHunk(hunk);
+                return true;
+            }
+        }
         if (renameBox != null) {
             boolean withinBox = mouseX >= renameBox.getX() && mouseX < renameBox.getX() + renameBox.getWidth()
                     && mouseY >= renameBox.getY() && mouseY < renameBox.getY() + renameBox.getHeight();
@@ -585,6 +1008,9 @@ public class IdeScreen extends Screen {
      */
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (chatPanel.handleKeyPressed(keyCode)) {
+            return true;
+        }
         if (renameBox != null) {
             switch (keyCode) {
                 case GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> {
@@ -630,6 +1056,7 @@ public class IdeScreen extends Screen {
     @Override
     public void tick() {
         super.tick();
+        chatPanel.tick();
         // Failsafe: if focus was stolen or lost some other way while renaming, don't leave an
         // orphaned, unfocused rename box on screen - close it (matches clicking away, see mouseClicked).
         if (renameBox != null && !renameBox.isFocused()) {
@@ -659,6 +1086,8 @@ public class IdeScreen extends Screen {
     /** Called when this screen is closed or replaced - the viewpoint must always come back. */
     @Override
     public void removed() {
+        closed = true;
+        chatPanel.close();
         if (this.minecraft != null) {
             cameraController.restore(this.minecraft);
         }
@@ -671,16 +1100,20 @@ public class IdeScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        if (listMode) {
+        if (listMode || chatPanel.isOpen()) {
             guiGraphics.fill(listPanelX() - ROW_GAP, 0, this.width, this.height, 0xE0101010);
         }
         renderEditorTitleBar(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
-        guiGraphics.drawCenteredString(this.font,
-                Component.translatable("gui.micradrone.ide_screen.heading", displayName),
-                this.width / 2, MARGIN, 0xFFFFFF);
+        chatPanel.render(guiGraphics);
+        Component heading = isReviewing()
+                ? Component.translatable("gui.micradrone.ide_screen.reviewing")
+                : Component.translatable("gui.micradrone.ide_screen.heading", displayName);
+        guiGraphics.drawCenteredString(this.font, heading, this.width / 2, MARGIN,
+                isReviewing() ? REVIEW_HEADING_COLOR : 0xFFFFFF);
         renderPointsHud(guiGraphics);
         renderGutter(guiGraphics);
+        renderReviewHunkMarkers(guiGraphics);
         refreshAutocomplete();
         renderAutocompletePopup(guiGraphics);
     }
