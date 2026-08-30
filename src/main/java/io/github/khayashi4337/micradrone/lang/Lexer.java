@@ -32,6 +32,19 @@ public final class Lexer {
 
     private int pos = 0;
     private int line = 1;
+    /**
+     * Indentation of the first line of code, taken as the script's "column zero". CPython
+     * rejects a script whose first statement is indented at all ({@code IndentationError:
+     * unexpected indent}); here that is deliberately relaxed, because the way scripts reach this
+     * lexer - pasted into the in-game editor from a chat window, a wiki, a terminal - routinely
+     * arrives with every line shifted right by the same few spaces, and "line 1: unexpected token
+     * INDENT" on a script that looks perfectly fine was a real-machine stumbling block. Only the
+     * uniform shift is absorbed: relative indentation (block structure) is judged exactly as
+     * before, and a later line indented LESS than the first statement is still an error, same as
+     * Python's "unindent does not match any outer indentation level".
+     */
+    private int baseIndent = 0;
+    private boolean seenCode = false;
 
     public Lexer(String source) {
         this.source = source;
@@ -47,7 +60,7 @@ public final class Lexer {
         while (pos < source.length()) {
             startOfLine();
         }
-        while (indents.peek() > 0) {
+        while (indents.peek() > baseIndent) {
             indents.pop();
             tokens.add(new Token(TokenType.DEDENT, "", null, line));
         }
@@ -79,10 +92,24 @@ public final class Lexer {
             return; // comment-only line
         }
 
+        if (!seenCode) {
+            // The first line of code defines column zero (see baseIndent) - the indent stack's
+            // floor moves up to it instead of this line opening a block nobody asked for.
+            seenCode = true;
+            baseIndent = indent;
+            indents.pop();
+            indents.push(baseIndent);
+        }
+
         if (indent > indents.peek()) {
             indents.push(indent);
             tokens.add(new Token(TokenType.INDENT, "", null, line));
         } else if (indent < indents.peek()) {
+            if (indent < baseIndent) {
+                // Left of the first statement: nothing on the stack can match, and popping the
+                // base level itself would leave the stack empty.
+                throw new MicraLangException(line, "unindent does not match any outer indentation level");
+            }
             while (indents.peek() > indent) {
                 indents.pop();
                 tokens.add(new Token(TokenType.DEDENT, "", null, line));
