@@ -13,8 +13,22 @@ import java.util.List;
  * which was the real-machine complaint: you couldn't see what the reply appended to, or what an
  * overwrite would throw away.
  *
- * <p>Standard longest-common-subsequence diff on whole lines; scripts here are at most a few
- * hundred lines, so the O(n*m) table is nothing. Minecraft-free and unit-tested.
+ * <p>Standard longest-common-subsequence diff on whole lines. Originally computed once per AI
+ * reply on scripts a few hundred lines long, where the raw O(n*m) table was nothing - but
+ * {@code IdeScreen}'s breakpoint-line tracking now runs this on every keystroke that lands while at
+ * least one breakpoint is set (see {@code BreakpointRetargeting#retarget}'s early exit), on scripts up to
+ * {@code DroneControllerBlockEntity#MAX_SCRIPT_CHARS} (10,000 characters, so thousands of short
+ * lines is a real shape). An untrimmed table at that size is hundreds of megabytes allocated on
+ * the render thread per keystroke - so {@link #between} first strips the common leading and
+ * trailing lines (the vast majority of any single-edit diff) and runs the O(n*m) table only on
+ * the unmatched middle, which for a typical one-line edit is tiny regardless of script length.
+ * A trimmed matching prefix/suffix is always part of SOME longest common subsequence, so the
+ * diff stays minimal - the same number of changed lines a full run would report. It is not
+ * always the identical alignment: where the untrimmed run has a tie between "removed here" and
+ * "added there", pinning the ends can break that tie the other way (diffing {@code "q\np"} into
+ * {@code "p\np"} puts the added line before the shared one rather than after). Both readings are
+ * equally minimal, and holding the ends fixed is if anything the better one for breakpoint
+ * tracking, which cares about where the UNCHANGED lines ended up. Minecraft-free and unit-tested.
  */
 public final class LineDiff {
     public enum Kind { SAME, REMOVED, ADDED }
@@ -39,6 +53,33 @@ public final class LineDiff {
     public static LineDiff between(String original, String proposed) {
         List<String> a = splitLines(original);
         List<String> b = splitLines(proposed);
+        int n = a.size();
+        int m = b.size();
+
+        int prefix = 0;
+        int maxPrefix = Math.min(n, m);
+        while (prefix < maxPrefix && a.get(prefix).equals(b.get(prefix))) {
+            prefix++;
+        }
+        int suffix = 0;
+        int maxSuffix = Math.min(n, m) - prefix;
+        while (suffix < maxSuffix && a.get(n - 1 - suffix).equals(b.get(m - 1 - suffix))) {
+            suffix++;
+        }
+
+        List<Line> out = new ArrayList<>();
+        for (int i = 0; i < prefix; i++) {
+            out.add(new Line(a.get(i), Kind.SAME));
+        }
+        out.addAll(lcsDiff(a.subList(prefix, n - suffix), b.subList(prefix, m - suffix)));
+        for (int i = n - suffix; i < n; i++) {
+            out.add(new Line(a.get(i), Kind.SAME));
+        }
+        return new LineDiff(out);
+    }
+
+    /** The untrimmed LCS diff of {@code a} against {@code b} - see {@link #between}'s own doc for why the caller trims first. */
+    private static List<Line> lcsDiff(List<String> a, List<String> b) {
         int n = a.size();
         int m = b.size();
         // lcs[i][j] = length of the LCS of a[i..] and b[j..]
@@ -72,7 +113,7 @@ public final class LineDiff {
         while (j < m) {
             out.add(new Line(b.get(j++), Kind.ADDED));
         }
-        return new LineDiff(out);
+        return out;
     }
 
     /** The merged review view, top to bottom. */
