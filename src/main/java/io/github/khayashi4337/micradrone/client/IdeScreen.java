@@ -195,7 +195,7 @@ public class IdeScreen extends Screen {
     private boolean closed = false;
 
     private CornerMarkerScan.PlotBounds bounds = new CornerMarkerScan.PlotBounds(
-            DroneControllerBlockEntity.DEFAULT_WORLD_SIZE, 1, 1, false, 0);
+            DroneControllerBlockEntity.DEFAULT_WORLD_SIZE, 1, 1, false, 0, 0);
     private int tickCounter = 0;
 
     public IdeScreen(BlockPos pos, String scriptId, String displayName) {
