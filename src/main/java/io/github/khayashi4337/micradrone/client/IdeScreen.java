@@ -512,9 +512,12 @@ public class IdeScreen extends Screen {
         rebuildWidgets();
     }
 
-    /** Same effect as typing {@code text} into the editor (replaces the whole script). */
+    /**
+     * Same effect as typing {@code text} into the editor (replaces the whole script) - including
+     * the breakpoint retargeting typing triggers, which is why {@code editorText} is left for the
+     * value listener to assign rather than set here (see {@link #applyWithoutReview}).
+     */
     public void setEditorTextForTesting(String text) {
-        editorText = text;
         editor.setValue(text);
     }
 
@@ -766,23 +769,29 @@ public class IdeScreen extends Screen {
      * Danger ON's counterpart of {@link #beginReview}: the proposal replaces the script outright,
      * and the text it replaced is kept for one {@link #undoLastApply} - the safety net that lets
      * the "just let the AI do it" mode stay recoverable.
+     *
+     * <p>{@code editorText} is deliberately NOT assigned here: the value listener does that, and
+     * doing it first would leave the listener comparing the new text against itself, so it would
+     * see no change and skip retargeting the breakpoints - the same trap {@link #endReview} spells
+     * out. An AI edit has to move breakpoints whether it arrives through review or straight through
+     * Danger ON.
      */
     private void applyWithoutReview(String proposed) {
         if (proposed.equals(editorText)) {
             return;
         }
         lastAutoApplyOriginal = editorText;
-        editorText = proposed;
         editor.setValue(proposed);
     }
 
+    /** Undoes one {@link #applyWithoutReview} - and, for the same reason as there, lets the listener assign {@code editorText}. */
     private void undoLastApply() {
         if (lastAutoApplyOriginal == null) {
             return;
         }
-        editorText = lastAutoApplyOriginal;
-        editor.setValue(editorText);
+        String restored = lastAutoApplyOriginal;
         lastAutoApplyOriginal = null;
+        editor.setValue(restored);
     }
 
     /**
