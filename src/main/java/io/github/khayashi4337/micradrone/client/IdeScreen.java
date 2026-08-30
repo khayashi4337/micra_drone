@@ -240,6 +240,25 @@ public class IdeScreen extends Screen {
         return dimensionKey + "|" + pos.asLong() + "|" + scriptId;
     }
 
+    /**
+     * Vanilla's own post-(re)build focus hook: both {@code Screen#init(Minecraft, int, int)} (the
+     * very first open) and {@code Screen#rebuildWidgets()} (every {@code List}/{@code Chat} toggle,
+     * picking a script from the list, and any other {@code rebuildWidgets()} call in this class)
+     * run {@code init()} and then this, in that order - so overriding it is the one place that
+     * covers all of them at once. Without it, none of those actions left anything focused, so the
+     * very next arrow-key press fell through to {@code Screen}'s own widget-to-widget navigation
+     * instead of reaching the editor (real-machine report). {@link #mouseClicked} separately steals
+     * focus back after a plain button press that does NOT rebuild (Save, Run, Step, ...) - the two
+     * are complementary, not redundant. Not chosen while {@code List}/{@code Chat} owns the right
+     * half (nothing in the editor makes sense to type into then).
+     */
+    @Override
+    protected void setInitialFocus() {
+        if (editor != null && !listMode && !chatPanel.isOpen()) {
+            setInitialFocus(editor);
+        }
+    }
+
     @Override
     protected void init() {
         int leftX = MARGIN;
@@ -916,6 +935,7 @@ public class IdeScreen extends Screen {
             removeWidget(renameBox);
             renameBox = null;
             this.setFocused(null);
+            setInitialFocus(); // no rebuild happens here, so the setInitialFocus() hook doesn't fire on its own
         }
     }
 
@@ -1031,7 +1051,18 @@ public class IdeScreen extends Screen {
             }
             return true;
         }
-        return super.mouseClicked(mouseX, mouseY, button);
+        boolean handled = super.mouseClicked(mouseX, mouseY, button);
+        // A click on any button leaves that BUTTON holding the keyboard focus (vanilla's
+        // ContainerEventHandler focuses whatever was clicked), after which the arrow keys walk the
+        // widget focus ring and typing goes nowhere - the "arrow keys sometimes jump the UI" real-
+        // machine report. None of this screen's buttons do anything with keyboard focus, so hand it
+        // straight back to the editor, the way a desktop IDE keeps the caret in the text after a
+        // toolbar click. Not while the Chat tab is open: there the next thing typed belongs in the
+        // chat's own input box, which is not a Button and so keeps its focus untouched.
+        if (getFocused() instanceof Button && editor != null && !chatPanel.isOpen()) {
+            setFocused(editor);
+        }
+        return handled;
     }
 
     /**
@@ -1043,8 +1074,9 @@ public class IdeScreen extends Screen {
      * keyboard</em>: Up/Down move the selection and Escape dismisses it, all three consumed
      * outright. Tab and Enter accept the highlighted suggestion, but are consumed only when it
      * actually applied - {@link #acceptAutocomplete} refuses a stale one, and the key then falls
-     * through to {@code super.keyPressed}, where Enter inserts its newline as usual and Tab moves
-     * the screen's focus (vanilla's own handling of it - the editor itself ignores Tab).
+     * through to {@code super.keyPressed}, where Enter inserts its newline as usual and Tab reaches
+     * {@link DebugEditBox#keyPressed}, which types {@code TAB_AS_SPACES} - it no longer moves the
+     * screen's focus (that vanilla fallback only ever ran because the editor used to ignore Tab).
      * Up/Down/Escape/Tab are the same keys vanilla's {@code CommandSuggestions.SuggestionsList}
      * binds; accepting with Enter as well is this editor's own addition. Key codes come from
      * {@link GLFW} rather than raw numbers. Everything else - including all of these once the popup
