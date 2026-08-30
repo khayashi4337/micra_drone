@@ -42,6 +42,9 @@ import net.minecraft.world.item.component.WritableBookContent;
  * world access) and avoids leaking one viewer's inventory contents into another's list.
  */
 final class ScriptChestLibrary {
+    private record ScrollLocation(Container container, ItemStack stack) {
+    }
+
     private ScriptChestLibrary() {
     }
 
@@ -116,8 +119,9 @@ final class ScriptChestLibrary {
         return entries;
     }
 
-    /** Resolves a scroll id back to its stack (written OR blank), re-scanning the chests; empty if it no longer points at a scroll. */
-    static Optional<ItemStack> resolveScroll(ServerLevel level, BlockPos controllerPos, String scrollId) {
+    /** Resolves a scroll id back to its owning container and stack, re-scanning the chests. */
+    private static Optional<ScrollLocation> resolveScrollLocation(
+            ServerLevel level, BlockPos controllerPos, String scrollId) {
         int chestIndex = ScriptId.scrollChestIndex(scrollId);
         int slot = ScriptId.scrollSlot(scrollId);
         List<Container> chests = findChests(level, controllerPos);
@@ -129,7 +133,14 @@ final class ScriptChestLibrary {
             return Optional.empty();
         }
         ItemStack stack = chest.getItem(slot);
-        return stack.getItem() instanceof ScriptScrollItem ? Optional.of(stack) : Optional.empty();
+        return stack.getItem() instanceof ScriptScrollItem
+                ? Optional.of(new ScrollLocation(chest, stack))
+                : Optional.empty();
+    }
+
+    /** Resolves a scroll id back to its stack (written OR blank); empty if it no longer points at a scroll. */
+    static Optional<ItemStack> resolveScroll(ServerLevel level, BlockPos controllerPos, String scrollId) {
+        return resolveScrollLocation(level, controllerPos, scrollId).map(ScrollLocation::stack);
     }
 
     /** {@link #resolveScroll}, unwrapped to the scroll's joined script source - empty text (not a missing Optional) for a blank scroll. */
@@ -142,11 +153,12 @@ final class ScriptChestLibrary {
      * scroll). False if the id no longer resolves to a written scroll.
      */
     static boolean saveScrollSource(ServerLevel level, BlockPos controllerPos, String scrollId, String source) {
-        Optional<ItemStack> stack = resolveScroll(level, controllerPos, scrollId);
-        if (stack.isEmpty()) {
+        Optional<ScrollLocation> location = resolveScrollLocation(level, controllerPos, scrollId);
+        if (location.isEmpty()) {
             return false;
         }
-        writeScrollSource(stack.get(), source);
+        writeScrollSource(location.get().stack(), source);
+        location.get().container().setChanged();
         return true;
     }
 
@@ -156,11 +168,12 @@ final class ScriptChestLibrary {
      * no longer resolves to a scroll.
      */
     static boolean renameScroll(ServerLevel level, BlockPos controllerPos, String scrollId, String newName) {
-        Optional<ItemStack> stack = resolveScroll(level, controllerPos, scrollId);
-        if (stack.isEmpty()) {
+        Optional<ScrollLocation> location = resolveScrollLocation(level, controllerPos, scrollId);
+        if (location.isEmpty()) {
             return false;
         }
-        stack.get().set(DataComponents.CUSTOM_NAME, Component.literal(newName));
+        location.get().stack().set(DataComponents.CUSTOM_NAME, Component.literal(newName));
+        location.get().container().setChanged();
         return true;
     }
 
