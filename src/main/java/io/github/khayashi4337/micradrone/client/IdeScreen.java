@@ -240,6 +240,25 @@ public class IdeScreen extends Screen {
         return dimensionKey + "|" + pos.asLong() + "|" + scriptId;
     }
 
+    /**
+     * Vanilla's own post-(re)build focus hook: both {@code Screen#init(Minecraft, int, int)} (the
+     * very first open) and {@code Screen#rebuildWidgets()} (every {@code List}/{@code Chat} toggle,
+     * picking a script from the list, and any other {@code rebuildWidgets()} call in this class)
+     * run {@code init()} and then this, in that order - so overriding it is the one place that
+     * covers all of them at once. Without it, none of those actions left anything focused, so the
+     * very next arrow-key press fell through to {@code Screen}'s own widget-to-widget navigation
+     * instead of reaching the editor (real-machine report). {@link #mouseClicked} separately steals
+     * focus back after a plain button press that does NOT rebuild (Save, Run, Step, ...) - the two
+     * are complementary, not redundant. Not chosen while {@code List}/{@code Chat} owns the right
+     * half (nothing in the editor makes sense to type into then).
+     */
+    @Override
+    protected void setInitialFocus() {
+        if (editor != null && !listMode && !chatPanel.isOpen()) {
+            setInitialFocus(editor);
+        }
+    }
+
     @Override
     protected void init() {
         int leftX = MARGIN;
@@ -916,6 +935,7 @@ public class IdeScreen extends Screen {
             removeWidget(renameBox);
             renameBox = null;
             this.setFocused(null);
+            setInitialFocus(); // no rebuild happens here, so the setInitialFocus() hook doesn't fire on its own
         }
     }
 
