@@ -14,23 +14,24 @@ package io.github.khayashi4337.micradrone.chat;
  * below N, and every stale echo would then outrank them and undo the edit in progress.
  */
 public final class RevisionClock {
-    private int lastSent = 0;
+    /** The highest revision this clock has issued or been shown - see {@link #accept}'s seeding. */
+    private int highestSeen = 0;
 
     /**
-     * Whether an echo carrying {@code serverRevision} is at least as new as this client's own last
-     * send, and so should be applied. Taking it also seeds the clock (see the class doc); refusing
-     * it leaves the clock alone, which is already above {@code serverRevision} by definition.
+     * Takes an echo carrying {@code serverRevision} if it is at least as new as this client's own
+     * last send, and reports whether it was taken. Taking one seeds the clock (see the class doc);
+     * refusing leaves it alone, since it is already above {@code serverRevision} by definition.
      */
     public boolean accept(int serverRevision) {
-        if (serverRevision < lastSent) {
+        if (serverRevision < highestSeen) {
             return false;
         }
-        lastSent = serverRevision;
+        highestSeen = serverRevision;
         return true;
     }
 
     /** The revision to stamp on the next send - strictly above every revision seen so far. */
     public int nextSend() {
-        return ++lastSent;
+        return ++highestSeen;
     }
 }

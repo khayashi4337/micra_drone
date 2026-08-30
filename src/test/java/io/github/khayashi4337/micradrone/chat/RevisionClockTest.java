@@ -60,4 +60,20 @@ class RevisionClockTest {
     void theFirstSyncOfAnUntouchedControllerIsAccepted() {
         assertTrue(new RevisionClock().accept(0));
     }
+
+    /**
+     * Two players on one controller: the other viewer's write comes back with a revision above
+     * anything this client issued, so it is taken rather than mistaken for a stale echo of one's
+     * own - and this client's next send still outranks it. This is the property
+     * {@code SetBreakpointsPayload}'s doc claims for the multi-viewer case.
+     */
+    @Test
+    void anotherViewersWriteIsTakenAndStillOutrankedByTheNextSend() {
+        RevisionClock clock = new RevisionClock();
+        for (int i = 0; i < 7; i++) {
+            clock.nextSend(); // 1..7
+        }
+        assertTrue(clock.accept(9), "another viewer's write carries a higher revision, not a stale one");
+        assertEquals(10, clock.nextSend());
+    }
 }
