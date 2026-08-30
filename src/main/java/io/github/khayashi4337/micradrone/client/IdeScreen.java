@@ -724,16 +724,11 @@ public class IdeScreen extends Screen {
 
     /**
      * Hands the editor back the undo history the last screen on this script parked in
-     * {@link #editHistories}, if it still describes the text the editor holds. Never overwrites a
-     * history the editor already has: a script switch reloads the source on a screen whose editor
-     * may still be carrying the previous script's history, and replacing that here would be
-     * pointless anyway - {@link DebugEditBox#setValue} clears it a line earlier. Called only from
-     * {@link #updateSource}.
+     * {@link #editHistories}, if it still describes the text the editor holds. Called only from
+     * {@link #updateSource}, right after the {@link DebugEditBox#setValue} that emptied the editor's
+     * own history - so there is never a live history here to protect, and nothing to check first.
      */
     private void restoreParkedHistory() {
-        if (editor.hasHistory()) {
-            return;
-        }
         editor.importHistory(editHistories.undoFor(draftKey(), editorText),
                 editHistories.redoFor(draftKey(), editorText));
     }
