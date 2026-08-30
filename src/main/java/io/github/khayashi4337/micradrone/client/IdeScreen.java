@@ -13,6 +13,7 @@ import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.MicraDroneClient;
 import io.github.khayashi4337.micradrone.chat.BreakpointRetargeting;
 import io.github.khayashi4337.micradrone.chat.LineDiff;
+import io.github.khayashi4337.micradrone.chat.RevisionClock;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
 import io.github.khayashi4337.micradrone.lang.CommandNames;
@@ -134,19 +135,10 @@ public class IdeScreen extends Screen {
     private final Set<Integer> breakpoints = new HashSet<>();
     private int debugState = DebugStatePayload.STATE_IDLE;
     /**
-     * The highest {@link SetBreakpointsPayload} revision this screen has either sent or seen the
-     * server report - see that field's own doc for what the number is for.
-     *
-     * <p>It starts at 0 on every open, because the screen itself is new every time (see
-     * {@code MicraDroneClient#openIdeScreen}) - but the SERVER's counter keeps whatever the last
-     * session left it at. So this is also raised to the server's value whenever an echo is accepted
-     * ({@link #updateDebugState}), which is what keeps the next send strictly above anything either
-     * side has seen. Without that, reopening a controller whose server-side revision had reached N
-     * would leave the first N edits of the new session sending 1, 2, 3... - all of them below N, so
-     * every stale echo would out-rank them and the pre-edit breakpoints would keep overwriting the
-     * live ones, which is exactly the bug the revision exists to prevent.
+     * Tells a fresh {@link SetBreakpointsPayload} echo from a stale one - see
+     * {@link RevisionClock}, which holds the whole rule and is unit-tested there.
      */
-    private int lastSentBreakpointRevision = 0;
+    private final RevisionClock breakpointRevisions = new RevisionClock();
 
     // Autocomplete popup state - see refreshAutocomplete/renderAutocompletePopup. Recomputed from
     // the editor's real caret every frame rather than pushed from an edit callback, so the popup
@@ -707,11 +699,7 @@ public class IdeScreen extends Screen {
         // sendBreakpoints), so an echo older than the last edit this screen sent must be ignored, or
         // it would overwrite already-further-along local state with stale data (real-machine
         // report: a breakpoint drifted mid-edit during a burst of typing above it).
-        if (breakpointRevision >= lastSentBreakpointRevision) {
-            // Catch up to the server's counter, so the next send outranks anything either side has
-            // seen - see lastSentBreakpointRevision's own doc for why a fresh screen can otherwise
-            // start out numbering its sends below the server's already-advanced revision.
-            lastSentBreakpointRevision = breakpointRevision;
+        if (breakpointRevisions.accept(breakpointRevision)) {
             breakpoints.clear();
             breakpoints.addAll(serverBreakpoints);
             editor.setBreakpointLines(breakpoints);
@@ -1049,15 +1037,13 @@ public class IdeScreen extends Screen {
 
     /**
      * The one place that sends {@link SetBreakpointsPayload} - both the gutter-click toggle and
-     * {@link #retargetBreakpoints} funnel through here so {@link #lastSentBreakpointRevision} is
-     * bumped on every send regardless of which triggered it, which is what lets
-     * {@link #updateDebugState} tell a stale echo of an earlier send apart from a fresh one (see
-     * that field's own doc and {@link SetBreakpointsPayload#revision}'s).
+     * {@link #retargetBreakpoints} funnel through here so the revision advances on every send
+     * regardless of which triggered it, which is what lets {@link #updateDebugState} tell a stale
+     * echo of an earlier send apart from a fresh one (see {@link RevisionClock}).
      */
     private void sendBreakpoints() {
-        lastSentBreakpointRevision++;
         PacketDistributor.sendToServer(
-                new SetBreakpointsPayload(pos, breakpoints.stream().sorted().toList(), lastSentBreakpointRevision));
+                new SetBreakpointsPayload(pos, breakpoints.stream().sorted().toList(), breakpointRevisions.nextSend()));
     }
 
     /**
