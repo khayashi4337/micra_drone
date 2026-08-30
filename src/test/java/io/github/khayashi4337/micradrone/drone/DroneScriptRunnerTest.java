@@ -1,6 +1,7 @@
 package io.github.khayashi4337.micradrone.drone;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
@@ -102,5 +103,24 @@ class DroneScriptRunnerTest {
         stopper.join();
 
         assertEquals(DroneScriptRunner.State.STOPPED, runner.getState());
+    }
+
+    @Test
+    void errorSetsErrorStateBeforeItIsRethrown() {
+        FakeMainThreadGateway gateway = new FakeMainThreadGateway();
+        PacedActionQueue queue = new PacedActionQueue();
+        FakeGridState grid = new FakeGridState(5);
+        List<String> errors = new ArrayList<>();
+        LiveDroneApi api = new LiveDroneApi(gateway, queue, grid, new FakeFarmBlockAccess(),
+                msg -> { throw new AssertionError("print failed"); });
+        DroneScriptRunner runner = new DroneScriptRunner(api, errors::add);
+
+        AssertionError error = assertThrows(AssertionError.class,
+                () -> runner.runProgram(parse("print(\"hello\")")));
+
+        assertEquals("print failed", error.getMessage());
+        assertEquals(DroneScriptRunner.State.ERROR, runner.getState());
+        assertEquals("print failed", runner.getLastError());
+        assertTrue(errors.getFirst().contains("AssertionError: print failed"));
     }
 }

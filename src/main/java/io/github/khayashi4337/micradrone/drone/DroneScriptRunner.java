@@ -60,7 +60,7 @@ public final class DroneScriptRunner {
         return lastError;
     }
 
-    private void runProgram(List<Stmt> program) {
+    void runProgram(List<Stmt> program) {
         try {
             new Interpreter(api, debug).run(program);
             state = State.IDLE;
@@ -70,10 +70,16 @@ public final class DroneScriptRunner {
             lastError = e.getMessage();
             logSink.accept("error: " + e.getMessage());
             state = State.ERROR; // set after lastError so a thread observing ERROR always sees the message too
-        } catch (RuntimeException e) {
-            lastError = String.valueOf(e.getMessage());
-            logSink.accept("error: " + e);
-            state = State.ERROR; // set after lastError so a thread observing ERROR always sees the message too
+        } catch (Throwable e) {
+            try {
+                lastError = String.valueOf(e.getMessage());
+                logSink.accept("error: " + e);
+            } finally {
+                state = State.ERROR;
+                if (e instanceof Error error) {
+                    throw error;
+                }
+            }
         }
     }
 }
