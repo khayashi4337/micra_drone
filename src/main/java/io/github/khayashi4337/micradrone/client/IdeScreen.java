@@ -12,6 +12,7 @@ import java.util.stream.Stream;
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.MicraDroneClient;
 import io.github.khayashi4337.micradrone.chat.LineDiff;
+import io.github.khayashi4337.micradrone.chat.UnsavedDraftStore;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
 import io.github.khayashi4337.micradrone.lang.CommandNames;
@@ -120,6 +121,26 @@ public class IdeScreen extends Screen {
     /** Human-facing name for the heading; mutable for the same reason as {@link #scriptId}. */
     private String displayName;
 
+    /**
+     * Unsaved edits, kept only for as long as the client is running (not persisted to disk or the
+     * server) so closing the IDE mid-edit - to check something else while paused in the debugger,
+     * say - doesn't throw the draft away: reopening on the same controller and script re-requests
+     * the source from the server as always, but a pending draft here wins over what comes back.
+     * Cleared once a save actually lands, since the draft and the saved copy agree again then.
+     * Keyed by dimension + controller position + script id: one controller holds several scripts,
+     * and two controllers can share the same coordinates in different dimensions (overworld /
+     * nether / end), which a position-only key would silently conflate. The key still carries no
+     * save/server identity, so it is cleared entirely on leaving a world/server (see
+     * {@code MicraDroneClient}'s constructor) - a stale draft must not resurface against a
+     * different save that happens to reuse the same dimension, coordinates and script id.
+     */
+    private static final UnsavedDraftStore unsavedDrafts = new UnsavedDraftStore();
+
+    /** Drops every pending draft - call on leaving a world/server, see {@link #unsavedDrafts}'s own doc. */
+    public static void clearUnsavedDrafts() {
+        unsavedDrafts.clear();
+    }
+
     private DebugEditBox editor;
     private Button pauseResumeButton;
     private Button listButton;
@@ -204,6 +225,19 @@ public class IdeScreen extends Screen {
         this.scriptId = scriptId;
         this.displayName = displayName;
         this.cameraController = new IdeCameraController(pos);
+        // Captured once at open time: the screen belongs to the dimension it was opened in, so the
+        // key is fixed for its lifetime rather than re-read from Minecraft.level on every keystroke
+        // and save (an external state that, in principle, could change under the open screen).
+        this.dimensionKey = Minecraft.getInstance().level == null
+                ? "" : Minecraft.getInstance().level.dimension().location().toString();
+    }
+
+    /** Dimension this screen was opened in (e.g. "minecraft:overworld"), part of {@link #draftKey}. */
+    private final String dimensionKey;
+
+    /** {@link #unsavedDrafts} key for the script currently open - see its own doc. */
+    private String draftKey() {
+        return dimensionKey + "|" + pos.asLong() + "|" + scriptId;
     }
 
     @Override
@@ -238,6 +272,11 @@ public class IdeScreen extends Screen {
         editor.setValue(editorText);
         editor.setValueListener(text -> {
             editorText = text;
+            // Mid-review the editor shows a merged diff view (red/green markup), not real script text
+            // - see beginReview. Its own setValue() also runs through this listener, so without the
+            // isReviewing() guard (enforced inside UnsavedDraftStore#record) a closed-mid-review IDE
+            // would resurface that markup as if it were the next draft.
+            unsavedDrafts.record(draftKey(), text, isReviewing());
             // Typing is the one thing that brings a dismissed popup back - see refreshAutocomplete.
             autocompleteDismissed = false;
         });
@@ -506,7 +545,7 @@ public class IdeScreen extends Screen {
     /** Same effect as typing {@code text} into the editor (replaces the whole script). */
     public void setEditorTextForTesting(String text) {
         editorText = text;
-        editor.setValue(text);
+        editor.setValue(text); // fires the value listener above, which records the draft itself
     }
 
     /** Same effect as clicking Save. */
@@ -620,11 +659,15 @@ public class IdeScreen extends Screen {
                 DroneControllerBlockEntity.DEFAULT_WORLD_SIZE);
     }
 
-    /** Called from {@code MicraDroneClient} when the requested script source arrives. */
+    /**
+     * Called from {@code MicraDroneClient} when the requested script source arrives. A pending
+     * unsaved draft for this exact controller+script (see {@link #unsavedDrafts}) wins over the
+     * server's saved copy, so reopening the IDE mid-edit picks up where typing left off.
+     */
     public void updateSource(BlockPos sourcePos, String sourceScriptName, String source) {
         if (sourcePos.equals(this.pos) && sourceScriptName.equals(this.scriptId)) {
-            editorText = source;
-            editor.setValue(source);
+            editorText = unsavedDrafts.resolve(draftKey(), source);
+            editor.setValue(editorText);
             autocompleteMatches = List.of();
         }
     }
@@ -700,6 +743,7 @@ public class IdeScreen extends Screen {
         if (isReviewing()) {
             return; // the editor holds the merged review view, not a script - Accept/Reject first (the heading says so)
         }
+        unsavedDrafts.forget(draftKey()); // now matches the server's saved copy, nothing left to protect
         PacketDistributor.sendToServer(new SaveScriptPayload(pos, scriptId, editorText));
     }
 

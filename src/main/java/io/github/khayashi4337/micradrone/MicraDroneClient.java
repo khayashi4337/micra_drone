@@ -23,6 +23,7 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.EntityRenderersEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
@@ -44,6 +45,15 @@ public class MicraDroneClient {
         NeoForge.EVENT_BUS.register(new EnchantTableWatcher());
         NeoForge.EVENT_BUS.register(new RegionPointerListener());
         NeoForge.EVENT_BUS.register(new RegionSelectionRenderer());
+        // The unsaved-draft cache's key carries no save/server identity, so it must not outlive the
+        // world it was written in - why, and what the key is made of, is documented once, on
+        // IdeScreen#unsavedDrafts. Logged (not just silently done) because this is the one piece of
+        // this whole feature no JUnit test can reach - a real-machine check needs a visible trace
+        // that this actually fired, not just that clearUnsavedDrafts() is correct in isolation.
+        NeoForge.EVENT_BUS.addListener((ClientPlayerNetworkEvent.LoggingOut event) -> {
+            IdeScreen.clearUnsavedDrafts();
+            MicraDrone.LOGGER.info("MicraDrone: cleared unsaved IDE drafts on world/server logout");
+        });
     }
 
     @SubscribeEvent
