@@ -47,8 +47,13 @@ public class MicraDroneClient {
         NeoForge.EVENT_BUS.register(new RegionSelectionRenderer());
         // The unsaved-draft cache's key carries no save/server identity, so it must not outlive the
         // world it was written in - why, and what the key is made of, is documented once, on
-        // IdeScreen#unsavedDrafts.
-        NeoForge.EVENT_BUS.addListener((ClientPlayerNetworkEvent.LoggingOut event) -> IdeScreen.clearUnsavedDrafts());
+        // IdeScreen#unsavedDrafts. Logged (not just silently done) because this is the one piece of
+        // this whole feature no JUnit test can reach - a real-machine check needs a visible trace
+        // that this actually fired, not just that clearUnsavedDrafts() is correct in isolation.
+        NeoForge.EVENT_BUS.addListener((ClientPlayerNetworkEvent.LoggingOut event) -> {
+            IdeScreen.clearUnsavedDrafts();
+            MicraDrone.LOGGER.info("MicraDrone: cleared unsaved IDE drafts on world/server logout");
+        });
     }
 
     @SubscribeEvent
