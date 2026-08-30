@@ -14,6 +14,7 @@ import io.github.khayashi4337.micradrone.MicraDroneClient;
 import io.github.khayashi4337.micradrone.chat.BreakpointRetargeting;
 import io.github.khayashi4337.micradrone.chat.LineDiff;
 import io.github.khayashi4337.micradrone.chat.RevisionClock;
+import io.github.khayashi4337.micradrone.chat.UnsavedDraftStore;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
 import io.github.khayashi4337.micradrone.lang.CommandNames;
@@ -122,6 +123,26 @@ public class IdeScreen extends Screen {
     /** Human-facing name for the heading; mutable for the same reason as {@link #scriptId}. */
     private String displayName;
 
+    /**
+     * Unsaved edits, kept only for as long as the client is running (not persisted to disk or the
+     * server) so closing the IDE mid-edit - to check something else while paused in the debugger,
+     * say - doesn't throw the draft away: reopening on the same controller and script re-requests
+     * the source from the server as always, but a pending draft here wins over what comes back.
+     * Cleared once a save actually lands, since the draft and the saved copy agree again then.
+     * Keyed by dimension + controller position + script id: one controller holds several scripts,
+     * and two controllers can share the same coordinates in different dimensions (overworld /
+     * nether / end), which a position-only key would silently conflate. The key still carries no
+     * save/server identity, so it is cleared entirely on leaving a world/server (see
+     * {@code MicraDroneClient}'s constructor) - a stale draft must not resurface against a
+     * different save that happens to reuse the same dimension, coordinates and script id.
+     */
+    private static final UnsavedDraftStore unsavedDrafts = new UnsavedDraftStore();
+
+    /** Drops every pending draft - call on leaving a world/server, see {@link #unsavedDrafts}'s own doc. */
+    public static void clearUnsavedDrafts() {
+        unsavedDrafts.clear();
+    }
+
     private DebugEditBox editor;
     private Button pauseResumeButton;
     private Button listButton;
@@ -211,6 +232,38 @@ public class IdeScreen extends Screen {
         this.scriptId = scriptId;
         this.displayName = displayName;
         this.cameraController = new IdeCameraController(pos);
+        // Captured once at open time: the screen belongs to the dimension it was opened in, so the
+        // key is fixed for its lifetime rather than re-read from Minecraft.level on every keystroke
+        // and save (an external state that, in principle, could change under the open screen).
+        this.dimensionKey = Minecraft.getInstance().level == null
+                ? "" : Minecraft.getInstance().level.dimension().location().toString();
+    }
+
+    /** Dimension this screen was opened in (e.g. "minecraft:overworld"), part of {@link #draftKey}. */
+    private final String dimensionKey;
+
+    /** {@link #unsavedDrafts} key for the script currently open - see its own doc. */
+    private String draftKey() {
+        return dimensionKey + "|" + pos.asLong() + "|" + scriptId;
+    }
+
+    /**
+     * Vanilla's own post-(re)build focus hook: both {@code Screen#init(Minecraft, int, int)} (the
+     * very first open) and {@code Screen#rebuildWidgets()} (every {@code List}/{@code Chat} toggle,
+     * picking a script from the list, and any other {@code rebuildWidgets()} call in this class)
+     * run {@code init()} and then this, in that order - so overriding it is the one place that
+     * covers all of them at once. Without it, none of those actions left anything focused, so the
+     * very next arrow-key press fell through to {@code Screen}'s own widget-to-widget navigation
+     * instead of reaching the editor (real-machine report). {@link #mouseClicked} separately steals
+     * focus back after a plain button press that does NOT rebuild (Save, Run, Step, ...) - the two
+     * are complementary, not redundant. Not chosen while {@code List}/{@code Chat} owns the right
+     * half (nothing in the editor makes sense to type into then).
+     */
+    @Override
+    protected void setInitialFocus() {
+        if (editor != null && !listMode && !chatPanel.isOpen()) {
+            setInitialFocus(editor);
+        }
     }
 
     @Override
@@ -246,6 +299,11 @@ public class IdeScreen extends Screen {
         editor.setValueListener(text -> {
             String previousText = editorText;
             editorText = text;
+            // Mid-review the editor shows a merged diff view (red/green markup), not real script text
+            // - see beginReview. Its own setValue() also runs through this listener, so without the
+            // isReviewing() guard (enforced inside UnsavedDraftStore#record) a closed-mid-review IDE
+            // would resurface that markup as if it were the next draft.
+            unsavedDrafts.record(draftKey(), text, isReviewing());
             retargetBreakpoints(previousText, text);
             // Typing is the one thing that brings a dismissed popup back - see refreshAutocomplete.
             autocompleteDismissed = false;
@@ -518,7 +576,7 @@ public class IdeScreen extends Screen {
      * value listener to assign rather than set here (see {@link #applyWithoutReview}).
      */
     public void setEditorTextForTesting(String text) {
-        editor.setValue(text);
+        editor.setValue(text); // fires the value listener, which records the draft AND retargets breakpoints
     }
 
     /** Same effect as clicking Save. */
@@ -633,23 +691,25 @@ public class IdeScreen extends Screen {
     }
 
     /**
-     * Called from {@code MicraDroneClient} when the requested script source arrives.
+     * Called from {@code MicraDroneClient} when the requested script source arrives. A pending
+     * unsaved draft for this exact controller+script (see {@link #unsavedDrafts}) wins over the
+     * server's saved copy, so reopening the IDE mid-edit picks up where typing left off.
      *
      * <p>The assignment before {@code setValue} is deliberate, and is the opposite case from
      * {@link #applyWithoutReview}: loading a script is not an edit of the one before it. Assigning
-     * first leaves the value listener comparing the incoming source against itself, so it retargets
+     * first leaves the value listener comparing the incoming text against itself, so it retargets
      * nothing - which is what we want. Letting it run would diff a blank editor (blank on every
      * path that asks for a source: {@link #selectAndEdit} clears it, and a freshly opened screen
-     * starts that way) against a whole script, and a blank
-     * editor is zero lines rather than one empty one (see {@code LineDiff#splitLines}) - so every
-     * line comes out ADDED with nothing marked SAME, no old line maps to a new one, and
-     * {@link #retargetBreakpoints} would drop the breakpoints outright and tell the server there
-     * are none. Same reasoning as {@link #endReview}'s.
+     * starts that way) against a whole script, and a blank editor is zero lines rather than one
+     * empty one (see {@code LineDiff#splitLines}) - so every line comes out ADDED with nothing
+     * marked SAME, no old line maps to a new one, and {@link #retargetBreakpoints} would drop the
+     * breakpoints outright and tell the server there are none. Same reasoning as
+     * {@link #endReview}'s.
      */
     public void updateSource(BlockPos sourcePos, String sourceScriptName, String source) {
         if (sourcePos.equals(this.pos) && sourceScriptName.equals(this.scriptId)) {
-            editorText = source;
-            editor.setValue(source);
+            editorText = unsavedDrafts.resolve(draftKey(), source);
+            editor.setValue(editorText);
             autocompleteMatches = List.of();
         }
     }
@@ -733,6 +793,7 @@ public class IdeScreen extends Screen {
         if (isReviewing()) {
             return; // the editor holds the merged review view, not a script - Accept/Reject first (the heading says so)
         }
+        unsavedDrafts.forget(draftKey()); // now matches the server's saved copy, nothing left to protect
         PacketDistributor.sendToServer(new SaveScriptPayload(pos, scriptId, editorText));
     }
 
@@ -920,6 +981,7 @@ public class IdeScreen extends Screen {
             removeWidget(renameBox);
             renameBox = null;
             this.setFocused(null);
+            setInitialFocus(); // no rebuild happens here, so the setInitialFocus() hook doesn't fire on its own
         }
     }
 
@@ -1035,7 +1097,18 @@ public class IdeScreen extends Screen {
             }
             return true;
         }
-        return super.mouseClicked(mouseX, mouseY, button);
+        boolean handled = super.mouseClicked(mouseX, mouseY, button);
+        // A click on any button leaves that BUTTON holding the keyboard focus (vanilla's
+        // ContainerEventHandler focuses whatever was clicked), after which the arrow keys walk the
+        // widget focus ring and typing goes nowhere - the "arrow keys sometimes jump the UI" real-
+        // machine report. None of this screen's buttons do anything with keyboard focus, so hand it
+        // straight back to the editor, the way a desktop IDE keeps the caret in the text after a
+        // toolbar click. Not while the Chat tab is open: there the next thing typed belongs in the
+        // chat's own input box, which is not a Button and so keeps its focus untouched.
+        if (getFocused() instanceof Button && editor != null && !chatPanel.isOpen()) {
+            setFocused(editor);
+        }
+        return handled;
     }
 
     /**
@@ -1077,8 +1150,9 @@ public class IdeScreen extends Screen {
      * keyboard</em>: Up/Down move the selection and Escape dismisses it, all three consumed
      * outright. Tab and Enter accept the highlighted suggestion, but are consumed only when it
      * actually applied - {@link #acceptAutocomplete} refuses a stale one, and the key then falls
-     * through to {@code super.keyPressed}, where Enter inserts its newline as usual and Tab moves
-     * the screen's focus (vanilla's own handling of it - the editor itself ignores Tab).
+     * through to {@code super.keyPressed}, where Enter inserts its newline as usual and Tab reaches
+     * {@link DebugEditBox#keyPressed}, which types {@code TAB_AS_SPACES} - it no longer moves the
+     * screen's focus (that vanilla fallback only ever ran because the editor used to ignore Tab).
      * Up/Down/Escape/Tab are the same keys vanilla's {@code CommandSuggestions.SuggestionsList}
      * binds; accepting with Enter as well is this editor's own addition. Key codes come from
      * {@link GLFW} rather than raw numbers. Everything else - including all of these once the popup
