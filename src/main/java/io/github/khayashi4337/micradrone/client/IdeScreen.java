@@ -638,8 +638,9 @@ public class IdeScreen extends Screen {
      * <p>The assignment before {@code setValue} is deliberate, and is the opposite case from
      * {@link #applyWithoutReview}: loading a script is not an edit of the one before it. Assigning
      * first leaves the value listener comparing the incoming source against itself, so it retargets
-     * nothing - which is what we want. Letting it run would diff a blank editor (always blank here:
-     * {@link #selectAndEdit} clears it, and it starts that way) against a whole script, and a blank
+     * nothing - which is what we want. Letting it run would diff a blank editor (blank on every
+     * path that asks for a source: {@link #selectAndEdit} clears it, and a freshly opened screen
+     * starts that way) against a whole script, and a blank
      * editor is zero lines rather than one empty one (see {@code LineDiff#splitLines}) - so every
      * line comes out ADDED with nothing marked SAME, no old line maps to a new one, and
      * {@link #retargetBreakpoints} would drop the breakpoints outright and tell the server there

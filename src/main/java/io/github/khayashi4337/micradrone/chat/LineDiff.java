@@ -15,7 +15,8 @@ import java.util.List;
  *
  * <p>Standard longest-common-subsequence diff on whole lines. Originally computed once per AI
  * reply on scripts a few hundred lines long, where the raw O(n*m) table was nothing - but
- * {@code IdeScreen}'s breakpoint-line tracking now runs this on every keystroke, on scripts up to
+ * {@code IdeScreen}'s breakpoint-line tracking now runs this on every keystroke that lands while at
+ * least one breakpoint is set (see {@code BreakpointRetargeting#retarget}'s early exit), on scripts up to
  * {@code DroneControllerBlockEntity#MAX_SCRIPT_CHARS} (10,000 characters, so thousands of short
  * lines is a real shape). An untrimmed table at that size is hundreds of megabytes allocated on
  * the render thread per keystroke - so {@link #between} first strips the common leading and
