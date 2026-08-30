@@ -294,12 +294,21 @@ final class DebugEditBox extends MultiLineEditBox {
     }
 
     /**
-     * Draws {@code [from, to)} of one row, clipping each span to it. Returns where the row's text
-     * ended: {@code drawString}'s return value already points exactly one pixel past the last glyph,
-     * so passing it straight through as the next span's start x joins the runs with no gap or
-     * overlap. Subtracting a pixel from it here (an earlier version of this method did, to "back off"
-     * before the next span) made runs overlap by one pixel at every span boundary instead - visible as
-     * collided, misaligned characters and a cursor bar that drifted from the text under it (issue #24).
+     * Draws {@code [from, to)} of one row, clipping each span to it, and returns where the row's
+     * text ended.
+     *
+     * <p>The {@code - 1} is load-bearing. {@code GuiGraphics#drawString(Font, String, int, int, int)}
+     * draws WITH a drop shadow, and {@code Font#drawInternal} then returns
+     * {@code (int) x + (dropShadow ? 1 : 0)} - one pixel PAST the last glyph, not the glyph's end
+     * (decompiled 1.21.1 {@code Font.java:204}). The glyph advance a run ends on already includes
+     * the usual 1px letter spacing, so that extra pixel is a pure offset, and vanilla's own
+     * {@code MultiLineEditBox#renderContents} subtracts it the same way
+     * ({@code MultiLineEditBox.java:142,155}). The cursor bar and selection band, meanwhile, are
+     * placed by {@code Font#width}, which sums advances with no shadow pixel. Without the
+     * {@code - 1}, every span boundary shifted the rest of the row 1px right of where
+     * {@code Font#width} says it is: on a line with a dozen color runs the text sat ~12px (two
+     * characters) right of the cursor bar - which is exactly the misalignment #24 set out to fix,
+     * and what removing the {@code - 1} (as #24 / #32 did) produced instead. Restored here.
      */
     private int drawRow(GuiGraphics guiGraphics, String value, List<Span> spans, int from, int to, int x, int y) {
         int cursorX = x;
@@ -309,7 +318,7 @@ final class DebugEditBox extends MultiLineEditBox {
             if (start >= end) {
                 continue;
             }
-            cursorX = guiGraphics.drawString(font, value.substring(start, end), cursorX, y, colorOf(span.kind()));
+            cursorX = guiGraphics.drawString(font, value.substring(start, end), cursorX, y, colorOf(span.kind())) - 1;
         }
         return cursorX;
     }
