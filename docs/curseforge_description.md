@@ -32,7 +32,8 @@ own. Inspired by the Steam game
 - **An in-game IDE that behaves like one** — syntax highlighting in a Monokai
   palette (keywords, strings, numbers and comments each get their own color,
   and a mistyped command name is visibly not the color a real one would be),
-  an autocomplete popup as you type a command name, run and step buttons on
+  an autocomplete popup as you type a command name, undo/redo (Ctrl+Z /
+  Ctrl+Y), run and step buttons on
   the editor's title bar, rename-in-place by double-clicking the script name,
   a debugger with breakpoints and step/step-out, a script list, and a live
   top-down camera view of your plot filling the other half of the screen.

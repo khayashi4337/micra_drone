@@ -117,6 +117,21 @@ final class DebugEditBox extends MultiLineEditBox {
     }
 
     /**
+     * Carries the history over from the widget this one replaces, when {@code IdeScreen} rebuilds
+     * its widgets (a List/Chat toggle, an arriving AI reply, a window resize) while the player is
+     * still editing the same script - see the call site. Only when the text matches: a rebuild that
+     * loaded something else is a different document, and inheriting a history that no longer
+     * describes it would let one Ctrl+Z paste back text from a script the player is no longer in.
+     */
+    void adoptHistoryFrom(DebugEditBox previous) {
+        if (previous == null || !previous.textField.value().equals(textField.value())) {
+            return;
+        }
+        undoStack.addAll(previous.undoStack);
+        redoStack.addAll(previous.redoStack);
+    }
+
+    /**
      * Runs {@code edit} and, if it changed the text, records the pre-edit state as an undo step
      * (and, as with any editor, forgets the redo branch - a fresh edit after an undo is a new
      * timeline). Edits that change nothing (Delete at the very end, an empty paste) leave history
