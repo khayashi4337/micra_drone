@@ -11,7 +11,10 @@ import java.util.stream.Stream;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.MicraDroneClient;
+import io.github.khayashi4337.micradrone.chat.BreakpointRetargeting;
+import io.github.khayashi4337.micradrone.chat.EditHistoryStore;
 import io.github.khayashi4337.micradrone.chat.LineDiff;
+import io.github.khayashi4337.micradrone.chat.RevisionClock;
 import io.github.khayashi4337.micradrone.chat.UnsavedDraftStore;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlockEntity;
@@ -95,6 +98,17 @@ public class IdeScreen extends Screen {
     // then log fills whatever's left.
     private static final int LIST_HEIGHT = 90;
     private static final int DESCRIPTION_HEIGHT = 28;
+    /** Labels both places the log appears: list mode's box and camera mode's strip (see {@link #renderLogOverlay}). */
+    private static final String LOG_LABEL_KEY = "gui.micradrone.drone_screen.log";
+    // Camera-mode log strip over the bottom of the plot view - see renderLogOverlay.
+    // Changing LOG_OVERLAY_ROWS means changing "最新6行" in README.md and in help scrolls 1/3
+    // (print()) and 3/3 (the editor section) too - the number is quoted there in prose.
+    private static final int LOG_OVERLAY_ROWS = 6;
+    private static final int LOG_OVERLAY_ROW_HEIGHT = 10;
+    private static final int LOG_OVERLAY_PADDING = 3;
+    private static final int LOG_OVERLAY_BACKGROUND = 0xB0101010;
+    private static final int LOG_OVERLAY_HEADING_COLOR = 0xFFA0A0A0;
+    private static final int LOG_OVERLAY_TEXT_COLOR = 0xFFF0F0F0;
 
     // Command autocomplete popup - see refreshAutocomplete/acceptAutocomplete/renderAutocompletePopup.
     private static final List<String> AUTOCOMPLETE_CANDIDATES =
@@ -136,9 +150,17 @@ public class IdeScreen extends Screen {
      */
     private static final UnsavedDraftStore unsavedDrafts = new UnsavedDraftStore();
 
-    /** Drops every pending draft - call on leaving a world/server, see {@link #unsavedDrafts}'s own doc. */
-    public static void clearUnsavedDrafts() {
+    /**
+     * The editor's undo history, parked here while the screen is closed so that closing the IDE to
+     * look at something and coming back doesn't cost the player their Ctrl+Z - the same reason and
+     * the same key as {@link #unsavedDrafts}, whose text this history describes.
+     */
+    private static final EditHistoryStore editHistories = new EditHistoryStore();
+
+    /** Drops every pending draft and parked history - call on leaving a world/server, see {@link #unsavedDrafts}'s own doc. */
+    public static void clearIdeSessionCaches() {
         unsavedDrafts.clear();
+        editHistories.clear();
     }
 
     private DebugEditBox editor;
@@ -153,6 +175,11 @@ public class IdeScreen extends Screen {
     // Debugger state, driven by DebugStatePayload; breakpoints are the client's working copy.
     private final Set<Integer> breakpoints = new HashSet<>();
     private int debugState = DebugStatePayload.STATE_IDLE;
+    /**
+     * Tells a fresh {@link SetBreakpointsPayload} echo from a stale one - see
+     * {@link RevisionClock}, which holds the whole rule and is unit-tested there.
+     */
+    private final RevisionClock breakpointRevisions = new RevisionClock();
 
     // Autocomplete popup state - see refreshAutocomplete/renderAutocompletePopup. Recomputed from
     // the editor's real caret every frame rather than pushed from an edit callback, so the popup
@@ -284,18 +311,29 @@ public class IdeScreen extends Screen {
                 .bounds(leftX + GUTTER_WIDTH + PLAY_BUTTON_SIZE + ICON_GAP, TOP_Y, PLAY_BUTTON_SIZE, PLAY_BUTTON_SIZE)
                 .build(StepButton::new));
 
+        DebugEditBox previousEditor = editor;
         editor = new DebugEditBox(this.font, leftX + GUTTER_WIDTH, editorTop, leftW - GUTTER_WIDTH, editorHeight,
                 Component.translatable("gui.micradrone.ide_screen.editor_placeholder"),
                 Component.translatable("gui.micradrone.ide_screen.editor"));
         editor.setCharacterLimit(DroneControllerBlockEntity.MAX_SCRIPT_CHARS);
         editor.setValue(editorText);
+        // init() runs again on every List/Chat toggle, every arriving AI reply, and every window
+        // resize - all of which build a new editor widget and would otherwise throw the undo history
+        // away with the old one. Typing, opening Chat to ask about it, then pressing Ctrl+Z is an
+        // ordinary thing to do, so the history has to outlive the widget the same way editorText and
+        // the breakpoint set already do. Must come after setValue above, which clears history by
+        // design (see DebugEditBox#setValue); adoptHistoryFrom checks the text still matches, so a
+        // rebuild that loads a different script genuinely starts fresh.
+        editor.adoptHistoryFrom(previousEditor);
         editor.setValueListener(text -> {
+            String previousText = editorText;
             editorText = text;
             // Mid-review the editor shows a merged diff view (red/green markup), not real script text
             // - see beginReview. Its own setValue() also runs through this listener, so without the
             // isReviewing() guard (enforced inside UnsavedDraftStore#record) a closed-mid-review IDE
             // would resurface that markup as if it were the next draft.
             unsavedDrafts.record(draftKey(), text, isReviewing());
+            retargetBreakpoints(previousText, text);
             // Typing is the one thing that brings a dismissed popup back - see refreshAutocomplete.
             autocompleteDismissed = false;
         });
@@ -389,7 +427,7 @@ public class IdeScreen extends Screen {
         int logHeight = editorTop + editorHeight - y;
         logBox = new MultiLineEditBox(this.font, rightX, y, rightW, logHeight,
                 Component.translatable("gui.micradrone.drone_screen.log_placeholder"),
-                Component.translatable("gui.micradrone.drone_screen.log"));
+                Component.translatable(LOG_LABEL_KEY));
         logBox.setValue(String.join("\n", logLines));
         addRenderableWidget(logBox);
     }
@@ -561,10 +599,13 @@ public class IdeScreen extends Screen {
         rebuildWidgets();
     }
 
-    /** Same effect as typing {@code text} into the editor (replaces the whole script). */
+    /**
+     * Same effect as typing {@code text} into the editor (replaces the whole script) - including
+     * the breakpoint retargeting typing triggers, which is why {@code editorText} is left for the
+     * value listener to assign rather than set here (see {@link #applyWithoutReview}).
+     */
     public void setEditorTextForTesting(String text) {
-        editorText = text;
-        editor.setValue(text); // fires the value listener above, which records the draft itself
+        editor.setValue(text); // fires the value listener, which records the draft AND retargets breakpoints
     }
 
     /** Same effect as clicking Save. */
@@ -658,6 +699,14 @@ public class IdeScreen extends Screen {
         scriptId = entry.id();
         displayName = entry.displayName();
         editorText = "";
+        // The rebuild below hands the new editor widget its predecessor's undo history whenever the
+        // text matches (see DebugEditBox#adoptHistoryFrom) - and here it always will, because the
+        // line above blanks editorText while the old widget may also be blank. Switching away from
+        // a script the player had just emptied would then carry that script's history into this
+        // one, and a Ctrl+Z would file its old text as this script's unsaved draft, overwriting
+        // what the server is about to send. Only this method knows a genuinely different script is
+        // being loaded, so it says so outright.
+        editor.clearHistory();
         autocompleteMatches = List.of();
         sourceRequested = true;
         PacketDistributor.sendToServer(new RequestScriptSourcePayload(pos, scriptId));
@@ -682,13 +731,40 @@ public class IdeScreen extends Screen {
      * Called from {@code MicraDroneClient} when the requested script source arrives. A pending
      * unsaved draft for this exact controller+script (see {@link #unsavedDrafts}) wins over the
      * server's saved copy, so reopening the IDE mid-edit picks up where typing left off.
+     *
+     * <p>The assignment before {@code setValue} is deliberate, and is the opposite case from
+     * {@link #applyWithoutReview}: loading a script is not an edit of the one before it. Assigning
+     * first leaves the value listener comparing the incoming text against itself, so it retargets
+     * nothing - which is what we want. Letting it run would diff a blank editor (blank on every
+     * path that asks for a source: {@link #selectAndEdit} clears it, and a freshly opened screen
+     * starts that way) against a whole script, and a blank editor is zero lines rather than one
+     * empty one (see {@code LineDiff#splitLines}) - so every line comes out ADDED with nothing
+     * marked SAME, no old line maps to a new one, and {@link #retargetBreakpoints} would drop the
+     * breakpoints outright and tell the server there are none. Same reasoning as
+     * {@link #endReview}'s.
      */
     public void updateSource(BlockPos sourcePos, String sourceScriptName, String source) {
         if (sourcePos.equals(this.pos) && sourceScriptName.equals(this.scriptId)) {
             editorText = unsavedDrafts.resolve(draftKey(), source);
             editor.setValue(editorText);
+            // The only place a parked history comes back. setValue just cleared the editor's, and
+            // the text it now holds is the one a parked history would describe - which is only true
+            // from here on: a screen that has just opened holds "" until this arrives, so there is
+            // nothing for init() to match against and no reason for it to try.
+            restoreParkedHistory();
             autocompleteMatches = List.of();
         }
+    }
+
+    /**
+     * Hands the editor back the undo history the last screen on this script parked in
+     * {@link #editHistories}, if it still describes the text the editor holds. Called only from
+     * {@link #updateSource}, right after the {@link DebugEditBox#setValue} that emptied the editor's
+     * own history - so there is never a live history here to protect, and nothing to check first.
+     */
+    private void restoreParkedHistory() {
+        editor.importHistory(editHistories.undoFor(draftKey(), editorText),
+                editHistories.redoFor(draftKey(), editorText));
     }
 
     /**
@@ -741,14 +817,22 @@ public class IdeScreen extends Screen {
     }
 
     /** Called from {@code MicraDroneClient} when a DebugStatePayload arrives for this controller. */
-    public void updateDebugState(BlockPos sourcePos, int state, int currentLine, List<Integer> serverBreakpoints) {
+    public void updateDebugState(BlockPos sourcePos, int state, int currentLine, List<Integer> serverBreakpoints,
+            int breakpointRevision) {
         if (!sourcePos.equals(this.pos)) {
             return;
         }
         debugState = state;
-        breakpoints.clear();
-        breakpoints.addAll(serverBreakpoints);
-        editor.setBreakpointLines(breakpoints);
+        // state/currentLine have only one writer (the server) and are always applied; breakpoints
+        // are also written locally between round trips (gutter clicks, edit-time retargeting - see
+        // sendBreakpoints), so an echo older than the last edit this screen sent must be ignored, or
+        // it would overwrite already-further-along local state with stale data (real-machine
+        // report: a breakpoint drifted mid-edit during a burst of typing above it).
+        if (breakpointRevisions.accept(breakpointRevision)) {
+            breakpoints.clear();
+            breakpoints.addAll(serverBreakpoints);
+            editor.setBreakpointLines(breakpoints);
+        }
         editor.setCurrentLine(state == DebugStatePayload.STATE_IDLE ? 0 : currentLine);
         pauseResumeButton.setMessage(pauseResumeLabel());
     }
@@ -812,23 +896,29 @@ public class IdeScreen extends Screen {
      * Danger ON's counterpart of {@link #beginReview}: the proposal replaces the script outright,
      * and the text it replaced is kept for one {@link #undoLastApply} - the safety net that lets
      * the "just let the AI do it" mode stay recoverable.
+     *
+     * <p>{@code editorText} is deliberately NOT assigned here: the value listener does that, and
+     * doing it first would leave the listener comparing the new text against itself, so it would
+     * see no change and skip retargeting the breakpoints - the same trap {@link #endReview} spells
+     * out. An AI edit has to move breakpoints whether it arrives through review or straight through
+     * Danger ON.
      */
     private void applyWithoutReview(String proposed) {
         if (proposed.equals(editorText)) {
             return;
         }
         lastAutoApplyOriginal = editorText;
-        editorText = proposed;
         editor.setValue(proposed);
     }
 
+    /** Undoes one {@link #applyWithoutReview} - and, for the same reason as there, lets the listener assign {@code editorText}. */
     private void undoLastApply() {
         if (lastAutoApplyOriginal == null) {
             return;
         }
-        editorText = lastAutoApplyOriginal;
-        editor.setValue(editorText);
+        String restored = lastAutoApplyOriginal;
         lastAutoApplyOriginal = null;
+        editor.setValue(restored);
     }
 
     /**
@@ -895,10 +985,19 @@ public class IdeScreen extends Screen {
         if (!isReviewing()) {
             return;
         }
+        // The value listener normally does this retargeting itself on every setValue() call, by
+        // diffing its own "before" (whatever editorText held) against "after". Here that would
+        // compare finalText against itself - editorText is about to be overwritten with finalText
+        // BEFORE editor.setValue(finalText) below, so the listener sees no change and retargets
+        // nothing. So this does it explicitly, from what the editor actually showed during review
+        // (the merged diff markup, with the rejected/accepted hunks already resolved into it) to
+        // what the script becomes - the real edit that just happened.
+        String mergedView = editorText;
         reviewDiff = null;
         reviewOriginalText = null;
         editor.setDiffLines(Set.of(), Set.of());
         editor.setLocked(false);
+        retargetBreakpoints(mergedView, finalText);
         editorText = finalText;
         editor.setValue(finalText);
     }
@@ -1047,7 +1146,7 @@ public class IdeScreen extends Screen {
                     breakpoints.add(line);
                 }
                 editor.setBreakpointLines(breakpoints);
-                PacketDistributor.sendToServer(new SetBreakpointsPayload(pos, breakpoints.stream().sorted().toList()));
+                sendBreakpoints();
             }
             return true;
         }
@@ -1063,6 +1162,36 @@ public class IdeScreen extends Screen {
             setFocused(editor);
         }
         return handled;
+    }
+
+    /**
+     * Keeps each breakpoint on the statement it was set on when editing inserts or removes lines
+     * above it - without this, a breakpoint was pinned to a raw line number, so pressing Enter a few
+     * lines up silently detached it from the code it was meant for (real-machine report: "a
+     * breakpoint doesn't follow along when the script reflows"). The actual line-matching lives in
+     * {@link BreakpointRetargeting#retarget}, which is Minecraft-free and unit-tested; this just owns
+     * the field and the network side-effect of telling the server, and only does either when the
+     * result actually differs from what's already set.
+     */
+    private void retargetBreakpoints(String previousText, String newText) {
+        Set<Integer> retargeted = BreakpointRetargeting.retarget(breakpoints, previousText, newText);
+        if (!retargeted.equals(breakpoints)) {
+            breakpoints.clear();
+            breakpoints.addAll(retargeted);
+            editor.setBreakpointLines(breakpoints);
+            sendBreakpoints();
+        }
+    }
+
+    /**
+     * The one place that sends {@link SetBreakpointsPayload} - both the gutter-click toggle and
+     * {@link #retargetBreakpoints} funnel through here so the revision advances on every send
+     * regardless of which triggered it, which is what lets {@link #updateDebugState} tell a stale
+     * echo of an earlier send apart from a fresh one (see {@link RevisionClock}).
+     */
+    private void sendBreakpoints() {
+        PacketDistributor.sendToServer(
+                new SetBreakpointsPayload(pos, breakpoints.stream().sorted().toList(), breakpointRevisions.nextSend()));
     }
 
     /**
@@ -1163,6 +1292,11 @@ public class IdeScreen extends Screen {
     @Override
     public void removed() {
         closed = true;
+        // Park the undo history before this screen (and its editor widget) goes away, so reopening
+        // on the same script can still take back the edit made just before closing.
+        if (editor != null) {
+            editHistories.retain(draftKey(), editor.exportUndo(), editor.exportRedo(), editorText);
+        }
         chatPanel.close();
         if (this.minecraft != null) {
             cameraController.restore(this.minecraft);
@@ -1188,6 +1322,7 @@ public class IdeScreen extends Screen {
         guiGraphics.drawCenteredString(this.font, heading, this.width / 2, MARGIN,
                 isReviewing() ? REVIEW_HEADING_COLOR : 0xFFFFFF);
         renderPointsHud(guiGraphics);
+        renderLogOverlay(guiGraphics);
         renderGutter(guiGraphics);
         renderReviewHunkMarkers(guiGraphics);
         refreshAutocomplete();
@@ -1226,6 +1361,45 @@ public class IdeScreen extends Screen {
                 .map(entry -> cropDisplayName(entry.getKey()) + ": " + entry.getValue())
                 .collect(Collectors.joining("   "));
         guiGraphics.drawCenteredString(this.font, text, this.width / 2, POINTS_Y, 0xFFFFFF);
+    }
+
+    /**
+     * The script's {@code print()} output, as a translucent strip over the bottom of the plot view
+     * in camera mode. Until now the log only existed inside list mode's third box, so in the mode a
+     * player actually watches the drone from there was no way to see what a running script printed
+     * at all (real-machine report). List mode keeps its full, scrollable box; this shows just the
+     * newest {@link #LOG_OVERLAY_ROWS} lines, newest at the bottom, the way a console tail reads,
+     * and draws nothing while there is nothing to show so an idle plot view stays uncluttered. A
+     * line too wide for the strip is cut to fit rather than wrapped, so one log line always costs
+     * exactly one row. The same {@link #logLines} snapshot list mode uses, refreshed by every
+     * {@link #updateLog}.
+     *
+     * <p>Skipped while the Chat tab is open for the same reason as list mode: the chat panel
+     * already occupies that right half (see {@link #toggleChatMode} and the panel's own
+     * {@code initWidgets} bounds), so there is no plot view under it to overlay.
+     */
+    private void renderLogOverlay(GuiGraphics guiGraphics) {
+        if (listMode || chatPanel.isOpen() || logLines.isEmpty()) {
+            return;
+        }
+        int left = listPanelX();
+        int right = left + listPanelWidth();
+        int bottom = editorTop + editorHeight;
+        int rows = Math.min(LOG_OVERLAY_ROWS, logLines.size());
+        int headingHeight = LOG_OVERLAY_ROW_HEIGHT;
+        int top = bottom - (LOG_OVERLAY_PADDING * 2 + headingHeight + rows * LOG_OVERLAY_ROW_HEIGHT);
+        guiGraphics.fill(left, top, right, bottom, LOG_OVERLAY_BACKGROUND);
+        int textX = left + LOG_OVERLAY_PADDING;
+        int maxTextWidth = right - left - LOG_OVERLAY_PADDING * 2;
+        int y = top + LOG_OVERLAY_PADDING;
+        guiGraphics.drawString(this.font, Component.translatable(LOG_LABEL_KEY),
+                textX, y, LOG_OVERLAY_HEADING_COLOR, false);
+        y += headingHeight;
+        for (String line : logLines.subList(logLines.size() - rows, logLines.size())) {
+            guiGraphics.drawString(this.font, this.font.plainSubstrByWidth(line, maxTextWidth),
+                    textX, y, LOG_OVERLAY_TEXT_COLOR, false);
+            y += LOG_OVERLAY_ROW_HEIGHT;
+        }
     }
 
     private static String cropDisplayName(String cropName) {

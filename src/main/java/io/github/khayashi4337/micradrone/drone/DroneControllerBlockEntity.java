@@ -157,6 +157,8 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     // IDE debugger (issue #6). Breakpoints are per-controller and session-only (deliberately not
     // saved to NBT); the controller is recreated for every run with the current set applied.
     private volatile Set<Integer> breakpoints = Set.of();
+    /** Whichever {@code SetBreakpointsPayload#revision} last wrote {@link #breakpoints} - see that field's own doc. */
+    private volatile int breakpointRevision = 0;
     private volatile DebugController debugController;
     /** The debug snapshot last pushed to the viewing player - see {@link #maybePushDebugState}. */
     private DebugStatePayload lastPushedDebugState;
@@ -702,9 +704,10 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      * the running script immediately and to every later run; echoed straight back so the IDE shows
      * the authoritative set.
      */
-    public void setBreakpoints(ServerPlayer requester, Set<Integer> lines) {
+    public void setBreakpoints(ServerPlayer requester, Set<Integer> lines, int revision) {
         addViewer(requester);
         breakpoints = Set.copyOf(lines);
+        breakpointRevision = revision;
         DebugController debug = debugController;
         if (debug != null) {
             debug.setBreakpoints(breakpoints);
@@ -745,7 +748,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         int state = !running ? DebugStatePayload.STATE_IDLE
                 : debug.isPaused() ? DebugStatePayload.STATE_PAUSED : DebugStatePayload.STATE_RUNNING;
         int line = running ? debug.currentLine() : 0;
-        return new DebugStatePayload(getBlockPos(), state, line, breakpoints.stream().sorted().toList());
+        return new DebugStatePayload(getBlockPos(), state, line, breakpoints.stream().sorted().toList(), breakpointRevision);
     }
 
     /** Unconditional push, e.g. when the IDE opens - the client learns the server-held breakpoints. */
