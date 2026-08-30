@@ -295,8 +295,11 @@ final class DebugEditBox extends MultiLineEditBox {
 
     /**
      * Draws {@code [from, to)} of one row, clipping each span to it. Returns where the row's text
-     * ended: {@code drawString} hands back the next glyph's position (one pixel of spacing past the
-     * text), so backing off that pixel each time makes the runs join seamlessly.
+     * ended: {@code drawString}'s return value already points exactly one pixel past the last glyph,
+     * so passing it straight through as the next span's start x joins the runs with no gap or
+     * overlap. Subtracting a pixel from it here (an earlier version of this method did, to "back off"
+     * before the next span) made runs overlap by one pixel at every span boundary instead - visible as
+     * collided, misaligned characters and a cursor bar that drifted from the text under it (issue #24).
      */
     private int drawRow(GuiGraphics guiGraphics, String value, List<Span> spans, int from, int to, int x, int y) {
         int cursorX = x;
