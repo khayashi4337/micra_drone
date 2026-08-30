@@ -1238,14 +1238,18 @@ public class IdeScreen extends Screen {
 
     /**
      * The script's {@code print()} output, as a translucent strip over the bottom of the plot view
-     * in camera mode. Until now the log only existed inside list mode's third box, so in the mode
-     * a player actually watches the drone from - and in the Chat tab - there was no way to see
-     * what a running script printed at all (real-machine report). List mode keeps its full,
-     * scrollable box; this shows just the newest {@link #LOG_OVERLAY_ROWS} lines, newest at the
-     * bottom, the way a console tail reads, and draws nothing while there is nothing to show so an
-     * idle plot view stays uncluttered. Lines wider than the strip are cut to fit rather than
-     * wrapped, so the row count (and the strip's height) stays fixed. The same
-     * {@link #logLines} snapshot list mode uses, refreshed by every {@link #updateLog}.
+     * in camera mode. Until now the log only existed inside list mode's third box, so in the mode a
+     * player actually watches the drone from there was no way to see what a running script printed
+     * at all (real-machine report). List mode keeps its full, scrollable box; this shows just the
+     * newest {@link #LOG_OVERLAY_ROWS} lines, newest at the bottom, the way a console tail reads,
+     * and draws nothing while there is nothing to show so an idle plot view stays uncluttered. A
+     * line too wide for the strip is cut to fit rather than wrapped, so one log line always costs
+     * exactly one row. The same {@link #logLines} snapshot list mode uses, refreshed by every
+     * {@link #updateLog}.
+     *
+     * <p>Skipped while the Chat tab is open for the same reason as list mode: the chat panel
+     * already occupies that right half (see {@link #toggleChatMode} and the panel's own
+     * {@code initWidgets} bounds), so there is no plot view under it to overlay.
      */
     private void renderLogOverlay(GuiGraphics guiGraphics) {
         if (listMode || chatPanel.isOpen() || logLines.isEmpty()) {
