@@ -632,7 +632,16 @@ public class IdeScreen extends Screen {
                 DroneControllerBlockEntity.DEFAULT_WORLD_SIZE);
     }
 
-    /** Called from {@code MicraDroneClient} when the requested script source arrives. */
+    /**
+     * Called from {@code MicraDroneClient} when the requested script source arrives.
+     *
+     * <p>The assignment before {@code setValue} is deliberate, and is the opposite case from
+     * {@link #applyWithoutReview}: loading a script is not an edit of the one before it. Assigning
+     * first leaves the value listener comparing the incoming source against itself, so it retargets
+     * nothing - which is what we want, because letting it run would diff a blank editor against a
+     * whole script and shove every breakpoint down by the length of the file (and send those wrong
+     * lines to the server). Same reasoning as {@link #endReview}'s.
+     */
     public void updateSource(BlockPos sourcePos, String sourceScriptName, String source) {
         if (sourcePos.equals(this.pos) && sourceScriptName.equals(this.scriptId)) {
             editorText = source;
