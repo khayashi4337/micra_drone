@@ -667,6 +667,14 @@ public class IdeScreen extends Screen {
         scriptId = entry.id();
         displayName = entry.displayName();
         editorText = "";
+        // The rebuild below hands the new editor widget its predecessor's undo history whenever the
+        // text matches (see DebugEditBox#adoptHistoryFrom) - and here it always will, because the
+        // line above blanks editorText while the old widget may also be blank. Switching away from
+        // a script the player had just emptied would then carry that script's history into this
+        // one, and a Ctrl+Z would file its old text as this script's unsaved draft, overwriting
+        // what the server is about to send. Only this method knows a genuinely different script is
+        // being loaded, so it says so outright.
+        editor.clearHistory();
         autocompleteMatches = List.of();
         sourceRequested = true;
         PacketDistributor.sendToServer(new RequestScriptSourcePayload(pos, scriptId));

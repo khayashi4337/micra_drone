@@ -132,6 +132,19 @@ final class DebugEditBox extends MultiLineEditBox {
     }
 
     /**
+     * Drops the history without touching the text, for when the screen already knows a different
+     * script is being loaded and the text alone cannot say so - {@link #adoptHistoryFrom}'s
+     * text-match test cannot tell "same script, rebuilt widget" from "switched away from a script
+     * that happened to be empty at the time". Deliberately not {@link #setValue}: that would fire
+     * the value listener, which would file the text as an unsaved draft under the script just
+     * switched TO.
+     */
+    void clearHistory() {
+        undoStack.clear();
+        redoStack.clear();
+    }
+
+    /**
      * Runs {@code edit} and, if it changed the text, records the pre-edit state as an undo step
      * (and, as with any editor, forgets the redo branch - a fresh edit after an undo is a new
      * timeline). Edits that change nothing (Delete at the very end, an empty paste) leave history
