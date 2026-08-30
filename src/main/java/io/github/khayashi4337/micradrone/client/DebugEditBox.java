@@ -150,11 +150,6 @@ final class DebugEditBox extends MultiLineEditBox {
         redoStack.clear();
     }
 
-    /** True if there is anything to undo or redo - {@code IdeScreen} asks before restoring a parked history over a live one. */
-    boolean hasHistory() {
-        return !undoStack.isEmpty() || !redoStack.isEmpty();
-    }
-
     /** The undo steps, newest first, for parking in an {@link EditHistoryStore} while the screen is closed. */
     List<Snapshot> exportUndo() {
         return List.copyOf(undoStack);
