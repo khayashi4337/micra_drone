@@ -45,10 +45,9 @@ public class MicraDroneClient {
         NeoForge.EVENT_BUS.register(new EnchantTableWatcher());
         NeoForge.EVENT_BUS.register(new RegionPointerListener());
         NeoForge.EVENT_BUS.register(new RegionSelectionRenderer());
-        // IdeScreen's unsaved-draft cache is keyed by controller position + script id, with no
-        // world/server identity - leaving one save/server without clearing it would let a stale
-        // draft resurface against an unrelated save that happens to reuse the same coordinates and
-        // script id (most commonly the built-in "controller" script every controller has).
+        // The unsaved-draft cache's key carries no save/server identity, so it must not outlive the
+        // world it was written in - why, and what the key is made of, is documented once, on
+        // IdeScreen#unsavedDrafts.
         NeoForge.EVENT_BUS.addListener((ClientPlayerNetworkEvent.LoggingOut event) -> IdeScreen.clearUnsavedDrafts());
     }
 

@@ -225,8 +225,9 @@ public class IdeScreen extends Screen {
         this.scriptId = scriptId;
         this.displayName = displayName;
         this.cameraController = new IdeCameraController(pos);
-        // Captured once at open time: the screen belongs to the dimension it was opened in, and
-        // Minecraft.level is null again by the time removed() runs after a disconnect.
+        // Captured once at open time: the screen belongs to the dimension it was opened in, so the
+        // key is fixed for its lifetime rather than re-read from Minecraft.level on every keystroke
+        // and save (an external state that, in principle, could change under the open screen).
         this.dimensionKey = Minecraft.getInstance().level == null
                 ? "" : Minecraft.getInstance().level.dimension().location().toString();
     }
