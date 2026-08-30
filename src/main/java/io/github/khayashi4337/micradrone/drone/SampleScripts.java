@@ -130,6 +130,72 @@ public final class SampleScripts {
             print(get_points("wheat"))
             """;
 
+    public static final String SIGNAL_HARVEST_READY = """
+            # コーナーマーカーのredstone出力を使って、収穫できる作物があるかを外から
+            # 見えるランプで知らせる。マーカーの隣にレッドストーンランプを置いておけば、
+            # 点灯/消灯だけで畑の様子がひと目でわかる(何も収穫しない、read-onlyな見回り)。
+            size = get_world_size()
+            ready = False
+            going_east = True
+            row = 0
+            while row < size:
+                col = 0
+                while col < size - 1:
+                    if can_harvest():
+                        ready = True
+                    if going_east:
+                        move("east")
+                    else:
+                        move("west")
+                    col = col + 1
+                if can_harvest():
+                    ready = True
+                if row < size - 1:
+                    move("south")
+                going_east = not going_east
+                row = row + 1
+            set_output(ready)
+            print("harvest ready:")
+            print(ready)
+            """;
+
+    public static final String PAIR_AND_SIGNAL_HARVEST = """
+            # 別のプロットのマーカーとペアリングし、収穫できる作物があるかを相手側の
+            # マーカーにも伝える(距離を問わないワイヤレスredstone)。相手のIDは
+            # get_plot_id()で調べられる。実行前に、相手側のプロットでも
+            # pair_with(このプロットのID)を実行しておくこと - 片方だけの宣言では
+            # ペアは成立しない(見知らぬ相手に勝手に信号を送れないようにするため)。
+            pair_with("north_field")
+            if is_paired():
+                print("paired with north_field")
+            else:
+                print("not paired yet - run pair_with() on the other plot too")
+
+            size = get_world_size()
+            ready = False
+            going_east = True
+            row = 0
+            while row < size:
+                col = 0
+                while col < size - 1:
+                    if can_harvest():
+                        ready = True
+                    if going_east:
+                        move("east")
+                    else:
+                        move("west")
+                    col = col + 1
+                if can_harvest():
+                    ready = True
+                if row < size - 1:
+                    move("south")
+                going_east = not going_east
+                row = row + 1
+            set_output(ready)
+            print("harvest ready:")
+            print(ready)
+            """;
+
     public static final String COUNT_GROUND = """
             # リストと辞書の練習。プロットを一周して、足元の地面を種類ごとに数える。
             # 種類が何通りあるか分からなくても、辞書ならキーを増やしていくだけで数えられる。
@@ -298,8 +364,10 @@ public final class SampleScripts {
         all.put("till_and_plant.mdrone", TILL_AND_PLANT);
         all.put("survey_plot.mdrone", SURVEY_PLOT);
         all.put("harvest_when_ready.mdrone", HARVEST_WHEN_READY);
+        all.put("signal_harvest_ready.mdrone", SIGNAL_HARVEST_READY);
         all.put("count_ground.mdrone", COUNT_GROUND);
         all.put("carrot_farm.mdrone", CARROT_FARM);
+        all.put("pair_and_signal_harvest.mdrone", PAIR_AND_SIGNAL_HARVEST);
         all.put("pumpkin_smart_harvest.mdrone", PUMPKIN_SMART_HARVEST);
         return Map.copyOf(all);
     }
