@@ -1,5 +1,6 @@
 package io.github.khayashi4337.micradrone.client;
 
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -120,6 +121,16 @@ public class IdeScreen extends Screen {
     /** Human-facing name for the heading; mutable for the same reason as {@link #scriptId}. */
     private String displayName;
 
+    /**
+     * Unsaved edits, kept only for as long as the client is running (not persisted to disk or the
+     * server) so closing the IDE mid-edit - to check something else while paused in the debugger,
+     * say - doesn't throw the draft away: reopening on the same controller and script re-requests
+     * the source from the server as always, but a pending draft here wins over what comes back.
+     * Cleared once a save actually lands, since the draft and the saved copy agree again then.
+     * Keyed by controller position + script id, since one controller holds several scripts.
+     */
+    private static final Map<String, String> unsavedDrafts = new HashMap<>();
+
     private DebugEditBox editor;
     private Button pauseResumeButton;
     private Button listButton;
@@ -206,6 +217,11 @@ public class IdeScreen extends Screen {
         this.cameraController = new IdeCameraController(pos);
     }
 
+    /** {@link #unsavedDrafts} key for the script currently open - see its own doc. */
+    private String draftKey() {
+        return pos.asLong() + "|" + scriptId;
+    }
+
     @Override
     protected void init() {
         int leftX = MARGIN;
@@ -238,6 +254,13 @@ public class IdeScreen extends Screen {
         editor.setValue(editorText);
         editor.setValueListener(text -> {
             editorText = text;
+            if (!isReviewing()) {
+                // Mid-review the editor shows a merged diff view (red/green markup), not real script
+                // text - see beginReview. Its own setValue() also runs through this listener, so
+                // without this guard a closed-mid-review IDE would resurface that markup as if it
+                // were the next draft instead of the (locked, not-yet-decided) proposal it actually is.
+                unsavedDrafts.put(draftKey(), text);
+            }
             // Typing is the one thing that brings a dismissed popup back - see refreshAutocomplete.
             autocompleteDismissed = false;
         });
@@ -506,6 +529,7 @@ public class IdeScreen extends Screen {
     /** Same effect as typing {@code text} into the editor (replaces the whole script). */
     public void setEditorTextForTesting(String text) {
         editorText = text;
+        unsavedDrafts.put(draftKey(), text);
         editor.setValue(text);
     }
 
@@ -620,11 +644,15 @@ public class IdeScreen extends Screen {
                 DroneControllerBlockEntity.DEFAULT_WORLD_SIZE);
     }
 
-    /** Called from {@code MicraDroneClient} when the requested script source arrives. */
+    /**
+     * Called from {@code MicraDroneClient} when the requested script source arrives. A pending
+     * unsaved draft for this exact controller+script (see {@link #unsavedDrafts}) wins over the
+     * server's saved copy, so reopening the IDE mid-edit picks up where typing left off.
+     */
     public void updateSource(BlockPos sourcePos, String sourceScriptName, String source) {
         if (sourcePos.equals(this.pos) && sourceScriptName.equals(this.scriptId)) {
-            editorText = source;
-            editor.setValue(source);
+            editorText = unsavedDrafts.getOrDefault(draftKey(), source);
+            editor.setValue(editorText);
             autocompleteMatches = List.of();
         }
     }
@@ -700,6 +728,7 @@ public class IdeScreen extends Screen {
         if (isReviewing()) {
             return; // the editor holds the merged review view, not a script - Accept/Reject first (the heading says so)
         }
+        unsavedDrafts.remove(draftKey()); // now matches the server's saved copy, nothing left to protect
         PacketDistributor.sendToServer(new SaveScriptPayload(pos, scriptId, editorText));
     }
 
