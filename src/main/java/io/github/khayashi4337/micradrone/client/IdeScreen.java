@@ -1054,8 +1054,9 @@ public class IdeScreen extends Screen {
      * keyboard</em>: Up/Down move the selection and Escape dismisses it, all three consumed
      * outright. Tab and Enter accept the highlighted suggestion, but are consumed only when it
      * actually applied - {@link #acceptAutocomplete} refuses a stale one, and the key then falls
-     * through to {@code super.keyPressed}, where Enter inserts its newline as usual and Tab moves
-     * the screen's focus (vanilla's own handling of it - the editor itself ignores Tab).
+     * through to {@code super.keyPressed}, where Enter inserts its newline as usual and Tab reaches
+     * {@link DebugEditBox#keyPressed}, which types {@code TAB_AS_SPACES} - it no longer moves the
+     * screen's focus (that vanilla fallback only ever ran because the editor used to ignore Tab).
      * Up/Down/Escape/Tab are the same keys vanilla's {@code CommandSuggestions.SuggestionsList}
      * binds; accepting with Enter as well is this editor's own addition. Key codes come from
      * {@link GLFW} rather than raw numbers. Everything else - including all of these once the popup
