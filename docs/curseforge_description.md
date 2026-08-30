@@ -21,7 +21,10 @@ own. Inspired by the Steam game
   `get_points`, `print`, `do_a_flip`, ...), plus perception commands that read
   the world around the drone (`get_ground`, `get_block_above`, `get_time`,
   `get_weather`, `get_biome`, `get_light`, `get_plot_id`). Scripts are written on a
-  rewritable **Script Scroll** item, or in the in-game IDE below.
+  rewritable **Script Scroll** item, or in the in-game IDE below. Indentation
+  works the way it does in Python, except that a script shifted uniformly to
+  the right still runs — so pasting from a chat window or a wiki doesn't
+  strand you on an indentation error before the first line.
 - **Lists, dicts and sets** — `items = [1, 2, 3]`, `costs = {"wheat": 20}`,
   `seen = set()`, indexing (`items[0]`, nested as deep as you like), looping
   straight over a collection, `x in items`, and the methods to build one up
@@ -33,10 +36,14 @@ own. Inspired by the Steam game
   palette (keywords, strings, numbers and comments each get their own color,
   and a mistyped command name is visibly not the color a real one would be),
   an autocomplete popup as you type a command name, undo/redo (Ctrl+Z /
-  Ctrl+Y), run and step buttons on the editor's title bar, rename-in-place
-  by double-clicking the script name, a debugger with breakpoints and
-  step/step-out, a script list, and a live top-down camera view of your plot
-  filling the other half of the screen.
+  Ctrl+Y), Tab to indent by four spaces, run and step buttons on the
+  editor's title bar, rename-in-place by double-clicking the script name,
+  a debugger whose breakpoints follow their line as you insert or delete
+  lines above them, a script list, and a live top-down camera view of your
+  plot filling the other half of the screen — with whatever your script
+  `print`s scrolling in a strip along the bottom of that view, so you can
+  watch the drone and read its output at the same time. Close the IDE
+  mid-edit and your unsaved changes are still there when you reopen it.
 - **AI chat, powered by your own claude CLI** — a Chat tab in the IDE talks
   directly to the copy of Claude Code already logged into your own machine
   (no API key, no extra cost beyond your existing subscription).
@@ -74,13 +81,7 @@ own. Inspired by the Steam game
   before placing it to give it a friendly name instead (world-wide unique -
   a duplicate name is rejected with a chat message). Right-click the marker
   (the Shop screen) to see its current id before using it in a script with
-  `get_plot_id()`. The marker also emits a redstone signal on every side
-  once a script calls `set_output(True)` — wire it into a lamp, a door, or
-  anything else redstone can drive, and read the current state back with
-  `get_output()`. Two markers can also pair up across any distance with
-  `pair_with(id)` (both sides have to name each other back — no reaching
-  into someone else's build uninvited), after which `set_output()` on
-  either one lights up both, wireless-redstone style.
+  `get_plot_id()`.
 - **Learn from the enchanting table** — right-click an enchanting table to
   open its normal vanilla screen, then drag a blank Script Scroll into its
   item slot: the screen switches to a picker offering starter scripts and a
