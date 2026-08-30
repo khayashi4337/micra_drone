@@ -62,4 +62,42 @@ class BreakpointRetargetingTest {
         Set<Integer> result = BreakpointRetargeting.retarget(empty, "a", "a\nb");
         assertSame(empty, result);
     }
+
+    /**
+     * Mirrors what {@code IdeScreen}'s AI-review flow actually does: a breakpoint on the last of
+     * three lines follows into the merged diff view when review starts (the value listener's own
+     * retargeting call), then - on Reject - {@code endReview} retargets explicitly from that merged
+     * view back to the rejected (original) text, since the listener alone can't (see its own doc).
+     * The breakpoint must land back on the same line it started on.
+     */
+    @Test
+    void rejectingAnAiProposalReturnsTheBreakpointToItsOriginalLine() {
+        String original = "a\nb\nc";
+        String proposed = "a\nX\nb\nc"; // AI inserts a line before the last two
+        String mergedView = LineDiff.between(original, proposed).mergedText();
+        assertEquals("a\nX\nb\nc", mergedView);
+
+        Set<Integer> onMergedView = BreakpointRetargeting.retarget(Set.of(3), original, mergedView);
+        assertEquals(Set.of(4), onMergedView, "breakpoint should have followed 'c' down to line 4 while review is open");
+
+        Set<Integer> afterReject = BreakpointRetargeting.retarget(onMergedView, mergedView, original);
+        assertEquals(Set.of(3), afterReject, "rejecting must return the breakpoint to its original line, not strand it on the discarded merged view");
+    }
+
+    /** Same setup as the reject case, but Accept keeps the merged view's text as-is - nothing to retarget. */
+    @Test
+    void acceptingAnAiProposalKeepsTheBreakpointOnTheInsertedLineNumber() {
+        String original = "a\nb\nc";
+        String proposed = "a\nX\nb\nc";
+        LineDiff diff = LineDiff.between(original, proposed);
+        String mergedView = diff.mergedText();
+
+        Set<Integer> onMergedView = BreakpointRetargeting.retarget(Set.of(3), original, mergedView);
+        assertEquals(Set.of(4), onMergedView);
+
+        String accepted = diff.acceptedText();
+        assertEquals(mergedView, accepted, "accepting a pure insertion leaves the text identical to the merged view");
+        Set<Integer> afterAccept = BreakpointRetargeting.retarget(onMergedView, mergedView, accepted);
+        assertEquals(Set.of(4), afterAccept);
+    }
 }

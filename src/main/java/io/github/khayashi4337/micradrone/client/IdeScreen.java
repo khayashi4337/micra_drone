@@ -133,6 +133,13 @@ public class IdeScreen extends Screen {
     // Debugger state, driven by DebugStatePayload; breakpoints are the client's working copy.
     private final Set<Integer> breakpoints = new HashSet<>();
     private int debugState = DebugStatePayload.STATE_IDLE;
+    /**
+     * Revision of the most recent {@link SetBreakpointsPayload} this screen has sent - see that
+     * field's own doc for why. 0 means "never sent", which is also the server's own initial value
+     * for a controller nothing has set breakpoints on yet, so the very first sync (before this
+     * screen has sent anything) always passes the {@code >=} check in {@link #updateDebugState}.
+     */
+    private int lastSentBreakpointRevision = 0;
 
     // Autocomplete popup state - see refreshAutocomplete/renderAutocompletePopup. Recomputed from
     // the editor's real caret every frame rather than pushed from an edit callback, so the popup
@@ -682,14 +689,22 @@ public class IdeScreen extends Screen {
     }
 
     /** Called from {@code MicraDroneClient} when a DebugStatePayload arrives for this controller. */
-    public void updateDebugState(BlockPos sourcePos, int state, int currentLine, List<Integer> serverBreakpoints) {
+    public void updateDebugState(BlockPos sourcePos, int state, int currentLine, List<Integer> serverBreakpoints,
+            int breakpointRevision) {
         if (!sourcePos.equals(this.pos)) {
             return;
         }
         debugState = state;
-        breakpoints.clear();
-        breakpoints.addAll(serverBreakpoints);
-        editor.setBreakpointLines(breakpoints);
+        // state/currentLine have only one writer (the server) and are always applied; breakpoints
+        // are also written locally between round trips (gutter clicks, edit-time retargeting - see
+        // sendBreakpoints), so an echo older than the last edit this screen sent must be ignored, or
+        // it would overwrite already-further-along local state with stale data (real-machine
+        // report: a breakpoint drifted mid-edit during a burst of typing above it).
+        if (breakpointRevision >= lastSentBreakpointRevision) {
+            breakpoints.clear();
+            breakpoints.addAll(serverBreakpoints);
+            editor.setBreakpointLines(breakpoints);
+        }
         editor.setCurrentLine(state == DebugStatePayload.STATE_IDLE ? 0 : currentLine);
         pauseResumeButton.setMessage(pauseResumeLabel());
     }
@@ -835,10 +850,19 @@ public class IdeScreen extends Screen {
         if (!isReviewing()) {
             return;
         }
+        // The value listener normally does this retargeting itself on every setValue() call, by
+        // diffing its own "before" (whatever editorText held) against "after". Here that would
+        // compare finalText against itself - editorText is about to be overwritten with finalText
+        // BEFORE editor.setValue(finalText) below, so the listener sees no change and retargets
+        // nothing. So this does it explicitly, from what the editor actually showed during review
+        // (the merged diff markup, with the rejected/accepted hunks already resolved into it) to
+        // what the script becomes - the real edit that just happened.
+        String mergedView = editorText;
         reviewDiff = null;
         reviewOriginalText = null;
         editor.setDiffLines(Set.of(), Set.of());
         editor.setLocked(false);
+        retargetBreakpoints(mergedView, finalText);
         editorText = finalText;
         editor.setValue(finalText);
     }
@@ -986,7 +1010,7 @@ public class IdeScreen extends Screen {
                     breakpoints.add(line);
                 }
                 editor.setBreakpointLines(breakpoints);
-                PacketDistributor.sendToServer(new SetBreakpointsPayload(pos, breakpoints.stream().sorted().toList()));
+                sendBreakpoints();
             }
             return true;
         }
@@ -1008,8 +1032,21 @@ public class IdeScreen extends Screen {
             breakpoints.clear();
             breakpoints.addAll(retargeted);
             editor.setBreakpointLines(breakpoints);
-            PacketDistributor.sendToServer(new SetBreakpointsPayload(pos, breakpoints.stream().sorted().toList()));
+            sendBreakpoints();
         }
+    }
+
+    /**
+     * The one place that sends {@link SetBreakpointsPayload} - both the gutter-click toggle and
+     * {@link #retargetBreakpoints} funnel through here so {@link #lastSentBreakpointRevision} is
+     * bumped on every send regardless of which triggered it, which is what lets
+     * {@link #updateDebugState} tell a stale echo of an earlier send apart from a fresh one (see
+     * that field's own doc and {@link SetBreakpointsPayload#revision}'s).
+     */
+    private void sendBreakpoints() {
+        lastSentBreakpointRevision++;
+        PacketDistributor.sendToServer(
+                new SetBreakpointsPayload(pos, breakpoints.stream().sorted().toList(), lastSentBreakpointRevision));
     }
 
     /**
