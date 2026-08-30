@@ -1031,7 +1031,18 @@ public class IdeScreen extends Screen {
             }
             return true;
         }
-        return super.mouseClicked(mouseX, mouseY, button);
+        boolean handled = super.mouseClicked(mouseX, mouseY, button);
+        // A click on any button leaves that BUTTON holding the keyboard focus (vanilla's
+        // ContainerEventHandler focuses whatever was clicked), after which the arrow keys walk the
+        // widget focus ring and typing goes nowhere - the "arrow keys sometimes jump the UI" real-
+        // machine report. None of this screen's buttons do anything with keyboard focus, so hand it
+        // straight back to the editor, the way a desktop IDE keeps the caret in the text after a
+        // toolbar click. Not while the Chat tab is open: there the next thing typed belongs in the
+        // chat's own input box, which is not a Button and so keeps its focus untouched.
+        if (getFocused() instanceof Button && editor != null && !chatPanel.isOpen()) {
+            setFocused(editor);
+        }
+        return handled;
     }
 
     /**

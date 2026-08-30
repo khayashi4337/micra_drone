@@ -110,10 +110,29 @@ final class DebugEditBox extends MultiLineEditBox {
         this.locked = locked;
     }
 
+    /**
+     * What the Tab key inserts. The language forbids tab characters for indentation (see
+     * {@code Lexer#startOfLine}), and every sample and help scroll indents by four spaces, so Tab
+     * types that instead of a {@code '\t'} the script would then refuse to run.
+     */
+    private static final String TAB_AS_SPACES = "    ";
+
+    /**
+     * Tab inserts {@link #TAB_AS_SPACES} at the caret. Vanilla's {@code MultilineTextField} does
+     * not handle Tab at all, so it fell through to {@code Screen#keyPressed}'s focus traversal and
+     * hopped the keyboard from the editor to the next button - in a code editor, Tab has to indent
+     * (real-machine report). Handled here, in the widget, rather than in {@code IdeScreen}, so it
+     * only fires while the editor actually holds the focus; the screen still gets first refusal for
+     * the autocomplete popup's own Tab-to-accept before this ever sees the key.
+     */
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (locked && isEditingKey(keyCode, modifiers)) {
             return true; // swallowed: the merged view is read-only until Accept/Reject
+        }
+        if (keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_TAB && !locked) {
+            textField.insertText(TAB_AS_SPACES);
+            return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
     }
