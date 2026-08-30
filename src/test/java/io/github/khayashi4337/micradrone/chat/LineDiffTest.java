@@ -95,4 +95,29 @@ class LineDiffTest {
         assertEquals(List.of(2), diff.lineNumbersOf(Kind.REMOVED));
         assertEquals("a\n\nb", diff.mergedText());
     }
+
+    /**
+     * One line inserted near the top of a 10,000-line script completes and gives the expected
+     * result - the shape breakpoint-line tracking runs on every keystroke (see the class javadoc
+     * on why the common prefix/suffix are trimmed before the O(n*m) table, not after).
+     */
+    @Test
+    void oneEditInATenThousandLineScriptStaysCheap() {
+        int lineCount = 10_000;
+        StringBuilder original = new StringBuilder();
+        for (int i = 0; i < lineCount; i++) {
+            original.append("line").append(i).append('\n');
+        }
+        original.setLength(original.length() - 1); // drop the trailing newline splitLines would treat as a blank line
+        String proposed = "inserted\n" + original;
+
+        long start = System.nanoTime();
+        LineDiff diff = LineDiff.between(original.toString(), proposed);
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+
+        assertEquals(List.of(1), diff.lineNumbersOf(Kind.ADDED));
+        assertEquals(List.of(), diff.lineNumbersOf(Kind.REMOVED));
+        assertEquals(lineCount + 1, diff.lines().size());
+        assertTrue(elapsedMs < 1000, "expected the trimmed diff to stay well under a second, took " + elapsedMs + "ms");
+    }
 }

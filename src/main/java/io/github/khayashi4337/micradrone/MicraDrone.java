@@ -377,7 +377,7 @@ public class MicraDrone {
         if (context.player() instanceof ServerPlayer serverPlayer
                 && isInReach(serverPlayer, payload.pos())
                 && serverPlayer.level().getBlockEntity(payload.pos()) instanceof DroneControllerBlockEntity be) {
-            be.setBreakpoints(serverPlayer, Set.copyOf(payload.lines()));
+            be.setBreakpoints(serverPlayer, Set.copyOf(payload.lines()), payload.revision());
         }
     }
 
