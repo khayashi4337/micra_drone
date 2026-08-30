@@ -156,10 +156,20 @@ final class DebugEditBox extends MultiLineEditBox {
      * Straight onto {@code textField}, not through {@link #setValue} (which would wipe the very
      * history being walked). {@code MultilineTextField#setValue} parks the caret at the end, so the
      * recorded caret is put back afterwards; the value listener fires as for any edit, which keeps
-     * {@code IdeScreen}'s own copy of the text, its draft cache, and breakpoint line tracking in step.
+     * {@code IdeScreen}'s own copy of the text and its draft cache in step.
+     *
+     * <p>The {@code setSelecting(false)} is not decoration. {@code MultilineTextField} keeps a
+     * "shift is held" flag that it refreshes on every key it handles, and {@code seekCursor} leaves
+     * the selection anchor where it was while that flag is set - that is how shift+arrow extends a
+     * selection. Ctrl+Shift+Z sets the flag (the Shift press reaches the field) and then never
+     * clears it, because {@link #keyPressed} consumes the Z itself. Without clearing it here, redo
+     * would land with everything from the restored caret to the end of the script selected, and the
+     * next character typed would replace all of it - an undo feature eating the script is precisely
+     * the accident it exists to prevent.
      */
     private void restore(Snapshot snapshot) {
         textField.setValue(snapshot.value());
+        textField.setSelecting(false);
         textField.seekCursor(Whence.ABSOLUTE, snapshot.cursor());
     }
 
@@ -241,12 +251,12 @@ final class DebugEditBox extends MultiLineEditBox {
 
     /** Everything vanilla's MultilineTextField treats as an edit: backspace, delete, enter, and paste/cut. */
     private static boolean isEditingKey(int keyCode, int modifiers) {
-        boolean ctrl = net.minecraft.client.gui.screens.Screen.hasControlDown();
-        return keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_BACKSPACE
-                || keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_DELETE
-                || keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER
-                || keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_KP_ENTER
-                || (ctrl && (keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_V || keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_X));
+        boolean ctrl = Screen.hasControlDown();
+        return keyCode == GLFW.GLFW_KEY_BACKSPACE
+                || keyCode == GLFW.GLFW_KEY_DELETE
+                || keyCode == GLFW.GLFW_KEY_ENTER
+                || keyCode == GLFW.GLFW_KEY_KP_ENTER
+                || (ctrl && (keyCode == GLFW.GLFW_KEY_V || keyCode == GLFW.GLFW_KEY_X));
     }
 
     /**
