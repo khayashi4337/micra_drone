@@ -127,10 +127,12 @@ public class IdeScreen extends Screen {
      * say - doesn't throw the draft away: reopening on the same controller and script re-requests
      * the source from the server as always, but a pending draft here wins over what comes back.
      * Cleared once a save actually lands, since the draft and the saved copy agree again then.
-     * Keyed by controller position + script id, since one controller holds several scripts - and
-     * cleared entirely on leaving a world/server (see {@code MicraDroneClient}'s constructor),
-     * since that key has no world/server identity in it and a stale draft must not resurface
-     * against a different save that happens to reuse the same coordinates and script id.
+     * Keyed by dimension + controller position + script id: one controller holds several scripts,
+     * and two controllers can share the same coordinates in different dimensions (overworld /
+     * nether / end), which a position-only key would silently conflate. The key still carries no
+     * save/server identity, so it is cleared entirely on leaving a world/server (see
+     * {@code MicraDroneClient}'s constructor) - a stale draft must not resurface against a
+     * different save that happens to reuse the same dimension, coordinates and script id.
      */
     private static final UnsavedDraftStore unsavedDrafts = new UnsavedDraftStore();
 
@@ -223,11 +225,18 @@ public class IdeScreen extends Screen {
         this.scriptId = scriptId;
         this.displayName = displayName;
         this.cameraController = new IdeCameraController(pos);
+        // Captured once at open time: the screen belongs to the dimension it was opened in, and
+        // Minecraft.level is null again by the time removed() runs after a disconnect.
+        this.dimensionKey = Minecraft.getInstance().level == null
+                ? "" : Minecraft.getInstance().level.dimension().location().toString();
     }
+
+    /** Dimension this screen was opened in (e.g. "minecraft:overworld"), part of {@link #draftKey}. */
+    private final String dimensionKey;
 
     /** {@link #unsavedDrafts} key for the script currently open - see its own doc. */
     private String draftKey() {
-        return pos.asLong() + "|" + scriptId;
+        return dimensionKey + "|" + pos.asLong() + "|" + scriptId;
     }
 
     @Override

@@ -36,12 +36,12 @@ public final class UnsavedDraftStore {
 
     /**
      * Call on leaving a world/server (see {@code ClientPlayerNetworkEvent.LoggingOut}). Keys are
-     * controller position + script id only, with no world or server identity in them, so without
-     * this a draft from one save could resurface as if it belonged to an unrelated save that
-     * happens to reuse the same coordinates and script id (most commonly the built-in
-     * "controller" script, which every controller has) - trading the original bug (a real edit
-     * lost) for a worse one (a stranger's stale text silently overwriting what the server actually
-     * has saved).
+     * dimension + controller position + script id, with no save/server identity in them, so
+     * without this a draft from one save could resurface as if it belonged to an unrelated save
+     * that happens to reuse the same dimension, coordinates and script id (most commonly the
+     * built-in "controller" script, which every controller has) - trading the original bug (a
+     * real edit lost) for a worse one (a stranger's stale text silently overwriting what the
+     * server actually has saved).
      */
     public void clear() {
         drafts.clear();
