@@ -23,6 +23,7 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.EntityRenderersEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
@@ -44,6 +45,11 @@ public class MicraDroneClient {
         NeoForge.EVENT_BUS.register(new EnchantTableWatcher());
         NeoForge.EVENT_BUS.register(new RegionPointerListener());
         NeoForge.EVENT_BUS.register(new RegionSelectionRenderer());
+        // IdeScreen's unsaved-draft cache is keyed by controller position + script id, with no
+        // world/server identity - leaving one save/server without clearing it would let a stale
+        // draft resurface against an unrelated save that happens to reuse the same coordinates and
+        // script id (most commonly the built-in "controller" script every controller has).
+        NeoForge.EVENT_BUS.addListener((ClientPlayerNetworkEvent.LoggingOut event) -> IdeScreen.clearUnsavedDrafts());
     }
 
     @SubscribeEvent
