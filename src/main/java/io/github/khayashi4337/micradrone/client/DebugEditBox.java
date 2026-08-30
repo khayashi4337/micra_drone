@@ -8,6 +8,8 @@ import java.util.function.BooleanSupplier;
 
 import org.lwjgl.glfw.GLFW;
 
+import io.github.khayashi4337.micradrone.chat.EditHistoryStore;
+import io.github.khayashi4337.micradrone.chat.EditHistoryStore.Snapshot;
 import io.github.khayashi4337.micradrone.lang.SyntaxHighlighter;
 import io.github.khayashi4337.micradrone.lang.SyntaxHighlighter.Kind;
 import io.github.khayashi4337.micradrone.lang.SyntaxHighlighter.Span;
@@ -95,10 +97,11 @@ final class DebugEditBox extends MultiLineEditBox {
      * if a little chatty on Ctrl+Z after a long burst of typing. Any wholesale replacement of the
      * text from outside ({@link #setValue}: a script loaded from the server, an AI review view
      * opening or closing) starts a new document, so history is cleared there.
+     *
+     * <p>The history outlives this widget in two ways: {@link #adoptHistoryFrom} carries it across a
+     * screen rebuild, and {@link #exportUndo}/{@link #importHistory} let {@code IdeScreen} park it in
+     * an {@link EditHistoryStore} across a screen close.
      */
-    private record Snapshot(String value, int cursor) {
-    }
-
     private static final int MAX_UNDO_HISTORY = 200;
     private final Deque<Snapshot> undoStack = new ArrayDeque<>();
     private final Deque<Snapshot> redoStack = new ArrayDeque<>();
@@ -142,6 +145,32 @@ final class DebugEditBox extends MultiLineEditBox {
     void clearHistory() {
         undoStack.clear();
         redoStack.clear();
+    }
+
+    /** True if there is anything to undo or redo - {@code IdeScreen} asks before restoring a parked history over a live one. */
+    boolean hasHistory() {
+        return !undoStack.isEmpty() || !redoStack.isEmpty();
+    }
+
+    /** The undo steps, newest first, for parking in an {@link EditHistoryStore} while the screen is closed. */
+    List<Snapshot> exportUndo() {
+        return List.copyOf(undoStack);
+    }
+
+    /** The redo steps, newest first - counterpart of {@link #exportUndo}. */
+    List<Snapshot> exportRedo() {
+        return List.copyOf(redoStack);
+    }
+
+    /**
+     * Puts back a history parked by {@link #exportUndo}/{@link #exportRedo}. Both lists are newest
+     * first, matching the order a {@link Deque} iterates, so re-adding them in order restores the
+     * original stacking. The caller is responsible for only offering a history that describes the
+     * text this editor holds (see {@link EditHistoryStore}'s matching rule).
+     */
+    void importHistory(List<Snapshot> undo, List<Snapshot> redo) {
+        undoStack.addAll(undo);
+        redoStack.addAll(redo);
     }
 
     /**

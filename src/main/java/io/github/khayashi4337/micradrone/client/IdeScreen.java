@@ -11,6 +11,7 @@ import java.util.stream.Stream;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.MicraDroneClient;
+import io.github.khayashi4337.micradrone.chat.EditHistoryStore;
 import io.github.khayashi4337.micradrone.chat.LineDiff;
 import io.github.khayashi4337.micradrone.chat.UnsavedDraftStore;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
@@ -136,9 +137,17 @@ public class IdeScreen extends Screen {
      */
     private static final UnsavedDraftStore unsavedDrafts = new UnsavedDraftStore();
 
-    /** Drops every pending draft - call on leaving a world/server, see {@link #unsavedDrafts}'s own doc. */
+    /**
+     * The editor's undo history, parked here while the screen is closed so that closing the IDE to
+     * look at something and coming back doesn't cost the player their Ctrl+Z - the same reason and
+     * the same key as {@link #unsavedDrafts}, whose text this history describes.
+     */
+    private static final EditHistoryStore editHistories = new EditHistoryStore();
+
+    /** Drops every pending draft and parked history - call on leaving a world/server, see {@link #unsavedDrafts}'s own doc. */
     public static void clearUnsavedDrafts() {
         unsavedDrafts.clear();
+        editHistories.clear();
     }
 
     private DebugEditBox editor;
@@ -298,6 +307,7 @@ public class IdeScreen extends Screen {
         // design (see DebugEditBox#setValue); adoptHistoryFrom checks the text still matches, so a
         // rebuild that loads a different script genuinely starts fresh.
         editor.adoptHistoryFrom(previousEditor);
+        restoreParkedHistory(); // nothing to adopt on a fresh open - see the method's own doc
         editor.setValueListener(text -> {
             editorText = text;
             // Mid-review the editor shows a merged diff view (red/green markup), not real script text
@@ -704,8 +714,26 @@ public class IdeScreen extends Screen {
         if (sourcePos.equals(this.pos) && sourceScriptName.equals(this.scriptId)) {
             editorText = unsavedDrafts.resolve(draftKey(), source);
             editor.setValue(editorText);
+            // setValue just cleared the history; the text it now holds is the one a parked history
+            // would describe, so this is the moment to offer it back (a freshly opened screen gets
+            // here after init() found nothing to restore, because the text arrives only now).
+            restoreParkedHistory();
             autocompleteMatches = List.of();
         }
+    }
+
+    /**
+     * Hands the editor back the undo history the last screen on this script parked in
+     * {@link #editHistories}, if it still describes the text the editor holds. Never overwrites a
+     * history the editor already has: on a rebuild {@link DebugEditBox#adoptHistoryFrom} has just
+     * carried the live one across, and that one is newer than anything parked.
+     */
+    private void restoreParkedHistory() {
+        if (editor.hasHistory()) {
+            return;
+        }
+        editor.importHistory(editHistories.undoFor(draftKey(), editorText),
+                editHistories.redoFor(draftKey(), editorText));
     }
 
     /**
@@ -1180,6 +1208,11 @@ public class IdeScreen extends Screen {
     @Override
     public void removed() {
         closed = true;
+        // Park the undo history before this screen (and its editor widget) goes away, so reopening
+        // on the same script can still take back the edit made just before closing.
+        if (editor != null) {
+            editHistories.retain(draftKey(), editor.exportUndo(), editor.exportRedo(), editorText);
+        }
         chatPanel.close();
         if (this.minecraft != null) {
             cameraController.restore(this.minecraft);
