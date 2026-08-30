@@ -96,7 +96,10 @@ final class DebugEditBox extends MultiLineEditBox {
      * one Backspace, one paste, one Tab, one autocomplete accept - which is simple and predictable,
      * if a little chatty on Ctrl+Z after a long burst of typing. Any wholesale replacement of the
      * text from outside ({@link #setValue}: a script loaded from the server, an AI review view
-     * opening or closing) starts a new document, so history is cleared there.
+     * opening or closing) starts a new document, so history is cleared there. Cleared as far as this
+     * widget is concerned, at least: after loading a script {@code IdeScreen} may hand back the
+     * history it parked for that same text, so what the player sees is the history surviving a close
+     * (see {@code IdeScreen#restoreParkedHistory}).
      *
      * <p>The history outlives this widget in two ways: {@link #adoptHistoryFrom} carries it across a
      * screen rebuild, and {@link #exportUndo}/{@link #importHistory} let {@code IdeScreen} park it in
