@@ -21,10 +21,13 @@ import java.util.List;
  * the render thread per keystroke - so {@link #between} first strips the common leading and
  * trailing lines (the vast majority of any single-edit diff) and runs the O(n*m) table only on
  * the unmatched middle, which for a typical one-line edit is tiny regardless of script length.
- * Trimming a matching prefix/suffix before diffing never changes the result: those lines are
- * always part of some longest common subsequence, so re-attaching them as {@code SAME} rows
- * around an LCS of the remainder reconstructs the same alignment a full run would have found.
- * Minecraft-free and unit-tested.
+ * A trimmed matching prefix/suffix is always part of SOME longest common subsequence, so the
+ * diff stays minimal - the same number of changed lines a full run would report. It is not
+ * always the identical alignment: where the untrimmed run has a tie between "removed here" and
+ * "added there", pinning the ends can break that tie the other way (diffing {@code "q\np"} into
+ * {@code "p\np"} puts the added line before the shared one rather than after). Both readings are
+ * equally minimal, and holding the ends fixed is if anything the better one for breakpoint
+ * tracking, which cares about where the UNCHANGED lines ended up. Minecraft-free and unit-tested.
  */
 public final class LineDiff {
     public enum Kind { SAME, REMOVED, ADDED }

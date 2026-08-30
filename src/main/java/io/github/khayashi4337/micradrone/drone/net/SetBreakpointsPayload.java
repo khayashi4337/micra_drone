@@ -24,9 +24,13 @@ import net.minecraft.resources.ResourceLocation;
  * breakpoint) send several of these before the first echo returns; without the revision, that first
  * echo would overwrite the client's already-further-along local state with older data mid-edit -
  * the exact bug this field exists to prevent (real-machine report: a breakpoint drifted off the
- * line it was set on during rapid editing). Meaningless to any client other than the one that sent
- * it - each client numbers its own sends independently, so another viewer's {@code DebugStatePayload}
- * is compared against ITS OWN last-sent revision, not this one.
+ * line it was set on during rapid editing).
+ *
+ * <p>With several players viewing one controller the counter still behaves, because each client
+ * raises its own to whatever the server reports whenever it accepts an echo (see
+ * {@code IdeScreen#updateDebugState}): every send therefore outranks every revision that client has
+ * seen, so one viewer's write registers as newer than the state the others were last shown, rather
+ * than being mistaken for a stale echo of their own.
  */
 public record SetBreakpointsPayload(BlockPos pos, List<Integer> lines, int revision) implements CustomPacketPayload {
     public static final Type<SetBreakpointsPayload> TYPE =

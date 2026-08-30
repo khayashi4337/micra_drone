@@ -134,10 +134,17 @@ public class IdeScreen extends Screen {
     private final Set<Integer> breakpoints = new HashSet<>();
     private int debugState = DebugStatePayload.STATE_IDLE;
     /**
-     * Revision of the most recent {@link SetBreakpointsPayload} this screen has sent - see that
-     * field's own doc for why. 0 means "never sent", which is also the server's own initial value
-     * for a controller nothing has set breakpoints on yet, so the very first sync (before this
-     * screen has sent anything) always passes the {@code >=} check in {@link #updateDebugState}.
+     * The highest {@link SetBreakpointsPayload} revision this screen has either sent or seen the
+     * server report - see that field's own doc for what the number is for.
+     *
+     * <p>It starts at 0 on every open, because the screen itself is new every time (see
+     * {@code MicraDroneClient#openIdeScreen}) - but the SERVER's counter keeps whatever the last
+     * session left it at. So this is also raised to the server's value whenever an echo is accepted
+     * ({@link #updateDebugState}), which is what keeps the next send strictly above anything either
+     * side has seen. Without that, reopening a controller whose server-side revision had reached N
+     * would leave the first N edits of the new session sending 1, 2, 3... - all of them below N, so
+     * every stale echo would out-rank them and the pre-edit breakpoints would keep overwriting the
+     * live ones, which is exactly the bug the revision exists to prevent.
      */
     private int lastSentBreakpointRevision = 0;
 
@@ -701,6 +708,10 @@ public class IdeScreen extends Screen {
         // it would overwrite already-further-along local state with stale data (real-machine
         // report: a breakpoint drifted mid-edit during a burst of typing above it).
         if (breakpointRevision >= lastSentBreakpointRevision) {
+            // Catch up to the server's counter, so the next send outranks anything either side has
+            // seen - see lastSentBreakpointRevision's own doc for why a fresh screen can otherwise
+            // start out numbering its sends below the server's already-advanced revision.
+            lastSentBreakpointRevision = breakpointRevision;
             breakpoints.clear();
             breakpoints.addAll(serverBreakpoints);
             editor.setBreakpointLines(breakpoints);
