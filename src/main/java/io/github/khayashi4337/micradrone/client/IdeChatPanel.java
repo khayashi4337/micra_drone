@@ -17,7 +17,6 @@ import io.github.khayashi4337.micradrone.chat.ChatSession;
 import io.github.khayashi4337.micradrone.chat.ClaudeCliBridge;
 import io.github.khayashi4337.micradrone.chat.CodeBlockParser;
 import io.github.khayashi4337.micradrone.chat.ControllerKey;
-import io.github.khayashi4337.micradrone.chat.DangerModeState;
 import io.github.khayashi4337.micradrone.drone.CommandsHelpDoc;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
 import io.github.khayashi4337.micradrone.drone.UnlockShop;
@@ -39,11 +38,15 @@ import org.lwjgl.glfw.GLFW;
 
 /**
  * The IDE's right-half AI chat tab (Wave 5), split out of {@link IdeScreen} once that class passed
- * 1300 lines: the transcript, per-reply Insert buttons, the input row, the danger/compact row, the
+ * 1300 lines: the transcript, per-reply Insert buttons, the input row, the compact row, the
  * claude -p round trip behind them, and the per-controller history on disk. IdeScreen still owns
  * layout, tab switching and the widget list; this class reaches those through {@link Host} rather
- * than being a Screen itself. One ClaudeCliBridge/DangerModeState per screen instance is enough -
- * there's no per-controller CLI process, only a per-controller ChatSession.
+ * than being a Screen itself. One ClaudeCliBridge per screen instance is enough - there's no
+ * per-controller CLI process, only a per-controller ChatSession.
+ *
+ * <p>Every call runs claude -p in ClaudeCliBridge's locked-down safe mode - there used to be a
+ * player-facing "Danger" toggle for full local-terminal power, removed after CurseForge rejected
+ * the file over it ("contains a feature... disabling permissions... unsafe and a security risk").
  */
 final class IdeChatPanel {
     /** What the panel needs from the screen that hosts it. */
@@ -70,13 +73,6 @@ final class IdeChatPanel {
         void acceptReview();
 
         void rejectReview();
-
-        /** Danger ON: the proposal goes straight into the editor, no review - kept undoable once. */
-        void applyWithoutReview(String proposed);
-
-        boolean canUndoLastApply();
-
-        void undoLastApply();
 
         List<String> logLines();
 
@@ -113,7 +109,6 @@ final class IdeChatPanel {
 
     private final Host host;
     private final ClaudeCliBridge claudeCliBridge = new ClaudeCliBridge(CLAUDE_EXECUTABLE);
-    private final DangerModeState dangerMode = new DangerModeState();
     private boolean open = false;
     private ChatSession chatSession;
     private boolean sendInFlight = false;
@@ -122,7 +117,6 @@ final class IdeChatPanel {
     private EditBox inputBox;
     private Button sendButton;
     private Button compactButton;
-    private Button dangerButton;
     /** What the player has typed but not sent - restored across the rebuild a landing reply triggers. */
     private String inputDraft = "";
     private int statusRowX;
@@ -156,8 +150,7 @@ final class IdeChatPanel {
 
     /**
      * Builds the panel's widgets into the host: transcript, the Accept/Reject row (only while a
-     * reply's code is under review in the editor), the message input row, and the danger/compact
-     * toggle row.
+     * reply's code is under review in the editor), the message input row, and the compact row.
      */
     void initWidgets(int rightX, int rightW, int topY, int bottomY) {
         ensureSessionLoaded();
@@ -194,14 +187,6 @@ final class IdeChatPanel {
                                 host.rebuildWidgets();
                             })
                     .bounds(rightX + REVIEW_BUTTON_WIDTH + ROW_GAP, insertRowY, REVIEW_BUTTON_WIDTH, INSERT_ROW_HEIGHT).build());
-        } else if (host.canUndoLastApply()) {
-            // Danger ON applied the last reply straight into the editor; this is the one-step way back.
-            host.addWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_undo"),
-                            b -> {
-                                host.undoLastApply();
-                                host.rebuildWidgets();
-                            })
-                    .bounds(rightX, insertRowY, REVIEW_BUTTON_WIDTH, INSERT_ROW_HEIGHT).build());
         }
 
         inputBox = new EditBox(host.font(), rightX, inputRowY, rightW - SEND_BUTTON_WIDTH - ROW_GAP,
@@ -217,16 +202,9 @@ final class IdeChatPanel {
                 .build());
         sendButton.active = !sendInFlight;
 
-        int toggleBtnW = (rightW - ROW_GAP) / 2;
-        dangerButton = host.addWidget(Button.builder(dangerButtonLabel(),
-                        b -> {
-                            dangerMode.toggle();
-                            dangerButton.setMessage(dangerButtonLabel());
-                        })
-                .bounds(rightX, toggleRowY, toggleBtnW, TOGGLE_ROW_HEIGHT).build());
         compactButton = host.addWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_compact"),
                         b -> compact())
-                .bounds(rightX + toggleBtnW + ROW_GAP, toggleRowY, toggleBtnW, TOGGLE_ROW_HEIGHT).build());
+                .bounds(rightX, toggleRowY, rightW, TOGGLE_ROW_HEIGHT).build());
         compactButton.active = !sendInFlight;
     }
 
@@ -341,11 +319,6 @@ final class IdeChatPanel {
     void close() {
         cancelRoundTrip();
         claudeCliBridge.close();
-    }
-
-    private Component dangerButtonLabel() {
-        return Component.translatable(dangerMode.isEnabled()
-                ? "gui.micradrone.ide_screen.chat_danger_on" : "gui.micradrone.ide_screen.chat_danger_off");
     }
 
     /** Loads this controller's chat history on first use (resume across screen reopens - see ChatHistoryStore). */
@@ -468,8 +441,8 @@ final class IdeChatPanel {
         String prompt = ChatContextBuilder.build(question, context);
 
         ClaudeCliBridge.ClaudeCliOptions options = chatSession.cliSessionId() == null
-                ? ClaudeCliBridge.ClaudeCliOptions.freshSession(dangerMode.toCliFlags(), mcpConfigPath.get())
-                : new ClaudeCliBridge.ClaudeCliOptions(chatSession.cliSessionId(), false, dangerMode.toCliFlags(), mcpConfigPath.get());
+                ? ClaudeCliBridge.ClaudeCliOptions.freshSession(mcpConfigPath.get())
+                : new ClaudeCliBridge.ClaudeCliOptions(chatSession.cliSessionId(), false, mcpConfigPath.get());
 
         setRoundTripInFlight(true);
         // The question stays visible (read-only) in the box until the reply lands, so a typo can
@@ -534,18 +507,10 @@ final class IdeChatPanel {
             }
             lastAssistantCodeBlocks = CodeBlockParser.parse(result.responseText());
             // Cursor's flow: by the time you read the reply, its code is already sitting in the
-            // editor - no Insert click. Safe mode shows it as a pending diff (Reject puts the
-            // script back untouched); Danger ON - the player's "I trust the AI with my machine"
-            // switch - applies it outright and offers a one-step Undo instead, for when
-            // confirming every change is the fatigue, not the help. Nothing is applied on top of
-            // a review still open from a previous turn.
+            // editor as a pending diff - no Insert click, Reject puts the script back untouched.
+            // Nothing is applied on top of a review still open from a previous turn.
             if (!lastAssistantCodeBlocks.isEmpty() && !host.isReviewing() && !host.isClosed()) {
-                String code = lastAssistantCodeBlocks.get(0).code();
-                if (dangerMode.isEnabled()) {
-                    host.applyWithoutReview(code);
-                } else {
-                    host.beginReview(code);
-                }
+                host.beginReview(lastAssistantCodeBlocks.get(0).code());
             }
         } else {
             // The question stays in the box (inputDraft) so a transient failure is one Enter away from a retry.
@@ -587,7 +552,7 @@ final class IdeChatPanel {
             return;
         }
         ClaudeCliBridge.ClaudeCliOptions options = new ClaudeCliBridge.ClaudeCliOptions(
-                chatSession.cliSessionId(), false, dangerMode.toCliFlags(), mcpConfigPath.get());
+                chatSession.cliSessionId(), false, mcpConfigPath.get());
 
         setRoundTripInFlight(true);
         claudeCliBridge.send(ChatCompactor.COMPACT_REQUEST_PROMPT, options)
@@ -627,17 +592,6 @@ final class IdeChatPanel {
 
     int codeBlockCount() {
         return lastAssistantCodeBlocks.size();
-    }
-
-    boolean isDangerMode() {
-        return dangerMode.isEnabled();
-    }
-
-    void setDangerMode(boolean enabled) {
-        dangerMode.setEnabled(enabled);
-        if (dangerButton != null) {
-            dangerButton.setMessage(dangerButtonLabel());
-        }
     }
 
     /** Types {@code text} into the input box and sends it (the tab must already be open). */

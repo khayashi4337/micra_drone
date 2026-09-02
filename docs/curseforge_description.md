@@ -60,11 +60,8 @@ own. Inspired by the Steam game
   cancel (your text stays in the box to fix and resend). When the reply
   contains code, the editor turns into a diff on the spot, Cursor-style:
   removed lines red, added lines green, an "x Reject" beside each change
-  block, and "Accept rest" / "Reject all" in the Chat tab. Runs in a
-  locked-down safe mode by default (no file/shell access at all); the
-  Danger toggle gives it full local-terminal power AND applies its code
-  straight into the editor with a one-step "Undo AI change" — for when you'd
-  rather let it drive. History is saved per controller and per world and
+  block, and "Accept rest" / "Reject all" in the Chat tab. Always runs in a
+  locked-down safe mode (no file/shell access at all). History is saved per controller and per world and
   resumes next time you open the tab, with a Compact button to summarize
   and start fresh. A craftable Region Pointer wand (left-click a block for
   the start corner, right-click for the end; the selection is drawn in the

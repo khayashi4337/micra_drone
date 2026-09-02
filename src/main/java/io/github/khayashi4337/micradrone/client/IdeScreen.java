@@ -231,8 +231,6 @@ public class IdeScreen extends Screen {
     // reviewOriginalText. See LineDiff for why this replaced the old overwrite-on-Insert.
     private String reviewOriginalText;
     private LineDiff reviewDiff;
-    /** The script as it was before Danger ON's last unreviewed apply - non-null while that apply can still be undone. */
-    private String lastAutoApplyOriginal;
     /** Per-hunk "x Reject" marker rectangles from the last frame (null = hunk scrolled out of view), for hit-testing. */
     private final List<int[]> reviewHunkMarkerRects = new java.util.ArrayList<>();
     private static final int HUNK_MARKER_PADDING = 3;
@@ -511,21 +509,6 @@ public class IdeScreen extends Screen {
         }
 
         @Override
-        public void applyWithoutReview(String proposed) {
-            IdeScreen.this.applyWithoutReview(proposed);
-        }
-
-        @Override
-        public boolean canUndoLastApply() {
-            return lastAutoApplyOriginal != null;
-        }
-
-        @Override
-        public void undoLastApply() {
-            IdeScreen.this.undoLastApply();
-        }
-
-        @Override
         public List<String> logLines() {
             return logLines;
         }
@@ -603,7 +586,7 @@ public class IdeScreen extends Screen {
     /**
      * Same effect as typing {@code text} into the editor (replaces the whole script) - including
      * the breakpoint retargeting typing triggers, which is why {@code editorText} is left for the
-     * value listener to assign rather than set here (see {@link #applyWithoutReview}).
+     * value listener to assign rather than set here.
      */
     public void setEditorTextForTesting(String text) {
         editor.setValue(text); // fires the value listener, which records the draft AND retargets breakpoints
@@ -633,10 +616,6 @@ public class IdeScreen extends Screen {
 
     public int getLastAssistantCodeBlockCountForTesting() {
         return chatPanel.codeBlockCount();
-    }
-
-    public boolean isDangerModeForTesting() {
-        return chatPanel.isDangerMode();
     }
 
     /** Switches to the Chat tab if it isn't already showing - a no-op otherwise. */
@@ -670,20 +649,6 @@ public class IdeScreen extends Screen {
     /** Same effect as pressing Esc while "AI: thinking" is showing. */
     public void cancelChatForTesting() {
         chatPanel.cancelRoundTrip();
-    }
-
-    public boolean canUndoLastApplyForTesting() {
-        return lastAutoApplyOriginal != null;
-    }
-
-    /** Same effect as clicking "Undo AI change" after a Danger ON apply. */
-    public void undoLastApplyForTesting() {
-        undoLastApply();
-        rebuildWidgets();
-    }
-
-    public void setDangerModeForTesting(boolean enabled) {
-        chatPanel.setDangerMode(enabled);
     }
 
     public void compactForTesting() {
@@ -769,9 +734,9 @@ public class IdeScreen extends Screen {
      * unsaved draft for this exact controller+script (see {@link #unsavedDrafts}) wins over the
      * server's saved copy, so reopening the IDE mid-edit picks up where typing left off.
      *
-     * <p>The assignment before {@code setValue} is deliberate, and is the opposite case from
-     * {@link #applyWithoutReview}: loading a script is not an edit of the one before it. Assigning
-     * first leaves the value listener comparing the incoming text against itself, so it retargets
+     * <p>The assignment before {@code setValue} is deliberate: loading a script is not an edit of
+     * the one before it. Assigning first leaves the value listener comparing the incoming text
+     * against itself, so it retargets
      * nothing - which is what we want. Letting it run would diff a blank editor (blank on every
      * path that asks for a source: {@link #selectAndEdit} clears it, and a freshly opened screen
      * starts that way) against a whole script, and a blank editor is zero lines rather than one
@@ -909,7 +874,6 @@ public class IdeScreen extends Screen {
         }
         reviewOriginalText = editorText;
         reviewDiff = diff;
-        lastAutoApplyOriginal = null; // a fresh review supersedes any earlier one-step undo
         editor.setValue(diff.mergedText()); // the value listener mirrors this into editorText; endReview restores
         applyReviewDecorations();
     }
@@ -929,35 +893,6 @@ public class IdeScreen extends Screen {
 
     private void rejectReview() {
         endReview(reviewOriginalText);
-    }
-
-    /**
-     * Danger ON's counterpart of {@link #beginReview}: the proposal replaces the script outright,
-     * and the text it replaced is kept for one {@link #undoLastApply} - the safety net that lets
-     * the "just let the AI do it" mode stay recoverable.
-     *
-     * <p>{@code editorText} is deliberately NOT assigned here: the value listener does that, and
-     * doing it first would leave the listener comparing the new text against itself, so it would
-     * see no change and skip retargeting the breakpoints - the same trap {@link #endReview} spells
-     * out. An AI edit has to move breakpoints whether it arrives through review or straight through
-     * Danger ON.
-     */
-    private void applyWithoutReview(String proposed) {
-        if (proposed.equals(editorText)) {
-            return;
-        }
-        lastAutoApplyOriginal = editorText;
-        editor.setValue(proposed);
-    }
-
-    /** Undoes one {@link #applyWithoutReview} - and, for the same reason as there, lets the listener assign {@code editorText}. */
-    private void undoLastApply() {
-        if (lastAutoApplyOriginal == null) {
-            return;
-        }
-        String restored = lastAutoApplyOriginal;
-        lastAutoApplyOriginal = null;
-        editor.setValue(restored);
     }
 
     /**
