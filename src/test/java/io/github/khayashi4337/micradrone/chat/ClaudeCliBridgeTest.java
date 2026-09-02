@@ -14,15 +14,16 @@ class ClaudeCliBridgeTest {
 
     @Test
     void newSessionUsesSessionIdFlag() {
-        ClaudeCliOptions options = new ClaudeCliOptions("uuid-1", true, List.of(), null);
+        ClaudeCliOptions options = new ClaudeCliOptions("uuid-1", true, null);
         List<String> cmd = ClaudeCliBridge.buildCommand("claude", options);
 
-        assertEquals(List.of("claude", "-p", "--output-format", "json", "--session-id", "uuid-1"), cmd);
+        assertEquals(List.of("claude", "-p", "--output-format", "json", "--session-id", "uuid-1",
+                "--setting-sources", "", "--restricted", "--strict-mcp-config", "--tools", ""), cmd);
     }
 
     @Test
     void resumingUsesResumeFlag() {
-        ClaudeCliOptions options = new ClaudeCliOptions("uuid-1", false, List.of(), null);
+        ClaudeCliOptions options = new ClaudeCliOptions("uuid-1", false, null);
         List<String> cmd = ClaudeCliBridge.buildCommand("claude", options);
 
         assertTrue(cmd.contains("--resume"));
@@ -30,16 +31,17 @@ class ClaudeCliBridgeTest {
     }
 
     @Test
-    void dangerFlagsAreAppendedVerbatim() {
-        ClaudeCliOptions options = new ClaudeCliOptions("uuid-1", true, List.of("--dangerously-skip-permissions"), null);
+    void everyCallIsRestrictedToTheSafeFlagsNoDangerousModeExists() {
+        ClaudeCliOptions options = new ClaudeCliOptions("uuid-1", true, null);
         List<String> cmd = ClaudeCliBridge.buildCommand("claude", options);
 
-        assertTrue(cmd.contains("--dangerously-skip-permissions"));
+        assertTrue(cmd.containsAll(List.of("--restricted", "--strict-mcp-config")));
+        assertFalse(cmd.contains("--dangerously-skip-permissions"));
     }
 
     @Test
     void noMcpConfigOmitsMcpFlagsEntirely() {
-        ClaudeCliOptions options = new ClaudeCliOptions("uuid-1", true, List.of(), null);
+        ClaudeCliOptions options = new ClaudeCliOptions("uuid-1", true, null);
         List<String> cmd = ClaudeCliBridge.buildCommand("claude", options);
 
         assertFalse(cmd.contains("--mcp-config"));
@@ -48,7 +50,7 @@ class ClaudeCliBridgeTest {
 
     @Test
     void mcpConfigAddsThePathAndTheFixedToolAllowlistEntry() {
-        ClaudeCliOptions options = new ClaudeCliOptions("uuid-1", true, List.of(), "C:/tmp/mcp-config.json");
+        ClaudeCliOptions options = new ClaudeCliOptions("uuid-1", true, "C:/tmp/mcp-config.json");
         List<String> cmd = ClaudeCliBridge.buildCommand("claude", options);
 
         int configIndex = cmd.indexOf("--mcp-config");
@@ -61,7 +63,7 @@ class ClaudeCliBridgeTest {
 
     @Test
     void freshSessionGeneratesARandomUuidAndMarksItNew() {
-        ClaudeCliOptions options = ClaudeCliOptions.freshSession(List.of(), null);
+        ClaudeCliOptions options = ClaudeCliOptions.freshSession(null);
         assertTrue(options.isNewSession());
         assertEquals(36, options.sessionId().length()); // UUID string length
     }
@@ -117,7 +119,7 @@ class ClaudeCliBridgeTest {
         assertTrue(bridge.probeVersion().get(30, java.util.concurrent.TimeUnit.SECONDS).isEmpty());
 
         ClaudeCliBridge.ClaudeCliResult result = bridge.send("hello",
-                ClaudeCliOptions.freshSession(List.of(), null)).get(30, java.util.concurrent.TimeUnit.SECONDS);
+                ClaudeCliOptions.freshSession(null)).get(30, java.util.concurrent.TimeUnit.SECONDS);
         assertFalse(result.success());
         assertEquals(ClaudeCliBridge.CLI_NOT_FOUND_MESSAGE, result.errorMessage());
     }
