@@ -1,0 +1,303 @@
+@startuml
+
+
+
+package claude {
+    class イベント管理機構 {
+        mqtt
+        kafka
+        etc.
+    }
+
+    class MHS {
+        read
+        write
+        イベント駆動
+    }
+    イベント管理機構 --> MHS
+}
+
+package user体験 {
+    class MHSの体験
+
+    class MHSのオートメーションのスキルアップ
+    MHSの体験 --> MHSのオートメーションのスキルアップ
+
+    class 演出フィードバック {
+        考え中(黄点滅)
+        エラー(赤点滅)
+        成功(緑チェック→フェードアウト)
+        busy(スロットル中)
+    }
+    note right of 演出フィードバック
+      待ち時間を花火・パチンコ的な
+      「見てて楽しい」演出に変える。
+      GUIを開いていなくても
+      ワールド空間で気づける。
+    end note
+    MHSの体験 --> 演出フィードバック
+}
+
+package minecraft {
+    package create_mod {
+        package aero_mod {
+            class 航空の概念
+            class 操縦桿
+        }
+
+        class 超粘着剤
+
+        class ユーザの自作マシン {
+            MAVLink風コマンド窓口
+        }
+        ユーザの自作マシン o--- 航空の概念
+        ユーザの自作マシン o--- 操縦桿
+
+        超粘着剤 ---> ユーザの自作マシン: ブロックの範囲固定
+
+        class CreateBlockHAL
+        note left of CreateBlockHAL
+          CreateModのブロック制御API。
+          本物のHAL(Hardware Abstraction
+          Layer)と同じ役目 - 橋渡し側
+          (疑似PWM出力・コーナーマーカー)は
+          実ブロックに直接触らず、必ず
+          このAPI層を経由する
+          (2026-09-05、林さんの分離を反映)
+        end note
+        class CreateBlock
+        note left of CreateBlock
+          CreateModのブロック(実体)
+        end note
+        CreateBlockHAL --> CreateBlock : 実ブロックの入出力を仲介
+        class Clutch
+        class Gearshift
+        Clutch --|> CreateBlock
+        Gearshift --|> CreateBlock
+        note right of Gearshift
+          Create自身が持つ既存ブロック。
+          バニラのredstone通電で
+          出力停止/回転反転する
+        end note
+    }
+    note bottom of create_mod
+      統合は2種類、コストが全く違う。
+      (1)深い統合(javaクラス直結、RPM値を
+      直接読む等)はコンパイル時依存・
+      バージョン追従コストが発生するため見送り。
+      (2)redstone経由の橋渡し(コーナーマーカーの
+      set_output()をClutch/Gearshiftの隣に置く)は
+      コード依存ゼロ、既存実装のまま今すぐ可能
+      (2026-09-05 訂正: 当初は(1)(2)を区別せず
+      一括で見送りとしていたが誤りだった)
+    end note
+
+
+    package micra_drone_mod {
+        class プログラムブロック
+        class AIChat
+        AIChat --> プログラムブロック : 提案などサポート
+
+        class イベントディスパッチャ {
+            既知イベント→ハンドラ直行
+            未知イベント→AI呼び出し
+        }
+        class AIスロットルガード {
+            実行中は多重発火を無視
+            完了後もクールダウン
+        }
+        class 強制AI呼び出し口 {
+            振り分け判定が壊れても
+            AI経路へ直接飛ばせる脱出口
+        }
+        note right of 強制AI呼び出し口
+          スクロール操作(Issue #1)でSneak修飾
+          への暗黙依存が2回連続バグを生んだ
+          教訓と同じ考え方: 判定ロジックの
+          バグが復旧不能な詰みにならないよう
+          独立した経路を必ず用意する
+        end note
+
+        イベントディスパッチャ o-- 強制AI呼び出し口
+
+        イベントディスパッチャ --> プログラムブロック : 既知イベント
+        イベントディスパッチャ --> AIChat : 未知イベント\n(引数を渡し自動生成→即実行)
+        イベントディスパッチャ --> AIスロットルガード
+        AIスロットルガード --> AIChat : 通過を許可した呼び出しのみ
+        強制AI呼び出し口 --> AIChat : 判定を経由せず直接
+
+        class コーナーマーカー {
+            既存ブロック
+            pairedTargetId
+        }
+        class リンクツール {
+            A→Bクリックでペアリング
+            配置プレビュー(緑/赤の線)
+            常時可視化モード
+        }
+        note right of リンクツール
+          RegionPointerItemと同じ設計パターン
+          (イベントバス方式のクリック検知、
+          useOn/useWithoutItemの分岐順序に
+          非依存)。配置プレビューはCreate mod
+          のベルト設置UX(CADの直線ツール風、
+          緑=設置可/赤=NG)が参考元
+        end note
+        リンクツール --> コーナーマーカー : ペアリング操作
+        コーナーマーカー --> イベントディスパッチャ : redstone信号イベント
+
+        class フライトコントローラ {
+            優先度(それっぽさ重視)
+            ウォッチドッグ予算(何tick以内)
+            横取り演出(音/光)
+        }
+        note right of フライトコントローラ
+          2026-09-05 検討中(まだ思いつき段階)。
+          本物のRTOS性能は目指さない
+          - Minecraft自体が20tick/秒の天井
+          なので、それを追う意味は薄い。
+          「それっぽく動いて楽しい・
+          試行錯誤の達成感がある」を狙う
+          (大学のOS教育で使う"おもちゃの
+          カーネル"と同じ発想)。ただし
+          演出だけでなく、制約・めんどく
+          ささ自体も本物らしさの一部
+          として必要(林さん方針)。
+          割り込みディスパッチャ(割り込み
+          ベクタ表)と既存の
+          暴走検知(RUNAWAY_STATEMENT_
+          THRESHOLD、ウォッチドッグ的)を
+          土台に発展させる案。AIChatと
+          わちゃわちゃ相談しながら
+          優先度やタイミングを試行錯誤
+          するのも楽しみの一部にする
+        end note
+
+
+
+        class RTOS {
+            タスクキュー
+            優先度管理
+            タイムアウト検知
+        }
+        フライトコントローラ o-- RTOS
+
+        class NuttX
+
+        class 割り込みディスパッチャ {
+            既知の割り込み→ハンドラ直行
+            未知の割り込み→AIChatに相談
+        }
+        note right of 割り込みディスパッチャ
+          NuttXはOS、言語ではない。その上で
+          RTOSタスクを書く層にも既知/未知の
+          振り分けが要る(上のイベントディスパッチャと
+          同じ考え方を、より低いレベルの
+          割り込み単位で繰り返す)。AIChatは
+          Pythonスクリプト層だけでなく
+          ここにも介入できる
+          (2026-09-05、林さんの指摘で追加)
+        end note
+        NuttX o-- 割り込みディスパッチャ
+        割り込みディスパッチャ --> RTOSタスク : 既知の割り込み→対応タスクを起床\n(ISRは短く、実際の出力はタスク側で)
+        AIChat ..> 割り込みディスパッチャ : 介入(未知の割り込みを一緒に考える)
+        割り込みディスパッチャ --> AIスロットルガード : 未知の割り込み→AI相談も必ず経由\n(割り込みは高頻度なので特に重要)
+
+        RTOS <|--- NuttX
+
+        class RTOSタスク {
+            優先度
+            実行予算(何tick以内)
+            担当する割り込み
+        }
+        note right of RTOSタスク
+          NuttXはOS(管理人)であって言語では
+          ない。その上で動く小さなプログラム
+          (タスク)が、子供が書く対象であり
+          AIが介在する場所。本物ではC/C++で
+          NuttXのAPI(タスク作成・優先度・
+          割り込み登録)を呼んで書く。PX4だと
+          姿勢制御/センサー読み取り/出力
+          ドライバなどのモジュール群がこれ。
+          このmodでは言語は増やさず、上と
+          同じPython風DSLで書く(defが前提、
+          Phase 3先送り項目)。ISR内で出力
+          禁止/優先度・予算は必須/超過で
+          強制終了、の3制約は実行器側で強制
+          (2026-09-05、林さんの疑問を受けて追加)
+        end note
+        RTOS o-- RTOSタスク : スケジュール対象
+        プログラムブロック ..> RTOSタスク : 同じPython風DSLで記述
+        RTOSタスク --> 疑似PWM出力 : 出力ドライバタスクが駆動
+        AIChat ..> RTOSタスク : 一緒に書く\n(優先度・予算・担当割り込みを試行錯誤)
+        MAVLink風コマンド窓口 --> RTOS : タスク登録/優先度変更の依頼
+
+        class 疑似PWM出力 {
+            デューティ比(強さ)
+            RTOSの精密tickで生成
+        }
+        note right of 疑似PWM出力
+          本物のモーターもON/OFFの2値信号
+          (PWM=パルス幅変調)だけで速度を
+          連続制御している。Create modの
+          Clutch/GearshiftがON/OFFしか
+          できないという制約は、実は本物の
+          ESC(モーター制御回路)への入力と
+          同じ性質 - 弱点ではなく好都合。
+          RTOSの精密tick管理でON/OFFを
+          高速に切り替え、デューティ比
+          (ONの時間の割合)で疑似的に
+          連続出力を表現する。フライト
+          コントローラが計算した「強さ」を
+          実際の出力に変換する、本物と
+          同じ役割分担(2026-09-05、林さんの
+          指摘で追加)。自前のDroneEntity
+          移動も将来的に同じ経路に乗せる
+          余地あり(今回はCreate mod橋渡し
+          が先)
+        end note
+        RTOS --> 疑似PWM出力 : 精密tickを供給
+        疑似PWM出力 ..> CreateBlockHAL : 高速明滅で疑似連続制御
+
+        class MAVLink風コマンド窓口 {
+            固定語彙のコマンド名
+            param1..param7(未使用は0)
+            結果コード語彙で返す
+        }
+        note right of MAVLink風コマンド窓口
+          本物のMAVLink COMMAND_LONG/
+          COMMAND_ACKに寄せる: 真偽値では
+          なくACCEPTED/IN_PROGRESS/
+          TEMPORARILY_REJECTED/DENIED
+          等の結果コードで返す。7スロット
+          固定(未使用分も0で埋める)という
+          面倒さも実物通り残す(要点だけ
+          読める楽な関数名にしない)。
+          Python側(作業スレッド)は
+          この窓口を通してしかフライト
+          コントローラに触れない -
+          既存のCompletableFuture経由の
+          main thread dispatch(今のmove/
+          till等と同じ「頼んで返事を待つ」
+          境界)をそのまま土台にする
+        end note
+        フライトコントローラ o-- MAVLink風コマンド窓口 : 唯一の入り口
+
+        イベントディスパッチャ ..> 割り込みディスパッチャ : 同じ既知/未知の考え方を\n下位層で繰り返す
+        AIChat ..> フライトコントローラ : 一緒に試行錯誤
+        ユーザの自作マシン ..> MAVLink風コマンド窓口 : リンクツール経由
+        プログラムブロック --> MAVLink風コマンド窓口 : Python DSLからの唯一の経路
+        コーナーマーカー --> 割り込みディスパッチャ : redstone信号を割り込みとして受ける\n(フライトコントローラ層の経路)
+
+    }
+}
+
+MHS --> イベントディスパッチャ : MHSループの実装箇所
+MHS <.. AIChat : この図でのAI部分の具体的実現\n(read=block snapshot/write=set_output等\n/イベント駆動=各ディスパッチャから呼ばれる)
+AIスロットルガード --> 演出フィードバック : busy状態を表示
+イベントディスパッチャ --> 演出フィードバック : 考え中/エラー/成功を表示
+MHSの体験 --> micra_drone_mod : 子供に安価に体験させる対象
+コーナーマーカー ..> CreateBlockHAL : redstone経由(コード依存ゼロ)
+ユーザの自作マシン "1" *-- "*" CreateBlock : 超粘着剤でひとまとまりに固定
+
+@enduml
