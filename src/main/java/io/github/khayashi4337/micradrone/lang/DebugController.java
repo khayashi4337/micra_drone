@@ -4,16 +4,24 @@ import java.util.Set;
 
 /**
  * Debugger control shared between the script's worker thread and the game: breakpoints, pause/
- * resume, statement stepping, and step-out-of-the-current-loop. The worker thread reports in via
- * {@link #onStatement} (called by {@link Interpreter} before every statement) and blocks right
- * there when a pause is due; the other methods are called from the server main thread (via the
- * IDE's debug payloads) and only flip flags / wake the worker. Minecraft-free and self-contained
- * so the whole protocol is unit-testable with plain threads.
+ * resume, statement stepping, and stepping out of the current loop or function call. The worker
+ * thread reports in via {@link #onStatement} (called by {@link Interpreter} before every
+ * statement) and blocks right there when a pause is due; the other methods are called from the
+ * server main thread (via the IDE's debug payloads) and only flip flags / wake the worker.
+ * Minecraft-free and self-contained so the whole protocol is unit-testable with plain threads.
  *
- * <p>The language has no user-defined functions yet, so classic step-in/step-over both collapse
- * to {@link #step} ("run to the next statement" - loop and if bodies are entered naturally).
- * {@link #stepOut} is defined against loop depth ("run until the current while/for exits"), which
- * generalizes to real call frames if functions are added later.
+ * <p>The language has user-defined functions (see {@link MicraFunction}), but no distinct
+ * step-over: classic step-in/step-over both still collapse to {@link #step} ("run to the next
+ * statement" - loop bodies, if bodies, and now function calls are all entered naturally, since
+ * {@code onStatement} fires the same way regardless of what frame it's called from). {@link
+ * #stepOut} is defined against a single depth counter ("pause the next time {@code depth} drops
+ * below its value when stepOut was requested") - {@link Interpreter#callFunction} brackets a call
+ * with {@link #enterLoop}/{@link #exitLoop} exactly the way a loop does, so this is genuinely "run
+ * until the current loop or function call frame has exited", not "the current loop specifically".
+ * Where the *next* pause lands after that depends entirely on what statement is next once the
+ * frame is gone - typically back inside an enclosing loop's body, but if the call/loop was the
+ * last thing in its own enclosing frame too, the next pause can land past that frame as well (it
+ * is simply the next {@code onStatement} call, wherever that turns out to be).
  *
  * <p>Stop keeps working while paused: {@code Thread.interrupt()} (the existing stop path) wakes
  * the {@code wait()} and is rethrown as {@link ScriptStoppedException}.
@@ -28,7 +36,7 @@ public final class DebugController {
     // All guarded by lock.
     private boolean pauseRequested;
     private boolean stepRequested;
-    /** Pause once loop depth drops below this; -1 = no step-out in progress. */
+    /** Pause once {@link #depth} (loop or function-call nesting) drops below this; -1 = no step-out in progress. */
     private int stepOutBelowDepth = -1;
     private int depth;
 
@@ -59,7 +67,7 @@ public final class DebugController {
         }
     }
 
-    /** Worker thread: brackets each while/for loop's whole execution (see Interpreter). */
+    /** Worker thread: brackets each while/for loop's whole execution, and each function call's, too (see Interpreter). */
     public void enterLoop() {
         synchronized (lock) {
             depth++;
@@ -107,9 +115,9 @@ public final class DebugController {
     }
 
     /**
-     * While paused inside a loop: run until that loop (the innermost one) has exited, then pause
-     * at the next statement. Paused at top level (depth 0), this is just {@link #resume} - there
-     * is nothing to step out of. No-op while running.
+     * While paused inside a loop or a function call: run until that innermost frame has exited,
+     * then pause at the next statement. Paused at top level (depth 0), this is just {@link
+     * #resume} - there is nothing to step out of. No-op while running.
      */
     public void stepOut() {
         synchronized (lock) {

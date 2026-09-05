@@ -67,7 +67,8 @@ import org.lwjgl.glfw.GLFW;
  *
  * <p>Debugger (issue #6): the editor gutter shows line numbers - click one to toggle a
  * breakpoint (red). The line about to execute is highlighted yellow, live. Pause/Resume, Step,
- * and Step Out (of the current loop) drive the server-side {@code DebugController} through
+ * and Step Out (of the current loop, or now a user-defined function call - see
+ * {@code DebugController}'s own doc) drive the server-side {@code DebugController} through
  * {@link DebugCommandPayload}; state comes back via {@link DebugStatePayload}. The highlight maps
  * lines of the SAVED script, so debugging starts from Save &amp; Run - unsaved edits shift lines.
  *
