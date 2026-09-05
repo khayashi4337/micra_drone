@@ -63,4 +63,15 @@ public final class Environment {
         }
         return null;
     }
+
+    /**
+     * A shallow copy of this frame's own bindings only (parents are not walked). Used to seed a
+     * forked Interpreter's global frame for create_task/raise_interrupt: each entry keeps its
+     * original object identity, so a shared mutable value (a semaphore, a list) stays the same
+     * object in both copies, while a later plain reassignment in either frame does not affect the
+     * other.
+     */
+    Map<String, Object> snapshot() {
+        return new HashMap<>(values);
+    }
 }

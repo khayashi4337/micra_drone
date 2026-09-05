@@ -19,7 +19,7 @@ public final class CommandNames {
             "set_output", "get_output", "pair_with", "is_paired",
             "print", "range",
             // General-purpose, nothing to do with the drone - see Interpreter's "general-purpose builtins".
-            "len", "abs", "min", "max", "random", "str", "list", "dict", "set", "semaphore");
+            "len", "abs", "min", "max", "random", "str", "list", "dict", "set", "semaphore", "create_task");
 
     private CommandNames() {
     }

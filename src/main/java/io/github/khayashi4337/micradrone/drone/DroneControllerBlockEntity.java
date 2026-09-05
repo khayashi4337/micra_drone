@@ -25,8 +25,10 @@ import io.github.khayashi4337.micradrone.drone.net.ScriptEntry;
 import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
 import io.github.khayashi4337.micradrone.lang.DebugController;
+import io.github.khayashi4337.micradrone.lang.InterruptTable;
 import io.github.khayashi4337.micradrone.lang.Lexer;
 import io.github.khayashi4337.micradrone.lang.Parser;
+import io.github.khayashi4337.micradrone.lang.TaskRegistry;
 import io.github.khayashi4337.micradrone.lang.ast.Stmt;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
@@ -160,6 +162,13 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private DroneScriptRunner scriptRunner;
     /** The visible {@link DroneEntity} tracked by UUID (entities aren't safe to hold direct references to across reloads). */
     private UUID droneEntityUuid;
+
+    // RTOS task foundation (create_task/attach_isr): owned here, not by DroneScriptRunner, because
+    // a fresh DroneScriptRunner is built on every Run (see startFreshRun below) - these must live
+    // as long as this controller so a task started by one Run can be found and stopped by a later
+    // Run, Stop, or block removal. See docs/design/lang_rtos_task_foundation.md.
+    private final TaskRegistry taskRegistry = new TaskRegistry();
+    private final InterruptTable interruptTable = new InterruptTable();
 
     // IDE debugger (issue #6). Breakpoints are per-controller and session-only (deliberately not
     // saved to NBT); the controller is recreated for every run with the current set applied.
@@ -328,6 +337,11 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             }
         }
         droneEntityUuid = null;
+    }
+
+    /** Interrupts every create_task task this controller has started. Called on block removal so none outlive it. */
+    public void stopAllTasks() {
+        taskRegistry.stopAll();
     }
 
     @Override
@@ -772,7 +786,13 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             debug.requestPause();
         }
         debugController = debug;
-        scriptRunner = new DroneScriptRunner(api, this::appendLog, debug);
+        // Tear down whatever the previous Run left behind (create_task tasks, attach_isr handlers)
+        // before wiring up the new run - a task is meant to outlive the script that started it
+        // (see the design doc), but not outlive the controller re-Run entirely.
+        taskRegistry.stopAll();
+        taskRegistry.reopen(); // stopAll() alone would leave create_task DENIED for this new run too
+        interruptTable.clear();
+        scriptRunner = new DroneScriptRunner(api, this::appendLog, debug, taskRegistry, interruptTable);
         appendLog(startPaused ? "[run] stepping " + scriptName : "[run] running " + scriptName);
         scriptRunner.start(program);
     }

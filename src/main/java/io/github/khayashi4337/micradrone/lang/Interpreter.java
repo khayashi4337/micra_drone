@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import io.github.khayashi4337.micradrone.lang.ast.Expr;
@@ -30,7 +31,7 @@ public final class Interpreter {
      * the same as pure arithmetic - otherwise it never trips and can exhaust the heap.
      */
     private static final Set<String> GENERAL_PURPOSE_BUILTINS =
-            Set.of("len", "abs", "min", "max", "random", "str", "list", "set", "dict", "semaphore");
+            Set.of("len", "abs", "min", "max", "random", "str", "list", "set", "dict", "semaphore", "create_task");
     /** How deep {@link #stringify(Object, int)} descends into nested collections before giving up. */
     private static final int MAX_STRINGIFY_DEPTH = 8;
 
@@ -43,28 +44,86 @@ public final class Interpreter {
     /**
      * The active scope. Starts out as (and normally stays) the global frame; {@link #callFunction}
      * temporarily swaps it for a fresh child frame for the duration of a call and always restores
-     * it afterwards, so the interpreter is not reentrant/thread-safe (fine today: one script runs
-     * on one dedicated worker thread at a time).
+     * it afterwards, so one Interpreter instance is not reentrant/thread-safe - fine, since each
+     * task/ISR handler (see {@link #createTask}/{@link #raiseInterrupt}) gets its own Interpreter
+     * instance rather than sharing this one.
      */
-    private Environment env = new Environment();
-    /** The module-level frame, captured once - every function call's frame is parented here, never the caller's locals (no closures, see MicraFunction). */
-    private final Environment globalEnv = env;
+    private Environment env;
+    /**
+     * The module-level frame. Every function call's frame is parented here, never the caller's
+     * locals (no closures, see MicraFunction). For a task/ISR's forked Interpreter this is a
+     * shallow copy of the creating Interpreter's globalEnv (see {@link Environment#snapshot()}) -
+     * shared mutable values (lists, semaphores, ...) stay the same object, but a plain reassignment
+     * in one Interpreter never affects the other.
+     */
+    private final Environment globalEnv;
     /** Backs {@code random()}. Unseeded on purpose - scripts that want repeatable runs shouldn't call it. */
     private final Random random = new Random();
     private long statementsSinceApiCall = 0;
     private int callDepth = 0;
+    /**
+     * True only for the Interpreter instance {@link #raiseInterrupt} builds to run an ISR handler.
+     * Gates {@link #evalCall} against anything that isn't in {@link #ISR_SAFE_BUILTINS} - see that
+     * set's javadoc for why a real interrupt handler must never call a DroneApi-backed builtin.
+     */
+    private final boolean isrContext;
+    private final TaskRegistry taskRegistry;
+    private final InterruptTable interruptTable;
 
     public Interpreter(DroneApi api) {
         this(api, null);
     }
 
     public Interpreter(DroneApi api, DebugController debug) {
+        this(api, debug, new TaskRegistry(), new InterruptTable());
+    }
+
+    /**
+     * Entry point for a top-level script that needs its {@code create_task}/{@code attach_isr}
+     * bookkeeping to outlive this one run - see
+     * {@link io.github.khayashi4337.micradrone.drone.DroneScriptRunner} and
+     * docs/design/lang_rtos_task_foundation.md's "TaskRegistry/InterruptTableの所有者について".
+     */
+    public Interpreter(DroneApi api, DebugController debug, TaskRegistry taskRegistry, InterruptTable interruptTable) {
+        this(api, debug, new Environment(), false, taskRegistry, interruptTable);
+    }
+
+    private Interpreter(DroneApi api, DebugController debug, Environment globalEnv, boolean isrContext,
+            TaskRegistry taskRegistry, InterruptTable interruptTable) {
         this.api = api;
         this.debug = debug;
+        this.globalEnv = globalEnv;
+        this.env = globalEnv;
+        this.isrContext = isrContext;
+        this.taskRegistry = taskRegistry;
+        this.interruptTable = interruptTable;
     }
 
     public void run(List<Stmt> program) {
         execBlock(program);
+    }
+
+    /** Interrupts every task this Interpreter's run() has created via create_task. Tests that call create_task without a DroneScriptRunner should call this once done. */
+    public void stopAllTasks() {
+        taskRegistry.stopAll();
+    }
+
+    /**
+     * Runs a task/ISR handler's body: {@link #callFunction}'s scoping rules but for a zero-arg
+     * body that nobody calls (no ReturnSignal value to hand back, no call-depth bookkeeping since
+     * this isn't a nested call within a running script - it IS the running script, for this
+     * Interpreter instance).
+     */
+    private void runIsolatedBody(List<Stmt> body) {
+        Environment previous = env;
+        env = new Environment(globalEnv);
+        try {
+            execBlock(body);
+        } catch (ReturnSignal ignored) {
+            // an early return just ends the task/ISR handler
+        } finally {
+            env = previous;
+        }
     }
 
     // ---- statements ----
@@ -313,10 +372,11 @@ public final class Interpreter {
     }
 
     /**
-     * The collection methods. Deliberately a small set - the ones needed to build a collection up
-     * and take it apart again - rather than all of Python's: every one of these is something a
-     * script genuinely can't do otherwise, since the literals alone can only ever produce a
-     * collection of a fixed size.
+     * The collection methods (list/set/dict) plus {@link MicraSemaphore}'s {@code post}/{@code
+     * wait}. The collection methods are deliberately a small set - the ones needed to build a
+     * collection up and take it apart again - rather than all of Python's: every one of these is
+     * something a script genuinely can't do otherwise, since the literals alone can only ever
+     * produce a collection of a fixed size.
      *
      * <p>Unlike {@link #evalCall}, this does NOT reset the runaway-loop counter: {@code append}/
      * {@code add} grow the JVM heap with no DroneApi pacing to slow them down, so a loop like
@@ -733,6 +793,14 @@ public final class Interpreter {
                 requireArgCount(call, 0);
                 yield new MicraSemaphore(0);
             }
+            case "create_task" -> {
+                requireArgCount(call, 4); // validated once; read the rest with eval(...), not argAt (see below)
+                String name = asString(eval(call.args().get(0)), call.line());
+                double priorityRaw = asDouble(eval(call.args().get(1)), call.line());
+                double budgetRaw = asDouble(eval(call.args().get(2)), call.line());
+                Object fnValue = eval(call.args().get(3));
+                yield createTask(name, priorityRaw, budgetRaw, fnValue);
+            }
             case "range" -> throw new MicraLangException(call.line(), "range() can only be used in a for-loop");
             default -> throw new MicraLangException(call.line(), "unknown function '" + call.name() + "'");
         };
@@ -740,6 +808,102 @@ public final class Interpreter {
             statementsSinceApiCall = 0;
         }
         return result;
+    }
+
+    /** Minecraft's own tick length (20 ticks/sec) - used only for the budget watchdog below, which is a wall-clock timer independent of any live game tick counter (a task may spin pure CPU with no DroneApi calls at all, so it can't rely on the paced-action tick clock the way sleep_ticks does). */
+    private static final long TICK_MILLIS = 50;
+    /** 1,000,000 ticks ~= 13.9 hours - an absolute cap so an absurd budget_ticks can't overflow `budgetTicks * TICK_MILLIS`. */
+    private static final long MAX_BUDGET_TICKS = 1_000_000;
+
+    /**
+     * Spawns a real Java thread running {@code fn} (must take no arguments) as an RTOS-style
+     * background task: its own Interpreter instance, its own fresh global frame seeded with a
+     * shallow copy of this Interpreter's globals (shared mutable values like semaphores stay the
+     * same object; a plain reassignment in the task never affects this Interpreter or vice versa -
+     * see docs/design/lang_rtos_task_foundation.md's "共有可変状態・並行アクセスについての注記"
+     * for what that does and doesn't make safe). Returns a MAVLink-style result code
+     * ("ACCEPTED"/"DENIED") rather than throwing, matching how the rest of this feature reports
+     * outcomes (see the design doc). {@code priority} is a best-effort {@link Thread#setPriority}
+     * hint only - the JVM/OS is free to ignore it, so nothing here or in any user-facing text may
+     * claim a higher-priority task is guaranteed to run first. {@code budgetTicks <= 0} means no
+     * time limit; otherwise the task is interrupted (a cooperative stop signal, not a forcible
+     * kill - see ScriptStoppedException) if it hasn't finished within that many ticks.
+     */
+    private String createTask(String name, double priorityRaw, double budgetTicksRaw, Object fnValue) {
+        if (!(fnValue instanceof MicraFunction fn) || !fn.params().isEmpty()) {
+            return "DENIED";
+        }
+        // Explicit 0 is a deliberate "no limit" sentinel; NaN/negative/infinite are input errors,
+        // not silently-accepted "unlimited" - a script's arithmetic mistake shouldn't quietly hand
+        // out an unbounded task (Codex review finding).
+        if (!Double.isFinite(budgetTicksRaw) || budgetTicksRaw < 0) {
+            return "DENIED";
+        }
+        long budgetTicks = (long) Math.min(MAX_BUDGET_TICKS, budgetTicksRaw);
+        // Clamp in double space before rounding/narrowing to int - narrowing an out-of-int-range
+        // long first can wrap to an arbitrary (even negative) value (Codex review finding).
+        double clampedPriorityRaw = Double.isNaN(priorityRaw) ? 5.0
+                : Math.max(Thread.MIN_PRIORITY, Math.min(Thread.MAX_PRIORITY, priorityRaw));
+        int priority = (int) Math.round(clampedPriorityRaw);
+        if (!taskRegistry.tryReserve(name)) {
+            return "DENIED";
+        }
+        Environment forkedGlobal = new Environment();
+        for (Map.Entry<String, Object> e : globalEnv.snapshot().entrySet()) {
+            forkedGlobal.set(e.getKey(), e.getValue());
+        }
+        Interpreter taskInterpreter = new Interpreter(api, null, forkedGlobal, false, taskRegistry, interruptTable);
+        // AtomicReference (not a plain array) so the task thread's finally block is guaranteed to
+        // observe a watchdog written after taskThread.start() - a plain array write has no
+        // happens-before edge to a read on a different thread (Codex review finding).
+        AtomicReference<Thread> watchdogHolder = new AtomicReference<>();
+        Thread taskThread = new Thread(() -> {
+            try {
+                taskInterpreter.runIsolatedBody(fn.body());
+            } catch (ScriptStoppedException ignored) {
+                // Stop, or budget exceeded - a normal way for a task to end.
+            } catch (MicraLangException e) {
+                api.print("task '" + name + "' error: " + e.getMessage());
+            } catch (Throwable e) {
+                // Mirrors DroneScriptRunner.runProgram's catch (Throwable): without this, anything
+                // that isn't a ScriptStoppedException/MicraLangException (an IllegalArgumentException
+                // from a bad move() direction, a ConcurrentModificationException from two tasks
+                // sharing an unsynchronized list, ...) would vanish into the thread's default
+                // uncaught-exception handler with nothing in the script's own log (Fable5.1 review
+                // finding).
+                try {
+                    api.print("task '" + name + "' error: " + e);
+                } finally {
+                    if (e instanceof Error error) {
+                        throw error; // log it, then let it surface like runProgram does
+                    }
+                }
+            } finally {
+                taskRegistry.release(name);
+                Thread watchdog = watchdogHolder.get();
+                if (watchdog != null) {
+                    watchdog.interrupt(); // this task finished on its own; the watchdog is no longer needed
+                }
+            }
+        }, "MicraDrone-Task-" + name);
+        taskThread.setDaemon(true);
+        taskThread.setPriority(priority);
+        taskRegistry.bind(name, taskThread);
+        taskThread.start();
+        if (budgetTicks > 0) {
+            Thread watchdog = new Thread(() -> {
+                try {
+                    Thread.sleep(budgetTicks * TICK_MILLIS);
+                    taskThread.interrupt();
+                } catch (InterruptedException ignored) {
+                    // the task finished first and interrupted this watchdog; nothing to do
+                }
+            }, "MicraDrone-Task-" + name + "-Watchdog");
+            watchdog.setDaemon(true);
+            watchdogHolder.set(watchdog);
+            watchdog.start();
+        }
+        return "ACCEPTED";
     }
 
     /**

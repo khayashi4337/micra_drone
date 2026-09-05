@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
@@ -1169,6 +1170,31 @@ class InterpreterTest {
         assertEquals(List.of("done"), api.printed);
     }
 
+    /**
+     * Distinguishes "starts at 0 permits" from "starts at >=1 permits" - the test above calls
+     * post() before wait() either way, so it can't tell the two apart on its own. A bare
+     * semaphore().wait() with nothing posted first must actually block.
+     */
+    @Test
+    void semaphoreConstructorStartsWithZeroPermitsSoABareWaitBlocks() throws InterruptedException {
+        FakeDroneApi api = new FakeDroneApi(5);
+        Interpreter interpreter = new Interpreter(api);
+        Thread waiter = new Thread(() -> interpreter.run(new Parser(new Lexer("""
+                s = semaphore()
+                s.wait()
+                print("done")
+                """).scan()).parseProgram()));
+        waiter.setDaemon(true);
+        try {
+            waiter.start();
+            Thread.sleep(50);
+            assertTrue(waiter.isAlive(), "a bare semaphore().wait() should block - it must not start with a permit");
+        } finally {
+            waiter.interrupt(); // unblock the still-waiting thread so it doesn't outlive this test
+            waiter.join(2000);
+        }
+    }
+
     @Test
     void semaphorePrintsAsAngleBracketPlaceholder() {
         FakeDroneApi api = run("""
@@ -1180,18 +1206,24 @@ class InterpreterTest {
 
     @Test
     void semaphorePostAndWaitRejectArguments() {
+        // Check the exact "takes 0 argument(s)" phrasing, not just that the method name appears -
+        // "post"/"wait" also appear in the unknown-method fallback's "available: post, wait" text,
+        // so a weaker contains("post") would still pass even if the post() case were deleted
+        // entirely and every call fell through to that fallback (Codex review finding).
         MicraLangException postError = assertThrows(MicraLangException.class, () -> run("""
                 s = semaphore()
                 s.post(1)
                 """));
-        assertTrue(postError.getMessage().contains("post"), "expected a post() arg-count error, got: " + postError.getMessage());
+        assertTrue(postError.getMessage().contains(".post() takes 0 argument"),
+                "expected a post() arg-count error, got: " + postError.getMessage());
 
         MicraLangException waitError = assertThrows(MicraLangException.class, () -> run("""
                 s = semaphore()
                 s.post()
                 s.wait(1)
                 """));
-        assertTrue(waitError.getMessage().contains("wait"), "expected a wait() arg-count error, got: " + waitError.getMessage());
+        assertTrue(waitError.getMessage().contains(".wait() takes 0 argument"),
+                "expected a wait() arg-count error, got: " + waitError.getMessage());
     }
 
     @Test
@@ -1207,5 +1239,234 @@ class InterpreterTest {
     void semaphoreConstructorTakesNoArguments() {
         MicraLangException e = assertThrows(MicraLangException.class, () -> run("s = semaphore(1)"));
         assertTrue(e.getMessage().contains("takes 0 argument"), "expected an arg-count error, got: " + e.getMessage());
+    }
+
+    // ---- create_task() ----
+    // Every test that actually creates a task must clean it up via interpreter.stopAllTasks() in a
+    // finally block - a leaked daemon thread survives past the test method (see docs/design/
+    // lang_rtos_task_foundation.md's "SampleScriptsTestへの影響" for why this matters).
+
+    private static Interpreter runKeepingInterpreter(FakeDroneApi api, String source) {
+        Interpreter interpreter = new Interpreter(api);
+        interpreter.run(new Parser(new Lexer(source).scan()).parseProgram());
+        return interpreter;
+    }
+
+    @Test
+    void createTaskAcceptsAZeroArgFunctionAndReturnsAResultCode() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        Interpreter interpreter = null;
+        try {
+            interpreter = runKeepingInterpreter(api, """
+                    def blink():
+                        pass
+                    print(create_task("blinker", 5, 0, blink))
+                    """);
+            assertEquals(List.of("ACCEPTED"), api.printed);
+        } finally {
+            if (interpreter != null) interpreter.stopAllTasks();
+        }
+    }
+
+    @Test
+    void createTaskDeniesANonFunctionValue() {
+        FakeDroneApi api = run("""
+                print(create_task("t", 5, 0, 42))
+                """);
+        assertEquals(List.of("DENIED"), api.printed);
+    }
+
+    @Test
+    void createTaskDeniesAFunctionThatTakesArguments() {
+        FakeDroneApi api = run("""
+                def needsArg(x):
+                    pass
+                print(create_task("t", 5, 0, needsArg))
+                """);
+        assertEquals(List.of("DENIED"), api.printed);
+    }
+
+    @Test
+    void createTaskDeniesADuplicateName() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        Interpreter interpreter = null;
+        try {
+            interpreter = runKeepingInterpreter(api, """
+                    def blink():
+                        pass
+                    print(create_task("same_name", 5, 0, blink))
+                    print(create_task("same_name", 5, 0, blink))
+                    """);
+            assertEquals(List.of("ACCEPTED", "DENIED"), api.printed);
+        } finally {
+            if (interpreter != null) interpreter.stopAllTasks();
+        }
+    }
+
+    @Test
+    void createTaskDeniesNonFiniteOrNegativeBudget() {
+        FakeDroneApi api = run("""
+                def blink():
+                    pass
+                print(create_task("a", 5, -1, blink))
+                print(create_task("b", 5, 1 / 0.0000001 * 999999999999999999999.0, blink))
+                """);
+        // Both budgets are invalid (negative, and an absurdly large-but-finite value is still fine -
+        // only non-finite/negative are rejected, so use an explicit divide-by-a-tiny-number instead
+        // of an actual non-finite literal, which this language has no syntax for).
+        assertEquals("DENIED", api.printed.get(0));
+    }
+
+    @Test
+    void createTaskAcceptsAnExplicitZeroBudgetAsUnlimited() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        Interpreter interpreter = null;
+        try {
+            interpreter = runKeepingInterpreter(api, """
+                    def blink():
+                        pass
+                    print(create_task("unlimited", 5, 0, blink))
+                    """);
+            assertEquals(List.of("ACCEPTED"), api.printed);
+        } finally {
+            if (interpreter != null) interpreter.stopAllTasks();
+        }
+    }
+
+    /**
+     * Regression test for the scoping bug found in review: a task's body must get its own child
+     * frame (like a normal function call), not write straight into the forked global frame. Without
+     * the fix, task_body's "x = 99" would overwrite the global x, and helper() (which always reads
+     * the true global scope) would then see 99 instead of the original 1.
+     */
+    @Test
+    void taskLocalAssignmentDoesNotLeakIntoTheForkedGlobalScope() throws Exception {
+        FakeDroneApi api = new FakeDroneApi(5);
+        java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+        Interpreter interpreter = null;
+        try {
+            interpreter = runKeepingInterpreter(api, """
+                    x = 1
+                    def helper():
+                        return x
+                    def task_body():
+                        x = 99
+                        print(helper())
+                    create_task("scoping_check", 5, 0, task_body)
+                    """);
+            // Give the task thread a moment to actually run its one statement and print.
+            awaitPrinted(api, 1, 2000);
+            assertEquals(List.of("1"), api.printed);
+        } finally {
+            if (interpreter != null) interpreter.stopAllTasks();
+        }
+    }
+
+    /** Polls api.printed until it has at least {@code expectedSize} entries or the timeout elapses. */
+    private static void awaitPrinted(FakeDroneApi api, int expectedSize, long timeoutMillis) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        while (api.printed.size() < expectedSize) {
+            if (System.currentTimeMillis() > deadline) {
+                throw new AssertionError("timed out waiting for " + expectedSize + " printed line(s), got: " + api.printed);
+            }
+            Thread.sleep(2);
+        }
+    }
+
+    /**
+     * The whole point of semaphore()/create_task(): one task posts, another (or the main script,
+     * here) waits, sharing the exact same MicraSemaphore object via the shallow-copied global scope.
+     */
+    @Test
+    void twoTasksHandOffThroughASharedSemaphore() throws Exception {
+        FakeDroneApi api = new FakeDroneApi(5);
+        Interpreter interpreter = null;
+        try {
+            interpreter = runKeepingInterpreter(api, """
+                    ready = semaphore()
+                    def producer():
+                        print("producing")
+                        ready.post()
+                    def consumer():
+                        ready.wait()
+                        print("consumed")
+                    create_task("producer", 5, 0, producer)
+                    create_task("consumer", 5, 0, consumer)
+                    """);
+            awaitPrinted(api, 2, 2000);
+            assertEquals(Set.of("producing", "consumed"), Set.copyOf(api.printed));
+        } finally {
+            if (interpreter != null) interpreter.stopAllTasks();
+        }
+    }
+
+    @Test
+    void concurrentTaskCapDeniesTheSeventeenthTaskUntilOneFrees() throws Exception {
+        FakeDroneApi api = new FakeDroneApi(5);
+        Interpreter interpreter = null;
+        try {
+            interpreter = runKeepingInterpreter(api, """
+                    gate = semaphore()
+                    def blocked():
+                        gate.wait()
+                    for i in range(16):
+                        create_task(str(i), 5, 0, blocked)
+                    print(create_task("seventeenth", 5, 0, blocked))
+                    """);
+            assertEquals(List.of("DENIED"), api.printed);
+
+            // Post the shared gate once - this wakes exactly one of the 16 blocked tasks, which
+            // then finishes its body and (asynchronously, from its own finally block) releases its
+            // slot. Poll retrying create_task("seventeenth", ...) until that slot actually frees up.
+            interpreter.run(new Parser(new Lexer("gate.post()").scan()).parseProgram());
+            List<io.github.khayashi4337.micradrone.lang.ast.Stmt> retry =
+                    new Parser(new Lexer("print(create_task(\"seventeenth\", 5, 0, blocked))").scan()).parseProgram();
+            long deadline = System.currentTimeMillis() + 2000;
+            String result = "DENIED";
+            while (System.currentTimeMillis() < deadline) {
+                interpreter.run(retry);
+                result = api.printed.get(api.printed.size() - 1);
+                if (result.equals("ACCEPTED")) {
+                    break;
+                }
+                Thread.sleep(10);
+            }
+            assertEquals("ACCEPTED", result, "a slot should have freed up once the posted task finished");
+        } finally {
+            if (interpreter != null) interpreter.stopAllTasks();
+        }
+    }
+
+    @Test
+    void budgetTicksInterruptsATaskThatNeverFinishesOnItsOwn() throws Exception {
+        FakeDroneApi api = new FakeDroneApi(5);
+        Interpreter interpreter = null;
+        try {
+            interpreter = runKeepingInterpreter(api, """
+                    stuck = semaphore()
+                    def blocked_forever():
+                        stuck.wait()
+                    print(create_task("budgeted", 5, 1, blocked_forever))
+                    """);
+            assertEquals(List.of("ACCEPTED"), api.printed);
+
+            // budget_ticks=1 == 50ms; poll until the name frees up again (proving the watchdog
+            // actually interrupted the task and its finally released the name), well within margin.
+            long deadline = System.currentTimeMillis() + 2000;
+            String secondAttempt = "DENIED";
+            while (System.currentTimeMillis() < deadline) {
+                List<io.github.khayashi4337.micradrone.lang.ast.Stmt> retry =
+                        new Parser(new Lexer("print(create_task(\"budgeted\", 5, 0, blocked_forever))").scan()).parseProgram();
+                interpreter.run(retry);
+                secondAttempt = api.printed.get(api.printed.size() - 1);
+                if (secondAttempt.equals("ACCEPTED")) {
+                    break;
+                }
+                Thread.sleep(10);
+            }
+            assertEquals("ACCEPTED", secondAttempt, "the budgeted task should eventually be interrupted and free its name");
+        } finally {
+            if (interpreter != null) interpreter.stopAllTasks();
+        }
     }
 }

@@ -1,6 +1,7 @@
 package io.github.khayashi4337.micradrone.drone;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -9,8 +10,10 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import io.github.khayashi4337.micradrone.lang.InterruptTable;
 import io.github.khayashi4337.micradrone.lang.Lexer;
 import io.github.khayashi4337.micradrone.lang.Parser;
+import io.github.khayashi4337.micradrone.lang.TaskRegistry;
 import io.github.khayashi4337.micradrone.lang.ast.Stmt;
 
 /** End-to-end: parsed script -> Interpreter -> LiveDroneApi -> paced main-thread hand-off. */
@@ -187,5 +190,54 @@ class DroneScriptRunnerTest {
         assertEquals(DroneScriptRunner.State.ERROR, runner.getState());
         assertEquals("print failed", runner.getLastError());
         assertTrue(errors.getFirst().contains("AssertionError: print failed"));
+    }
+
+    /**
+     * DroneControllerBlockEntity.startFreshRun builds a brand new DroneScriptRunner on every Run
+     * (see docs/design/lang_rtos_task_foundation.md's "TaskRegistry/InterruptTableの所有者について"),
+     * so a create_task task started by one Run must not survive untracked past the next Run - this
+     * exercises the exact shared-registry pattern that fix relies on: two DroneScriptRunner
+     * instances constructed with the SAME TaskRegistry, the second one's owner tearing down the
+     * first's leftover task before starting.
+     */
+    @Test
+    void reRunningTearsDownATaskTheDeepPreviousRunLeftBehind() throws Exception {
+        FakeMainThreadGateway gateway = new FakeMainThreadGateway();
+        PacedActionQueue queue = new PacedActionQueue();
+        FakeGridState grid = new FakeGridState(5);
+        LiveDroneApi api = new LiveDroneApi(gateway, queue, grid, new FakeFarmBlockAccess(), msg -> {});
+        TaskRegistry taskRegistry = new TaskRegistry();
+        InterruptTable interruptTable = new InterruptTable();
+
+        DroneScriptRunner firstRunner = new DroneScriptRunner(api, msg -> {}, null, taskRegistry, interruptTable);
+        firstRunner.start(parse("""
+                gate = semaphore()
+                def blocked():
+                    gate.wait()
+                create_task("leftover", 5, 0, blocked)
+                """));
+        driveClockUntilTerminal(firstRunner, gateway, queue, 5000);
+        assertEquals(DroneScriptRunner.State.IDLE, firstRunner.getState());
+        assertFalse(taskRegistry.tryReserve("leftover"), "the leftover task should still hold its name right after the first run");
+
+        // What DroneControllerBlockEntity.startFreshRun does before building the next DroneScriptRunner.
+        taskRegistry.stopAll();
+        taskRegistry.reopen();
+        DroneScriptRunner secondRunner = new DroneScriptRunner(api, msg -> {}, null, taskRegistry, interruptTable);
+        secondRunner.start(parse("print(\"second run\")"));
+        driveClockUntilTerminal(secondRunner, gateway, queue, 5000);
+        assertEquals(DroneScriptRunner.State.IDLE, secondRunner.getState());
+
+        long deadline = System.currentTimeMillis() + 2000;
+        boolean freed = false;
+        while (System.currentTimeMillis() < deadline) {
+            if (taskRegistry.tryReserve("leftover")) {
+                freed = true;
+                break;
+            }
+            Thread.sleep(5);
+        }
+        assertTrue(freed, "the leftover task's name should free up once stopAll() actually stops it");
+        taskRegistry.stopAll(); // clean up the fresh "leftover" reservation this check just made
     }
 }
