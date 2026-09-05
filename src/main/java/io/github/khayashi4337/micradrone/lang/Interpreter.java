@@ -103,7 +103,7 @@ public final class Interpreter {
         execBlock(program);
     }
 
-    /** Interrupts every task this Interpreter's run() has created via create_task. Tests that call create_task without a DroneScriptRunner should call this once done. */
+    /** Interrupts every task live in this Interpreter's TaskRegistry (shared across every Interpreter instance that was constructed with the same registry, e.g. via create_task's own forks). Tests that call create_task without a DroneScriptRunner should call this once done. */
     public void stopAllTasks() {
         taskRegistry.stopAll();
     }
@@ -674,6 +674,10 @@ public final class Interpreter {
                 api.doAFlip();
                 yield MicraNone.INSTANCE;
             }
+            case "sleep_ticks" -> {
+                api.sleepTicks(asDouble(argAt(call, 0), call.line()));
+                yield MicraNone.INSTANCE;
+            }
             case "can_harvest" -> {
                 requireArgCount(call, 0);
                 yield api.canHarvest();
@@ -839,23 +843,30 @@ public final class Interpreter {
         if (!Double.isFinite(budgetTicksRaw) || budgetTicksRaw < 0) {
             return "DENIED";
         }
-        long budgetTicks = (long) Math.min(MAX_BUDGET_TICKS, budgetTicksRaw);
+        // Math.ceil, not a truncating cast: 0 < budgetTicksRaw < 1 must round UP to 1 tick, not
+        // truncate down to 0 - a `(long) 0.5` would otherwise silently turn "budget 0.5" into "no
+        // limit at all" (budgetTicks > 0 gates the watchdog below), exactly the silent-unbounded-task
+        // outcome the finite/non-negative check above exists to prevent (Fable5.1 review finding).
+        long budgetTicks = (long) Math.min(MAX_BUDGET_TICKS, Math.ceil(budgetTicksRaw));
         // Clamp in double space before rounding/narrowing to int - narrowing an out-of-int-range
         // long first can wrap to an arbitrary (even negative) value (Codex review finding).
-        double clampedPriorityRaw = Double.isNaN(priorityRaw) ? 5.0
+        double clampedPriorityRaw = Double.isNaN(priorityRaw) ? Thread.NORM_PRIORITY
                 : Math.max(Thread.MIN_PRIORITY, Math.min(Thread.MAX_PRIORITY, priorityRaw));
         int priority = (int) Math.round(clampedPriorityRaw);
-        if (!taskRegistry.tryReserve(name)) {
-            return "DENIED";
-        }
+
         Environment forkedGlobal = new Environment();
         for (Map.Entry<String, Object> e : globalEnv.snapshot().entrySet()) {
             forkedGlobal.set(e.getKey(), e.getValue());
         }
         Interpreter taskInterpreter = new Interpreter(api, null, forkedGlobal, false, taskRegistry, interruptTable);
         // AtomicReference (not a plain array) so the task thread's finally block is guaranteed to
-        // observe a watchdog written after taskThread.start() - a plain array write has no
-        // happens-before edge to a read on a different thread (Codex review finding).
+        // observe the watchdog - a plain array write has no happens-before edge to a read on a
+        // different thread (Codex review finding). Set *before* taskThread.start() (not after, as
+        // an earlier draft had it) so there is no window where the task could finish and check
+        // watchdogHolder before it's populated (Fable5.1 review finding) - a not-yet-started
+        // Thread can still be interrupt()ed safely (its Thread.sleep below simply throws
+        // InterruptedException immediately once started), so constructing the watchdog first and
+        // starting it last is safe.
         AtomicReference<Thread> watchdogHolder = new AtomicReference<>();
         Thread taskThread = new Thread(() -> {
             try {
@@ -888,8 +899,6 @@ public final class Interpreter {
         }, "MicraDrone-Task-" + name);
         taskThread.setDaemon(true);
         taskThread.setPriority(priority);
-        taskRegistry.bind(name, taskThread);
-        taskThread.start();
         if (budgetTicks > 0) {
             Thread watchdog = new Thread(() -> {
                 try {
@@ -901,7 +910,29 @@ public final class Interpreter {
             }, "MicraDrone-Task-" + name + "-Watchdog");
             watchdog.setDaemon(true);
             watchdogHolder.set(watchdog);
-            watchdog.start();
+        }
+
+        // Reservation and binding happen as ONE atomic call, made only now that taskThread fully
+        // exists but has NOT been started yet: an earlier design reserved the name first and bound
+        // the real thread in a later, separate call, leaving a window where a concurrent stopAll()
+        // would only ever see an inert placeholder and let the real thread start completely
+        // unstopped right after (Codex review finding) - see TaskRegistry's class javadoc.
+        if (!taskRegistry.tryReserveAndBind(name, taskThread)) {
+            return "DENIED";
+        }
+        try {
+            taskThread.start();
+            Thread watchdog = watchdogHolder.get();
+            if (watchdog != null) {
+                watchdog.start();
+            }
+        } catch (RuntimeException | Error e) {
+            // If starting the thread itself throws (e.g. an OutOfMemoryError creating a native
+            // thread), the name/slot must not leak forever - MAX_CONCURRENT_TASKS is small enough
+            // that a few leaked reservations would meaningfully starve this controller (Fable5.1
+            // review finding).
+            taskRegistry.release(name);
+            throw e;
         }
         return "ACCEPTED";
     }

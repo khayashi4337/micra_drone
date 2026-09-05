@@ -19,6 +19,8 @@ import io.github.khayashi4337.micradrone.lang.ScriptStoppedException;
 public final class LiveDroneApi implements DroneApi {
     private static final int ACTION_DELAY_TICKS = 4;
     private static final long MAIN_THREAD_TIMEOUT_SECONDS = 5;
+    /** ~1 in-game day/night cycle (20 minutes at 20 TPS) - a generous, sane cap on a single sleep_ticks() call. */
+    private static final long MAX_SLEEP_TICKS = 24_000;
 
     private final MainThreadGateway gateway;
     private final PacedActionQueue pacedQueue;
@@ -180,14 +182,36 @@ public final class LiveDroneApi implements DroneApi {
     }
 
     /**
-     * Decides success/failure of {@code attempt} on the main thread right away, then defers the
-     * actual mutation - and unblocking the caller - until the resulting pacing delay elapses.
+     * Waits {@code ticks} game ticks without touching the world - RTOS-style tasks (create_task)
+     * use this to pace/yield themselves, sharing the exact same tick-driven pacing as move/till/
+     * plant/harvest (see {@link #dispatch(long, Supplier)}) so it stays correct even under server
+     * lag. Non-finite ticks (this language has essentially no way to produce one - {@code /} and
+     * {@code %} already stop on division by zero) fall back to 0; the value is otherwise clamped
+     * to {@link #MAX_SLEEP_TICKS} so an absurd request can't produce an absurd wait.
      */
+    @Override
+    public void sleepTicks(double ticks) {
+        long n = Double.isFinite(ticks) ? (long) Math.max(0, Math.min(MAX_SLEEP_TICKS, ticks)) : 0;
+        dispatch(n, () -> new Attempt(true, () -> { }));
+    }
+
+    /** Existing callers (move/till/plant/harvest/doAFlip/setOutput/pairWith) - unchanged, always paced by {@link #ACTION_DELAY_TICKS}. */
     private boolean dispatch(Supplier<Attempt> attempt) {
+        return dispatch(ACTION_DELAY_TICKS, attempt);
+    }
+
+    /**
+     * Decides success/failure of {@code attempt} on the main thread right away, then defers the
+     * actual mutation - and unblocking the caller - until {@code successDelayTicks} game ticks
+     * have elapsed (0 on failure). {@code blockOn}'s wait is capped at
+     * {@link #timeoutForTicks(long)}, not the bare anomaly-detection margin, so a legitimately
+     * long {@code sleep_ticks} call isn't mistaken for a stuck main thread.
+     */
+    private boolean dispatch(long successDelayTicks, Supplier<Attempt> attempt) {
         CompletableFuture<Boolean> future = new CompletableFuture<>();
         gateway.runOnMainThread(() -> {
             Attempt result = attempt.get();
-            long delay = result.succeeded() ? ACTION_DELAY_TICKS : 0;
+            long delay = result.succeeded() ? successDelayTicks : 0;
             long readyAt = gateway.currentTick() + delay;
             pacedQueue.submit(readyAt, () -> {
                 if (result.succeeded()) {
@@ -196,19 +220,24 @@ public final class LiveDroneApi implements DroneApi {
                 future.complete(result.succeeded());
             });
         });
-        return blockOn(future);
+        return blockOn(future, timeoutForTicks(successDelayTicks));
+    }
+
+    /** The 5s anomaly-detection margin, plus however long {@code ticks} should nominally take at 20 TPS. */
+    private long timeoutForTicks(long ticks) {
+        return MAIN_THREAD_TIMEOUT_SECONDS + (ticks / 20L);
     }
 
     /** Runs a read-only query on the main thread and returns its result immediately (no pacing delay). */
     private <T> T queryMainThread(Supplier<T> query) {
         CompletableFuture<T> future = new CompletableFuture<>();
         gateway.runOnMainThread(() -> future.complete(query.get()));
-        return blockOn(future);
+        return blockOn(future, MAIN_THREAD_TIMEOUT_SECONDS);
     }
 
-    private <T> T blockOn(CompletableFuture<T> future) {
+    private <T> T blockOn(CompletableFuture<T> future, long timeoutSeconds) {
         try {
-            return future.get(MAIN_THREAD_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            return future.get(timeoutSeconds, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new ScriptStoppedException();

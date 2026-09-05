@@ -1288,14 +1288,20 @@ class InterpreterTest {
 
     @Test
     void createTaskDeniesADuplicateName() {
+        // The first task must genuinely still be alive (not have already finished and released
+        // its name) by the time the second create_task call happens - a "pass"-only body would
+        // race, since a task's finally block can release its name before the very next statement
+        // on the calling thread even runs, making the second call's expected DENIED flaky (Codex
+        // review finding). Blocking on a never-posted semaphore guarantees it can't have finished.
         FakeDroneApi api = new FakeDroneApi(5);
         Interpreter interpreter = null;
         try {
             interpreter = runKeepingInterpreter(api, """
-                    def blink():
-                        pass
-                    print(create_task("same_name", 5, 0, blink))
-                    print(create_task("same_name", 5, 0, blink))
+                    gate = semaphore()
+                    def blocked():
+                        gate.wait()
+                    print(create_task("same_name", 5, 0, blocked))
+                    print(create_task("same_name", 5, 0, blocked))
                     """);
             assertEquals(List.of("ACCEPTED", "DENIED"), api.printed);
         } finally {
@@ -1304,17 +1310,34 @@ class InterpreterTest {
     }
 
     @Test
-    void createTaskDeniesNonFiniteOrNegativeBudget() {
+    void createTaskDeniesANegativeBudget() {
         FakeDroneApi api = run("""
                 def blink():
                     pass
                 print(create_task("a", 5, -1, blink))
-                print(create_task("b", 5, 1 / 0.0000001 * 999999999999999999999.0, blink))
                 """);
-        // Both budgets are invalid (negative, and an absurdly large-but-finite value is still fine -
-        // only non-finite/negative are rejected, so use an explicit divide-by-a-tiny-number instead
-        // of an actual non-finite literal, which this language has no syntax for).
-        assertEquals("DENIED", api.printed.get(0));
+        assertEquals(List.of("DENIED"), api.printed);
+    }
+
+    /**
+     * This language has no exponent-notation literal (e.g. "1e300"), so an actually non-finite
+     * value has to be produced the same way a script accidentally could: repeated squaring past
+     * Double.MAX_VALUE (~1.8e308) overflows to Infinity, same as plain Java double arithmetic.
+     * 1e21 squared four times is 1e21, 1e42, 1e84, 1e168, 1e336 - the last exceeds MAX_VALUE.
+     */
+    @Test
+    void createTaskDeniesANonFiniteBudget() {
+        FakeDroneApi api = run("""
+                def blink():
+                    pass
+                huge = 1000000000000000000000.0
+                huge = huge * huge
+                huge = huge * huge
+                huge = huge * huge
+                huge = huge * huge
+                print(create_task("b", 5, huge, blink))
+                """);
+        assertEquals(List.of("DENIED"), api.printed);
     }
 
     @Test
@@ -1342,7 +1365,6 @@ class InterpreterTest {
     @Test
     void taskLocalAssignmentDoesNotLeakIntoTheForkedGlobalScope() throws Exception {
         FakeDroneApi api = new FakeDroneApi(5);
-        java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
         Interpreter interpreter = null;
         try {
             interpreter = runKeepingInterpreter(api, """
@@ -1356,18 +1378,20 @@ class InterpreterTest {
                     """);
             // Give the task thread a moment to actually run its one statement and print.
             awaitPrinted(api, 1, 2000);
-            assertEquals(List.of("1"), api.printed);
+            assertEquals(List.of("1"), api.printedSnapshot());
         } finally {
             if (interpreter != null) interpreter.stopAllTasks();
         }
     }
 
-    /** Polls api.printed until it has at least {@code expectedSize} entries or the timeout elapses. */
+    /** Polls api's printed output until it has at least {@code expectedSize} entries or the timeout elapses. */
     private static void awaitPrinted(FakeDroneApi api, int expectedSize, long timeoutMillis) throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutMillis;
-        while (api.printed.size() < expectedSize) {
+        // Read through the synchronized snapshot, not the raw field - a task thread may still be
+        // concurrently calling print() (which is synchronized) while this loop polls.
+        while (api.printedSnapshot().size() < expectedSize) {
             if (System.currentTimeMillis() > deadline) {
-                throw new AssertionError("timed out waiting for " + expectedSize + " printed line(s), got: " + api.printed);
+                throw new AssertionError("timed out waiting for " + expectedSize + " printed line(s), got: " + api.printedSnapshot());
             }
             Thread.sleep(2);
         }
@@ -1394,7 +1418,7 @@ class InterpreterTest {
                     create_task("consumer", 5, 0, consumer)
                     """);
             awaitPrinted(api, 2, 2000);
-            assertEquals(Set.of("producing", "consumed"), Set.copyOf(api.printed));
+            assertEquals(Set.of("producing", "consumed"), Set.copyOf(api.printedSnapshot()));
         } finally {
             if (interpreter != null) interpreter.stopAllTasks();
         }
@@ -1468,5 +1492,23 @@ class InterpreterTest {
         } finally {
             if (interpreter != null) interpreter.stopAllTasks();
         }
+    }
+
+    // ---- sleep_ticks() ----
+    // The real tick-driven pacing (and the fix for the 5-second-timeout bug the design review
+    // found) is exercised end-to-end against LiveDroneApi/PacedActionQueue in
+    // DroneScriptRunnerTest - FakeDroneApi doesn't model ticks at all, so these only check that the
+    // interpreter dispatches the call with the right argument.
+
+    @Test
+    void sleepTicksDispatchesToTheApiWithItsArgument() {
+        FakeDroneApi api = run("sleep_ticks(10)");
+        assertEquals(List.of("sleep_ticks:10.0"), api.calls);
+    }
+
+    @Test
+    void sleepTicksRequiresExactlyOneArgument() {
+        MicraLangException e = assertThrows(MicraLangException.class, () -> run("sleep_ticks()"));
+        assertTrue(e.getMessage().contains("sleep_ticks() takes 1 argument"), "expected an arg-count error, got: " + e.getMessage());
     }
 }

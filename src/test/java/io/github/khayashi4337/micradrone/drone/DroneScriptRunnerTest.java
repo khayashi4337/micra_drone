@@ -201,7 +201,7 @@ class DroneScriptRunnerTest {
      * first's leftover task before starting.
      */
     @Test
-    void reRunningTearsDownATaskTheDeepPreviousRunLeftBehind() throws Exception {
+    void reRunningTearsDownATaskThePreviousRunLeftBehind() throws Exception {
         FakeMainThreadGateway gateway = new FakeMainThreadGateway();
         PacedActionQueue queue = new PacedActionQueue();
         FakeGridState grid = new FakeGridState(5);
@@ -218,7 +218,8 @@ class DroneScriptRunnerTest {
                 """));
         driveClockUntilTerminal(firstRunner, gateway, queue, 5000);
         assertEquals(DroneScriptRunner.State.IDLE, firstRunner.getState());
-        assertFalse(taskRegistry.tryReserve("leftover"), "the leftover task should still hold its name right after the first run");
+        assertFalse(taskRegistry.tryReserveAndBind("leftover", new Thread()),
+                "the leftover task should still hold its name right after the first run");
 
         // What DroneControllerBlockEntity.startFreshRun does before building the next DroneScriptRunner.
         taskRegistry.stopAll();
@@ -231,13 +232,51 @@ class DroneScriptRunnerTest {
         long deadline = System.currentTimeMillis() + 2000;
         boolean freed = false;
         while (System.currentTimeMillis() < deadline) {
-            if (taskRegistry.tryReserve("leftover")) {
+            // tryReserveAndBind with a never-started, never-released placeholder is just a "is the
+            // name still occupied?" probe here - release it again immediately either way so this
+            // polling loop itself never permanently consumes the name.
+            if (taskRegistry.tryReserveAndBind("leftover", new Thread())) {
+                taskRegistry.release("leftover");
                 freed = true;
                 break;
             }
             Thread.sleep(5);
         }
         assertTrue(freed, "the leftover task's name should free up once stopAll() actually stops it");
-        taskRegistry.stopAll(); // clean up the fresh "leftover" reservation this check just made
+    }
+
+    /**
+     * Regression test for the design review's found bug: {@code blockOn}'s wait used to be a flat
+     * 5-second timeout regardless of how long the paced delay itself should take, so
+     * {@code sleep_ticks(40)} (nominally 2 real seconds at 20 TPS) would have thrown a
+     * RuntimeException at the 5-second mark on any run where the test doesn't immediately advance
+     * the clock - real Minecraft ticks at its own pace, so a script legitimately waiting on a
+     * longer sleep_ticks() call must not be timed out just because the main thread hasn't gotten to
+     * that tick yet. This sleeps the JVM test thread past the OLD 5-second limit (deliberately,
+     * this is the one test in the suite allowed to be this slow - it's the only way to prove a
+     * flat-timeout regression doesn't fire without literally waiting past where it used to) while
+     * the worker thread sits blocked in the real dispatch/blockOn path, then confirms the script is
+     * still RUNNING (not ERROR) before finally advancing the clock to let it finish normally.
+     */
+    @Test
+    void sleepTicksSurvivesLongerThanTheOldFlatFiveSecondTimeout() throws Exception {
+        FakeMainThreadGateway gateway = new FakeMainThreadGateway();
+        PacedActionQueue queue = new PacedActionQueue();
+        FakeGridState grid = new FakeGridState(5);
+        LiveDroneApi api = new LiveDroneApi(gateway, queue, grid, new FakeFarmBlockAccess(), msg -> {});
+        DroneScriptRunner runner = new DroneScriptRunner(api, msg -> {});
+
+        runner.start(parse("sleep_ticks(40)")); // timeoutForTicks(40) = 5s + 40/20 = 7s; old code used a flat 5s
+
+        gateway.awaitQueuedWork(2000);
+        gateway.pump(); // submits the paced entry (readyAt = 0 + 40) into the queue; the worker is now blocked in blockOn
+
+        Thread.sleep(6000); // past the OLD 5s limit, still under the NEW 7s one
+        assertEquals(DroneScriptRunner.State.RUNNING, runner.getState(),
+                "the script should still be waiting, not failed with a timeout, 6s into a sleep_ticks(40) call");
+
+        gateway.advanceTo(40, queue); // let the sleep actually complete
+        driveClockUntilTerminal(runner, gateway, queue, 5000);
+        assertEquals(DroneScriptRunner.State.IDLE, runner.getState());
     }
 }

@@ -51,4 +51,26 @@ class PacedActionQueueTest {
 
         assertEquals(1, count[0]);
     }
+
+    /**
+     * Regression test for the head-blocking bug (Codex review finding): before sleep_ticks()
+     * existed, every delay was the same fixed constant, so entries always arrived in non-decreasing
+     * readyAtTick order and a simple "peek the head, stop at the first not-yet-ready entry" loop
+     * happened to work. sleep_ticks() lets a script submit an arbitrarily far-future entry (e.g.
+     * from a long sleep) before a later, nearer-future entry (e.g. another task's move()) is
+     * submitted - the nearer one must still run on time instead of waiting behind the far one.
+     */
+    @Test
+    void aFarFutureEntrySubmittedFirstDoesNotBlockANearerFutureEntrySubmittedLater() {
+        PacedActionQueue queue = new PacedActionQueue();
+        List<String> order = new ArrayList<>();
+        queue.submit(1000, () -> order.add("far-future"));
+        queue.submit(5, () -> order.add("near-future"));
+
+        queue.tick(5);
+        assertEquals(List.of("near-future"), order, "the nearer entry should run without waiting for the far one");
+
+        queue.tick(1000);
+        assertEquals(List.of("near-future", "far-future"), order);
+    }
 }

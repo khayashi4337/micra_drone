@@ -736,6 +736,16 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         if (!(level instanceof ServerLevel serverLevel)) {
             return;
         }
+        // Tear down whatever the previous Run left behind (create_task tasks, attach_isr handlers)
+        // as the very first thing any Run attempt does - even one that goes on to fail (invalid
+        // script id, missing scroll, a parse error) - so a Run always means "the previous
+        // generation is gone", not "only if this new script happens to load successfully"
+        // (Fable5.1 review finding: this used to sit after script loading/parsing, so an early
+        // return there would leave the previous Run's tasks running untracked). A task is meant to
+        // outlive the *script* that started it (see the design doc), but not outlive a re-Run.
+        taskRegistry.stopAll();
+        taskRegistry.reopen(); // stopAll() alone would leave create_task DENIED for this new run too
+        interruptTable.clear();
         if (!ScriptId.isValidId(scriptName)) {
             appendLog(scriptName.isEmpty()
                     ? "[error] no script selected - open List and pick one"
@@ -786,12 +796,6 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             debug.requestPause();
         }
         debugController = debug;
-        // Tear down whatever the previous Run left behind (create_task tasks, attach_isr handlers)
-        // before wiring up the new run - a task is meant to outlive the script that started it
-        // (see the design doc), but not outlive the controller re-Run entirely.
-        taskRegistry.stopAll();
-        taskRegistry.reopen(); // stopAll() alone would leave create_task DENIED for this new run too
-        interruptTable.clear();
         scriptRunner = new DroneScriptRunner(api, this::appendLog, debug, taskRegistry, interruptTable);
         appendLog(startPaused ? "[run] stepping " + scriptName : "[run] running " + scriptName);
         scriptRunner.start(program);

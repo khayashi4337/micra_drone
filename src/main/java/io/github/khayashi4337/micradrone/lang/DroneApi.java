@@ -117,4 +117,12 @@ public interface DroneApi {
 
     /** Appends text to the script's log panel. */
     void print(String text);
+
+    /**
+     * Waits {@code ticks} game ticks without touching the world - the basic pacing primitive a
+     * task uses to yield/pause itself (e.g. a blink loop). Uses the exact same tick-driven pacing
+     * as move/till/plant/harvest, so it stays correct even under server lag. {@code ticks <= 0}
+     * succeeds immediately (still costs one main-thread round trip, like every other command).
+     */
+    void sleepTicks(double ticks);
 }
