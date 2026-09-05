@@ -30,7 +30,7 @@ public final class Interpreter {
      * the same as pure arithmetic - otherwise it never trips and can exhaust the heap.
      */
     private static final Set<String> GENERAL_PURPOSE_BUILTINS =
-            Set.of("len", "abs", "min", "max", "random", "str", "list", "set", "dict");
+            Set.of("len", "abs", "min", "max", "random", "str", "list", "set", "dict", "semaphore");
     /** How deep {@link #stringify(Object, int)} descends into nested collections before giving up. */
     private static final int MAX_STRINGIFY_DEPTH = 8;
 
@@ -333,8 +333,26 @@ public final class Interpreter {
             case List<?> list -> listMethod(uncheckedList(list), call, args);
             case Set<?> set -> setMethod(uncheckedSet(set), call, args);
             case Map<?, ?> map -> dictMethod(uncheckedMap(map), call, args);
+            case MicraSemaphore sem -> semaphoreMethod(sem, call, args);
             default -> throw new MicraLangException(call.line(),
                     typeName(target) + " has no methods (tried ." + call.name() + "())");
+        };
+    }
+
+    /** {@code .post()} (never blocks) and {@code .wait()} (blocks until a permit is available). */
+    private Object semaphoreMethod(MicraSemaphore sem, Expr.MethodCall call, List<Object> args) {
+        return switch (call.name()) {
+            case "post" -> {
+                requireMethodArgCount(call, args, 0);
+                sem.post();
+                yield MicraNone.INSTANCE;
+            }
+            case "wait" -> {
+                requireMethodArgCount(call, args, 0);
+                sem.await();
+                yield MicraNone.INSTANCE;
+            }
+            default -> throw unknownMethod(call, "semaphore", "post, wait");
         };
     }
 
@@ -711,6 +729,10 @@ public final class Interpreter {
                 requireArgCount(call, 0);
                 yield new LinkedHashMap<>();
             }
+            case "semaphore" -> {
+                requireArgCount(call, 0);
+                yield new MicraSemaphore(0);
+            }
             case "range" -> throw new MicraLangException(call.line(), "range() can only be used in a for-loop");
             default -> throw new MicraLangException(call.line(), "unknown function '" + call.name() + "'");
         };
@@ -880,6 +902,7 @@ public final class Interpreter {
         if (v instanceof Set) return "set";
         if (v instanceof Map) return "dict";
         if (v instanceof MicraFunction) return "function";
+        if (v instanceof MicraSemaphore) return "semaphore";
         return "None";
     }
 
@@ -916,6 +939,7 @@ public final class Interpreter {
             return items.stream().map(item -> quoted(item, depth + 1)).collect(Collectors.joining(", ", open, close));
         }
         if (v instanceof MicraFunction fn) return "<function " + fn.name() + ">";
+        if (v instanceof MicraSemaphore) return "<semaphore>";
         return "None";
     }
 

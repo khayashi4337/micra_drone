@@ -1150,4 +1150,62 @@ class InterpreterTest {
                 """));
         assertTrue(ex.getMessage().contains("too long"), "expected the runaway-loop message, got: " + ex.getMessage());
     }
+
+    // ---- semaphore() ----
+    // Cross-thread blocking behavior (wait() actually blocks until another thread posts) is
+    // exercised directly against MicraSemaphore in MicraSemaphoreTest - there is no way to share
+    // one semaphore between two independent Interpreter runs yet at the language level (that
+    // becomes testable end-to-end once create_task exists, see InterpreterTest's task-related
+    // tests once that lands). These tests only cover the language-level dispatch wiring.
+
+    @Test
+    void semaphoreStartsEmptySoPostThenWaitOnTheSameThreadDoesNotBlock() {
+        FakeDroneApi api = run("""
+                s = semaphore()
+                s.post()
+                s.wait()
+                print("done")
+                """);
+        assertEquals(List.of("done"), api.printed);
+    }
+
+    @Test
+    void semaphorePrintsAsAngleBracketPlaceholder() {
+        FakeDroneApi api = run("""
+                s = semaphore()
+                print(s)
+                """);
+        assertEquals(List.of("<semaphore>"), api.printed);
+    }
+
+    @Test
+    void semaphorePostAndWaitRejectArguments() {
+        MicraLangException postError = assertThrows(MicraLangException.class, () -> run("""
+                s = semaphore()
+                s.post(1)
+                """));
+        assertTrue(postError.getMessage().contains("post"), "expected a post() arg-count error, got: " + postError.getMessage());
+
+        MicraLangException waitError = assertThrows(MicraLangException.class, () -> run("""
+                s = semaphore()
+                s.post()
+                s.wait(1)
+                """));
+        assertTrue(waitError.getMessage().contains("wait"), "expected a wait() arg-count error, got: " + waitError.getMessage());
+    }
+
+    @Test
+    void unknownSemaphoreMethodMentionsPostAndWait() {
+        MicraLangException e = assertThrows(MicraLangException.class, () -> run("""
+                s = semaphore()
+                s.acquire()
+                """));
+        assertTrue(e.getMessage().contains("post, wait"), "expected the method list in the error, got: " + e.getMessage());
+    }
+
+    @Test
+    void semaphoreConstructorTakesNoArguments() {
+        MicraLangException e = assertThrows(MicraLangException.class, () -> run("s = semaphore(1)"));
+        assertTrue(e.getMessage().contains("takes 0 argument"), "expected an arg-count error, got: " + e.getMessage());
+    }
 }
