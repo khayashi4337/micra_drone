@@ -36,6 +36,7 @@ public final class SampleCatalog {
             new Sample("till_and_plant", SampleScripts.TILL_AND_PLANT, 3, 1),
             new Sample("survey_plot", SampleScripts.SURVEY_PLOT, 6, 2),
             new Sample("harvest_when_ready", SampleScripts.HARVEST_WHEN_READY, 6, 2),
+            new Sample("functions_intro", SampleScripts.FUNCTIONS_INTRO, 6, 2),
             new Sample("signal_harvest_ready", SampleScripts.SIGNAL_HARVEST_READY, 6, 2),
             new Sample("count_ground", SampleScripts.COUNT_GROUND, 6, 2),
             new Sample("carrot_farm", SampleScripts.CARROT_FARM, 9, 2),

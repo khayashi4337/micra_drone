@@ -68,6 +68,20 @@ class SampleScriptsTest {
         assertTrue(api.printed.contains("9"), "expected the printed harvested-cell count to be 9");
     }
 
+    /** The def/return intro sample: harvest_if_ready() must both act on and report each cell correctly. */
+    @Test
+    void functionsIntroHarvestsExactlyTheMatureCellsInTheStartingRow() {
+        FakeDroneApi api = new FakeDroneApi(3);
+        api.setCropAge(0, 0, 3); // mature at the start
+        api.setCropAge(2, 0, 3); // mature at the far end of the row the sample walks
+
+        new Interpreter(api).run(parse(SampleScripts.FUNCTIONS_INTRO));
+
+        assertEquals(2, api.calls.stream().filter("harvest"::equals).count(),
+                "expected the two mature cells in the row to be harvested, the immature one skipped");
+        assertEquals(List.of("harvested:", "2"), api.printed);
+    }
+
     @Test
     void signalHarvestReadyTurnsOutputOnWhenSomethingIsMatureAndNeverHarvests() {
         FakeDroneApi api = new FakeDroneApi(3);

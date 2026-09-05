@@ -130,6 +130,30 @@ public final class SampleScripts {
             print(get_points("wheat"))
             """;
 
+    public static final String FUNCTIONS_INTRO = """
+            # Harvests the starting row using a def/return helper - an intro to writing your own functions.
+            # def lets you name a piece of logic and reuse it instead of repeating it, and return
+            # hands a value back to whoever called it - the same idea as a built-in like
+            # can_harvest(), but written by you. This one bundles "check, then harvest" into a
+            # single call that reports whether the harvest actually succeeded (not just whether it
+            # looked ready a moment earlier - harvest() itself is the source of truth), so the loop
+            # that walks the row doesn't have to repeat the can_harvest()/harvest() pair every time.
+            def harvest_if_ready():
+                if can_harvest():
+                    return harvest()
+                return False
+
+            size = get_world_size()
+            harvested = 0
+            for i in range(size):
+                if harvest_if_ready():
+                    harvested = harvested + 1
+                if i < size - 1:
+                    move("east")
+            print("harvested:")
+            print(harvested)
+            """;
+
     public static final String SIGNAL_HARVEST_READY = """
             # コーナーマーカーのredstone出力を使って、収穫できる作物があるかを外から
             # 見えるランプで知らせる。マーカーの隣にレッドストーンランプを置いておけば、
@@ -364,6 +388,7 @@ public final class SampleScripts {
         all.put("till_and_plant.mdrone", TILL_AND_PLANT);
         all.put("survey_plot.mdrone", SURVEY_PLOT);
         all.put("harvest_when_ready.mdrone", HARVEST_WHEN_READY);
+        all.put("functions_intro.mdrone", FUNCTIONS_INTRO);
         all.put("signal_harvest_ready.mdrone", SIGNAL_HARVEST_READY);
         all.put("count_ground.mdrone", COUNT_GROUND);
         all.put("carrot_farm.mdrone", CARROT_FARM);

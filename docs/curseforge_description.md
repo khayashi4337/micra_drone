@@ -16,7 +16,8 @@ own. Inspired by the Steam game
 ### Features
 
 - **A real (tiny) programming language** — variables, `if`/`elif`/`else`,
-  `while`, `for i in range(...)`, comments, and a handful of drone commands
+  `while`, `for i in range(...)`, `break`/`continue`, your own functions with
+  `def`/`return`, comments, and a handful of drone commands
   (`move`, `till`, `plant`, `harvest`, `can_harvest`, `is_rotten`, `measure`,
   `get_points`, `print`, `do_a_flip`, ...), plus perception commands that read
   the world around the drone (`get_ground`, `get_block_above`, `get_time`,
