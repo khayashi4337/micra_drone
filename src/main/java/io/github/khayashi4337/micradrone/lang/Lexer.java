@@ -24,7 +24,12 @@ public final class Lexer {
             Map.entry("not", TokenType.NOT),
             Map.entry("True", TokenType.TRUE),
             Map.entry("False", TokenType.FALSE),
-            Map.entry("None", TokenType.NONE));
+            Map.entry("None", TokenType.NONE),
+            Map.entry("def", TokenType.DEF),
+            Map.entry("return", TokenType.RETURN),
+            Map.entry("break", TokenType.BREAK),
+            Map.entry("continue", TokenType.CONTINUE),
+            Map.entry("pass", TokenType.PASS));
 
     private final String source;
     private final List<Token> tokens = new ArrayList<>();

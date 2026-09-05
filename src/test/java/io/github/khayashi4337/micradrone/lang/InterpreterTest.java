@@ -785,4 +785,369 @@ class InterpreterTest {
                 x = get_plot_id(1)
                 """));
     }
+
+    // ---- user-defined functions (def/return/break/continue/pass) ----
+
+    @Test
+    void defAndCallWithReturnValue() {
+        FakeDroneApi api = run("""
+                def add(a, b):
+                    return a + b
+                print(add(2, 3))
+                """);
+        assertEquals(List.of("5"), api.printed);
+    }
+
+    @Test
+    void bareReturnYieldsNone() {
+        FakeDroneApi api = run("""
+                def f():
+                    return
+                print(f())
+                """);
+        assertEquals(List.of("None"), api.printed);
+    }
+
+    @Test
+    void fallingOffTheEndWithoutReturnYieldsNoneJustLikeBareReturn() {
+        FakeDroneApi api = run("""
+                def f():
+                    x = 1
+                print(f())
+                """);
+        assertEquals(List.of("None"), api.printed);
+    }
+
+    @Test
+    void passIsANoOp() {
+        FakeDroneApi api = run("""
+                def f():
+                    pass
+                f()
+                print("done")
+                """);
+        assertEquals(List.of("done"), api.printed);
+    }
+
+    @Test
+    void recursionWorks() {
+        FakeDroneApi api = run("""
+                def factorial(n):
+                    if n <= 1:
+                        return 1
+                    return n * factorial(n - 1)
+                print(factorial(5))
+                """);
+        assertEquals(List.of("120"), api.printed);
+    }
+
+    @Test
+    void functionsCanReadGlobalsButAssignmentInsideAFunctionStaysLocal() {
+        // No `global` statement in this language: `count = count + 1` inside a function reads the
+        // global (falls through the scope chain) but the assignment always creates a *local* count,
+        // leaving the outer binding untouched - an intentional simplification, see
+        // docs/design/lang_def_return_break_continue.md.
+        FakeDroneApi api = run("""
+                count = 10
+                def bump():
+                    count = count + 1
+                    return count
+                print(bump())
+                print(count)
+                """);
+        assertEquals(List.of("11", "10"), api.printed);
+    }
+
+    @Test
+    void parametersShadowSameNamedGlobals() {
+        FakeDroneApi api = run("""
+                x = 100
+                def f(x):
+                    return x + 1
+                print(f(1))
+                print(x)
+                """);
+        assertEquals(List.of("2", "100"), api.printed);
+    }
+
+    @Test
+    void breakAndContinueWorkInsideAFunctionsOwnLoop() {
+        FakeDroneApi api = run("""
+                def sumUntilThree():
+                    total = 0
+                    for i in range(10):
+                        if i == 3:
+                            break
+                        if i == 1:
+                            continue
+                        total = total + i
+                    return total
+                print(sumUntilThree())
+                """);
+        assertEquals(List.of("2"), api.printed); // 0 + 2 (1 skipped by continue, loop stops before 3)
+    }
+
+    @Test
+    void redefiningABuiltinCommandNameRaises() {
+        assertThrows(MicraLangException.class, () -> run("""
+                def move():
+                    pass
+                """));
+    }
+
+    @Test
+    void duplicateParameterNameRaises() {
+        assertThrows(MicraLangException.class, () -> run("""
+                def f(a, a):
+                    return a
+                """));
+    }
+
+    @Test
+    void returnOutsideFunctionRaisesAtParseTime() {
+        assertThrows(MicraLangException.class, () -> run("""
+                return 1
+                """));
+    }
+
+    @Test
+    void breakOutsideLoopRaisesAtParseTime() {
+        assertThrows(MicraLangException.class, () -> run("""
+                break
+                """));
+    }
+
+    @Test
+    void continueOutsideLoopRaisesAtParseTime() {
+        assertThrows(MicraLangException.class, () -> run("""
+                continue
+                """));
+    }
+
+    @Test
+    void nestedDefIsRejected() {
+        assertThrows(MicraLangException.class, () -> run("""
+                def outer():
+                    def inner():
+                        return 1
+                    return inner()
+                """));
+    }
+
+    /**
+     * The parser must reset loopDepth to 0 while parsing a function body, even when that def
+     * statement is textually nested inside a while/for block (as opposed to inside another def,
+     * which is rejected outright by the nested-def check above). Without the reset, this break
+     * would be wrongly accepted at parse time; at runtime it would then escape callFunction
+     * (which only catches ReturnSignal) and get swallowed by the *enclosing* while's own
+     * break-catch, silently exiting that loop early - which the assertion on api.printed below
+     * would catch as a regression even without assertThrows firing.
+     */
+    @Test
+    void breakInsideAFunctionDefinedInsideALoopIsStillRejectedAtParseTime() {
+        MicraLangException e = assertThrows(MicraLangException.class, () -> run("""
+                while True:
+                    def f():
+                        break
+                    f()
+                    print("unreachable")
+                """));
+        assertTrue(e.getMessage().contains("break"), "expected a break-outside-loop message, got: " + e.getMessage());
+    }
+
+    @Test
+    void tooMuchRecursionRaisesACleanErrorInsteadOfOverflowingTheStack() {
+        MicraLangException e = assertThrows(MicraLangException.class, () -> run("""
+                def recurse(n):
+                    return recurse(n + 1)
+                recurse(0)
+                """));
+        assertTrue(e.getMessage().contains("recursion"), "expected a recursion-limit message, got: " + e.getMessage());
+    }
+
+    @Test
+    void callingANonFunctionValueGivesAClearError() {
+        MicraLangException e = assertThrows(MicraLangException.class, () -> run("""
+                x = 5
+                x()
+                """));
+        assertTrue(e.getMessage().contains("not a function"), "expected a not-a-function message, got: " + e.getMessage());
+    }
+
+    /**
+     * Shadowing a builtin's name with an ordinary (non-function) local must not break calling the
+     * builtin itself - this mod already has published CurseForge releases, and evalCall never
+     * consulted {@code env} at all before user-defined functions existed, so a script that (say)
+     * uses {@code max} as a running-maximum variable and separately calls {@code max(a, b)} must
+     * keep working exactly as it did before this feature shipped.
+     */
+    @Test
+    void aLocalVariableSharingABuiltinsNameDoesNotBreakCallingTheBuiltin() {
+        FakeDroneApi api = run("""
+                max = 0
+                print(max(3, 7))
+                """);
+        assertEquals(List.of("7"), api.printed);
+    }
+
+    @Test
+    void wrongArgumentCountToAUserFunctionRaises() {
+        assertThrows(MicraLangException.class, () -> run("""
+                def f(a, b):
+                    return a + b
+                f(1)
+                """));
+    }
+
+    @Test
+    void returnInsideAWhileLoopExitsTheFunctionNotJustTheLoop() {
+        FakeDroneApi api = run("""
+                def firstAtLeastThree(items):
+                    i = 0
+                    while i < len(items):
+                        if items[i] >= 3:
+                            return items[i]
+                        i = i + 1
+                    return -1
+                print(firstAtLeastThree([1, 2, 5, 9]))
+                print("after")
+                """);
+        assertEquals(List.of("5", "after"), api.printed); // the loop's own frame must not swallow ReturnSignal
+    }
+
+    @Test
+    void returnInsideAForLoopSkipsTheStatementsAfterTheLoop() {
+        FakeDroneApi api = run("""
+                def firstEven(items):
+                    for x in items:
+                        if x % 2 == 0:
+                            return x
+                    return -1
+                print(firstEven([1, 3, 4, 5]))
+                """);
+        assertEquals(List.of("4"), api.printed);
+    }
+
+    @Test
+    void breakAndContinueWorkInAPlainWhileLoopAtTopLevel() {
+        FakeDroneApi api = run("""
+                n = 0
+                total = 0
+                while True:
+                    n = n + 1
+                    if n > 5:
+                        break
+                    if n == 2:
+                        continue
+                    total = total + n
+                print(total)
+                """);
+        assertEquals(List.of("13"), api.printed); // 1+3+4+5 (2 skipped by continue, loop stops after 5)
+    }
+
+    @Test
+    void breakAndContinueWorkInAForLoopOverAListAtTopLevel() {
+        FakeDroneApi api = run("""
+                total = 0
+                for x in [1, 2, 3, 4, 5]:
+                    if x == 2:
+                        continue
+                    if x == 4:
+                        break
+                    total = total + x
+                print(total)
+                """);
+        assertEquals(List.of("4"), api.printed); // 1 + 3 (2 skipped, loop stops before reaching 4)
+    }
+
+    @Test
+    void breakInANestedLoopOnlyExitsTheInnermostLoop() {
+        FakeDroneApi api = run("""
+                outerRuns = 0
+                for outer in range(3):
+                    outerRuns = outerRuns + 1
+                    for inner in range(10):
+                        if inner == 2:
+                            break
+                        print(inner)
+                print(outerRuns)
+                """);
+        assertEquals(List.of("0", "1", "0", "1", "0", "1", "3"), api.printed);
+    }
+
+    /**
+     * A function's own frame is parented at the global scope, never the caller's - so a parameter
+     * named the same as one of the caller's locals must not leak either direction.
+     */
+    @Test
+    void aCalleeReadsGlobalsNotTheCallersLocals() {
+        FakeDroneApi api = run("""
+                shared = "global"
+                def readsShared():
+                    return shared
+                def caller():
+                    shared = "caller's own local"
+                    return readsShared()
+                print(caller())
+                """);
+        assertEquals(List.of("global"), api.printed);
+    }
+
+    /**
+     * Functions are first-class values (falls out of resolving calls through the environment, see
+     * Interpreter#evalCall) - passing one as an argument, the way the future RTOS-task design
+     * (create_task(name, priority, budget, fn)) needs to, must work.
+     */
+    @Test
+    void functionsCanBePassedAsArgumentsToOtherFunctions() {
+        FakeDroneApi api = run("""
+                def double(x):
+                    return x * 2
+                def applyTwice(f, x):
+                    return f(f(x))
+                print(applyTwice(double, 3))
+                """);
+        assertEquals(List.of("12"), api.printed);
+    }
+
+    /** Locks in exactly where MAX_CALL_DEPTH (200) draws the line: one level under succeeds, right at it fails. */
+    @Test
+    void recursionSucceedsRightUpToTheDepthLimitAndFailsOneLevelBeyondIt() {
+        FakeDroneApi api = run("""
+                def countdown(n):
+                    if n <= 0:
+                        return 0
+                    return 1 + countdown(n - 1)
+                print(countdown(199))
+                """);
+        assertEquals(List.of("199"), api.printed);
+
+        MicraLangException e = assertThrows(MicraLangException.class, () -> run("""
+                def countdown(n):
+                    if n <= 0:
+                        return 0
+                    return 1 + countdown(n - 1)
+                countdown(200)
+                """));
+        assertTrue(e.getMessage().contains("recursion"), "expected a recursion-limit message, got: " + e.getMessage());
+    }
+
+    /**
+     * A loop that only calls a no-op user-defined function (never touches DroneApi) must still
+     * trip the runaway-loop watchdog. User function calls are resolved before evalCall's builtin
+     * switch (see Interpreter#evalCall), so they never touch the switch's post-call
+     * statementsSinceApiCall reset at all - confirmed here the same way the existing
+     * appendOnlyLoop/generalPurposeBuiltinOnlyLoop tests above confirm it for methods and
+     * general-purpose builtins.
+     */
+    @Test
+    void noOpUserFunctionCallLoopStillTripsTheRunawayWatchdog() {
+        MicraLangException ex = assertThrows(MicraLangException.class, () -> run("""
+                def noop():
+                    pass
+                while True:
+                    noop()
+                """));
+        assertTrue(ex.getMessage().contains("too long"), "expected the runaway-loop message, got: " + ex.getMessage());
+    }
 }

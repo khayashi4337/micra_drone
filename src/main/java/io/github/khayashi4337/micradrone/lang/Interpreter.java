@@ -34,13 +34,25 @@ public final class Interpreter {
     /** How deep {@link #stringify(Object, int)} descends into nested collections before giving up. */
     private static final int MAX_STRINGIFY_DEPTH = 8;
 
+    /** Function call frames deep before a script is assumed to be runaway recursion, not real work. */
+    private static final int MAX_CALL_DEPTH = 200;
+
     private final DroneApi api;
     /** Optional debugger (breakpoints/pause/step - see DebugController); null = no debugging overhead. */
     private final DebugController debug;
-    private final Environment env = new Environment();
+    /**
+     * The active scope. Starts out as (and normally stays) the global frame; {@link #callFunction}
+     * temporarily swaps it for a fresh child frame for the duration of a call and always restores
+     * it afterwards, so the interpreter is not reentrant/thread-safe (fine today: one script runs
+     * on one dedicated worker thread at a time).
+     */
+    private Environment env = new Environment();
+    /** The module-level frame, captured once - every function call's frame is parented here, never the caller's locals (no closures, see MicraFunction). */
+    private final Environment globalEnv = env;
     /** Backs {@code random()}. Unseeded on purpose - scripts that want repeatable runs shouldn't call it. */
     private final Random random = new Random();
     private long statementsSinceApiCall = 0;
+    private int callDepth = 0;
 
     public Interpreter(DroneApi api) {
         this(api, null);
@@ -75,7 +87,20 @@ public final class Interpreter {
             case Stmt.IfStmt s -> execIf(s);
             case Stmt.WhileStmt s -> execWhile(s);
             case Stmt.ForStmt s -> execFor(s);
+            case Stmt.FunctionDef s -> defineFunction(s);
+            case Stmt.ReturnStmt s -> throw new ReturnSignal(s.value() == null ? MicraNone.INSTANCE : eval(s.value()));
+            case Stmt.BreakStmt ignored -> throw BreakSignal.INSTANCE;
+            case Stmt.ContinueStmt ignored -> throw ContinueSignal.INSTANCE;
+            case Stmt.PassStmt ignored -> { }
         }
+    }
+
+    /** Rejects a name clash with a built-in command (the parser already rejects nested def). */
+    private void defineFunction(Stmt.FunctionDef s) {
+        if (CommandNames.ALL.contains(s.name())) {
+            throw new MicraLangException(s.line(), "'" + s.name() + "' is a built-in command and cannot be redefined");
+        }
+        env.set(s.name(), new MicraFunction(s.name(), s.params(), s.body()));
     }
 
     /** {@code a[i] = v} on a list (existing position only) or {@code d[k] = v} on a dict (adds or replaces). */
@@ -126,9 +151,17 @@ public final class Interpreter {
     private void execWhile(Stmt.WhileStmt s) {
         enterLoopForDebug();
         try {
-            while (isTruthy(eval(s.condition()))) {
-                checkCancellation(s.line());
-                execBlock(s.block());
+            try {
+                while (isTruthy(eval(s.condition()))) {
+                    checkCancellation(s.line());
+                    try {
+                        execBlock(s.block());
+                    } catch (ContinueSignal ignored) {
+                        // fall through to re-check the condition
+                    }
+                }
+            } catch (BreakSignal ignored) {
+                // loop exits normally
             }
         } finally {
             exitLoopForDebug();
@@ -148,10 +181,18 @@ public final class Interpreter {
         Iterable<Object> values = iterableOf(eval(s.rangeExpr()), s.line());
         enterLoopForDebug();
         try {
-            for (Object value : values) {
-                checkCancellation(s.line());
-                env.set(s.varName(), value);
-                execBlock(s.block());
+            try {
+                for (Object value : values) {
+                    checkCancellation(s.line());
+                    env.set(s.varName(), value);
+                    try {
+                        execBlock(s.block());
+                    } catch (ContinueSignal ignored) {
+                        // fall through to the next item
+                    }
+                }
+            } catch (BreakSignal ignored) {
+                // loop exits normally
             }
         } finally {
             exitLoopForDebug();
@@ -168,10 +209,18 @@ public final class Interpreter {
         }
         enterLoopForDebug();
         try {
-            for (double i = start; step > 0 ? i < stop : i > stop; i += step) {
-                checkCancellation(s.line());
-                env.set(s.varName(), i);
-                execBlock(s.block());
+            try {
+                for (double i = start; step > 0 ? i < stop : i > stop; i += step) {
+                    checkCancellation(s.line());
+                    env.set(s.varName(), i);
+                    try {
+                        execBlock(s.block());
+                    } catch (ContinueSignal ignored) {
+                        // fall through to the next value of i
+                    }
+                }
+            } catch (BreakSignal ignored) {
+                // loop exits normally
             }
         } finally {
             exitLoopForDebug();
@@ -503,7 +552,33 @@ public final class Interpreter {
         };
     }
 
+    /**
+     * User-defined functions are resolved before the built-in switch, not inside its {@code
+     * default} case: {@link #defineFunction} already refuses a name that collides with a builtin,
+     * so the two namespaces never overlap, and resolving here means a call to a user function
+     * never touches the switch's post-call bookkeeping (the {@code statementsSinceApiCall} reset
+     * below) at all - closing off what would otherwise be a runaway-loop-detection loophole
+     * (calling a no-op user function in a tight loop would look like drone activity to that check).
+     *
+     * <p>A bound value that is <em>not</em> a function and whose name is <em>also not</em> a
+     * builtin gets a clear "not a function" error immediately - strictly better than the old
+     * "unknown function" message, and no compatibility concern, since calling it always failed
+     * either way. But if the name IS a builtin (e.g. a script assigns {@code max = 0} as an
+     * ordinary variable and later calls {@code max(a, b)}), this deliberately falls through to the
+     * switch below unchanged: before user-defined functions existed, {@code evalCall} never
+     * consulted {@code env} at all, so a same-named local variable could never shadow a builtin
+     * call - scripts already shipped (this mod has published CurseForge releases) may rely on
+     * that. Only an actual {@link MicraFunction} value takes precedence over a builtin's name.
+     */
     private Object evalCall(Expr.Call call) {
+        Object maybeFn = env.tryGet(call.name());
+        if (maybeFn instanceof MicraFunction fn) {
+            return callFunction(fn, call);
+        }
+        if (maybeFn != null && !CommandNames.ALL.contains(call.name())) {
+            throw new MicraLangException(call.line(),
+                    "'" + call.name() + "' is not a function (it is a " + typeName(maybeFn) + ")");
+        }
         List<Expr> args = call.args();
         Object result = switch (call.name()) {
             case "move" -> api.move(asString(argAt(call, 0), call.line()));
@@ -645,6 +720,41 @@ public final class Interpreter {
         return result;
     }
 
+    /**
+     * Calls a user-defined function: evaluates the arguments in the caller's scope, then swaps in
+     * a fresh frame (parented at {@link #globalEnv}, never the caller's locals - see {@link
+     * MicraFunction}) for the body. The recursion-depth check happens before {@code callDepth} is
+     * incremented and before entering the {@code try}, so a script that blows the limit never
+     * leaves the counter off balance for the next call.
+     */
+    private Object callFunction(MicraFunction fn, Expr.Call call) {
+        requireArgCount(call, fn.params().size());
+        List<Object> argVals = new ArrayList<>(call.args().size());
+        for (Expr arg : call.args()) {
+            argVals.add(eval(arg));
+        }
+        if (callDepth >= MAX_CALL_DEPTH) {
+            throw new MicraLangException(call.line(), "too much recursion in '" + fn.name() + "'");
+        }
+        callDepth++;
+        Environment previous = env;
+        env = new Environment(globalEnv);
+        for (int i = 0; i < fn.params().size(); i++) {
+            env.set(fn.params().get(i), argVals.get(i));
+        }
+        enterLoopForDebug(); // reuses the loop-depth hook for Step Out across a call frame too
+        try {
+            execBlock(fn.body());
+            return MicraNone.INSTANCE;
+        } catch (ReturnSignal r) {
+            return r.value();
+        } finally {
+            env = previous;
+            callDepth--;
+            exitLoopForDebug();
+        }
+    }
+
     /** {@code len(x)} - items in a collection, or characters in a string. */
     private int lengthOf(Object v, int line) {
         if (v instanceof Collection<?> c) return c.size();
@@ -769,6 +879,7 @@ public final class Interpreter {
         if (v instanceof List) return "list";
         if (v instanceof Set) return "set";
         if (v instanceof Map) return "dict";
+        if (v instanceof MicraFunction) return "function";
         return "None";
     }
 
@@ -804,6 +915,7 @@ public final class Interpreter {
             String close = v instanceof Set<?> ? "}" : "]";
             return items.stream().map(item -> quoted(item, depth + 1)).collect(Collectors.joining(", ", open, close));
         }
+        if (v instanceof MicraFunction fn) return "<function " + fn.name() + ">";
         return "None";
     }
 

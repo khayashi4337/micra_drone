@@ -21,6 +21,24 @@ Codexと独立なFable5.1(全くの初見でこの設計書とソースを読ま
 Codex: `env`宣言の引用矛盾・「Pythonと同じ」という言い過ぎ・`callDepth`の増減順序)も
 実ソースで裏取りの上ですべて反映した。
 
+**改訂履歴(2回目、実装コードのレビュー)**: T1のコード実装後、実装コード自体を
+Codex・独立なFable5.1(コード読みのみの2回目インスタンス)にレビューしてもらった。
+両者とも「T1の実装自体に確実な誤りは無い」と判定(loopDepthリセット・ネストしたdef
+禁止・evalCall早期解決・callDepth増減順序を、それぞれ実ソースの行番号を挙げて
+独立に検証済みと報告)。ただし両者が収束して指摘した重要な懸念が1件あった:
+`evalCall`の早期関数解決が、組み込み名を**普通の変数として代入**した後にその
+組み込みを呼ぶ既存スクリプト(例: `max = 0` の後で `max(a, b)`)を壊しうる
+(このmodは既にCurseForgeで公開済み)。`!CommandNames.ALL.contains(call.name())`を
+追加条件にして修正済み(下記Interpreterの変更点を参照)。他にCodex・Fable5.1
+両方が「MAX_CALL_DEPTH=200の実測はより重い呼び出し1段あたりのJavaフレーム数でも
+確認すべき」と収束して指摘し、list/dict literal・算術式を含む重い再帰形状の
+テストを`DroneScriptRunnerTest.java`に追加、実測で安全性を確認した。他の単独
+指摘(関数内ループを跨ぐreturn・while/for-list上でのbreak/continue・入れ子
+ループでのbreakが最内だけに効くこと・関数呼び出しをまたいだスコープ分離・
+第一級関数値としての受け渡し・callDepthの境界値199/200)もテストとして追加した。
+`Environment.set`には`Objects.requireNonNull`を追加(将来DroneApiがnullを返す
+ようになった場合の防御、Fable5.1の提案)。
+
 ## 対象ファイル一覧(クローズドリスト)
 
 ### 既存ファイル(編集のみ、絶対に新規作成しない)
@@ -39,6 +57,7 @@ Codex: `env`宣言の引用矛盾・「Pythonと同じ」という言い過ぎ�
 | `src/test/java/io/github/khayashi4337/micradrone/lang/InterpreterTest.java` | - | def/return/break/continue/pass・スコープ・再帰上限・組み込み名の再定義禁止・仮引数重複・break/continue/return外文脈エラー・ネストしたdef禁止・暴走検知の抜け穴が塞がっていることのテストを追加 |
 | `src/test/java/io/github/khayashi4337/micradrone/lang/DebugControllerTest.java` | - | T2: 関数呼び出し中のStep Outが正しく動く(関数を抜けて呼び出し元へ戻る)ことを確認するテストを追加 |
 | `src/test/java/io/github/khayashi4337/micradrone/lang/CommandNamesTest.java` | - | **必ず修正が要る**。既存の`keywordsMatchesTheLanguagesReservedWords`(34-37行目)が`Lexer.keywords()`を12語のハードコードされた集合と`assertEquals`しているため、DEF/RETURN/BREAK/CONTINUE/PASSを追加した瞬間にこのテストが落ちる。期待値の集合に5語を追加する |
+| `src/test/java/io/github/khayashi4337/micradrone/drone/DroneScriptRunnerTest.java` | - | (2026-09-05、Fable5.1レビューで対象ファイル一覧からの漏れを指摘され追記)MAX_CALL_DEPTHが実際のワーカースレッド生成方法(`DroneScriptRunner.start()`の`new Thread(...)`、カスタムスタックサイズ無し)で安全に働くことを実測するテストを追加。Codex・Fable5.1の両方が指摘した「より重い呼び出し1段あたりのJavaフレーム数」でも安全か、実測で確認するテストも含む |
 
 ### 新規ファイル(このタスクで作るのはこれだけ)
 
@@ -109,7 +128,7 @@ Codex: `env`宣言の引用矛盾・「Pythonと同じ」という言い過ぎ�
       if (maybeFn instanceof MicraFunction fn) {
           return callFunction(fn, call);
       }
-      if (maybeFn != null) {
+      if (maybeFn != null && !CommandNames.ALL.contains(call.name())) {
           throw new MicraLangException(call.line(),
                   "'" + call.name() + "' is not a function (it is a " + typeName(maybeFn) + ")");
       }
@@ -120,10 +139,21 @@ Codex: `env`宣言の引用矛盾・「Pythonと同じ」という言い過ぎ�
       // ... 既存の642-644行目、無変更 ...
   }
   ```
-  (`defineFunction`が組み込み名との衝突を既に禁止しているので、ユーザー関数名と
-  組み込み名の名前空間は重複しない。ゆえにこの早期returnを追加しても既存の
-  switchに到達する経路は一切変わらない。`maybeFn != null`だが関数でない場合
-  ―`x = 5` の後 `x()` ―のエラーメッセージも、この段で分かりやすく出せる)
+  (`defineFunction`が組み込み名との衝突を既に禁止しているので、ユーザー関数
+  として定義された名前と組み込み名の名前空間は重複しない。**訂正
+  (2026-09-05、独立なFable5.1レビューの指摘)**: 「ゆえに早期returnを追加しても
+  既存のswitchに到達する経路は一切変わらない」という当初の記述は不正確
+  だった。組み込み名を**普通の変数として代入**した後にその組み込みを呼ぶ
+  スクリプト(例: `max = 0` の後で `max(a, b)` を呼ぶ)は、この分岐が
+  `maybeFn != null`だけで判定していると「'max' is not a function」で
+  止まってしまう ― このmodは既にCurseForgeで公開済みで、旧実装は
+  `evalCall`が`env`を一切見ずに常に組み込みへ直行していたため、こうした
+  既存スクリプトを壊しかねない後方互換性の懸念だった。`!CommandNames.ALL.
+  contains(call.name())`を追加条件にすることで、**組み込み名と同じ名前の
+  ローカル変数がある場合は黙って既存のswitchへフォールスルーする**(旧実装と
+  完全に同じ挙動)。組み込みでない名前を関数でない値で呼んだ場合
+  (`x = 5` の後 `x()`)は、この段で分かりやすいエラーを出せる ― これは
+  以前から「unknown function」で必ず失敗していたので後方互換性の懸念は無い。)
 - 新規`private Object callFunction(MicraFunction fn, Expr.Call call)`(**通常メソッド
   なので`return`を使う、`yield`はswitch式専用でここでは使えない**):
   ```java
