@@ -42,6 +42,7 @@ import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.StringTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.Containers;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.PlayerList;
@@ -307,11 +308,22 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      * cast_line(): throws a real hook via the SAME method vanilla's own right-click dispatch calls
      * ({@code FishingRodItem.use()}), so enchantments (Lure/Luck of the Sea, read off {@link #currentRod}
      * inside that method) and the bite-timing state machine are entirely vanilla's, not reimplemented
-     * here. No-op (false) if there's no rod, or a hook is already out.
+     * here. No-op (false) if there's still no rod after {@link #ensureRodFromStock} (empty hand AND
+     * empty stock), or a hook is already out.
+     *
+     * <p>Codex review finding (confirmed bug): a brand-new controller's {@link #currentRod} starts
+     * {@code ItemStack.EMPTY} and this used to bail out right here before ever consulting
+     * {@link RodStock} - the "put a rod in an adjacent chest" README/help-scroll promise only ever
+     * became true AFTER a first successful {@link #reelIn()}, which itself could never happen. Pulling
+     * from stock here too closes that gap.
      */
     @Override
     public boolean castLine() {
-        if (!(level instanceof ServerLevel serverLevel) || currentRod.isEmpty()) {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+        ensureRodFromStock(serverLevel);
+        if (currentRod.isEmpty()) {
             return false;
         }
         FakePlayer angler = resolveAngler(serverLevel);
@@ -361,13 +373,29 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      */
     private void maybeSwapRod(ServerLevel level) {
         if (currentRod.isEmpty()) {
-            RodStock.findSpareRod(level, getBlockPos()).ifPresent(spare -> currentRod = spare.take());
+            ensureRodFromStock(level);
             return;
         }
         boolean runningLow = currentRod.getMaxDamage() - currentRod.getDamageValue() <= LOW_DURABILITY_MARGIN;
         if (currentRod.isEnchanted() && runningLow) {
             RodStock.findSpareRod(level, getBlockPos()).ifPresent(spare -> currentRod = spare.swap(currentRod));
         }
+    }
+
+    /**
+     * Pulls one rod from {@link RodStock} into {@link #currentRod} if (and only if) the hand is
+     * currently empty - the shared "get a rod from stock" step {@link #castLine} needs before its
+     * very first cast, and {@link #maybeSwapRod} needs after a rod breaks. A no-op if a rod is
+     * already held, or the stock has none.
+     */
+    private void ensureRodFromStock(ServerLevel level) {
+        if (!currentRod.isEmpty()) {
+            return;
+        }
+        RodStock.findSpareRod(level, getBlockPos()).ifPresent(spare -> {
+            currentRod = spare.take();
+            setChanged();
+        });
     }
 
     /** is_fishing()/internal guard: true while a hook thrown by {@link #castLine} is still out. */
@@ -395,10 +423,20 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         return currentHook().map(hook -> hook.biting).orElse(false);
     }
 
-    /** is_open_water_cast(): delegates to {@code FishingHook.isOpenWaterFishing()}, already public. */
+    /**
+     * is_open_water_cast(): {@code FishingHook.openWater} defaults to {@code true} and is only ever
+     * recalculated once the hook reaches {@code BOBBING} (decompiled source confirmed: the FLYING
+     * branch never touches it) - so a hook still flying toward dry land would otherwise read as
+     * open water too. Requiring BOBBING first is what makes "false" actually mean "landed somewhere
+     * that isn't open water" (Codex review finding: confirmed bug, the un-gated version could never
+     * truthfully report a bad cast before the hook landed).
+     */
     @Override
     public boolean isOpenWaterCast() {
-        return currentHook().map(FishingHook::isOpenWaterFishing).orElse(false);
+        return currentHook()
+                .filter(hook -> hook.currentState == FishingHook.FishHookState.BOBBING)
+                .map(FishingHook::isOpenWaterFishing)
+                .orElse(false);
     }
 
     /** Shared by the 4 read-only hook perception commands above: the angler's current hook, if any. */
@@ -503,13 +541,22 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     /**
      * The player who pays repair_rod()'s XP cost - this controller's existing owner (whoever last ran
      * a script here, see {@link #ownerUuid}/{@link #resolveOwner}), same as every other place
-     * credit/cost already flows through this controller. Must be online AND within the same 32-block
-     * tether vanilla's own {@code FishingHook.shouldStopFishing()} uses to decide a player has
-     * wandered off - not a distance invented for this feature.
+     * credit/cost already flows through this controller. Must be online, in the SAME dimension as
+     * this controller, AND within the same 32-block tether vanilla's own
+     * {@code FishingHook.shouldStopFishing()} uses to decide a player has wandered off - not a
+     * distance invented for this feature.
+     *
+     * <p>Codex review finding (confirmed bug): {@link #resolveOwner} looks the owner up by UUID
+     * across the WHOLE server (any dimension), and {@code distanceToSqr} is a bare XYZ comparison
+     * with no dimension of its own - without the {@code player.level() == level} check, an owner
+     * standing at this controller's numeric coordinates in a DIFFERENT dimension (e.g. the Nether)
+     * would pass the distance filter and get charged XP for a repair they aren't actually near.
      */
     private Optional<ServerPlayer> resolvePayingOwner() {
-        return resolveOwner().filter(player -> player.distanceToSqr(
-                getBlockPos().getX() + 0.5, getBlockPos().getY() + 0.5, getBlockPos().getZ() + 0.5) <= 1024.0);
+        return resolveOwner()
+                .filter(player -> player.level() == level)
+                .filter(player -> player.distanceToSqr(
+                        getBlockPos().getX() + 0.5, getBlockPos().getY() + 0.5, getBlockPos().getZ() + 0.5) <= 1024.0);
     }
 
     /**
@@ -600,6 +647,34 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             }
         }
         droneEntityUuid = null;
+    }
+
+    /**
+     * Discards this controller's angler's active {@link FishingHook} (if any), drops {@link #currentRod}
+     * into the world, and empties the angler's hand. Called on block removal so none of the three
+     * lingers or is silently lost: {@link #resolveAngler}'s {@code FakePlayer} is a long-lived,
+     * factory-cached actor (NOT world state {@link #discardDroneEntity} removes), so a hook it's
+     * holding open would otherwise never get vanilla's normal despawn treatment - a real player
+     * entity going away is what usually ends a cast. And unlike {@link #points}/{@code unlockedCrops},
+     * this controller's block item has no component that would carry {@link #currentRod} into a
+     * broken-and-picked-back-up copy (Codex review finding: confirmed bugs - the hook/held rod
+     * previously survived a broken controller indefinitely, and the rod itself was simply lost).
+     */
+    public void discardAnglerState() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        FakePlayer angler = resolveAngler(serverLevel);
+        if (angler.fishing != null) {
+            angler.fishing.discard();
+            angler.fishing = null;
+        }
+        angler.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+        if (!currentRod.isEmpty()) {
+            BlockPos pos = getBlockPos();
+            Containers.dropItemStack(serverLevel, pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, currentRod);
+            currentRod = ItemStack.EMPTY;
+        }
     }
 
     /** Interrupts every create_task task this controller has started. Called on block removal so none outlive it. */

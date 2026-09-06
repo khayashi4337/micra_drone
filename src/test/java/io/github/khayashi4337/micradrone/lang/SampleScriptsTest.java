@@ -238,8 +238,9 @@ class SampleScriptsTest {
 
     /**
      * With a rod, a bite on every check, and a rod that's always "running low" next to a working
-     * anvil, every one of the 20 bounded iterations should both catch and repair - proves the sample
-     * actually calls through to cast_line()/reel_in()/repair_rod() rather than just reading state.
+     * anvil, every one of the 5 casts should both catch (on the inner wait loop's very first
+     * did_fish_bite() check) and repair - proves the sample actually calls through to
+     * cast_line()/reel_in()/repair_rod() rather than just reading state.
      */
     @Test
     void autoFishAndRepairCastsReelsAndRepairsOnEveryIterationWhenEverythingIsReady() {
@@ -253,10 +254,10 @@ class SampleScriptsTest {
 
         new Interpreter(api).run(parse(SampleScripts.AUTO_FISH_AND_REPAIR));
 
-        assertEquals(List.of("釣れた回数:", "20", "修理した回数:", "20"), api.printed);
+        assertEquals(List.of("釣れた回数:", "5", "修理した回数:", "5"), api.printed);
     }
 
-    /** With no rod and no anvil in reach, the sample must still run its 20 bounded iterations harmlessly. */
+    /** With no rod and no anvil in reach, the sample must still run its 5 casts harmlessly. */
     @Test
     void autoFishAndRepairDoesNothingHarmfulWithNoRodOrAnvil() {
         FakeDroneApi api = new FakeDroneApi(3);

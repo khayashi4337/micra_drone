@@ -124,6 +124,7 @@ public class DroneControllerBlock extends BaseEntityBlock {
         if (state.hasBlockEntity() && !state.is(newState.getBlock())
                 && level.getBlockEntity(pos) instanceof DroneControllerBlockEntity be) {
             be.discardDroneEntity();
+            be.discardAnglerState(); // don't let a fishing hook/held rod outlive the controller that cast it
             be.stopAllTasks(); // don't let a create_task task outlive the controller that started it
         }
         super.onRemove(state, level, pos, newState, movedByPiston);

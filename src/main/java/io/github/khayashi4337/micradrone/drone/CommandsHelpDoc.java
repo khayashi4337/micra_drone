@@ -591,7 +591,10 @@ public final class CommandsHelpDoc {
                 戻り値: true/false。
 
             is_open_water_cast()
-                今の投げ方が「開けた水面」に対する正しい投げ方かどうか。
+                ウキが水面に浮いて安定している（is_bobber_bobbing()がtrue）
+                間だけ意味のある判定で、今の投げ方が「開けた水面」に対する
+                正しい投げ方かどうかを返す。まだ飛んでいる最中はfalseに
+                なる（着水前は判定できないため）。ウキが浮いているのに
                 falseなら、狭い場所や陸に投げてしまっている可能性が
                 高いので、move()で場所を変えるとよい。戻り値: true/false。
 

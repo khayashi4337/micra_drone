@@ -383,14 +383,22 @@ public final class SampleScripts {
             # 一切使っていない)。コントローラの隣接6面のどこかに minecraft:fishing_rod を
             # 入れたチェスト等を置いておくこと。アンヴィル修理も使うなら本物のアンヴィルも
             # 隣接させておく(どちらも無くても投げる/巻くだけは動く)。
+            # vanillaのアタリはすぐには来ない(数秒〜数十秒)ので、sleep_ticks()で
+            # 実際に時間を進めながら待つ(即座にループを回すだけだと一度も釣れない)。
             caught = 0
             repaired = 0
-            for i in range(20):
+            for cast_num in range(5):
                 if not is_fishing():
                     cast_line()
-                if did_fish_bite():
-                    if reel_in():
-                        caught = caught + 1
+                bit = False
+                for wait in range(40):
+                    sleep_ticks(10)
+                    if did_fish_bite():
+                        bit = True
+                        break
+                reeled = reel_in()
+                if bit and reeled:
+                    caught = caught + 1
                 durability = get_rod_durability()
                 if durability >= 0 and durability < 10:
                     if is_anvil() and get_repair_cost() >= 0:
