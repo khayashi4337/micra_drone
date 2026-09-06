@@ -218,7 +218,7 @@ class DroneScriptRunnerTest {
                 """));
         driveClockUntilTerminal(firstRunner, gateway, queue, 5000);
         assertEquals(DroneScriptRunner.State.IDLE, firstRunner.getState());
-        assertFalse(taskRegistry.tryReserveAndBind("leftover", new Thread()),
+        assertFalse(taskRegistry.tryReserveAndBind(taskRegistry.currentGeneration(), "leftover", new Thread()),
                 "the leftover task should still hold its name right after the first run");
 
         // What DroneControllerBlockEntity.startFreshRun does before building the next DroneScriptRunner.
@@ -235,7 +235,7 @@ class DroneScriptRunnerTest {
             // tryReserveAndBind with a never-started, never-released placeholder is just a "is the
             // name still occupied?" probe here - release it again immediately either way so this
             // polling loop itself never permanently consumes the name.
-            if (taskRegistry.tryReserveAndBind("leftover", new Thread())) {
+            if (taskRegistry.tryReserveAndBind(taskRegistry.currentGeneration(), "leftover", new Thread())) {
                 taskRegistry.release("leftover");
                 freed = true;
                 break;

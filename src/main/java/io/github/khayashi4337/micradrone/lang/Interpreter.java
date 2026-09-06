@@ -83,6 +83,15 @@ public final class Interpreter {
     private final boolean isrContext;
     private final TaskRegistry taskRegistry;
     private final InterruptTable interruptTable;
+    /**
+     * The {@link TaskRegistry} generation captured once, when this Interpreter (or the ancestor it
+     * forked from - a task/ISR interpreter always inherits its creator's value, never re-reads a
+     * fresh one) was built. Passed to every {@link TaskRegistry#tryReserveAndBind} call this
+     * Interpreter makes, so a create_task attempt that's already "stale" (its whole lineage traces
+     * back to a script generation stopAll() has since moved past) is rejected even if it slips past
+     * the interrupt itself - see TaskRegistry's class javadoc for why that's needed.
+     */
+    private final long generation;
 
     public Interpreter(DroneApi api) {
         this(api, null);
@@ -99,11 +108,11 @@ public final class Interpreter {
      * docs/design/lang_rtos_task_foundation.md's "TaskRegistry/InterruptTableの所有者について".
      */
     public Interpreter(DroneApi api, DebugController debug, TaskRegistry taskRegistry, InterruptTable interruptTable) {
-        this(api, debug, new Environment(), false, taskRegistry, interruptTable);
+        this(api, debug, new Environment(), false, taskRegistry, interruptTable, taskRegistry.currentGeneration());
     }
 
     private Interpreter(DroneApi api, DebugController debug, Environment globalEnv, boolean isrContext,
-            TaskRegistry taskRegistry, InterruptTable interruptTable) {
+            TaskRegistry taskRegistry, InterruptTable interruptTable, long generation) {
         this.api = api;
         this.debug = debug;
         this.globalEnv = globalEnv;
@@ -111,6 +120,7 @@ public final class Interpreter {
         this.isrContext = isrContext;
         this.taskRegistry = taskRegistry;
         this.interruptTable = interruptTable;
+        this.generation = generation;
     }
 
     public void run(List<Stmt> program) {
@@ -905,7 +915,8 @@ public final class Interpreter {
         for (Map.Entry<String, Object> e : globalEnv.snapshot().entrySet()) {
             forkedGlobal.set(e.getKey(), e.getValue());
         }
-        Interpreter taskInterpreter = new Interpreter(api, null, forkedGlobal, false, taskRegistry, interruptTable);
+        Interpreter taskInterpreter =
+                new Interpreter(api, null, forkedGlobal, false, taskRegistry, interruptTable, generation);
         // AtomicReference (not a plain array) so the task thread's finally block is guaranteed to
         // observe the watchdog - a plain array write has no happens-before edge to a read on a
         // different thread (Codex review finding). Set *before* taskThread.start() (not after, as
@@ -963,23 +974,37 @@ public final class Interpreter {
         // exists but has NOT been started yet: an earlier design reserved the name first and bound
         // the real thread in a later, separate call, leaving a window where a concurrent stopAll()
         // would only ever see an inert placeholder and let the real thread start completely
-        // unstopped right after (Codex review finding) - see TaskRegistry's class javadoc.
-        if (!taskRegistry.tryReserveAndBind(name, taskThread)) {
+        // unstopped right after (Codex review finding) - see TaskRegistry's class javadoc. Passing
+        // `generation` (captured once, when this Interpreter was built - see that field's javadoc)
+        // is what closes the narrower race where an old-generation task's own in-flight create_task
+        // call reaches this point only after a stopAll()+reopen() already ran for a newer Run.
+        if (!taskRegistry.tryReserveAndBind(generation, name, taskThread)) {
             return "DENIED";
         }
         try {
             taskThread.start();
-            Thread watchdog = watchdogHolder.get();
-            if (watchdog != null) {
-                watchdog.start();
-            }
         } catch (RuntimeException | Error e) {
-            // If starting the thread itself throws (e.g. an OutOfMemoryError creating a native
-            // thread), the name/slot must not leak forever - MAX_CONCURRENT_TASKS is small enough
-            // that a few leaked reservations would meaningfully starve this controller (Fable5.1
-            // review finding).
+            // Nothing is running yet - safe to just release (Fable5.1 review finding: without
+            // this, a thread-creation failure like an OutOfMemoryError would leak the name/slot
+            // forever, and MAX_CONCURRENT_TASKS is small enough that a few leaks meaningfully
+            // starve this controller).
             taskRegistry.release(name);
             throw e;
+        }
+        Thread watchdog = watchdogHolder.get();
+        if (watchdog != null) {
+            try {
+                watchdog.start();
+            } catch (RuntimeException | Error e) {
+                // taskThread is already running at this point - releasing here (like the block
+                // above) would leave it alive but both untracked by TaskRegistry AND missing the
+                // budget enforcement the caller explicitly asked for by passing budgetTicks > 0
+                // (Codex review finding). Interrupting it instead asks it to stop the same way
+                // Stop/a budget timeout would; its own existing finally block still runs and
+                // releases the registry entry once it unwinds - nothing extra to do here.
+                taskThread.interrupt();
+                throw e;
+            }
         }
         return "ACCEPTED";
     }
@@ -1001,7 +1026,8 @@ public final class Interpreter {
         for (Map.Entry<String, Object> e : globalEnv.snapshot().entrySet()) {
             forkedGlobal.set(e.getKey(), e.getValue());
         }
-        Interpreter isrInterpreter = new Interpreter(api, null, forkedGlobal, true, taskRegistry, interruptTable);
+        Interpreter isrInterpreter =
+                new Interpreter(api, null, forkedGlobal, true, taskRegistry, interruptTable, generation);
         isrInterpreter.runIsolatedBody(handler.body());
     }
 

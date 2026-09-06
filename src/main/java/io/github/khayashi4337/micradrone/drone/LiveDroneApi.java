@@ -184,14 +184,16 @@ public final class LiveDroneApi implements DroneApi {
     /**
      * Waits {@code ticks} game ticks without touching the world - RTOS-style tasks (create_task)
      * use this to pace/yield themselves, sharing the exact same tick-driven pacing as move/till/
-     * plant/harvest (see {@link #dispatch(long, Supplier)}) so it stays correct even under server
-     * lag. Non-finite ticks (this language has essentially no way to produce one - {@code /} and
-     * {@code %} already stop on division by zero) fall back to 0; the value is otherwise clamped
-     * to {@link #MAX_SLEEP_TICKS} so an absurd request can't produce an absurd wait.
+     * plant/harvest (see {@link #dispatch(long, Supplier)}). Non-finite ticks (this language has
+     * essentially no way to produce one - {@code /} and {@code %} already stop on division by
+     * zero) fall back to 0; the value is otherwise clamped to {@link #MAX_SLEEP_TICKS} so an
+     * absurd request can't produce an absurd wait. Rounds a fractional tick count UP (0.9 becomes
+     * 1, not 0) - matching create_task's budget_ticks handling, and avoiding a script's arithmetic
+     * producing a barely-fractional value silently sleeping for nothing at all.
      */
     @Override
     public void sleepTicks(double ticks) {
-        long n = Double.isFinite(ticks) ? (long) Math.max(0, Math.min(MAX_SLEEP_TICKS, ticks)) : 0;
+        long n = Double.isFinite(ticks) ? (long) Math.min(MAX_SLEEP_TICKS, Math.ceil(Math.max(0, ticks))) : 0;
         dispatch(n, () -> new Attempt(true, () -> { }));
     }
 
@@ -223,9 +225,26 @@ public final class LiveDroneApi implements DroneApi {
         return blockOn(future, timeoutForTicks(successDelayTicks));
     }
 
-    /** The 5s anomaly-detection margin, plus however long {@code ticks} should nominally take at 20 TPS. */
+    /**
+     * The 5s anomaly-detection margin, plus however long {@code ticks} could plausibly take under
+     * real (possibly severe) server lag - NOT the nominal 20 TPS. An earlier version divided by 20
+     * (assuming the server always runs at full speed), which contradicted this very method's
+     * purpose: under sustained lag - exactly the condition sleep_ticks is meant to stay correct
+     * under - reaching a given tick number for real takes longer than the nominal 20-TPS math
+     * predicts, so that version would spuriously time out a legitimately-waiting, merely slow
+     * server (Codex review finding). {@link #MIN_ASSUMED_TPS} is a deliberately pessimistic floor
+     * (a tenth of normal speed) to tolerate that, at the cost of a much later "the main thread is
+     * genuinely dead" failure for a long sleep_ticks() call specifically - this is an honest
+     * tradeoff, not a guarantee: a server wedged for longer than this still eventually reports a
+     * timeout instead of hanging forever, but there is no timeout formula that is both tight enough
+     * to catch a truly hung server quickly and loose enough to never misfire under some amount of
+     * sustained real lag, since the two look identical from here for long enough.
+     */
+    private static final long MIN_ASSUMED_TPS = 2;
+
     private long timeoutForTicks(long ticks) {
-        return MAIN_THREAD_TIMEOUT_SECONDS + (ticks / 20L);
+        long pessimisticSeconds = (ticks + MIN_ASSUMED_TPS - 1) / MIN_ASSUMED_TPS; // ceiling division
+        return MAIN_THREAD_TIMEOUT_SECONDS + pessimisticSeconds;
     }
 
     /** Runs a read-only query on the main thread and returns its result immediately (no pacing delay). */

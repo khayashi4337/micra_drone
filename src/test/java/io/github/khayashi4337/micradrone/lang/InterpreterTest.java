@@ -1357,6 +1357,48 @@ class InterpreterTest {
     }
 
     /**
+     * Regression test for the fractional-budget bug Fable5.1's review found: a truncating cast
+     * ((long) 0.5 == 0) would silently turn "budget 0.5" into budgetTicks == 0, which create_task
+     * treats as "no limit at all" (budgetTicks > 0 gates the watchdog) - the exact silently-
+     * unbounded-task outcome create_task's finite/non-negative check exists to prevent. Math.ceil
+     * fixes this: 0.5 must round UP to a real 1-tick budget, so a task stuck forever still gets a
+     * working (if very short) watchdog instead of none at all.
+     */
+    @Test
+    void aFractionalBudgetBetweenZeroAndOneRoundsUpToARealOneTickBudget() throws Exception {
+        FakeDroneApi api = new FakeDroneApi(5);
+        Interpreter interpreter = null;
+        try {
+            interpreter = runKeepingInterpreter(api, """
+                    stuck = semaphore()
+                    def blocked_forever():
+                        stuck.wait()
+                    print(create_task("fractional_budget", 5, 0.5, blocked_forever))
+                    """);
+            assertEquals(List.of("ACCEPTED"), api.printed);
+
+            // If 0.5 had truncated to 0 (no limit), this name would never free up on its own.
+            long deadline = System.currentTimeMillis() + 2000;
+            String secondAttempt = "DENIED";
+            while (System.currentTimeMillis() < deadline) {
+                List<io.github.khayashi4337.micradrone.lang.ast.Stmt> retry = new Parser(
+                        new Lexer("print(create_task(\"fractional_budget\", 5, 0, blocked_forever))").scan())
+                        .parseProgram();
+                interpreter.run(retry);
+                secondAttempt = api.printed.get(api.printed.size() - 1);
+                if (secondAttempt.equals("ACCEPTED")) {
+                    break;
+                }
+                Thread.sleep(10);
+            }
+            assertEquals("ACCEPTED", secondAttempt,
+                    "budget 0.5 should have rounded up to a real (if short) budget and freed the name, not become unlimited");
+        } finally {
+            if (interpreter != null) interpreter.stopAllTasks();
+        }
+    }
+
+    /**
      * Regression test for the scoping bug found in review: a task's body must get its own child
      * frame (like a normal function call), not write straight into the forked global frame. Without
      * the fix, task_body's "x = 99" would overwrite the global x, and helper() (which always reads

@@ -3,9 +3,12 @@ package io.github.khayashi4337.micradrone.lang;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
@@ -21,16 +24,18 @@ class TaskRegistryTest {
     @Test
     void reservingTheSameNameTwiceFailsTheSecondTime() {
         TaskRegistry registry = new TaskRegistry();
-        assertTrue(registry.tryReserveAndBind("a", inertThread()));
-        assertFalse(registry.tryReserveAndBind("a", inertThread()));
+        long gen = registry.currentGeneration();
+        assertTrue(registry.tryReserveAndBind(gen, "a", inertThread()));
+        assertFalse(registry.tryReserveAndBind(gen, "a", inertThread()));
     }
 
     @Test
     void releasingFreesTheNameForReuse() {
         TaskRegistry registry = new TaskRegistry();
-        assertTrue(registry.tryReserveAndBind("a", inertThread()));
+        long gen = registry.currentGeneration();
+        assertTrue(registry.tryReserveAndBind(gen, "a", inertThread()));
         registry.release("a");
-        assertTrue(registry.tryReserveAndBind("a", inertThread()));
+        assertTrue(registry.tryReserveAndBind(gen, "a", inertThread()));
     }
 
     @Test
@@ -42,21 +47,23 @@ class TaskRegistryTest {
     @Test
     void theSeventeenthConcurrentReservationIsRejected() {
         TaskRegistry registry = new TaskRegistry();
+        long gen = registry.currentGeneration();
         for (int i = 0; i < 16; i++) {
-            assertTrue(registry.tryReserveAndBind("task-" + i, inertThread()), "reservation " + i + " should have succeeded");
+            assertTrue(registry.tryReserveAndBind(gen, "task-" + i, inertThread()), "reservation " + i + " should have succeeded");
         }
-        assertFalse(registry.tryReserveAndBind("task-16", inertThread()), "the 17th concurrent reservation should be rejected");
+        assertFalse(registry.tryReserveAndBind(gen, "task-16", inertThread()), "the 17th concurrent reservation should be rejected");
     }
 
     @Test
     void releasingOneFreesCapacityForAnother() {
         TaskRegistry registry = new TaskRegistry();
+        long gen = registry.currentGeneration();
         for (int i = 0; i < 16; i++) {
-            registry.tryReserveAndBind("task-" + i, inertThread());
+            registry.tryReserveAndBind(gen, "task-" + i, inertThread());
         }
-        assertFalse(registry.tryReserveAndBind("overflow", inertThread()));
+        assertFalse(registry.tryReserveAndBind(gen, "overflow", inertThread()));
         registry.release("task-0");
-        assertTrue(registry.tryReserveAndBind("overflow", inertThread()));
+        assertTrue(registry.tryReserveAndBind(gen, "overflow", inertThread()));
     }
 
     @Test
@@ -70,7 +77,7 @@ class TaskRegistryTest {
             }
         });
         thread.setDaemon(true);
-        registry.tryReserveAndBind("a", thread);
+        registry.tryReserveAndBind(registry.currentGeneration(), "a", thread);
         thread.start();
 
         registry.stopAll();
@@ -81,10 +88,11 @@ class TaskRegistryTest {
     @Test
     void stopAllClosesIntakeUntilReopen() {
         TaskRegistry registry = new TaskRegistry();
+        long genBeforeStop = registry.currentGeneration();
         registry.stopAll();
-        assertFalse(registry.tryReserveAndBind("a", inertThread()), "no new reservations should be accepted after stopAll()");
+        assertFalse(registry.tryReserveAndBind(genBeforeStop, "a", inertThread()), "no new reservations should be accepted after stopAll()");
         registry.reopen();
-        assertTrue(registry.tryReserveAndBind("a", inertThread()), "reservations should work again after reopen()");
+        assertTrue(registry.tryReserveAndBind(registry.currentGeneration(), "a", inertThread()), "reservations should work again after reopen()");
     }
 
     @Test
@@ -93,12 +101,38 @@ class TaskRegistryTest {
         // have consumed a capacity slot - otherwise capacity would silently shrink over repeated
         // Stop/Run cycles.
         TaskRegistry registry = new TaskRegistry();
+        long genBeforeStop = registry.currentGeneration();
         registry.stopAll();
-        assertFalse(registry.tryReserveAndBind("rejected", inertThread()));
+        assertFalse(registry.tryReserveAndBind(genBeforeStop, "rejected", inertThread()));
         registry.reopen();
+        long gen = registry.currentGeneration();
         for (int i = 0; i < 16; i++) {
-            assertTrue(registry.tryReserveAndBind("task-" + i, inertThread()), "reservation " + i + " should have succeeded after reopen()");
+            assertTrue(registry.tryReserveAndBind(gen, "task-" + i, inertThread()), "reservation " + i + " should have succeeded after reopen()");
         }
+    }
+
+    /**
+     * Regression test for the generation race Codex's review found (confirmed independently across
+     * two separate review passes): a task's own create_task() call is not instantaneous, and
+     * Thread.interrupt() is only observed at the next statement boundary - so a task that had
+     * already captured its generation and started evaluating a create_task(...) call before
+     * stopAll() ran could still finish that call and reach tryReserveAndBind() *after* reopen() has
+     * already run for the next Run. Checking only `accepting` cannot catch this (intake is open
+     * again by then); the generation the caller captured earlier must still be compared.
+     */
+    @Test
+    void aReservationCarryingAStaleGenerationIsRejectedEvenAfterReopen() {
+        TaskRegistry registry = new TaskRegistry();
+        // Simulates a task capturing its generation once, early - before stopAll()/reopen() ran.
+        long staleGeneration = registry.currentGeneration();
+
+        registry.stopAll();
+        registry.reopen(); // intake is open again, but for a NEW generation
+
+        assertFalse(registry.tryReserveAndBind(staleGeneration, "grandchild", inertThread()),
+                "a reservation carrying the old (pre-stopAll) generation must still be rejected, even though accepting is true again");
+        assertTrue(registry.tryReserveAndBind(registry.currentGeneration(), "grandchild", inertThread()),
+                "the same name with the CURRENT generation should succeed - the name itself was never actually taken");
     }
 
     /**
@@ -126,11 +160,12 @@ class TaskRegistryTest {
     @Test
     void concurrentTryReserveAndStopAllNeverLeavesAThreadUnstoppable() throws Exception {
         TaskRegistry registry = new TaskRegistry();
+        long gen = registry.currentGeneration();
         int attempts = 200;
         CyclicBarrier barrier = new CyclicBarrier(attempts + 1);
         AtomicInteger accepted = new AtomicInteger();
-        List<Thread> boundThreads = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
-        List<Thread> reservers = new java.util.ArrayList<>();
+        List<Thread> boundThreads = Collections.synchronizedList(new ArrayList<>());
+        List<Thread> reservers = new ArrayList<>();
 
         for (int i = 0; i < attempts; i++) {
             String name = "task-" + i;
@@ -148,7 +183,7 @@ class TaskRegistryTest {
                 } catch (Exception ignored) {
                     return;
                 }
-                if (registry.tryReserveAndBind(name, bound)) {
+                if (registry.tryReserveAndBind(gen, name, bound)) {
                     accepted.incrementAndGet();
                     boundThreads.add(bound);
                     bound.start();
@@ -178,7 +213,7 @@ class TaskRegistryTest {
         for (Thread reserver : reservers) {
             reserver.join(5000);
         }
-        stopAllDone.await(5, java.util.concurrent.TimeUnit.SECONDS);
+        stopAllDone.await(5, TimeUnit.SECONDS);
 
         // Give every accepted task's own thread a moment to actually receive and act on the
         // interrupt that either its own start-then-immediately-race-with-stopAll, or stopAll()

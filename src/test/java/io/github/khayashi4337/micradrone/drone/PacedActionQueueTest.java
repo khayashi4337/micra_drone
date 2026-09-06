@@ -73,4 +73,30 @@ class PacedActionQueueTest {
         queue.tick(1000);
         assertEquals(List.of("near-future", "far-future"), order);
     }
+
+    /**
+     * Regression test for a bug in the head-blocking fix itself (Codex review finding): an earlier
+     * draft collected every ready entry into a list first, then ran them - so if the first one
+     * threw, every later one already collected (and already removed from the queue) was lost
+     * forever, its own action never running and never getting a chance on a later tick either.
+     * Removing and running one entry at a time (not collect-then-run-all) means a throwing entry
+     * only loses itself; anything the iterator hasn't reached yet is untouched and still pending.
+     */
+    @Test
+    void anEarlierEntryThrowingDoesNotLoseALaterReadyEntry() {
+        PacedActionQueue queue = new PacedActionQueue();
+        List<String> ran = new ArrayList<>();
+        queue.submit(5, () -> { throw new RuntimeException("boom"); });
+        queue.submit(5, () -> ran.add("second"));
+
+        try {
+            queue.tick(5);
+        } catch (RuntimeException expected) {
+            // the first entry's own exception propagating is the pre-existing, unchanged behavior
+        }
+
+        // The second entry must still be pending (not silently discarded) and run on a later tick.
+        queue.tick(5);
+        assertEquals(List.of("second"), ran, "the second entry should still run on a later tick, not be lost");
+    }
 }
