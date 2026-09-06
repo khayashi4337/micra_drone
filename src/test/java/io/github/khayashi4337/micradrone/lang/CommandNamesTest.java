@@ -32,7 +32,8 @@ class CommandNamesTest {
 
     @Test
     void keywordsMatchesTheLanguagesReservedWords() {
-        assertEquals(Set.of("if", "elif", "else", "while", "for", "in", "and", "or", "not", "True", "False", "None"),
+        assertEquals(Set.of("if", "elif", "else", "while", "for", "in", "and", "or", "not", "True", "False", "None",
+                        "def", "return", "break", "continue", "pass"),
                 Lexer.keywords());
     }
 }

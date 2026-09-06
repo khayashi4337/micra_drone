@@ -16,7 +16,8 @@ own. Inspired by the Steam game
 ### Features
 
 - **A real (tiny) programming language** — variables, `if`/`elif`/`else`,
-  `while`, `for i in range(...)`, comments, and a handful of drone commands
+  `while`, `for i in range(...)`, `break`/`continue`, your own functions with
+  `def`/`return`, comments, and a handful of drone commands
   (`move`, `till`, `plant`, `harvest`, `can_harvest`, `is_rotten`, `measure`,
   `get_points`, `print`, `do_a_flip`, ...), plus perception commands that read
   the world around the drone (`get_ground`, `get_block_above`, `get_time`,
@@ -32,20 +33,28 @@ own. Inspired by the Steam game
   `len`, `abs`, `min`, `max`, `random` and `str`. Enough to count things,
   remember what you've seen, and write the kind of script that doesn't need to
   know its answer in advance.
+- **RTOS-style tasks** — `create_task(name, priority, budget_ticks, fn)` runs a
+  function as a background task alongside your main script (it keeps going
+  after the script that started it ends), `semaphore()` with `.post()`/
+  `.wait()` lets tasks safely hand work off to each other, `sleep_ticks(n)`
+  paces a task on the same tick-driven clock as `move`/`till`, and
+  `attach_isr(face, fn)`/`raise_interrupt(face)` add software interrupts for
+  instant, no-blocking-allowed handlers. RTOS-inspired concurrency primitives
+  in a farming drone — `priority` is a best-effort hint, not a hard real-time
+  guarantee.
 - **An in-game IDE that behaves like one** — syntax highlighting in a Monokai
   palette (keywords, strings, numbers and comments each get their own color,
   and a mistyped command name is visibly not the color a real one would be),
   an autocomplete popup as you type a command name, undo/redo (Ctrl+Z /
   Ctrl+Y), Tab to indent by four spaces, run and step buttons on the
   editor's title bar, rename-in-place by double-clicking the script name,
-  a debugger with breakpoints and step/step-out, its breakpoints following
-  their line as you insert or delete lines above them, a script list, and a
-  live top-down camera view of your plot filling the other half of the
-  screen — with whatever your script `print`s scrolling in a strip along the
-  bottom of that view, so you can watch the drone and read its output at the
-  same time. Close the IDE mid-edit and your unsaved changes are still there
-  when you reopen it (kept while the game is running; leaving the world
-  clears them).
+  a debugger whose breakpoints follow their line as you insert or delete
+  lines above them, a script list, and a live top-down camera view of your
+  plot filling the other half of the screen — with whatever your script
+  `print`s scrolling in a strip along the bottom of that view, so you can
+  watch the drone and read its output at the same time. Close the IDE
+  mid-edit and your unsaved changes are still there when you reopen it
+  (kept while the game is running; leaving the world clears them).
 - **AI chat, powered by your own claude CLI** — a Chat tab in the IDE talks
   directly to the copy of Claude Code already logged into your own machine
   (no API key, no extra cost beyond your existing subscription).
@@ -62,11 +71,8 @@ own. Inspired by the Steam game
   cancel (your text stays in the box to fix and resend). When the reply
   contains code, the editor turns into a diff on the spot, Cursor-style:
   removed lines red, added lines green, an "x Reject" beside each change
-  block, and "Accept rest" / "Reject all" in the Chat tab. Runs in a
-  locked-down safe mode by default (no file/shell access at all); the
-  Danger toggle gives it full local-terminal power AND applies its code
-  straight into the editor with a one-step "Undo AI change" — for when you'd
-  rather let it drive. History is saved per controller and per world and
+  block, and "Accept rest" / "Reject all" in the Chat tab. Always runs in a
+  locked-down safe mode (no file/shell access at all). History is saved per controller and per world and
   resumes next time you open the tab, with a Compact button to summarize
   and start fresh. A craftable Region Pointer wand (left-click a block for
   the start corner, right-click for the end; the selection is drawn in the

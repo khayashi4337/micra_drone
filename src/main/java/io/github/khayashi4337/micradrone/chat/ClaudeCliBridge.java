@@ -46,16 +46,28 @@ public final class ClaudeCliBridge {
             "claude CLI not found - install Claude Code (npm install -g @anthropic-ai/claude-code), run 'claude login', then reopen Chat";
 
     /**
+     * The mod always talks to claude -p in this locked-down mode - no file/shell tools, none of the
+     * player's own CLAUDE.md/settings (a real per-message cost too, SPK-1: ~$0.20 of cache-creation
+     * on a cold session vs ~$0.09 without it). There used to be a player-facing "Danger" toggle that
+     * swapped these for {@code --dangerously-skip-permissions} (full local-terminal power); CurseForge
+     * rejected the file over it ("contains a feature... disabling permissions... unsafe and a
+     * security risk"), and shipping a mod that can spawn a permission-check-free local process from
+     * an in-game button is a genuine risk independent of that rejection, so the toggle is gone rather
+     * than just hidden.
+     */
+    static final List<String> SAFE_FLAGS =
+            List.of("--setting-sources", "", "--restricted", "--strict-mcp-config", "--tools", "");
+
+    /**
      * @param sessionId     the id to pass to --session-id (new) or --resume (continuing)
      * @param isNewSession  true for a fresh session (--session-id), false to resume an existing one
-     * @param dangerFlags   DangerModeState#toCliFlags's result for this send
      * @param mcpConfigPath path to the --mcp-config JSON file, or null to skip MCP entirely (e.g.
      *                      before BlockSnapshotToolServer is up)
      */
-    public record ClaudeCliOptions(String sessionId, boolean isNewSession, List<String> dangerFlags, String mcpConfigPath) {
+    public record ClaudeCliOptions(String sessionId, boolean isNewSession, String mcpConfigPath) {
         /** A fresh session id and options ready for a controller's very first message. */
-        public static ClaudeCliOptions freshSession(List<String> dangerFlags, String mcpConfigPath) {
-            return new ClaudeCliOptions(UUID.randomUUID().toString(), true, dangerFlags, mcpConfigPath);
+        public static ClaudeCliOptions freshSession(String mcpConfigPath) {
+            return new ClaudeCliOptions(UUID.randomUUID().toString(), true, mcpConfigPath);
         }
     }
 
@@ -96,7 +108,7 @@ public final class ClaudeCliBridge {
         cmd.add("json");
         cmd.add(options.isNewSession() ? "--session-id" : "--resume");
         cmd.add(options.sessionId());
-        cmd.addAll(options.dangerFlags());
+        cmd.addAll(SAFE_FLAGS);
         if (options.mcpConfigPath() != null) {
             cmd.add("--mcp-config");
             cmd.add(options.mcpConfigPath());

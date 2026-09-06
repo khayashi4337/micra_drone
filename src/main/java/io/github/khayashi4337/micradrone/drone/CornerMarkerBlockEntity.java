@@ -45,6 +45,18 @@ public class CornerMarkerBlockEntity extends BlockEntity {
     /** -1 = not yet assigned (a freshly crafted item that has never been placed before). */
     private int sequenceNumber = -1;
     private String friendlyName = "";
+    /**
+     * The other marker's {@link #displayId} this marker wants to mutually pair with (empty = none) -
+     * see pair_with()/is_paired(). One-sided by itself; only reading this ONE field never tells you
+     * whether a pairing is actually mutual - that check (does the target marker's own
+     * {@code pairedTargetId} point back here) is done by
+     * {@code DroneControllerBlockEntity#pairedMarkerPos}, not by this class, since it needs to resolve
+     * and read a second, potentially-anywhere-in-the-world marker. Tied to this placed block, not the
+     * item: unlike {@code friendlyName}/{@code sequenceNumber}, does NOT round-trip through
+     * {@link #collectImplicitComponents} - a pairing is a relationship between two specific world
+     * positions, meaningless to carry onto a dropped/replanted item.
+     */
+    private String pairedTargetId = "";
 
     public CornerMarkerBlockEntity(BlockPos pos, BlockState state) {
         super(MicraDrone.CORNER_MARKER_BLOCK_ENTITY.get(), pos, state);
@@ -52,6 +64,16 @@ public class CornerMarkerBlockEntity extends BlockEntity {
 
     public String friendlyName() {
         return friendlyName;
+    }
+
+    public String pairedTargetId() {
+        return pairedTargetId;
+    }
+
+    /** pair_with(): declares (or, with "", clears) the id this marker wants to pair with. */
+    public void setPairedTargetId(String id) {
+        pairedTargetId = id;
+        setChanged();
     }
 
     /** Short, human-typeable form for scripts/chat: the friendly name if set, else the auto-assigned sequence number. */
@@ -62,6 +84,11 @@ public class CornerMarkerBlockEntity extends BlockEntity {
     /** True once this marker has been placed at least once and thus already owns a sequence number. */
     boolean hasSequenceNumber() {
         return sequenceNumber >= 1;
+    }
+
+    /** The raw auto-assigned number, regardless of whether {@link #friendlyName} currently hides it from {@link #displayId}. */
+    public int sequenceNumber() {
+        return sequenceNumber;
     }
 
     /** Called only by {@code CornerMarkerBlock#setPlacedBy}, exactly once per marker, the first time it's placed. */
@@ -85,11 +112,18 @@ public class CornerMarkerBlockEntity extends BlockEntity {
      * assigns one) never re-runs for a block that's already standing in the world. Called from every
      * path that actually reads a placed marker's id, so the fix applies the first time anyone looks
      * (seb's PR #20 round-2 review caught this).
+     *
+     * <p>Also (re-)claims this number in {@link CornerMarkerNumberRegistry} even when a number was
+     * already assigned - the same "reached the world without going through setPlacedBy's claim" gap
+     * applies to any marker placed before pair_with()/set_output(id) existed, not just the 0.0.7 case
+     * above. Cheap and idempotent, so doing it unconditionally here (rather than tracking a separate
+     * "have I claimed yet" flag) is simpler.
      */
     public void ensureSequenceNumber(ServerLevel level) {
         if (!hasSequenceNumber()) {
             assignSequenceNumber(CornerMarkerSequenceRegistry.get(level).nextNumber());
         }
+        CornerMarkerNumberRegistry.get(level).claim(sequenceNumber, getBlockPos());
     }
 
     /**
@@ -107,7 +141,29 @@ public class CornerMarkerBlockEntity extends BlockEntity {
                 .orElse("");
     }
 
-    private static Optional<CornerMarkerBlockEntity> at(ServerLevel level, BlockPos pos) {
+    /**
+     * Resolves ANY marker's {@link #displayId} (friendly name or auto-assigned number) to its current
+     * position anywhere in the world - unlike {@link #findDisplayId}, not limited to a marker
+     * discoverable via a specific controller's diagonal scan. Used by pair_with()/set_output(id) to
+     * target a marker by id regardless of where it sits relative to the calling plot.
+     * Tries the name registry first, matching {@link #displayId}'s own priority (a friendly name
+     * always wins over a number for a GIVEN marker); only if nothing claims {@code id} as a name, and
+     * it parses as a plain integer, falls back to the number registry.
+     */
+    public static Optional<BlockPos> resolveId(ServerLevel level, String id) {
+        Optional<BlockPos> byName = CornerMarkerNameRegistry.get(level).resolve(id);
+        if (byName.isPresent()) {
+            return byName;
+        }
+        try {
+            return CornerMarkerNumberRegistry.get(level).resolve(Integer.parseInt(id));
+        } catch (NumberFormatException e) {
+            return Optional.empty();
+        }
+    }
+
+    /** Package-private: also used by {@code DroneControllerBlockEntity} to resolve pair_with()/is_paired() targets. */
+    static Optional<CornerMarkerBlockEntity> at(ServerLevel level, BlockPos pos) {
         if (level.getBlockEntity(pos) instanceof CornerMarkerBlockEntity be) {
             be.ensureSequenceNumber(level);
             return Optional.of(be);
@@ -154,6 +210,7 @@ public class CornerMarkerBlockEntity extends BlockEntity {
         super.loadAdditional(tag, registries);
         sequenceNumber = tag.getInt("SequenceNumber");
         friendlyName = tag.getString("FriendlyName");
+        pairedTargetId = tag.getString("PairedTargetId");
     }
 
     @Override
@@ -161,5 +218,6 @@ public class CornerMarkerBlockEntity extends BlockEntity {
         super.saveAdditional(tag, registries);
         tag.putInt("SequenceNumber", sequenceNumber);
         tag.putString("FriendlyName", friendlyName);
+        tag.putString("PairedTargetId", pairedTargetId);
     }
 }

@@ -67,7 +67,8 @@ import org.lwjgl.glfw.GLFW;
  *
  * <p>Debugger (issue #6): the editor gutter shows line numbers - click one to toggle a
  * breakpoint (red). The line about to execute is highlighted yellow, live. Pause/Resume, Step,
- * and Step Out (of the current loop) drive the server-side {@code DebugController} through
+ * and Step Out (of the current loop, or now a user-defined function call - see
+ * {@code DebugController}'s own doc) drive the server-side {@code DebugController} through
  * {@link DebugCommandPayload}; state comes back via {@link DebugStatePayload}. The highlight maps
  * lines of the SAVED script, so debugging starts from Save &amp; Run - unsaved edits shift lines.
  *
@@ -231,8 +232,6 @@ public class IdeScreen extends Screen {
     // reviewOriginalText. See LineDiff for why this replaced the old overwrite-on-Insert.
     private String reviewOriginalText;
     private LineDiff reviewDiff;
-    /** The script as it was before Danger ON's last unreviewed apply - non-null while that apply can still be undone. */
-    private String lastAutoApplyOriginal;
     /** Per-hunk "x Reject" marker rectangles from the last frame (null = hunk scrolled out of view), for hit-testing. */
     private final List<int[]> reviewHunkMarkerRects = new java.util.ArrayList<>();
     private static final int HUNK_MARKER_PADDING = 3;
@@ -243,7 +242,7 @@ public class IdeScreen extends Screen {
     private boolean closed = false;
 
     private CornerMarkerScan.PlotBounds bounds = new CornerMarkerScan.PlotBounds(
-            DroneControllerBlockEntity.DEFAULT_WORLD_SIZE, 1, 1, false, 0);
+            DroneControllerBlockEntity.DEFAULT_WORLD_SIZE, 1, 1, false, 0, 0);
     private int tickCounter = 0;
 
     public IdeScreen(BlockPos pos, String scriptId, String displayName) {
@@ -510,21 +509,6 @@ public class IdeScreen extends Screen {
         }
 
         @Override
-        public void applyWithoutReview(String proposed) {
-            IdeScreen.this.applyWithoutReview(proposed);
-        }
-
-        @Override
-        public boolean canUndoLastApply() {
-            return lastAutoApplyOriginal != null;
-        }
-
-        @Override
-        public void undoLastApply() {
-            IdeScreen.this.undoLastApply();
-        }
-
-        @Override
         public List<String> logLines() {
             return logLines;
         }
@@ -602,7 +586,7 @@ public class IdeScreen extends Screen {
     /**
      * Same effect as typing {@code text} into the editor (replaces the whole script) - including
      * the breakpoint retargeting typing triggers, which is why {@code editorText} is left for the
-     * value listener to assign rather than set here (see {@link #applyWithoutReview}).
+     * value listener to assign rather than set here.
      */
     public void setEditorTextForTesting(String text) {
         editor.setValue(text); // fires the value listener, which records the draft AND retargets breakpoints
@@ -632,10 +616,6 @@ public class IdeScreen extends Screen {
 
     public int getLastAssistantCodeBlockCountForTesting() {
         return chatPanel.codeBlockCount();
-    }
-
-    public boolean isDangerModeForTesting() {
-        return chatPanel.isDangerMode();
     }
 
     /** Switches to the Chat tab if it isn't already showing - a no-op otherwise. */
@@ -671,22 +651,44 @@ public class IdeScreen extends Screen {
         chatPanel.cancelRoundTrip();
     }
 
-    public boolean canUndoLastApplyForTesting() {
-        return lastAutoApplyOriginal != null;
-    }
-
-    /** Same effect as clicking "Undo AI change" after a Danger ON apply. */
-    public void undoLastApplyForTesting() {
-        undoLastApply();
-        rebuildWidgets();
-    }
-
-    public void setDangerModeForTesting(boolean enabled) {
-        chatPanel.setDangerMode(enabled);
-    }
-
     public void compactForTesting() {
         chatPanel.compact();
+    }
+
+    /** The lines carrying a red gutter dot, ascending. */
+    public List<Integer> getBreakpointsForTesting() {
+        return breakpoints.stream().sorted().toList();
+    }
+
+    /**
+     * Same effect as clicking the gutter beside {@code line} - including being ignored for a line
+     * the script doesn't have. Exists because the gutter is a few pixels wide and its position
+     * moves with the GUI scale, which made clicking it by coordinate the least reliable step in
+     * real-machine breakpoint testing.
+     */
+    public void toggleBreakpointForTesting(int line) {
+        toggleBreakpoint(line);
+    }
+
+    /** One of the {@code DebugStatePayload.STATE_*} constants, as last reported by the server. */
+    public int getDebugStateForTesting() {
+        return debugState;
+    }
+
+    /** The line the yellow "executing now" bar is on; 0 when the script isn't stopped on one. */
+    public int getCurrentLineForTesting() {
+        return editor.currentLine();
+    }
+
+    /**
+     * Same effect as pressing one of the debugger buttons; {@code command} is a
+     * {@code DebugCommandPayload.COMMAND_*} constant. Whether one applies is the server's call, so
+     * this never has to check first: with nothing running it drops Pause/Resume/Step Out, but Step
+     * starts a fresh run paused before the first statement - see
+     * {@code DroneControllerBlockEntity#debugCommand}.
+     */
+    public void sendDebugCommandForTesting(int command) {
+        PacketDistributor.sendToServer(new DebugCommandPayload(pos, command));
     }
 
     /**
@@ -732,9 +734,9 @@ public class IdeScreen extends Screen {
      * unsaved draft for this exact controller+script (see {@link #unsavedDrafts}) wins over the
      * server's saved copy, so reopening the IDE mid-edit picks up where typing left off.
      *
-     * <p>The assignment before {@code setValue} is deliberate, and is the opposite case from
-     * {@link #applyWithoutReview}: loading a script is not an edit of the one before it. Assigning
-     * first leaves the value listener comparing the incoming text against itself, so it retargets
+     * <p>The assignment before {@code setValue} is deliberate: loading a script is not an edit of
+     * the one before it. Assigning first leaves the value listener comparing the incoming text
+     * against itself, so it retargets
      * nothing - which is what we want. Letting it run would diff a blank editor (blank on every
      * path that asks for a source: {@link #selectAndEdit} clears it, and a freshly opened screen
      * starts that way) against a whole script, and a blank editor is zero lines rather than one
@@ -870,7 +872,6 @@ public class IdeScreen extends Screen {
         }
         reviewOriginalText = editorText;
         reviewDiff = diff;
-        lastAutoApplyOriginal = null; // a fresh review supersedes any earlier one-step undo
         editor.setValue(diff.mergedText()); // the value listener mirrors this into editorText; endReview restores
         applyReviewDecorations();
     }
@@ -890,35 +891,6 @@ public class IdeScreen extends Screen {
 
     private void rejectReview() {
         endReview(reviewOriginalText);
-    }
-
-    /**
-     * Danger ON's counterpart of {@link #beginReview}: the proposal replaces the script outright,
-     * and the text it replaced is kept for one {@link #undoLastApply} - the safety net that lets
-     * the "just let the AI do it" mode stay recoverable.
-     *
-     * <p>{@code editorText} is deliberately NOT assigned here: the value listener does that, and
-     * doing it first would leave the listener comparing the new text against itself, so it would
-     * see no change and skip retargeting the breakpoints - the same trap {@link #endReview} spells
-     * out. An AI edit has to move breakpoints whether it arrives through review or straight through
-     * Danger ON.
-     */
-    private void applyWithoutReview(String proposed) {
-        if (proposed.equals(editorText)) {
-            return;
-        }
-        lastAutoApplyOriginal = editorText;
-        editor.setValue(proposed);
-    }
-
-    /** Undoes one {@link #applyWithoutReview} - and, for the same reason as there, lets the listener assign {@code editorText}. */
-    private void undoLastApply() {
-        if (lastAutoApplyOriginal == null) {
-            return;
-        }
-        String restored = lastAutoApplyOriginal;
-        lastAutoApplyOriginal = null;
-        editor.setValue(restored);
     }
 
     /**
@@ -1141,13 +1113,7 @@ public class IdeScreen extends Screen {
                 && mouseY >= editorTop && mouseY < editorTop + editorHeight) {
             int line = (int) ((mouseY - editorTop - editor.gutterTopPadding() + editor.gutterScroll())
                     / DebugEditBox.LINE_HEIGHT) + 1;
-            if (line >= 1 && line <= lineCount()) {
-                if (!breakpoints.remove(line)) {
-                    breakpoints.add(line);
-                }
-                editor.setBreakpointLines(breakpoints);
-                sendBreakpoints();
-            }
+            toggleBreakpoint(line);
             return true;
         }
         boolean handled = super.mouseClicked(mouseX, mouseY, button);
@@ -1162,6 +1128,24 @@ public class IdeScreen extends Screen {
             setFocused(editor);
         }
         return handled;
+    }
+
+    /**
+     * Adds {@code line} to the breakpoints if it isn't one, removes it if it is, and tells the
+     * server the new whole set. Silently does nothing for a line the script doesn't have, so a
+     * gutter click below the last line is ignored rather than setting a breakpoint that can never
+     * be hit. The only place a person's toggle enters the set, so the gutter click and the devkit
+     * hook cannot drift apart in what they send.
+     */
+    private void toggleBreakpoint(int line) {
+        if (line < 1 || line > lineCount()) {
+            return;
+        }
+        if (!breakpoints.remove(line)) {
+            breakpoints.add(line);
+        }
+        editor.setBreakpointLines(breakpoints);
+        sendBreakpoints();
     }
 
     /**

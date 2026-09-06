@@ -85,21 +85,20 @@ class BreakpointRetargetingTest {
     }
 
     /**
-     * Danger ON applies an AI proposal straight to the script and offers one "Undo AI change" -
-     * neither goes through the review view, so each is just an ordinary whole-text edit. Both legs
-     * must retarget (see {@code IdeScreen#applyWithoutReview}), leaving the breakpoint back on its
-     * original line once the round trip completes.
+     * A whole-text replacement (loading a script, an AI edit landing, or reverting one) is just an
+     * ordinary edit as far as retargeting is concerned - applying it and then reverting it must
+     * leave the breakpoint back on its original line, not stranded on the intermediate line number.
      */
     @Test
-    void applyingAndUndoingAnAiChangeReturnsTheBreakpointToItsOriginalLine() {
+    void applyingAndRevertingAWholeTextEditReturnsTheBreakpointToItsOriginalLine() {
         String original = "a\nb\nc";
-        String applied = "a\nX\nb\nc"; // the AI inserts a line above the breakpointed one
+        String applied = "a\nX\nb\nc"; // e.g. an inserted line above the breakpointed one
 
         Set<Integer> afterApply = BreakpointRetargeting.retarget(Set.of(3), original, applied);
         assertEquals(Set.of(4), afterApply, "applying must push the breakpoint down with its line");
 
-        Set<Integer> afterUndo = BreakpointRetargeting.retarget(afterApply, applied, original);
-        assertEquals(Set.of(3), afterUndo, "undoing must bring it back, not strand it on the applied line number");
+        Set<Integer> afterRevert = BreakpointRetargeting.retarget(afterApply, applied, original);
+        assertEquals(Set.of(3), afterRevert, "reverting must bring it back, not strand it on the applied line number");
     }
 
     /** Same setup as the reject case, but Accept keeps the merged view's text as-is - nothing to retarget. */

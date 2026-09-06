@@ -12,13 +12,15 @@ import java.util.List;
  */
 public final class CommandNames {
     public static final List<String> ALL = List.of(
-            "move", "till", "plant", "harvest", "do_a_flip",
+            "move", "till", "plant", "harvest", "do_a_flip", "sleep_ticks",
             "can_harvest", "is_rotten", "measure",
             "get_pos_x", "get_pos_y", "get_world_size", "get_points",
             "get_ground", "get_block_above", "get_time", "get_weather", "get_biome", "get_light", "get_plot_id",
+            "set_output", "get_output", "pair_with", "is_paired",
             "print", "range",
             // General-purpose, nothing to do with the drone - see Interpreter's "general-purpose builtins".
-            "len", "abs", "min", "max", "random", "str", "list", "dict", "set");
+            "len", "abs", "min", "max", "random", "str", "list", "dict", "set", "semaphore", "create_task",
+            "attach_isr", "raise_interrupt");
 
     private CommandNames() {
     }

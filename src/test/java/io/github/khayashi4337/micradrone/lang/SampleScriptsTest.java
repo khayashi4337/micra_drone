@@ -23,9 +23,22 @@ class SampleScriptsTest {
 
     @Test
     void everySampleParsesAndRunsWithoutError() {
+        // BLINK_TASK's create_task() spawns a task that loops forever (by design - it's meant to
+        // outlive the script that started it) - stopAllTasks() in finally sends it an interrupt
+        // (checked before its next statement, see checkCancellation) so it doesn't keep burning
+        // CPU past this test - this does not join()/wait for the task thread to actually finish,
+        // just asks it to (Codex review finding: an earlier comment overclaimed "ensures it
+        // doesn't leak", which isn't quite true - it bounds the damage, it doesn't prove
+        // termination). Every other sample creates no tasks, so this call is a no-op for them (see
+        // docs/design/lang_rtos_task_foundation.md's "SampleScriptsTestへの影響").
         for (String source : SampleScripts.ALL.values()) {
             FakeDroneApi api = new FakeDroneApi(3);
-            new Interpreter(api).run(parse(source));
+            Interpreter interpreter = new Interpreter(api);
+            try {
+                interpreter.run(parse(source));
+            } finally {
+                interpreter.stopAllTasks();
+            }
         }
     }
 
@@ -66,6 +79,65 @@ class SampleScriptsTest {
         long harvestCount = api.calls.stream().filter("harvest"::equals).count();
         assertEquals(9, harvestCount, "expected every one of the 9 mature cells to be harvested");
         assertTrue(api.printed.contains("9"), "expected the printed harvested-cell count to be 9");
+    }
+
+    /** The def/return intro sample: harvest_if_ready() must both act on and report each cell correctly. */
+    @Test
+    void functionsIntroHarvestsExactlyTheMatureCellsInTheStartingRow() {
+        FakeDroneApi api = new FakeDroneApi(3);
+        api.setCropAge(0, 0, 3); // mature at the start
+        api.setCropAge(2, 0, 3); // mature at the far end of the row the sample walks
+
+        new Interpreter(api).run(parse(SampleScripts.FUNCTIONS_INTRO));
+
+        assertEquals(2, api.calls.stream().filter("harvest"::equals).count(),
+                "expected the two mature cells in the row to be harvested, the immature one skipped");
+        assertEquals(List.of("harvested:", "2"), api.printed);
+    }
+
+    @Test
+    void signalHarvestReadyTurnsOutputOnWhenSomethingIsMatureAndNeverHarvests() {
+        FakeDroneApi api = new FakeDroneApi(3);
+        api.setCropAge(2, 2, 3); // exactly one mature cell, the last one the snake path visits
+
+        new Interpreter(api).run(parse(SampleScripts.SIGNAL_HARVEST_READY));
+
+        assertEquals(0, api.calls.stream().filter("harvest"::equals).count(), "must never harvest - read-only");
+        assertEquals(List.of("set_output:true"),
+                api.calls.stream().filter(c -> c.startsWith("set_output")).toList());
+        assertEquals(List.of("harvest ready:", "True"), api.printed);
+    }
+
+    @Test
+    void signalHarvestReadyTurnsOutputOffWhenNothingIsMature() {
+        FakeDroneApi api = new FakeDroneApi(3); // fresh plot, nothing planted anywhere
+
+        new Interpreter(api).run(parse(SampleScripts.SIGNAL_HARVEST_READY));
+
+        assertEquals(List.of("set_output:false"),
+                api.calls.stream().filter(c -> c.startsWith("set_output")).toList());
+        assertEquals(List.of("harvest ready:", "False"), api.printed);
+    }
+
+    @Test
+    void pairAndSignalHarvestAlwaysPairsWithNorthFieldRegardlessOfMaturity() {
+        FakeDroneApi api = new FakeDroneApi(3);
+        api.setPairedResult(true);
+
+        new Interpreter(api).run(parse(SampleScripts.PAIR_AND_SIGNAL_HARVEST));
+
+        assertEquals("north_field", api.pairTarget());
+        assertEquals(List.of("paired with north_field", "harvest ready:", "False"), api.printed);
+    }
+
+    @Test
+    void pairAndSignalHarvestReportsWhenNotYetPaired() {
+        FakeDroneApi api = new FakeDroneApi(3); // setPairedResult defaults to false
+
+        new Interpreter(api).run(parse(SampleScripts.PAIR_AND_SIGNAL_HARVEST));
+
+        assertEquals(List.of("not paired yet - run pair_with() on the other plot too", "harvest ready:", "False"),
+                api.printed);
     }
 
     /**

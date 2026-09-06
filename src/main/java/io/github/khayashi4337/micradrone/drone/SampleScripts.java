@@ -130,6 +130,96 @@ public final class SampleScripts {
             print(get_points("wheat"))
             """;
 
+    public static final String FUNCTIONS_INTRO = """
+            # Harvests the starting row using a def/return helper - an intro to writing your own functions.
+            # def lets you name a piece of logic and reuse it instead of repeating it, and return
+            # hands a value back to whoever called it - the same idea as a built-in like
+            # can_harvest(), but written by you. This one bundles "check, then harvest" into a
+            # single call that reports whether the harvest actually succeeded (not just whether it
+            # looked ready a moment earlier - harvest() itself is the source of truth), so the loop
+            # that walks the row doesn't have to repeat the can_harvest()/harvest() pair every time.
+            def harvest_if_ready():
+                if can_harvest():
+                    return harvest()
+                return False
+
+            size = get_world_size()
+            harvested = 0
+            for i in range(size):
+                if harvest_if_ready():
+                    harvested = harvested + 1
+                if i < size - 1:
+                    move("east")
+            print("harvested:")
+            print(harvested)
+            """;
+
+    public static final String SIGNAL_HARVEST_READY = """
+            # コーナーマーカーのredstone出力を使って、収穫できる作物があるかを外から
+            # 見えるランプで知らせる。マーカーの隣にレッドストーンランプを置いておけば、
+            # 点灯/消灯だけで畑の様子がひと目でわかる(何も収穫しない、read-onlyな見回り)。
+            size = get_world_size()
+            ready = False
+            going_east = True
+            row = 0
+            while row < size:
+                col = 0
+                while col < size - 1:
+                    if can_harvest():
+                        ready = True
+                    if going_east:
+                        move("east")
+                    else:
+                        move("west")
+                    col = col + 1
+                if can_harvest():
+                    ready = True
+                if row < size - 1:
+                    move("south")
+                going_east = not going_east
+                row = row + 1
+            set_output(ready)
+            print("harvest ready:")
+            print(ready)
+            """;
+
+    public static final String PAIR_AND_SIGNAL_HARVEST = """
+            # 別のプロットのマーカーとペアリングし、収穫できる作物があるかを相手側の
+            # マーカーにも伝える(距離を問わないワイヤレスredstone)。相手のIDは
+            # get_plot_id()で調べられる。実行前に、相手側のプロットでも
+            # pair_with(このプロットのID)を実行しておくこと - 片方だけの宣言では
+            # ペアは成立しない(見知らぬ相手に勝手に信号を送れないようにするため)。
+            pair_with("north_field")
+            if is_paired():
+                print("paired with north_field")
+            else:
+                print("not paired yet - run pair_with() on the other plot too")
+
+            size = get_world_size()
+            ready = False
+            going_east = True
+            row = 0
+            while row < size:
+                col = 0
+                while col < size - 1:
+                    if can_harvest():
+                        ready = True
+                    if going_east:
+                        move("east")
+                    else:
+                        move("west")
+                    col = col + 1
+                if can_harvest():
+                    ready = True
+                if row < size - 1:
+                    move("south")
+                going_east = not going_east
+                row = row + 1
+            set_output(ready)
+            print("harvest ready:")
+            print(ready)
+            """;
+
     public static final String COUNT_GROUND = """
             # リストと辞書の練習。プロットを一周して、足元の地面を種類ごとに数える。
             # 種類が何通りあるか分からなくても、辞書ならキーを増やしていくだけで数えられる。
@@ -286,6 +376,30 @@ public final class SampleScripts {
             print(get_points("pumpkin"))
             """;
 
+    /**
+     * RTOS-style: a background task blinks the plot marker's redstone output forever while the
+     * main script is free to finish and do something else. Demonstrates create_task()/
+     * sleep_ticks() (not semaphore() - this sample has no producer/consumer handoff) - see the
+     * help scroll's "RTOSタスク（応用）" section for what each one does.
+     */
+    public static final String BLINK_TASK = """
+            # RTOSタスク基盤(応用): blink()を本体スクリプトとは別の「タスク」として
+            # 動かし続ける。本体はcreate_task()した直後に終わるが、blinkerタスクは
+            # マーカーの出力を点滅させ続ける(次にRunし直すかStopするまで)。
+            def blink():
+                while True:
+                    set_output(True)
+                    sleep_ticks(10)
+                    set_output(False)
+                    sleep_ticks(10)
+
+            result = create_task("blinker", 5, 0, blink)
+            if result == "ACCEPTED":
+                print("blinker task started - it keeps running after this script ends")
+            else:
+                print(result)
+            """;
+
     /** File name (with extension) -> content, in the order they should appear in the picker. */
     public static final Map<String, String> ALL = buildAll();
 
@@ -298,9 +412,13 @@ public final class SampleScripts {
         all.put("till_and_plant.mdrone", TILL_AND_PLANT);
         all.put("survey_plot.mdrone", SURVEY_PLOT);
         all.put("harvest_when_ready.mdrone", HARVEST_WHEN_READY);
+        all.put("functions_intro.mdrone", FUNCTIONS_INTRO);
+        all.put("signal_harvest_ready.mdrone", SIGNAL_HARVEST_READY);
         all.put("count_ground.mdrone", COUNT_GROUND);
         all.put("carrot_farm.mdrone", CARROT_FARM);
+        all.put("pair_and_signal_harvest.mdrone", PAIR_AND_SIGNAL_HARVEST);
         all.put("pumpkin_smart_harvest.mdrone", PUMPKIN_SMART_HARVEST);
+        all.put("blink_task.mdrone", BLINK_TASK);
         return Map.copyOf(all);
     }
 

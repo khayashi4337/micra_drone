@@ -131,4 +131,19 @@ class LexerTest {
         // 4-space then 2-space: 2 doesn't match any outer level (0 or 4)
         assertThrows(MicraLangException.class, () -> types("if True:\n    if True:\n        x = 1\n  y = 2\n"));
     }
+
+    @Test
+    void defReturnBreakContinuePassAreTokenizedAsKeywords() {
+        assertEquals(List.of(
+                TokenType.DEF, TokenType.IDENT, TokenType.LPAREN, TokenType.RPAREN, TokenType.COLON, TokenType.NEWLINE,
+                TokenType.INDENT,
+                TokenType.RETURN, TokenType.NEWLINE,
+                TokenType.DEDENT,
+                TokenType.EOF
+        ), types("def f():\n    return\n"));
+        assertEquals(List.of(
+                TokenType.BREAK, TokenType.NEWLINE, TokenType.CONTINUE, TokenType.NEWLINE,
+                TokenType.PASS, TokenType.NEWLINE, TokenType.EOF
+        ), types("break\ncontinue\npass\n"));
+    }
 }
