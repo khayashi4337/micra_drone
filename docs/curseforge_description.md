@@ -39,8 +39,9 @@ own. Inspired by the Steam game
   `.wait()` lets tasks safely hand work off to each other, `sleep_ticks(n)`
   paces a task on the same tick-driven clock as `move`/`till`, and
   `attach_isr(face, fn)`/`raise_interrupt(face)` add software interrupts for
-  instant, no-blocking-allowed handlers. The building blocks of a real
-  embedded-systems scheduler, in a farming drone.
+  instant, no-blocking-allowed handlers. RTOS-inspired concurrency primitives
+  in a farming drone — `priority` is a best-effort hint, not a hard real-time
+  guarantee.
 - **An in-game IDE that behaves like one** — syntax highlighting in a Monokai
   palette (keywords, strings, numbers and comments each get their own color,
   and a mistyped command name is visibly not the color a real one would be),

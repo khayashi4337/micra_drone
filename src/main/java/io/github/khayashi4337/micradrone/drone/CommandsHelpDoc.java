@@ -366,19 +366,28 @@ public final class CommandsHelpDoc {
                 タスク同士が安全に合図をやり取りするための道具。
                 s = semaphore() で作った直後は「空」で、s.wait() は
                 誰かが s.post() するまでそのタスクを止めて待たせる。
-                s.post() は待っている相手を起こすだけで、自分は止まらない。
+                s.post() は「許可証」を1枚増やすだけの操作で、待っている
+                相手がいればその1枚で起こす。誰も待っていない時に
+                s.post() しても許可証は消えずに残り、後から呼ばれた
+                s.wait() がその許可証をすぐ受け取って進める(「呼ぶ順番を
+                間違えると合図が消える」ことはない)。
 
             create_task(名前, priority, budget_ticks, 関数)
                 引数を取らない関数を、本体のスクリプトとは別に並行して
                 動かし始める。結果は文字列で返る:
                 "ACCEPTED"（受理された）か "DENIED"（拒否された— 名前の
                 重複、同時に動けるタスク数の上限（16個）、関数が0引数で
-                ない、budget_ticksが負やNaN等の不正値、のいずれか）。
-                priorityは1〜10の目安（大きいほど優先されやすい"かもしれ
-                ない"というヒントに過ぎず、必ずその順で動く保証は無い）。
-                budget_ticksは0なら無期限、正の値ならそのtick数を過ぎても
-                終わっていないタスクに停止シグナルを送る（Stopボタンと
-                同じ仕組み、強制終了ではなく協調的な停止）。
+                ない、budget_ticksが負やNaN等の不正値、Stop直後でまだ
+                受付が再開していない、のいずれか。引数の個数や型が
+                そもそも違う場合はDENIEDではなくエラーで止まる）。
+                priorityは1〜10の目安に丸められる(範囲外やNaNは自動で
+                収まる)が、大きいほど優先されやすい"かもしれない"という
+                ヒントに過ぎず、必ずその順で動く保証は無い。
+                budget_ticksは0なら無期限、正の値ならその数だけ
+                (1tick=約50ms相当の実時間で数える、実際のゲームtickの
+                進み方そのものではない)経っても終わっていないタスクに
+                停止シグナルを送る（Stopボタンと同じ仕組み、強制終了では
+                なく協調的な停止）。
                 タスクは本体のスクリプトが1文実行を終えた後もそのまま
                 動き続ける。止まるのは次にRunし直した時か、Stopを
                 押した時。
@@ -388,8 +397,11 @@ public final class CommandsHelpDoc {
                             sleep_ticks(10)
                             set_output(False)
                             sleep_ticks(10)
-                    create_task("blinker", 5, 0, blink)
-                    print("本体はここで終わるが、blinkerは点滅を続ける")
+                    result = create_task("blinker", 5, 0, blink)
+                    if result == "ACCEPTED":
+                        print("blinkerが点滅を始めた。本体はここで終わっても点滅は続く")
+                    else:
+                        print(result)
 
             sleep_ticks(n)
                 何もせずnゲームtickだけ待つ（move()等と同じ、実際の
@@ -401,13 +413,17 @@ public final class CommandsHelpDoc {
                 来たらこの0引数関数を呼ぶ」と登録しておくと、
                 raise_interrupt()を呼んだ瞬間にその場で（同じ文の中で）
                 その関数が実行される。同じ名前に2回attach_isrすると
-                後の方に上書きされる。
+                後の方に上書きされる。別のタスクが同時に同じ名前を
+                raise_interruptすると、ハンドラが並行して複数実行される
+                ことがある（1つずつ順番に、という保証は無い）。
                 割り込みハンドラの中は「一瞬で終わる処理」専用の特別な
-                場所で、move()やharvest()やprint()、s.wait()のような
-                「時間がかかる/止まる」処理は一切呼べない（呼ぶとエラー
-                になる）。純粋な計算や、s.post()でタスクに合図を送る
-                ことだけができる。実際の作業は、その合図で起きたタスクに
-                やらせること。
+                場所で、move()・harvest()・print()・get_time()のような
+                ドローン/ワールドに触れる命令や、s.wait()、create_task()、
+                attach_isr()、raise_interrupt()自身は一切呼べない（呼ぶと
+                エラーになる）。呼べるのは純粋な計算(len/abs/min/max/
+                random/str/list/set/dict、およびlist・dict・setの
+                append等のメソッド)と、s.post()でタスクに合図を送ること
+                だけ。実際の作業は、その合図で起きたタスクにやらせること。
 
             ■ 複数タスクで同じデータを触るときの注意
             複数のタスクが同じlist/dict/setを保護なしに同時に書き換えると

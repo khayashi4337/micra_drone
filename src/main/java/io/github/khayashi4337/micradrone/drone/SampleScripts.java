@@ -378,8 +378,9 @@ public final class SampleScripts {
 
     /**
      * RTOS-style: a background task blinks the plot marker's redstone output forever while the
-     * main script is free to finish and do something else. Demonstrates semaphore()/create_task()/
-     * sleep_ticks() - see the help scroll's "RTOSタスク（応用）" section for what each one does.
+     * main script is free to finish and do something else. Demonstrates create_task()/
+     * sleep_ticks() (not semaphore() - this sample has no producer/consumer handoff) - see the
+     * help scroll's "RTOSタスク（応用）" section for what each one does.
      */
     public static final String BLINK_TASK = """
             # RTOSタスク基盤(応用): blink()を本体スクリプトとは別の「タスク」として
@@ -392,8 +393,11 @@ public final class SampleScripts {
                     set_output(False)
                     sleep_ticks(10)
 
-            create_task("blinker", 5, 0, blink)
-            print("blinker task started - it keeps running after this script ends")
+            result = create_task("blinker", 5, 0, blink)
+            if result == "ACCEPTED":
+                print("blinker task started - it keeps running after this script ends")
+            else:
+                print(result)
             """;
 
     /** File name (with extension) -> content, in the order they should appear in the picker. */
