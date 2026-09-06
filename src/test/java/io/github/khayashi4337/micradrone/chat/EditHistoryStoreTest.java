@@ -54,6 +54,20 @@ class EditHistoryStoreTest {
         assertEquals(List.of(), store.redoFor("k", "current"));
     }
 
+    /**
+     * The screen that parks nothing is not necessarily talking about the same text: an IDE closed
+     * before the script arrives holds "", one closed mid-AI-review holds the diff markup. Neither
+     * may throw away the history parked for the real script.
+     */
+    @Test
+    void anEmptyRetainForOtherTextLeavesTheRetainedHistoryAlone() {
+        EditHistoryStore store = new EditHistoryStore();
+        store.retain("k", List.of(STEP), List.of(REDO_STEP), "current");
+        store.retain("k", List.of(), List.of(), ""); // a screen that never loaded the script
+        assertEquals(List.of(STEP), store.undoFor("k", "current"));
+        assertEquals(List.of(REDO_STEP), store.redoFor("k", "current"));
+    }
+
     @Test
     void clearDropsEveryRetainedHistory() {
         EditHistoryStore store = new EditHistoryStore();

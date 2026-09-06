@@ -159,7 +159,7 @@ public class IdeScreen extends Screen {
     private static final EditHistoryStore editHistories = new EditHistoryStore();
 
     /** Drops every pending draft and parked history - call on leaving a world/server, see {@link #unsavedDrafts}'s own doc. */
-    public static void clearUnsavedDrafts() {
+    public static void clearIdeSessionCaches() {
         unsavedDrafts.clear();
         editHistories.clear();
     }
@@ -324,7 +324,6 @@ public class IdeScreen extends Screen {
         // design (see DebugEditBox#setValue); adoptHistoryFrom checks the text still matches, so a
         // rebuild that loads a different script genuinely starts fresh.
         editor.adoptHistoryFrom(previousEditor);
-        restoreParkedHistory(); // nothing to adopt on a fresh open - see the method's own doc
         editor.setValueListener(text -> {
             String previousText = editorText;
             editorText = text;
@@ -750,9 +749,10 @@ public class IdeScreen extends Screen {
         if (sourcePos.equals(this.pos) && sourceScriptName.equals(this.scriptId)) {
             editorText = unsavedDrafts.resolve(draftKey(), source);
             editor.setValue(editorText);
-            // setValue just cleared the history; the text it now holds is the one a parked history
-            // would describe, so this is the moment to offer it back (a freshly opened screen gets
-            // here after init() found nothing to restore, because the text arrives only now).
+            // The only place a parked history comes back. setValue just cleared the editor's, and
+            // the text it now holds is the one a parked history would describe - which is only true
+            // from here on: a screen that has just opened holds "" until this arrives, so there is
+            // nothing for init() to match against and no reason for it to try.
             restoreParkedHistory();
             autocompleteMatches = List.of();
         }
@@ -760,14 +760,11 @@ public class IdeScreen extends Screen {
 
     /**
      * Hands the editor back the undo history the last screen on this script parked in
-     * {@link #editHistories}, if it still describes the text the editor holds. Never overwrites a
-     * history the editor already has: on a rebuild {@link DebugEditBox#adoptHistoryFrom} has just
-     * carried the live one across, and that one is newer than anything parked.
+     * {@link #editHistories}, if it still describes the text the editor holds. Called only from
+     * {@link #updateSource}, right after the {@link DebugEditBox#setValue} that emptied the editor's
+     * own history - so there is never a live history here to protect, and nothing to check first.
      */
     private void restoreParkedHistory() {
-        if (editor.hasHistory()) {
-            return;
-        }
         editor.importHistory(editHistories.undoFor(draftKey(), editorText),
                 editHistories.redoFor(draftKey(), editorText));
     }

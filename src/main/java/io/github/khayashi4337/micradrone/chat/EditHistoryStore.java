@@ -29,11 +29,23 @@ public final class EditHistoryStore {
 
     /**
      * Remembers {@code undo}/{@code redo} against the text they describe. Storing an empty history
-     * forgets the key instead, so a script whose history was cleared doesn't keep an older one.
+     * forgets the key instead, so a script whose history was cleared doesn't keep an older one -
+     * but only when {@code text} is the very text the stored history describes.
+     *
+     * <p>That condition is what stops a screen that never got as far as the script from throwing
+     * the history away: an IDE opened and closed again before the source arrives holds {@code ""}
+     * and no history, and one closed while an AI review is showing holds the diff markup, and
+     * neither says anything about the history parked for the real script. Without the check, either
+     * one destroys it - the unsaved draft would survive the same close, since
+     * {@link UnsavedDraftStore#record} only runs when the text actually changed, so the history
+     * alone would go missing.
      */
     public void retain(String key, List<Snapshot> undo, List<Snapshot> redo, String text) {
         if (undo.isEmpty() && redo.isEmpty()) {
-            byKey.remove(key);
+            Retained existing = byKey.get(key);
+            if (existing != null && existing.text().equals(text)) {
+                byKey.remove(key);
+            }
             return;
         }
         byKey.put(key, new Retained(List.copyOf(undo), List.copyOf(redo), text));
