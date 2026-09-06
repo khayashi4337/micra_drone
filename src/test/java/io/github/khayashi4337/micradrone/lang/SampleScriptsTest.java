@@ -23,9 +23,18 @@ class SampleScriptsTest {
 
     @Test
     void everySampleParsesAndRunsWithoutError() {
+        // BLINK_TASK's create_task() spawns a task that loops forever (by design - it's meant to
+        // outlive the script that started it) - stopAllTasks() in finally ensures it doesn't leak
+        // past this test even so; every other sample creates no tasks, so this is a no-op for them
+        // (see docs/design/lang_rtos_task_foundation.md's "SampleScriptsTestへの影響").
         for (String source : SampleScripts.ALL.values()) {
             FakeDroneApi api = new FakeDroneApi(3);
-            new Interpreter(api).run(parse(source));
+            Interpreter interpreter = new Interpreter(api);
+            try {
+                interpreter.run(parse(source));
+            } finally {
+                interpreter.stopAllTasks();
+            }
         }
     }
 

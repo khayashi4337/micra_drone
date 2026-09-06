@@ -376,6 +376,26 @@ public final class SampleScripts {
             print(get_points("pumpkin"))
             """;
 
+    /**
+     * RTOS-style: a background task blinks the plot marker's redstone output forever while the
+     * main script is free to finish and do something else. Demonstrates semaphore()/create_task()/
+     * sleep_ticks() - see the help scroll's "RTOSタスク（応用）" section for what each one does.
+     */
+    public static final String BLINK_TASK = """
+            # RTOSタスク基盤(応用): blink()を本体スクリプトとは別の「タスク」として
+            # 動かし続ける。本体はcreate_task()した直後に終わるが、blinkerタスクは
+            # マーカーの出力を点滅させ続ける(次にRunし直すかStopするまで)。
+            def blink():
+                while True:
+                    set_output(True)
+                    sleep_ticks(10)
+                    set_output(False)
+                    sleep_ticks(10)
+
+            create_task("blinker", 5, 0, blink)
+            print("blinker task started - it keeps running after this script ends")
+            """;
+
     /** File name (with extension) -> content, in the order they should appear in the picker. */
     public static final Map<String, String> ALL = buildAll();
 
@@ -394,6 +414,7 @@ public final class SampleScripts {
         all.put("carrot_farm.mdrone", CARROT_FARM);
         all.put("pair_and_signal_harvest.mdrone", PAIR_AND_SIGNAL_HARVEST);
         all.put("pumpkin_smart_harvest.mdrone", PUMPKIN_SMART_HARVEST);
+        all.put("blink_task.mdrone", BLINK_TASK);
         return Map.copyOf(all);
     }
 

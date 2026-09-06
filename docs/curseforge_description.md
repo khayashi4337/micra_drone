@@ -33,6 +33,14 @@ own. Inspired by the Steam game
   `len`, `abs`, `min`, `max`, `random` and `str`. Enough to count things,
   remember what you've seen, and write the kind of script that doesn't need to
   know its answer in advance.
+- **RTOS-style tasks** — `create_task(name, priority, budget_ticks, fn)` runs a
+  function as a background task alongside your main script (it keeps going
+  after the script that started it ends), `semaphore()` with `.post()`/
+  `.wait()` lets tasks safely hand work off to each other, `sleep_ticks(n)`
+  paces a task on the same tick-driven clock as `move`/`till`, and
+  `attach_isr(face, fn)`/`raise_interrupt(face)` add software interrupts for
+  instant, no-blocking-allowed handlers. The building blocks of a real
+  embedded-systems scheduler, in a farming drone.
 - **An in-game IDE that behaves like one** — syntax highlighting in a Monokai
   palette (keywords, strings, numbers and comments each get their own color,
   and a mistyped command name is visibly not the color a real one would be),

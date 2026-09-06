@@ -41,7 +41,8 @@ public final class SampleCatalog {
             new Sample("count_ground", SampleScripts.COUNT_GROUND, 6, 2),
             new Sample("carrot_farm", SampleScripts.CARROT_FARM, 9, 2),
             new Sample("pair_and_signal_harvest", SampleScripts.PAIR_AND_SIGNAL_HARVEST, 9, 2),
-            new Sample("pumpkin_smart_harvest", SampleScripts.PUMPKIN_SMART_HARVEST, MAX_BOOKSHELVES, 3));
+            new Sample("pumpkin_smart_harvest", SampleScripts.PUMPKIN_SMART_HARVEST, MAX_BOOKSHELVES, 3),
+            new Sample("blink_task", SampleScripts.BLINK_TASK, MAX_BOOKSHELVES, 3));
 
     /** Whether the sample at {@code index} is available with {@code bookshelfCount} bookshelves; false for bad indexes. */
     public static boolean isUnlocked(int index, int bookshelfCount) {
