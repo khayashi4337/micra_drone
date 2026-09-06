@@ -1720,4 +1720,67 @@ class InterpreterTest {
                 """));
         assertTrue(e.getMessage().contains("too long"), "expected the runaway-loop message, got: " + e.getMessage());
     }
+
+    /**
+     * Same regression as raiseInterruptLoopOnAnUnregisteredFaceStillTripsTheRunawayWatchdog, for
+     * create_task specifically - explicitly called out in docs/design/lang_rtos_task_foundation.md's
+     * 検証方法 section ("while True: create_task(...)（常にDENIED）...が RUNAWAY_STATEMENT_THRESHOLD
+     * で正しく止まる") but not yet covered by a test (Codex review finding). Passing a non-function
+     * value means every call is denied instantly without ever spawning a real thread.
+     */
+    @Test
+    void createTaskLoopThatAlwaysDeniesStillTripsTheRunawayWatchdog() {
+        MicraLangException e = assertThrows(MicraLangException.class, () -> run("""
+                while True:
+                    create_task("x", 5, 0, 42)
+                """));
+        assertTrue(e.getMessage().contains("too long"), "expected the runaway-loop message, got: " + e.getMessage());
+    }
+
+    /**
+     * Regression test mirroring taskLocalAssignmentDoesNotLeakIntoTheForkedGlobalScope, but for an
+     * ISR handler (Codex review finding: the task-side test existed, but nothing directly verified
+     * runIsolatedBody's child-frame fix for the ISR path specifically, even though raiseInterrupt
+     * uses the exact same method).
+     */
+    @Test
+    void isrHandlerLocalAssignmentDoesNotLeakIntoTheForkedGlobalScope() {
+        FakeDroneApi api = run("""
+                x = 1
+                def helper():
+                    return x
+                seen = []
+                def handler():
+                    x = 99
+                    seen.append(helper())
+                attach_isr("edge", handler)
+                raise_interrupt("edge")
+                print(seen)
+                """);
+        assertEquals(List.of("[1]"), api.printed);
+    }
+
+    /**
+     * Positive coverage for ISR_SAFE_BUILTINS (Codex review finding: the existing ISR tests only
+     * ever exercised the gate's rejections plus one user-defined pure-computation helper; nothing
+     * called an actual general-purpose builtin directly from inside a handler, so a builtin
+     * accidentally dropped from ISR_SAFE_BUILTINS wouldn't have been caught).
+     */
+    @Test
+    void isrHandlerCanCallGeneralPurposeBuiltinsDirectly() {
+        FakeDroneApi api = run("""
+                seen = []
+                def handler():
+                    seen.append(len([1, 2, 3]))
+                    seen.append(abs(-5))
+                    seen.append(str(7))
+                    local_sem = semaphore()
+                    local_sem.post()
+                    seen.append("semaphore ok")
+                attach_isr("edge", handler)
+                raise_interrupt("edge")
+                print(seen)
+                """);
+        assertEquals(List.of("[3, 5, \"7\", \"semaphore ok\"]"), api.printed);
+    }
 }

@@ -1016,6 +1016,14 @@ public final class Interpreter {
      * docs/design/lang_rtos_task_foundation.md's scope section - so this may be called from a
      * script or task thread today, never the main thread. An unregistered face does nothing
      * (matches set_output()'s "no marker, do nothing" pattern - a quiet no-op).
+     *
+     * <p><b>Not serialized across callers</b> (Codex review finding): re-entrant self-firing from
+     * inside the handler currently running IS rejected (raise_interrupt/attach_isr/create_task are
+     * all outside {@link #ISR_SAFE_BUILTINS}), but two different tasks raising the SAME face at
+     * genuinely the same time each get their own isrContext=true Interpreter and can run the
+     * handler concurrently - same as any other user-defined function two tasks might call at once,
+     * this is only as safe as whatever the handler itself touches (see the design doc's
+     * "共有可変状態・並行アクセスについての注記": protect shared state with a semaphore if that matters).
      */
     private void raiseInterrupt(String face) {
         MicraFunction handler = interruptTable.handlerFor(face);
