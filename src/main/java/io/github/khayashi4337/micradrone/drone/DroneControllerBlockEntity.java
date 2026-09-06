@@ -271,10 +271,14 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      * explicitly documents "call this every time" as a valid usage - resolved fresh on every use
      * rather than stored as a field, matching this class's general "resolve fresh, never cache
      * position-derived state" idiom (see {@link #cornerMarkerPos}). Positioned at the drone's own
-     * grid cell each time, so a cast lands where the drone visibly stands. {@link #currentRod} - the
-     * only part of the angler's state this controller actually persists - is loaded into its main
-     * hand before returning; callers must read it back out (it may have taken durability damage or
-     * broken) once the action completes.
+     * grid cell each time, standing due south (yaw 0) and looking level (pitch 0) - {@code
+     * FishingHook}'s own constructor throws the hook FORWARD from there using real vanilla physics
+     * (Fable5.1 review finding: an earlier version of this javadoc wrongly claimed the hook lands
+     * "where the drone visibly stands" - it travels several blocks south first, the same way a real
+     * player's cast does, so open water needs to be south of the drone, not just under its feet).
+     * {@link #currentRod} - the only part of the angler's state this controller actually persists -
+     * is loaded into its main hand before returning; callers must read it back out (it may have
+     * taken durability damage or broken) once the action completes.
      */
     private FakePlayer resolveAngler(ServerLevel level) {
         GameProfile profile = new GameProfile(anglerUuid(), "[MicraDrone Angler]");
@@ -283,7 +287,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         double x = getBlockPos().getX() + offset[0] + 0.5;
         double y = getBlockPos().getY() + 1.0 + groundYOffset;
         double z = getBlockPos().getZ() + offset[1] + 0.5;
-        angler.moveTo(x, y, z, 0.0F, 0.0F);
+        angler.moveTo(x, y, z, 0.0F, 0.0F); // yaw 0 = facing south; the hook flies forward from here, not straight down
         angler.setItemInHand(InteractionHand.MAIN_HAND, currentRod);
         return angler;
     }
@@ -680,6 +684,18 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     /** Interrupts every create_task task this controller has started. Called on block removal so none outlive it. */
     public void stopAllTasks() {
         taskRegistry.stopAll();
+    }
+
+    /**
+     * Interrupts the main script itself (not just its create_task tasks), if one is running. Called
+     * on block removal for the same reason as {@link #stopAllTasks} - without it, the worker thread
+     * could still run one more action (e.g. cast_line()) after the controller is gone, taking a rod
+     * from stock that this now-orphaned BlockEntity can never return (Fable5.1 review finding).
+     */
+    public void stopScriptForRemoval() {
+        if (scriptRunner != null) {
+            scriptRunner.stop();
+        }
     }
 
     @Override

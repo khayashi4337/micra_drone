@@ -123,6 +123,7 @@ public class DroneControllerBlock extends BaseEntityBlock {
     protected void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
         if (state.hasBlockEntity() && !state.is(newState.getBlock())
                 && level.getBlockEntity(pos) instanceof DroneControllerBlockEntity be) {
+            be.stopScriptForRemoval(); // before the two lines below: don't let the worker thread take one more action (e.g. cast_line()) on a now-gone controller
             be.discardDroneEntity();
             be.discardAnglerState(); // don't let a fishing hook/held rod outlive the controller that cast it
             be.stopAllTasks(); // don't let a create_task task outlive the controller that started it
