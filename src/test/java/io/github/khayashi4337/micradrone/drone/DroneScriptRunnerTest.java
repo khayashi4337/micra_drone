@@ -266,12 +266,12 @@ class DroneScriptRunnerTest {
         LiveDroneApi api = new LiveDroneApi(gateway, queue, grid, new FakeFarmBlockAccess(), msg -> {});
         DroneScriptRunner runner = new DroneScriptRunner(api, msg -> {});
 
-        runner.start(parse("sleep_ticks(40)")); // timeoutForTicks(40) = 5s + 40/20 = 7s; old code used a flat 5s
+        runner.start(parse("sleep_ticks(40)")); // timeoutForTicks(40) = 5s + ceil(40/2) = 25s; old code used a flat 5s
 
         gateway.awaitQueuedWork(2000);
         gateway.pump(); // submits the paced entry (readyAt = 0 + 40) into the queue; the worker is now blocked in blockOn
 
-        Thread.sleep(6000); // past the OLD 5s limit, still under the NEW 7s one
+        Thread.sleep(6000); // past the OLD 5s limit, still well under the NEW 25s one
         assertEquals(DroneScriptRunner.State.RUNNING, runner.getState(),
                 "the script should still be waiting, not failed with a timeout, 6s into a sleep_ticks(40) call");
 
