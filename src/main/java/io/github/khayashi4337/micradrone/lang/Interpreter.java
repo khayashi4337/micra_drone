@@ -31,7 +31,21 @@ public final class Interpreter {
      * the same as pure arithmetic - otherwise it never trips and can exhaust the heap.
      */
     private static final Set<String> GENERAL_PURPOSE_BUILTINS =
-            Set.of("len", "abs", "min", "max", "random", "str", "list", "set", "dict", "semaphore", "create_task");
+            Set.of("len", "abs", "min", "max", "random", "str", "list", "set", "dict", "semaphore", "create_task",
+                    "attach_isr", "raise_interrupt");
+    /**
+     * The subset of {@link #GENERAL_PURPOSE_BUILTINS} also safe to call from inside an ISR handler
+     * (see {@link #isrContext}) - deliberately NOT the same set as GENERAL_PURPOSE_BUILTINS
+     * (that one only governs the runaway-loop counter, a different concern): {@code create_task}/
+     * {@code attach_isr}/{@code raise_interrupt} don't touch DroneApi so they don't need to reset
+     * the counter, but they must still be refused inside an ISR (spawning a task, registering
+     * another handler, or firing another interrupt mid-interrupt is exactly the kind of thing a
+     * real interrupt handler must never do). Every actual DroneApi-backed builtin (including
+     * {@code print}, which happens to not route through the main thread today but might in the
+     * future) is refused too, for the same reason - see the ISR gate in {@link #evalCall}.
+     */
+    private static final Set<String> ISR_SAFE_BUILTINS =
+            Set.of("len", "abs", "min", "max", "random", "str", "list", "set", "dict", "semaphore");
     /** How deep {@link #stringify(Object, int)} descends into nested collections before giving up. */
     private static final int MAX_STRINGIFY_DEPTH = 8;
 
@@ -399,7 +413,11 @@ public final class Interpreter {
         };
     }
 
-    /** {@code .post()} (never blocks) and {@code .wait()} (blocks until a permit is available). */
+    /**
+     * {@code .post()} (never blocks, always allowed) and {@code .wait()} (blocks until a permit is
+     * available - refused inside an ISR handler, same reasoning as {@link #ISR_SAFE_BUILTINS}: a
+     * real interrupt handler must never block).
+     */
     private Object semaphoreMethod(MicraSemaphore sem, Expr.MethodCall call, List<Object> args) {
         return switch (call.name()) {
             case "post" -> {
@@ -409,6 +427,10 @@ public final class Interpreter {
             }
             case "wait" -> {
                 requireMethodArgCount(call, args, 0);
+                if (isrContext) {
+                    throw new MicraLangException(call.line(),
+                            "wait() cannot be called from an interrupt handler (would block) - use post() instead");
+                }
                 sem.await();
                 yield MicraNone.INSTANCE;
             }
@@ -657,6 +679,17 @@ public final class Interpreter {
             throw new MicraLangException(call.line(),
                     "'" + call.name() + "' is not a function (it is a " + typeName(maybeFn) + ")");
         }
+        // Placed after the user-function resolution above (not before it): a pure-computation
+        // helper function must still be callable from inside an ISR handler, and only actually
+        // hitting a forbidden builtin - whether directly or from inside such a helper's own body,
+        // since isrContext is a field on this same Interpreter instance and so applies transitively
+        // wherever callFunction takes this thread - should be rejected.
+        if (isrContext && !ISR_SAFE_BUILTINS.contains(call.name())) {
+            throw new MicraLangException(call.line(),
+                    "'" + call.name() + "' cannot be called from an interrupt handler - it would block "
+                            + "the caller (main-thread freeze risk if raised from there). "
+                            + "Post a semaphore instead and let a task do the real work.");
+        }
         List<Expr> args = call.args();
         Object result = switch (call.name()) {
             case "move" -> api.move(asString(argAt(call, 0), call.line()));
@@ -805,6 +838,20 @@ public final class Interpreter {
                 Object fnValue = eval(call.args().get(3));
                 yield createTask(name, priorityRaw, budgetRaw, fnValue);
             }
+            case "attach_isr" -> {
+                requireArgCount(call, 2); // validated once; read the rest with eval(...), not argAt (see above)
+                String face = asString(eval(call.args().get(0)), call.line());
+                Object fnValue = eval(call.args().get(1));
+                if (!(fnValue instanceof MicraFunction fn) || !fn.params().isEmpty()) {
+                    throw new MicraLangException(call.line(), "attach_isr()'s handler must be a function that takes no arguments");
+                }
+                interruptTable.attach(face, fn);
+                yield MicraNone.INSTANCE;
+            }
+            case "raise_interrupt" -> {
+                raiseInterrupt(asString(argAt(call, 0), call.line()));
+                yield MicraNone.INSTANCE;
+            }
             case "range" -> throw new MicraLangException(call.line(), "range() can only be used in a for-loop");
             default -> throw new MicraLangException(call.line(), "unknown function '" + call.name() + "'");
         };
@@ -935,6 +982,27 @@ public final class Interpreter {
             throw e;
         }
         return "ACCEPTED";
+    }
+
+    /**
+     * Software interrupt: synchronously runs {@code face}'s registered handler (if any) on the
+     * calling thread - genuinely ISR-like immediacy, not deferred to some other thread. A real
+     * hardware-triggered path (a redstone edge, wired up on the main thread) is future work - see
+     * docs/design/lang_rtos_task_foundation.md's scope section - so this may be called from a
+     * script or task thread today, never the main thread. An unregistered face does nothing
+     * (matches set_output()'s "no marker, do nothing" pattern - a quiet no-op).
+     */
+    private void raiseInterrupt(String face) {
+        MicraFunction handler = interruptTable.handlerFor(face);
+        if (handler == null) {
+            return;
+        }
+        Environment forkedGlobal = new Environment();
+        for (Map.Entry<String, Object> e : globalEnv.snapshot().entrySet()) {
+            forkedGlobal.set(e.getKey(), e.getValue());
+        }
+        Interpreter isrInterpreter = new Interpreter(api, null, forkedGlobal, true, taskRegistry, interruptTable);
+        isrInterpreter.runIsolatedBody(handler.body());
     }
 
     /**

@@ -1511,4 +1511,171 @@ class InterpreterTest {
         MicraLangException e = assertThrows(MicraLangException.class, () -> run("sleep_ticks()"));
         assertTrue(e.getMessage().contains("sleep_ticks() takes 1 argument"), "expected an arg-count error, got: " + e.getMessage());
     }
+
+    // ---- attach_isr() / raise_interrupt() ----
+
+    @Test
+    void raiseInterruptRunsTheAttachedHandlerSynchronously() {
+        // The handler itself can't call print() (forbidden in ISR context, see below) - it records
+        // into a shared list instead (pure computation, always allowed), read back by the main
+        // script (outside ISR context) once raise_interrupt returns.
+        FakeDroneApi api = run("""
+                seen = []
+                def handler():
+                    seen.append("fired")
+                attach_isr("edge", handler)
+                raise_interrupt("edge")
+                print(seen)
+                print("after")
+                """);
+        assertEquals(List.of("[\"fired\"]", "after"), api.printed);
+    }
+
+    @Test
+    void raiseInterruptOnAnUnregisteredFaceDoesNothing() {
+        FakeDroneApi api = run("""
+                raise_interrupt("no_such_face")
+                print("still here")
+                """);
+        assertEquals(List.of("still here"), api.printed);
+    }
+
+    @Test
+    void attachIsrRejectsAHandlerThatTakesArguments() {
+        MicraLangException e = assertThrows(MicraLangException.class, () -> run("""
+                def needsArg(x):
+                    pass
+                attach_isr("edge", needsArg)
+                """));
+        assertTrue(e.getMessage().contains("no arguments"), "expected a handler-signature error, got: " + e.getMessage());
+    }
+
+    @Test
+    void attachIsrRejectsANonFunctionHandler() {
+        MicraLangException e = assertThrows(MicraLangException.class, () -> run("attach_isr(\"edge\", 42)"));
+        assertTrue(e.getMessage().contains("no arguments"), "expected a handler-signature error, got: " + e.getMessage());
+    }
+
+    @Test
+    void attachingTheSameFaceTwiceReplacesTheHandler() {
+        FakeDroneApi api = run("""
+                seen = []
+                def first():
+                    seen.append("first")
+                def second():
+                    seen.append("second")
+                attach_isr("edge", first)
+                attach_isr("edge", second)
+                raise_interrupt("edge")
+                print(seen)
+                """);
+        assertEquals(List.of("[\"second\"]"), api.printed);
+    }
+
+    @Test
+    void isrHandlerCannotCallMoveOrOtherDroneApiBuiltins() {
+        MicraLangException e = assertThrows(MicraLangException.class, () -> run("""
+                def handler():
+                    move("east")
+                attach_isr("edge", handler)
+                raise_interrupt("edge")
+                """));
+        assertTrue(e.getMessage().contains("interrupt handler"), "expected an ISR-context rejection, got: " + e.getMessage());
+    }
+
+    @Test
+    void isrHandlerCannotCallPrint() {
+        MicraLangException e = assertThrows(MicraLangException.class, () -> run("""
+                def handler():
+                    print("should not run")
+                attach_isr("edge", handler)
+                raise_interrupt("edge")
+                """));
+        assertTrue(e.getMessage().contains("interrupt handler"), "expected an ISR-context rejection, got: " + e.getMessage());
+    }
+
+    @Test
+    void isrHandlerCanPostASemaphoreButNotWaitOnOne() {
+        FakeDroneApi api = run("""
+                s = semaphore()
+                def poster():
+                    s.post()
+                attach_isr("edge", poster)
+                raise_interrupt("edge")
+                s.wait()
+                print("woken by the isr's post")
+                """);
+        assertEquals(List.of("woken by the isr's post"), api.printed);
+
+        MicraLangException e = assertThrows(MicraLangException.class, () -> run("""
+                s = semaphore()
+                def waiter():
+                    s.wait()
+                attach_isr("edge", waiter)
+                raise_interrupt("edge")
+                """));
+        assertTrue(e.getMessage().contains("interrupt handler"), "expected wait() to be rejected in ISR context, got: " + e.getMessage());
+    }
+
+    @Test
+    void isrHandlerCanCallAPureHelperFunctionButNotOneThatTouchesDroneApi() {
+        // Calling a user function at all must be allowed inside an ISR (isrContext only blocks at
+        // the point a forbidden builtin is actually reached, not the function call itself) - see
+        // the placement note on the ISR gate in evalCall. The handler stores the result rather than
+        // print()ing it directly, since print() is itself forbidden in ISR context.
+        FakeDroneApi api = run("""
+                seen = []
+                def pure_add(a, b):
+                    return a + b
+                def handler():
+                    seen.append(pure_add(2, 3))
+                attach_isr("edge", handler)
+                raise_interrupt("edge")
+                print(seen)
+                """);
+        assertEquals(List.of("[5]"), api.printed);
+
+        MicraLangException e = assertThrows(MicraLangException.class, () -> run("""
+                def touches_drone():
+                    return move("east")
+                def handler():
+                    touches_drone()
+                attach_isr("edge", handler)
+                raise_interrupt("edge")
+                """));
+        assertTrue(e.getMessage().contains("interrupt handler"),
+                "expected the rejection to happen once the helper reaches move(), got: " + e.getMessage());
+    }
+
+    @Test
+    void isrHandlerCannotCreateATaskOrReattachOrReRaise() {
+        for (String forbidden : List.of(
+                "create_task(\"x\", 5, 0, handler)",
+                "attach_isr(\"other\", handler)",
+                "raise_interrupt(\"other\")")) {
+            MicraLangException e = assertThrows(MicraLangException.class, () -> run("""
+                    def handler():
+                        %s
+                    attach_isr("edge", handler)
+                    raise_interrupt("edge")
+                    """.formatted(forbidden)));
+            assertTrue(e.getMessage().contains("interrupt handler"),
+                    "expected " + forbidden + " to be rejected in ISR context, got: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Regression test for the runaway-detection-bypass Codex's review found: raise_interrupt on an
+     * unregistered face (a near no-op) must not be exempt from GENERAL_PURPOSE_BUILTINS's reset
+     * rule the same way create_task already isn't (see the "暴走検知すり抜けの修正" note on
+     * GENERAL_PURPOSE_BUILTINS) - otherwise a tight loop of it could spin forever undetected.
+     */
+    @Test
+    void raiseInterruptLoopOnAnUnregisteredFaceStillTripsTheRunawayWatchdog() {
+        MicraLangException e = assertThrows(MicraLangException.class, () -> run("""
+                while True:
+                    raise_interrupt("no_such_face")
+                """));
+        assertTrue(e.getMessage().contains("too long"), "expected the runaway-loop message, got: " + e.getMessage());
+    }
 }
