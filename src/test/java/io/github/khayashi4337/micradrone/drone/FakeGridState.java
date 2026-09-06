@@ -24,6 +24,9 @@ final class FakeGridState implements DroneGridState {
     private double repairCost = -1;
     private boolean repairPossible;
     private int repairCount;
+    private boolean redstoneOutput;
+    private String pairTarget = "";
+    private boolean paired;
 
     FakeGridState(int size) {
         this.size = size;
@@ -96,6 +99,19 @@ final class FakeGridState implements DroneGridState {
     @Override
     public void triggerDroneFlip() {
         flipCount++;
+    }
+
+    /** Real seed items the fake "owner" is holding, per crop - what takeSeedFromOwner draws from. */
+    final Map<String, Integer> ownerSeeds = new java.util.HashMap<>();
+
+    @Override
+    public boolean takeSeedFromOwner(String crop) {
+        int have = ownerSeeds.getOrDefault(crop, 0);
+        if (have <= 0) {
+            return false;
+        }
+        ownerSeeds.put(crop, have - 1);
+        return true;
     }
 
     void setHasRod(boolean hasRod) {
@@ -204,5 +220,34 @@ final class FakeGridState implements DroneGridState {
         }
         repairCount++;
         return true;
+    }
+
+    @Override
+    public void setRedstoneOutput(boolean powered) {
+        redstoneOutput = powered;
+    }
+
+    @Override
+    public boolean redstoneOutput() {
+        return redstoneOutput;
+    }
+
+    String pairTarget() {
+        return pairTarget;
+    }
+
+    /** Test-only: the real mutual-pairing check lives in DroneControllerBlockEntity (Minecraft-dependent). */
+    void setPairedForTest(boolean paired) {
+        this.paired = paired;
+    }
+
+    @Override
+    public void setPairTarget(String id) {
+        pairTarget = id;
+    }
+
+    @Override
+    public boolean isPaired() {
+        return paired;
     }
 }

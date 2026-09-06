@@ -13,7 +13,11 @@ public interface DroneApi {
     /** Returns true if the ground was tilled into farmland. */
     boolean till();
 
-    /** Returns true if the crop was planted. crop is currently only "wheat". */
+    /**
+     * Returns true if the crop was planted. crop is "wheat", "carrot", or "pumpkin" - carrot and
+     * pumpkin also work unlocked-or-not as long as the controller's owner is carrying one real
+     * seed of that crop (consumed on success).
+     */
     boolean plant(String crop);
 
     /** Returns true if a mature crop was harvested. */
@@ -32,6 +36,14 @@ public interface DroneApi {
     /** Read-only: true if the cell under the drone holds a defective ("rotten") pumpkin. */
     boolean isRotten();
 
+    /**
+     * Read-only: the side length of the giant pumpkin the drone is standing on (2 for a 2x2, 3 for
+     * a 3x3, ...), 0 on anything else. The original game's measure() returns "a mysterious number"
+     * on a pumpkin (an id shared by the fused tiles); this returns the size instead, because "how
+     * big is it right now" is the question a harvest strategy actually asks.
+     */
+    double measure();
+
     double getPosX();
 
     double getPosY();
@@ -43,6 +55,35 @@ public interface DroneApi {
 
     /** Read-only: this plot's current point balance for one crop type only (0 if it has none). */
     double getPoints(String crop);
+
+    /**
+     * Sets this plot's own Corner Marker's redstone output on (full power) or off - lets a script
+     * signal the world outside the plot (a lamp, a door, another contraption). Does nothing if this
+     * plot has no marker (none placed, or none found on a diagonal). Persists until changed again,
+     * independent of whether a script is running. Once {@link #isPaired} is true, also propagates to
+     * the mutually-paired partner marker (which may be anywhere in the world, not diagonally adjacent
+     * to anything here) - see {@link #pairWith}.
+     */
+    void setOutput(boolean powered);
+
+    /** Read-only: this plot's own marker's current redstone output state (false if it has no marker). */
+    boolean getOutput();
+
+    /**
+     * Declares (or, with "", clears) the id (see get_plot_id()) this plot's own marker wants to
+     * mutually pair with - a DIFFERENT relationship than "this plot's own marker" above (that one is
+     * always found by diagonal scan from the controller; a pair_with() target can be any marker
+     * anywhere in the world). One-sided by itself, see {@link #isPaired()}. Does nothing if this plot
+     * has no marker of its own.
+     */
+    void pairWith(String id);
+
+    /**
+     * Read-only: true only if this plot's own marker AND the marker it named both name each other
+     * back (mutual pairing). Once true, {@link #setOutput} also propagates to the mutually-paired
+     * partner marker.
+     */
+    boolean isPaired();
 
     // ---- perception: the world around the drone, not just its own grid (GitHub issue #10) ----
     // Everything below is read-only. Block/biome names come back without the "minecraft:" prefix
@@ -67,9 +108,10 @@ public interface DroneApi {
     double getLight();
 
     /**
-     * Read-only: this plot's Corner Marker id - the friendly name if one was set via anvil, else a
-     * short form of its auto-assigned id (see {@code CornerMarkerBlockEntity#displayId}). Empty
-     * string if no marker is currently paired with this plot.
+     * Read-only: this plot's own Corner Marker's id - the friendly name if one was set via anvil, else
+     * a short form of its auto-assigned id (see {@code CornerMarkerBlockEntity#displayId}). Empty
+     * string if this plot has no marker (none placed, or none found on a diagonal). This is the id
+     * another plot's script would pass to {@link #pairWith}.
      */
     String getPlotId();
 
@@ -111,4 +153,12 @@ public interface DroneApi {
 
     /** Repairs the current rod using a spare from stock, if the plot owner can afford it. */
     boolean repairRod();
+
+    /**
+     * Waits {@code ticks} game ticks without touching the world - the basic pacing primitive a
+     * task uses to yield/pause itself (e.g. a blink loop). Uses the exact same tick-driven pacing
+     * as move/till/plant/harvest, so it stays correct even under server lag. {@code ticks <= 0}
+     * succeeds immediately (still costs one main-thread round trip, like every other command).
+     */
+    void sleepTicks(double ticks);
 }

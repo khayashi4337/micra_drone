@@ -5,6 +5,8 @@ import io.github.khayashi4337.micradrone.client.DroneRenderer;
 import io.github.khayashi4337.micradrone.client.EnchantScrollScreen;
 import io.github.khayashi4337.micradrone.client.EnchantTableWatcher;
 import io.github.khayashi4337.micradrone.client.IdeScreen;
+import io.github.khayashi4337.micradrone.client.RegionPointerListener;
+import io.github.khayashi4337.micradrone.client.RegionSelectionRenderer;
 import io.github.khayashi4337.micradrone.client.ShopScreen;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
@@ -21,6 +23,7 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.EntityRenderersEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
@@ -40,6 +43,20 @@ public class MicraDroneClient {
         // ("Expected @SubscribeEvent method ... to NOT be static") - confirmed by a real-machine
         // crash the first time this was tried directly here. See EnchantTableWatcher's own javadoc.
         NeoForge.EVENT_BUS.register(new EnchantTableWatcher());
+        NeoForge.EVENT_BUS.register(new RegionPointerListener());
+        NeoForge.EVENT_BUS.register(new RegionSelectionRenderer());
+        // The unsaved drafts and the undo histories are keyed the same way, and that key carries no
+        // save/server identity, so neither may outlive the world it was written in - why, and what
+        // the key is made of, is documented once, on IdeScreen#unsavedDrafts. Logged (not just
+        // silently done) because this is the one piece of this whole feature no JUnit test can reach
+        // - a real-machine check needs a visible trace that this actually fired, not just that
+        // clearIdeSessionCaches() is correct in isolation. The message names both caches so the
+        // trace says what was actually dropped.
+        NeoForge.EVENT_BUS.addListener((ClientPlayerNetworkEvent.LoggingOut event) -> {
+            IdeScreen.clearIdeSessionCaches();
+            MicraDrone.LOGGER.info(
+                    "MicraDrone: cleared unsaved IDE drafts and undo histories on world/server logout");
+        });
     }
 
     @SubscribeEvent
@@ -87,7 +104,7 @@ public class MicraDroneClient {
     /** Registered as the DroneLogPayload handler in MicraDrone's RegisterPayloadHandlersEvent listener. */
     public static void handleDroneLog(DroneLogPayload payload, IPayloadContext context) {
         if (Minecraft.getInstance().screen instanceof IdeScreen screen) {
-            screen.updateLog(payload.pos(), payload.lines(), payload.pointsByCrop(),
+            screen.updateLog(payload.pos(), payload.lines(), payload.pointsByCrop(), payload.unlockedCrops(),
                     payload.scripts(), payload.selectedScript(), payload.alias());
         }
     }
@@ -109,7 +126,8 @@ public class MicraDroneClient {
     /** Registered as the DebugStatePayload handler: drives the IDE's line highlight and debug buttons. */
     public static void handleDebugState(DebugStatePayload payload, IPayloadContext context) {
         if (Minecraft.getInstance().screen instanceof IdeScreen screen) {
-            screen.updateDebugState(payload.pos(), payload.state(), payload.currentLine(), payload.breakpoints());
+            screen.updateDebugState(payload.pos(), payload.state(), payload.currentLine(), payload.breakpoints(),
+                    payload.breakpointRevision());
         }
     }
 

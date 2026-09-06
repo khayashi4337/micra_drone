@@ -114,6 +114,129 @@ class DebugControllerTest {
         assertEquals(List.of("in", "in", "in", "done"), api.printed);
     }
 
+    /**
+     * A function call is bracketed with the same {@link DebugController#enterLoop}/{@link
+     * DebugController#exitLoop} pair a loop is (see {@code Interpreter#callFunction}), so Step Out
+     * from inside a function body must run the whole call to completion and pause at the
+     * statement right after the call site - not at the function's own next statement, and not by
+     * exiting any loop the call happened to be inside.
+     */
+    @Test
+    void stepOutRunsUntilTheCurrentFunctionCallReturns() throws Exception {
+        String source = """
+                def f():
+                    print("in f")
+                    print("still in f")
+                f()
+                print("after f")
+                """;
+        debug.setBreakpoints(Set.of(2)); // the first print() inside f's body
+        Thread worker = startScript(source);
+
+        awaitTrue("pause inside the function", () -> debug.isPaused() && debug.currentLine() == 2);
+        debug.setBreakpoints(Set.of()); // clear it before stepOut resumes, so it doesn't re-pause first
+        debug.stepOut();
+
+        awaitTrue("pause after the call site", () -> debug.isPaused() && debug.currentLine() == 5);
+        assertEquals(List.of("in f", "still in f"), api.printed); // the whole function body ran
+
+        debug.resume();
+        awaitExit(worker);
+        assertEquals(List.of("in f", "still in f", "after f"), api.printed);
+    }
+
+    /**
+     * The language has no distinct step-over (see DebugController's class doc): stepping from a
+     * call site must land on the function's first statement, not skip past the whole call.
+     */
+    @Test
+    void steppingFromACallSiteEntersTheFunctionBodyRatherThanSteppingOverIt() throws Exception {
+        String source = """
+                def f():
+                    print("in f")
+                f()
+                print("after f")
+                """;
+        debug.setBreakpoints(Set.of(3)); // "f()"
+        Thread worker = startScript(source);
+
+        awaitTrue("pause at the call site", () -> debug.isPaused() && debug.currentLine() == 3);
+        debug.setBreakpoints(Set.of());
+        debug.step();
+
+        awaitTrue("pause inside the function body", () -> debug.isPaused() && debug.currentLine() == 2);
+        assertEquals(List.of(), api.printed); // f()'s own print hasn't run yet
+
+        debug.resume();
+        awaitExit(worker);
+        assertEquals(List.of("in f", "after f"), api.printed);
+    }
+
+    /**
+     * The common case: the function call is not the loop body's last statement, so once the call
+     * frame's depth drops away there is still more of the same loop iteration left to run.
+     */
+    @Test
+    void stepOutOfAFunctionCalledMidLoopLandsBackInsideThatLoopsBody() throws Exception {
+        String source = """
+                def f():
+                    print("in f")
+                for i in range(3):
+                    f()
+                    print("after call")
+                print("done")
+                """;
+        debug.setBreakpoints(Set.of(2)); // inside f's body
+        Thread worker = startScript(source);
+
+        awaitTrue("pause inside the function on the first iteration", () -> debug.isPaused() && debug.currentLine() == 2);
+        debug.setBreakpoints(Set.of());
+        debug.stepOut();
+
+        awaitTrue("pause right after the call, still inside the loop body", () -> debug.isPaused() && debug.currentLine() == 5);
+        assertEquals(List.of("in f"), api.printed);
+
+        debug.resume();
+        awaitExit(worker);
+        assertEquals(List.of("in f", "after call", "in f", "after call", "in f", "after call", "done"), api.printed);
+    }
+
+    /**
+     * The edge case DebugController's class doc calls out explicitly: when the call is the loop
+     * body's last statement AND this is the loop's last iteration, there is nothing left of that
+     * frame OR the loop to return to - the next {@code onStatement} genuinely lands past the whole
+     * loop, not "back inside" it. This is what makes the general class-doc wording ("pause at
+     * whatever onStatement comes next") the accurate one, not the narrower "back in the loop"
+     * framing an earlier draft of that doc used.
+     */
+    @Test
+    void stepOutOfAFunctionCalledOnTheLoopsFinalIterationCanLandPastTheWholeLoop() throws Exception {
+        String source = """
+                def f():
+                    print("in f")
+                for i in range(2):
+                    f()
+                print("done")
+                """;
+        debug.setBreakpoints(Set.of(2));
+        Thread worker = startScript(source);
+
+        awaitTrue("pause inside the function on the first iteration", () -> debug.isPaused() && debug.currentLine() == 2);
+        debug.resume(); // let the first call finish; the breakpoint fires again on the second (final) call
+
+        awaitTrue("pause inside the function on the second, final iteration",
+                () -> debug.isPaused() && debug.currentLine() == 2);
+        debug.setBreakpoints(Set.of());
+        debug.stepOut();
+
+        awaitTrue("pause past the whole loop, not back inside it", () -> debug.isPaused() && debug.currentLine() == 5);
+        assertEquals(List.of("in f", "in f"), api.printed);
+
+        debug.resume();
+        awaitExit(worker);
+        assertEquals(List.of("in f", "in f", "done"), api.printed);
+    }
+
     @Test
     void stepOutAtTopLevelSimplyResumes() throws Exception {
         debug.setBreakpoints(Set.of(1));

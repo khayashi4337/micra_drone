@@ -1,13 +1,13 @@
 {
   "variants": {
-    "position=0": { "model": "micradrone:block/giant_pumpkin" },
-    "position=1": { "model": "micradrone:block/giant_pumpkin" },
-    "position=2": { "model": "micradrone:block/giant_pumpkin" },
-    "position=3": { "model": "micradrone:block/giant_pumpkin" },
-    "position=4": { "model": "micradrone:block/giant_pumpkin" },
-    "position=5": { "model": "micradrone:block/giant_pumpkin" },
-    "position=6": { "model": "micradrone:block/giant_pumpkin" },
-    "position=7": { "model": "micradrone:block/giant_pumpkin" },
-    "position=8": { "model": "micradrone:block/giant_pumpkin" }
+    "position=0": { "model": "micradrone:block/giant_pumpkin_nw" },
+    "position=1": { "model": "micradrone:block/giant_pumpkin_ne" },
+    "position=2": { "model": "micradrone:block/giant_pumpkin_sw" },
+    "position=3": { "model": "micradrone:block/giant_pumpkin_se" },
+    "position=4": { "model": "micradrone:block/giant_pumpkin_w" },
+    "position=5": { "model": "micradrone:block/giant_pumpkin_e" },
+    "position=6": { "model": "micradrone:block/giant_pumpkin_n" },
+    "position=7": { "model": "micradrone:block/giant_pumpkin_s" },
+    "position=8": { "model": "micradrone:block/giant_pumpkin_center" }
   }
 }

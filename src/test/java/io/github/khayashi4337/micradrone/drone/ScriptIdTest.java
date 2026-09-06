@@ -82,4 +82,15 @@ class ScriptIdTest {
         assertTrue(ScriptId.isValidId("inv:0"));
         assertFalse(ScriptId.isValidId("inv:-1"));
     }
+
+    @Test
+    void theControllersOwnScriptIsAValidIdAndNothingElseIsMistakenForIt() {
+        assertTrue(ScriptId.isControllerId(ScriptId.CONTROLLER_ID));
+        assertTrue(ScriptId.isValidId(ScriptId.CONTROLLER_ID));
+        assertFalse(ScriptId.isControllerId(""));
+        assertFalse(ScriptId.isControllerId(null));
+        assertFalse(ScriptId.isControllerId("controller.mdrone"));
+        assertFalse(ScriptId.isScrollId(ScriptId.CONTROLLER_ID));
+        assertFalse(ScriptId.isInventoryScrollId(ScriptId.CONTROLLER_ID));
+    }
 }

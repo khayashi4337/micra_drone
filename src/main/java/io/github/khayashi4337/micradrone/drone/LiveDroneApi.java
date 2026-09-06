@@ -19,6 +19,8 @@ import io.github.khayashi4337.micradrone.lang.ScriptStoppedException;
 public final class LiveDroneApi implements DroneApi {
     private static final int ACTION_DELAY_TICKS = 4;
     private static final long MAIN_THREAD_TIMEOUT_SECONDS = 5;
+    /** ~1 in-game day/night cycle (20 minutes at 20 TPS) - a generous, sane cap on a single sleep_ticks() call. */
+    private static final long MAX_SLEEP_TICKS = 24_000;
 
     private final MainThreadGateway gateway;
     private final PacedActionQueue pacedQueue;
@@ -85,6 +87,11 @@ public final class LiveDroneApi implements DroneApi {
     }
 
     @Override
+    public double measure() {
+        return queryMainThread(farm::giantPumpkinSide);
+    }
+
+    @Override
     public double getPosX() {
         return grid.gridX();
     }
@@ -107,6 +114,26 @@ public final class LiveDroneApi implements DroneApi {
     @Override
     public double getPoints(String crop) {
         return grid.getPoints(crop);
+    }
+
+    @Override
+    public void setOutput(boolean powered) {
+        dispatch(() -> new Attempt(true, () -> grid.setRedstoneOutput(powered)));
+    }
+
+    @Override
+    public boolean getOutput() {
+        return queryMainThread(grid::redstoneOutput);
+    }
+
+    @Override
+    public void pairWith(String id) {
+        dispatch(() -> new Attempt(true, () -> grid.setPairTarget(id)));
+    }
+
+    @Override
+    public boolean isPaired() {
+        return queryMainThread(grid::isPaired);
     }
 
     // ---- perception (GitHub issue #10) ----
@@ -224,14 +251,38 @@ public final class LiveDroneApi implements DroneApi {
     }
 
     /**
-     * Decides success/failure of {@code attempt} on the main thread right away, then defers the
-     * actual mutation - and unblocking the caller - until the resulting pacing delay elapses.
+     * Waits {@code ticks} game ticks without touching the world - RTOS-style tasks (create_task)
+     * use this to pace/yield themselves, sharing the exact same tick-driven pacing as move/till/
+     * plant/harvest (see {@link #dispatch(long, Supplier)}). Non-finite ticks (this language has
+     * essentially no way to produce one - {@code /} and {@code %} already stop on division by
+     * zero) fall back to 0; the value is otherwise clamped to {@link #MAX_SLEEP_TICKS} so an
+     * absurd request can't produce an absurd wait. Rounds a fractional tick count UP (0.9 becomes
+     * 1, not 0) - matching create_task's budget_ticks handling, and avoiding a script's arithmetic
+     * producing a barely-fractional value silently sleeping for nothing at all.
      */
+    @Override
+    public void sleepTicks(double ticks) {
+        long n = Double.isFinite(ticks) ? (long) Math.min(MAX_SLEEP_TICKS, Math.ceil(Math.max(0, ticks))) : 0;
+        dispatch(n, () -> new Attempt(true, () -> { }));
+    }
+
+    /** Existing callers (move/till/plant/harvest/doAFlip/setOutput/pairWith) - unchanged, always paced by {@link #ACTION_DELAY_TICKS}. */
     private boolean dispatch(Supplier<Attempt> attempt) {
+        return dispatch(ACTION_DELAY_TICKS, attempt);
+    }
+
+    /**
+     * Decides success/failure of {@code attempt} on the main thread right away, then defers the
+     * actual mutation - and unblocking the caller - until {@code successDelayTicks} game ticks
+     * have elapsed (0 on failure). {@code blockOn}'s wait is capped at
+     * {@link #timeoutForTicks(long)}, not the bare anomaly-detection margin, so a legitimately
+     * long {@code sleep_ticks} call isn't mistaken for a stuck main thread.
+     */
+    private boolean dispatch(long successDelayTicks, Supplier<Attempt> attempt) {
         CompletableFuture<Boolean> future = new CompletableFuture<>();
         gateway.runOnMainThread(() -> {
             Attempt result = attempt.get();
-            long delay = result.succeeded() ? ACTION_DELAY_TICKS : 0;
+            long delay = result.succeeded() ? successDelayTicks : 0;
             long readyAt = gateway.currentTick() + delay;
             pacedQueue.submit(readyAt, () -> {
                 if (result.succeeded()) {
@@ -240,19 +291,41 @@ public final class LiveDroneApi implements DroneApi {
                 future.complete(result.succeeded());
             });
         });
-        return blockOn(future);
+        return blockOn(future, timeoutForTicks(successDelayTicks));
+    }
+
+    /**
+     * The 5s anomaly-detection margin, plus however long {@code ticks} could plausibly take under
+     * real (possibly severe) server lag - NOT the nominal 20 TPS. An earlier version divided by 20
+     * (assuming the server always runs at full speed), which contradicted this very method's
+     * purpose: under sustained lag - exactly the condition sleep_ticks is meant to stay correct
+     * under - reaching a given tick number for real takes longer than the nominal 20-TPS math
+     * predicts, so that version would spuriously time out a legitimately-waiting, merely slow
+     * server (Codex review finding). {@link #MIN_ASSUMED_TPS} is a deliberately pessimistic floor
+     * (a tenth of normal speed) to tolerate that, at the cost of a much later "the main thread is
+     * genuinely dead" failure for a long sleep_ticks() call specifically - this is an honest
+     * tradeoff, not a guarantee: a server wedged for longer than this still eventually reports a
+     * timeout instead of hanging forever, but there is no timeout formula that is both tight enough
+     * to catch a truly hung server quickly and loose enough to never misfire under some amount of
+     * sustained real lag, since the two look identical from here for long enough.
+     */
+    private static final long MIN_ASSUMED_TPS = 2;
+
+    private long timeoutForTicks(long ticks) {
+        long pessimisticSeconds = (ticks + MIN_ASSUMED_TPS - 1) / MIN_ASSUMED_TPS; // ceiling division
+        return MAIN_THREAD_TIMEOUT_SECONDS + pessimisticSeconds;
     }
 
     /** Runs a read-only query on the main thread and returns its result immediately (no pacing delay). */
     private <T> T queryMainThread(Supplier<T> query) {
         CompletableFuture<T> future = new CompletableFuture<>();
         gateway.runOnMainThread(() -> future.complete(query.get()));
-        return blockOn(future);
+        return blockOn(future, MAIN_THREAD_TIMEOUT_SECONDS);
     }
 
-    private <T> T blockOn(CompletableFuture<T> future) {
+    private <T> T blockOn(CompletableFuture<T> future, long timeoutSeconds) {
         try {
-            return future.get(MAIN_THREAD_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            return future.get(timeoutSeconds, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new ScriptStoppedException();

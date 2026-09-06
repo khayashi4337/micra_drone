@@ -1,7 +1,9 @@
 package io.github.khayashi4337.micradrone.lang;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import io.github.khayashi4337.micradrone.lang.ast.Expr;
 import io.github.khayashi4337.micradrone.lang.ast.Stmt;
@@ -10,6 +12,10 @@ import io.github.khayashi4337.micradrone.lang.ast.Stmt;
 public final class Parser {
     private final List<Token> tokens;
     private int pos = 0;
+    /** How many enclosing while/for loops the parser is currently inside; reset to 0 for each function body. */
+    private int loopDepth = 0;
+    /** How many enclosing function bodies the parser is currently inside; used to reject nested def and return-outside-function. */
+    private int funcDepth = 0;
 
     public Parser(List<Token> tokens) {
         this.tokens = tokens;
@@ -29,6 +35,11 @@ public final class Parser {
         if (check(TokenType.IF)) return ifStmt();
         if (check(TokenType.WHILE)) return whileStmt();
         if (check(TokenType.FOR)) return forStmt();
+        if (check(TokenType.DEF)) return defStmt();
+        if (check(TokenType.RETURN)) return returnStmt();
+        if (check(TokenType.BREAK)) return breakStmt();
+        if (check(TokenType.CONTINUE)) return continueStmt();
+        if (check(TokenType.PASS)) return passStmt();
         return simpleStmt();
     }
 
@@ -80,7 +91,12 @@ public final class Parser {
         int line = peek().line();
         advance(); // while
         Expr cond = expression();
-        return new Stmt.WhileStmt(cond, block(), line);
+        loopDepth++;
+        try {
+            return new Stmt.WhileStmt(cond, block(), line);
+        } finally {
+            loopDepth--;
+        }
     }
 
     private Stmt forStmt() {
@@ -89,7 +105,97 @@ public final class Parser {
         String varName = expect(TokenType.IDENT, "loop variable name").lexeme();
         expect(TokenType.IN, "'in'");
         Expr rangeExpr = expression();
-        return new Stmt.ForStmt(varName, rangeExpr, block(), line);
+        loopDepth++;
+        try {
+            return new Stmt.ForStmt(varName, rangeExpr, block(), line);
+        } finally {
+            loopDepth--;
+        }
+    }
+
+    /**
+     * {@code def name(params...): block}. Nested def (a def parsed while already inside another
+     * def's body) is rejected outright rather than silently producing a function that cannot
+     * recurse into itself or call its siblings - see docs/design/lang_def_return_break_continue.md.
+     * {@code loopDepth} is saved and reset to 0 for the body: a break/continue inside the function
+     * is only legal if the function's *own* body has an enclosing loop, not an outer one the def
+     * happens to be nested in.
+     */
+    private Stmt defStmt() {
+        int line = peek().line();
+        if (funcDepth > 0) {
+            throw new MicraLangException(line, "nested def is not supported - define functions at the top level");
+        }
+        advance(); // def
+        String name = expect(TokenType.IDENT, "function name").lexeme();
+        expect(TokenType.LPAREN, "'('");
+        List<String> params = new ArrayList<>();
+        if (!check(TokenType.RPAREN)) {
+            params.add(expect(TokenType.IDENT, "parameter name").lexeme());
+            while (check(TokenType.COMMA)) {
+                advance();
+                params.add(expect(TokenType.IDENT, "parameter name").lexeme());
+            }
+        }
+        expect(TokenType.RPAREN, "')'");
+        requireNoDuplicateParams(params, line);
+        funcDepth++;
+        int savedLoopDepth = loopDepth;
+        loopDepth = 0;
+        try {
+            return new Stmt.FunctionDef(name, params, block(), line);
+        } finally {
+            loopDepth = savedLoopDepth;
+            funcDepth--;
+        }
+    }
+
+    private void requireNoDuplicateParams(List<String> params, int line) {
+        Set<String> seen = new HashSet<>();
+        for (String param : params) {
+            if (!seen.add(param)) {
+                throw new MicraLangException(line, "duplicate parameter name '" + param + "'");
+            }
+        }
+    }
+
+    /** {@code return [expr]} - the expression is optional (bare {@code return} yields None). */
+    private Stmt returnStmt() {
+        int line = peek().line();
+        if (funcDepth == 0) {
+            throw new MicraLangException(line, "'return' outside function");
+        }
+        advance(); // return
+        Expr value = check(TokenType.NEWLINE) ? null : expression();
+        expect(TokenType.NEWLINE, "end of line");
+        return new Stmt.ReturnStmt(value, line);
+    }
+
+    private Stmt breakStmt() {
+        int line = peek().line();
+        if (loopDepth == 0) {
+            throw new MicraLangException(line, "'break' outside loop");
+        }
+        advance(); // break
+        expect(TokenType.NEWLINE, "end of line");
+        return new Stmt.BreakStmt(line);
+    }
+
+    private Stmt continueStmt() {
+        int line = peek().line();
+        if (loopDepth == 0) {
+            throw new MicraLangException(line, "'continue' outside loop");
+        }
+        advance(); // continue
+        expect(TokenType.NEWLINE, "end of line");
+        return new Stmt.ContinueStmt(line);
+    }
+
+    private Stmt passStmt() {
+        int line = peek().line();
+        advance(); // pass
+        expect(TokenType.NEWLINE, "end of line");
+        return new Stmt.PassStmt(line);
     }
 
     /** ':' NEWLINE INDENT stmt+ DEDENT */

@@ -22,9 +22,22 @@ public final class CornerMarkerScan {
      * {@code markerFound} is false only when no marker was found and {@code defaultSize} was used.
      * {@code groundYOffset} is 0 (embedded controller, farmland at the controller's own Y - the
      * original convention) or -1 (surface-mounted controller, farmland one block down) - see
-     * {@link #groundYOffset}.
+     * {@link #groundYOffset}. {@code markerDy} is the Y offset (relative to the controller) the
+     * marker was actually found at - within {@code yTolerance}, not necessarily 0 - so callers that
+     * need the marker's real position (e.g. redstone output) don't have to re-scan for it; meaningless
+     * (always 0) when {@code markerFound} is false.
      */
-    public record PlotBounds(int worldSize, int dirX, int dirZ, boolean markerFound, int groundYOffset) {}
+    public record PlotBounds(int worldSize, int dirX, int dirZ, boolean markerFound, int groundYOffset, int markerDy) {
+        /**
+         * The marker's {@code (dx, dy, dz)} offset from the controller - the inverse of the distance
+         * collapsed into {@code worldSize} ({@code worldSize + 1} steps out along {@code dirX}/
+         * {@code dirZ}, at {@code markerDy}). Only meaningful when {@link #markerFound}.
+         */
+        public int[] markerOffset() {
+            int distance = worldSize + 1;
+            return new int[]{dirX * distance, markerDy, dirZ * distance};
+        }
+    }
 
     @FunctionalInterface
     public interface MarkerLookup {
@@ -56,12 +69,13 @@ public final class CornerMarkerScan {
             for (int[] dir : DIAGONAL_DIRECTIONS) {
                 for (int dy = -yTolerance; dy <= yTolerance; dy++) {
                     if (lookup.isMarkerAt(dir[0] * i, dy, dir[1] * i)) {
-                        return new PlotBounds(Math.max(0, i - 1), dir[0], dir[1], true, groundYOffset(groundLookup, dir[0], dir[1]));
+                        return new PlotBounds(Math.max(0, i - 1), dir[0], dir[1], true,
+                                groundYOffset(groundLookup, dir[0], dir[1]), dy);
                     }
                 }
             }
         }
-        return new PlotBounds(defaultSize, 1, 1, false, groundYOffset(groundLookup, 1, 1));
+        return new PlotBounds(defaultSize, 1, 1, false, groundYOffset(groundLookup, 1, 1), 0);
     }
 
     /**

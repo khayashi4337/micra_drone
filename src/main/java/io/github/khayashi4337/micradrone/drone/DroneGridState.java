@@ -37,6 +37,15 @@ public interface DroneGridState {
     /** True if this plot may plant {@code crop} - "wheat" always is; others need buying in the shop. */
     boolean isUnlocked(String crop);
 
+    /**
+     * The fallback for a crop that is NOT unlocked: takes one real seed item for {@code crop}
+     * (a carrot, pumpkin seeds) out of the controller owner's inventory and returns true, or
+     * returns false if the owner is offline or has none. The shop unlock stays the "game" way -
+     * free planting forever - but a player holding actual carrots may plant them too (林さん's
+     * call: prefer the game's mechanism, accept real items when that isn't there).
+     */
+    boolean takeSeedFromOwner(String crop);
+
     /** Starts (or restarts) a one-shot cosmetic spin on the visible drone entity - see do_a_flip(). */
     void triggerDroneFlip();
 
@@ -94,4 +103,28 @@ public interface DroneGridState {
      * if a repair isn't currently possible, or the owner is offline/too far away/can't afford it.
      */
     boolean repairRod();
+
+    /**
+     * Sets this plot's own Corner Marker's redstone output on (full power) or off - see set_output().
+     * Silently does nothing if this plot has no marker (none placed, or none found on a diagonal).
+     */
+    void setRedstoneOutput(boolean powered);
+
+    /** This plot's own marker's current redstone output state - false if it has no marker, or none has been set yet. */
+    boolean redstoneOutput();
+
+    /**
+     * pair_with(): declares (or, with "", clears) the id this plot's own marker wants to mutually
+     * pair with - a DIFFERENT relationship than "the marker found for this plot" above (that one is
+     * always this plot's own, by diagonal scan; this one can name any marker anywhere in the world).
+     * One-sided by itself - see {@link #isPaired()}. Does nothing if this plot has no marker of its own.
+     */
+    void setPairTarget(String id);
+
+    /**
+     * is_paired(): true only if this plot's own marker names some other marker AND that other marker
+     * names this one back (mutual). False if this plot has no marker of its own, that marker has no
+     * pair target set, or the target hasn't (yet) named this marker back.
+     */
+    boolean isPaired();
 }

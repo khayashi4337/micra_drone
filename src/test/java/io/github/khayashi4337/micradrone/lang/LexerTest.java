@@ -31,6 +31,59 @@ class LexerTest {
     }
 
     @Test
+    void uniformLeadingIndentIsAbsorbedNotTreatedAsABlock() {
+        // A whole script shifted right (the shape a paste from a chat window or wiki arrives in):
+        // tokenizes exactly like the same script flush left - no INDENT on line 1, no stray DEDENT
+        // at EOF, and the nested block inside is still an INDENT/DEDENT pair.
+        List<TokenType> shifted = types("""
+                  if True:
+                      x = 1
+                  y = 2
+                """);
+        List<TokenType> flush = types("""
+                if True:
+                    x = 1
+                y = 2
+                """);
+        assertEquals(flush, shifted);
+        assertEquals(List.of(
+                TokenType.IF, TokenType.TRUE, TokenType.COLON, TokenType.NEWLINE,
+                TokenType.INDENT,
+                TokenType.IDENT, TokenType.EQUAL, TokenType.NUMBER, TokenType.NEWLINE,
+                TokenType.DEDENT,
+                TokenType.IDENT, TokenType.EQUAL, TokenType.NUMBER, TokenType.NEWLINE,
+                TokenType.EOF
+        ), shifted);
+    }
+
+    @Test
+    void commentsBeforeTheFirstStatementDoNotSetTheBaseIndent() {
+        // The leading comment sits at column zero while the code is shifted - the comment must not
+        // pin the base at 0 and turn the first statement into a spurious block.
+        List<TokenType> types = types("""
+                # pasted with a comment header
+                    x = 1
+                    y = 2
+                """);
+        assertEquals(List.of(
+                TokenType.IDENT, TokenType.EQUAL, TokenType.NUMBER, TokenType.NEWLINE,
+                TokenType.IDENT, TokenType.EQUAL, TokenType.NUMBER, TokenType.NEWLINE,
+                TokenType.EOF
+        ), types);
+    }
+
+    @Test
+    void dedentingBelowTheFirstStatementIsStillRejected() {
+        // Only a UNIFORM shift is forgiven: a later line left of the first statement is the same
+        // error it always was (and the same one Python gives).
+        MicraLangException e = assertThrows(MicraLangException.class, () -> types("""
+                    x = 1
+                y = 2
+                """));
+        assertEquals(2, e.line());
+    }
+
+    @Test
     void blankLinesAndCommentsAreIgnoredForIndentation() {
         List<TokenType> types = types("""
                 x = 1
@@ -77,5 +130,20 @@ class LexerTest {
     void mismatchedDedentIsRejected() {
         // 4-space then 2-space: 2 doesn't match any outer level (0 or 4)
         assertThrows(MicraLangException.class, () -> types("if True:\n    if True:\n        x = 1\n  y = 2\n"));
+    }
+
+    @Test
+    void defReturnBreakContinuePassAreTokenizedAsKeywords() {
+        assertEquals(List.of(
+                TokenType.DEF, TokenType.IDENT, TokenType.LPAREN, TokenType.RPAREN, TokenType.COLON, TokenType.NEWLINE,
+                TokenType.INDENT,
+                TokenType.RETURN, TokenType.NEWLINE,
+                TokenType.DEDENT,
+                TokenType.EOF
+        ), types("def f():\n    return\n"));
+        assertEquals(List.of(
+                TokenType.BREAK, TokenType.NEWLINE, TokenType.CONTINUE, TokenType.NEWLINE,
+                TokenType.PASS, TokenType.NEWLINE, TokenType.EOF
+        ), types("break\ncontinue\npass\n"));
     }
 }

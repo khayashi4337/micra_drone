@@ -3,7 +3,17 @@ package io.github.khayashi4337.micradrone.lang;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Minimal in-memory stand-in for a real drone/farm, used to exercise the interpreter in tests. */
+/**
+ * Minimal in-memory stand-in for a real drone/farm, used to exercise the interpreter in tests.
+ *
+ * <p>Every method is {@code synchronized}: since create_task lets a test drive several concurrent
+ * task threads against one shared FakeDroneApi instance, its internal state (this whole class
+ * predates that and was never designed for concurrent access) needs the same protection a script
+ * author is taught to give their own shared list/dict/set with a semaphore - see docs/design/
+ * lang_rtos_task_foundation.md's "共有可変状態・並行アクセスについての注記". Doing it here with
+ * {@code synchronized} is simpler than asking every task-related test to serialize its own calls,
+ * and correctness (not throughput) is all a test double needs.
+ */
 final class FakeDroneApi implements DroneApi {
     private final int size;
     private int x = 0;
@@ -13,6 +23,8 @@ final class FakeDroneApi implements DroneApi {
     private final int[][] cropAge;
     private final int matureAge = 3;
     private final boolean[][] rotten;
+    /** 0 = not part of a giant pumpkin, otherwise the side length measure() reports there. */
+    private final int[][] giantSide;
     private long points = 0;
     private long dayTime = 6000; // noon
     private String weather = "clear";
@@ -28,6 +40,9 @@ final class FakeDroneApi implements DroneApi {
     private boolean anvil;
     private double repairCost = -1;
     private boolean repairPossible;
+    private boolean output = false;
+    private String pairTarget = "";
+    private boolean pairedResult = false;
 
     final List<String> calls = new ArrayList<>();
     final List<String> printed = new ArrayList<>();
@@ -37,70 +52,84 @@ final class FakeDroneApi implements DroneApi {
         this.tilled = new boolean[size][size];
         this.cropAge = new int[size][size];
         this.rotten = new boolean[size][size];
+        this.giantSide = new int[size][size];
         for (int[] row : cropAge) java.util.Arrays.fill(row, -1);
     }
 
-    void setCropAge(int atX, int atY, int age) {
+    synchronized void setCropAge(int atX, int atY, int age) {
         cropAge[atX][atY] = age;
     }
 
-    void setRotten(int atX, int atY, boolean isRotten) {
+    synchronized void setRotten(int atX, int atY, boolean isRotten) {
         rotten[atX][atY] = isRotten;
     }
 
-    void setWeather(String weather) {
+    /** Pretends the cell is part of a fused giant pumpkin of the given side (0 = not giant). */
+    synchronized void setGiantSide(int atX, int atY, int side) {
+        giantSide[atX][atY] = side;
+    }
+
+    synchronized void setWeather(String weather) {
         this.weather = weather;
     }
 
-    void setDayTime(long dayTime) {
+    synchronized void setDayTime(long dayTime) {
         this.dayTime = dayTime;
     }
 
-    void setLight(double light) {
+    synchronized void setLight(double light) {
         this.light = light;
     }
 
-    void setPlotId(String plotId) {
+    synchronized void setPlotId(String plotId) {
         this.plotId = plotId;
     }
 
-    void setHasRod(boolean hasRod) {
+    synchronized void setHasRod(boolean hasRod) {
         this.hasRod = hasRod;
     }
 
-    void setBobbing(boolean bobbing) {
+    synchronized void setBobbing(boolean bobbing) {
         this.bobbing = bobbing;
     }
 
-    void setBiting(boolean biting) {
+    synchronized void setBiting(boolean biting) {
         this.biting = biting;
     }
 
-    void setOpenWaterCast(boolean openWaterCast) {
+    synchronized void setOpenWaterCast(boolean openWaterCast) {
         this.openWaterCast = openWaterCast;
     }
 
-    void setRodDurability(double rodDurability) {
+    synchronized void setRodDurability(double rodDurability) {
         this.rodDurability = rodDurability;
     }
 
-    void setAnvil(boolean anvil) {
+    synchronized void setAnvil(boolean anvil) {
         this.anvil = anvil;
     }
 
-    void setRepairCost(double repairCost) {
+    synchronized void setRepairCost(double repairCost) {
         this.repairCost = repairCost;
     }
 
-    void setRepairPossible(boolean repairPossible) {
+    synchronized void setRepairPossible(boolean repairPossible) {
         this.repairPossible = repairPossible;
     }
 
-    int posXInt() { return x; }
-    int posYInt() { return y; }
+    synchronized void setPairedResult(boolean paired) {
+        this.pairedResult = paired;
+    }
+
+    synchronized String pairTarget() {
+        return pairTarget;
+    }
+
+    synchronized int posXInt() { return x; }
+    synchronized int posYInt() { return y; }
 
     @Override
-    public boolean move(String direction) {
+    public synchronized boolean move(String direction) {
         calls.add("move:" + direction);
         int nx = x, ny = y;
         switch (direction) {
@@ -117,14 +146,14 @@ final class FakeDroneApi implements DroneApi {
     }
 
     @Override
-    public boolean till() {
+    public synchronized boolean till() {
         calls.add("till");
         tilled[x][y] = true;
         return true;
     }
 
     @Override
-    public boolean plant(String crop) {
+    public synchronized boolean plant(String crop) {
         calls.add("plant:" + crop);
         if (tilled[x][y] && (cropAge[x][y] == -1 || rotten[x][y])) {
             cropAge[x][y] = 0;
@@ -135,7 +164,7 @@ final class FakeDroneApi implements DroneApi {
     }
 
     @Override
-    public boolean harvest() {
+    public synchronized boolean harvest() {
         calls.add("harvest");
         // Matches the original game: a rotten pumpkin can be harvested (the attempt succeeds and
         // clears the cell) but yields no points - see LiveFarmBlockAccess#attemptHarvest.
@@ -153,47 +182,77 @@ final class FakeDroneApi implements DroneApi {
     }
 
     @Override
-    public void doAFlip() {
+    public synchronized void doAFlip() {
         calls.add("do_a_flip");
     }
 
     @Override
-    public boolean canHarvest() {
+    public synchronized boolean canHarvest() {
         calls.add("can_harvest");
         return cropAge[x][y] >= matureAge;
     }
 
     @Override
-    public boolean isRotten() {
+    public synchronized boolean isRotten() {
         calls.add("is_rotten");
         return rotten[x][y];
     }
 
     @Override
-    public double getPosX() {
+    public synchronized double measure() {
+        calls.add("measure");
+        return giantSide[x][y];
+    }
+
+    @Override
+    public synchronized double getPosX() {
         return x;
     }
 
     @Override
-    public double getPosY() {
+    public synchronized double getPosY() {
         return y;
     }
 
     @Override
     public double getWorldSize() {
-        return size;
+        return size; // final, never mutated - no synchronization needed
     }
 
     @Override
-    public double getPoints() {
+    public synchronized double getPoints() {
         return points;
     }
 
     @Override
-    public double getPoints(String crop) {
+    public synchronized double getPoints(String crop) {
         // The fake only ever deals in one implicit crop ("wheat"), matching the real game's current
         // (wheat-only) state - see LiveFarmBlockAccess.POINTS_PER_WHEAT_HARVEST.
         return "wheat".equals(crop) ? points : 0;
+    }
+
+    @Override
+    public synchronized void setOutput(boolean powered) {
+        calls.add("set_output:" + powered);
+        output = powered;
+    }
+
+    @Override
+    public synchronized boolean getOutput() {
+        calls.add("get_output");
+        return output;
+    }
+
+    @Override
+    public synchronized void pairWith(String id) {
+        calls.add("pair_with:" + id);
+        pairTarget = id;
+    }
+
+    @Override
+    public synchronized boolean isPaired() {
+        calls.add("is_paired");
+        return pairedResult;
     }
 
     // ---- perception (issue #10) ----
@@ -202,54 +261,54 @@ final class FakeDroneApi implements DroneApi {
     // "nice day on a plain" readings, overridable where a test needs a different world.
 
     @Override
-    public String getGround() {
+    public synchronized String getGround() {
         calls.add("get_ground");
         return tilled[x][y] ? "farmland" : "dirt";
     }
 
     @Override
-    public String getBlockAbove() {
+    public synchronized String getBlockAbove() {
         calls.add("get_block_above");
         return cropAge[x][y] == -1 ? "air" : "wheat";
     }
 
     @Override
-    public double getTime() {
+    public synchronized double getTime() {
         calls.add("get_time");
         return dayTime;
     }
 
     @Override
-    public String getWeather() {
+    public synchronized String getWeather() {
         calls.add("get_weather");
         return weather;
     }
 
     @Override
-    public String getBiome() {
+    public synchronized String getBiome() {
         calls.add("get_biome");
         return biome;
     }
 
     @Override
-    public double getLight() {
+    public synchronized double getLight() {
         calls.add("get_light");
         return light;
     }
 
     @Override
-    public String getPlotId() {
+    public synchronized String getPlotId() {
         calls.add("get_plot_id");
         return plotId;
     }
 
     @Override
-    public void print(String text) {
+    public synchronized void print(String text) {
         printed.add(text);
     }
 
     @Override
-    public boolean castLine() {
+    public synchronized boolean castLine() {
         calls.add("cast_line");
         if (!hasRod || fishing) {
             return false;
@@ -259,7 +318,7 @@ final class FakeDroneApi implements DroneApi {
     }
 
     @Override
-    public boolean reelIn() {
+    public synchronized boolean reelIn() {
         calls.add("reel_in");
         if (!fishing) {
             return false;
@@ -269,50 +328,66 @@ final class FakeDroneApi implements DroneApi {
     }
 
     @Override
-    public boolean isFishing() {
+    public synchronized boolean isFishing() {
         calls.add("is_fishing");
         return fishing;
     }
 
     @Override
-    public boolean isBobberBobbing() {
+    public synchronized boolean isBobberBobbing() {
         calls.add("is_bobber_bobbing");
         return bobbing;
     }
 
     @Override
-    public boolean didFishBite() {
+    public synchronized boolean didFishBite() {
         calls.add("did_fish_bite");
         return biting;
     }
 
     @Override
-    public boolean isOpenWaterCast() {
+    public synchronized boolean isOpenWaterCast() {
         calls.add("is_open_water_cast");
         return openWaterCast;
     }
 
     @Override
-    public double getRodDurability() {
+    public synchronized double getRodDurability() {
         calls.add("get_rod_durability");
         return rodDurability;
     }
 
     @Override
-    public boolean isAnvil() {
+    public synchronized boolean isAnvil() {
         calls.add("is_anvil");
         return anvil;
     }
 
     @Override
-    public double getRepairCost() {
+    public synchronized double getRepairCost() {
         calls.add("get_repair_cost");
         return repairCost;
     }
 
     @Override
-    public boolean repairRod() {
+    public synchronized boolean repairRod() {
         calls.add("repair_rod");
         return repairPossible;
+    }
+
+    /**
+     * A synchronized snapshot of {@link #printed} - use this (not the raw {@code printed} field
+     * directly) from a test that polls/reads it while a create_task task on another thread might
+     * still be writing to it. Reading the plain field directly is fine everywhere else in this
+     * suite, where the Interpreter under test has already fully finished running on the calling
+     * thread before any assertion runs.
+     */
+    synchronized List<String> printedSnapshot() {
+        return new ArrayList<>(printed);
+    }
+
+    @Override
+    public synchronized void sleepTicks(double ticks) {
+        calls.add("sleep_ticks:" + ticks);
     }
 }

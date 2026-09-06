@@ -28,8 +28,10 @@ import io.github.khayashi4337.micradrone.drone.net.ScriptEntry;
 import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
 import io.github.khayashi4337.micradrone.lang.DebugController;
+import io.github.khayashi4337.micradrone.lang.InterruptTable;
 import io.github.khayashi4337.micradrone.lang.Lexer;
 import io.github.khayashi4337.micradrone.lang.Parser;
+import io.github.khayashi4337.micradrone.lang.TaskRegistry;
 import io.github.khayashi4337.micradrone.lang.ast.Stmt;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
@@ -51,7 +53,9 @@ import net.minecraft.world.inventory.AnvilMenu;
 import net.minecraft.world.inventory.ContainerLevelAccess;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.FishingRodItem;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -125,8 +129,15 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private volatile int dirX = 1;
     private volatile int dirZ = 1;
     private volatile int groundYOffset = 0;
-    // True only once scanForCornerMarker has actually found a paired corner marker - see its use in
-    // serverTick, which must not ambient-boost growth in the size-5-toward-SE guess used otherwise.
+    // The Y offset of this plot's own Corner Marker (found by diagonal scan, see #cornerMarkerPos)
+    // from this controller (see CornerMarkerScan.PlotBounds#markerDy) - together with
+    // dirX/dirZ/worldSize this reconstructs the marker's exact BlockPos for redstone output, without
+    // a re-scan. Meaningless while plotConfirmed is false.
+    private volatile int markerDy = 0;
+    // True only once scanForCornerMarker has actually found this plot's own corner marker (by
+    // diagonal scan - a DIFFERENT relationship than pairedMarkerPos's mutual pair_with() partner) -
+    // see its use in serverTick, which must not ambient-boost growth in the size-5-toward-SE guess
+    // used otherwise.
     private volatile boolean plotConfirmed = false;
     // Belongs to this controller, not the plot's geometry: survives corner-marker re-scans on purpose.
     // Keyed by crop name (e.g. "wheat"); written on the main thread, read from the network/GUI push
@@ -141,9 +152,19 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     // applyImplicitComponents, the same route vanilla chests use); the script folder on disk is
     // named after it, falling back to coordinates when blank - see ScriptFileStore#folderName.
     private volatile String alias = "";
-    // Empty until a script is actually picked (or saved/run) at least once - see ScriptId.isValidId,
-    // which rejects "" so an early redstone signal or right-click just logs/no-ops instead of crashing.
-    private volatile String selectedScript = "";
+    /**
+     * The script stored in this block itself (ScriptId.CONTROLLER_ID): the one target that always
+     * exists, so a freshly placed controller can be written to and run immediately. Before it
+     * existed, an IDE opened on a controller with no scroll selected accepted typing but Save/Run
+     * were refused with "invalid script id ''" and the text was lost on close (real-machine
+     * report). Scrolls stay the way to carry/share scripts; this is just the built-in one.
+     */
+    private volatile String builtInScript = "";
+    /** What the list shows for the built-in script - a fixed label, since it isn't an item with a hover name. */
+    static final String CONTROLLER_SCRIPT_DISPLAY_NAME = "Controller script";
+    // The built-in script is the default selection, so Save/Run and an early redstone signal all
+    // have a valid target from the moment the block is placed.
+    private volatile String selectedScript = ScriptId.CONTROLLER_ID;
     // Refreshed from the library containers in sendLogSnapshotTo (screen open); reused as-is by
     // every other push so routine log/points updates don't re-scan anything. On-disk .mdrone files
     // are no longer listed (GUI reduction, issue #7) - scripts live in items now; the file store
@@ -164,9 +185,18 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      */
     private ItemStack currentRod = ItemStack.EMPTY;
 
+    // RTOS task foundation (create_task/attach_isr): owned here, not by DroneScriptRunner, because
+    // a fresh DroneScriptRunner is built on every Run (see startFreshRun below) - these must live
+    // as long as this controller so a task started by one Run can be found and stopped by a later
+    // Run, Stop, or block removal. See docs/design/lang_rtos_task_foundation.md.
+    private final TaskRegistry taskRegistry = new TaskRegistry();
+    private final InterruptTable interruptTable = new InterruptTable();
+
     // IDE debugger (issue #6). Breakpoints are per-controller and session-only (deliberately not
     // saved to NBT); the controller is recreated for every run with the current set applied.
     private volatile Set<Integer> breakpoints = Set.of();
+    /** Whichever {@code SetBreakpointsPayload#revision} last wrote {@link #breakpoints} - see that field's own doc. */
+    private volatile int breakpointRevision = 0;
     private volatile DebugController debugController;
     /** The debug snapshot last pushed to the viewing player - see {@link #maybePushDebugState}. */
     private DebugStatePayload lastPushedDebugState;
@@ -482,6 +512,85 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
                 getBlockPos().getX() + 0.5, getBlockPos().getY() + 0.5, getBlockPos().getZ() + 0.5) <= 1024.0);
     }
 
+    /**
+     * set_output(): writes {@link CornerMarkerBlock#POWERED} directly (no NBT of our own - vanilla
+     * already persists BlockState across saves/reloads, the same way {@link DroneControllerBlock#ACTIVE}
+     * needs none) onto two different markers, each independently optional:
+     * <ol>
+     *   <li>this plot's OWN marker - the one diagonally scanned from this controller ({@link #cornerMarkerPos}) - unchanged from before pair_with() existed;</li>
+     *   <li>if a mutual pair_with() pairing holds (see {@link #pairedMarkerPos}), the OTHER plot's
+     *       paired-by-name partner marker too - wireless redstone between two markers that have named
+     *       each other, which may be anywhere in the world, not diagonally adjacent to anything here.</li>
+     * </ol>
+     * Silently skips whichever side (or both) isn't actually a corner marker right now - either could
+     * have been broken since the last scan/pairing.
+     */
+    @Override
+    public void setRedstoneOutput(boolean powered) {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        cornerMarkerPos().ifPresent(pos -> writeMarkerPowered(serverLevel, pos, powered));
+        pairedMarkerPos(serverLevel).ifPresent(pos -> writeMarkerPowered(serverLevel, pos, powered));
+    }
+
+    private static void writeMarkerPowered(ServerLevel serverLevel, BlockPos pos, boolean powered) {
+        BlockState state = serverLevel.getBlockState(pos);
+        if (state.is(MicraDrone.CORNER_MARKER_BLOCK.get())) {
+            serverLevel.setBlock(pos, state.setValue(CornerMarkerBlock.POWERED, powered), Block.UPDATE_ALL);
+        }
+    }
+
+    /** get_output(): reads the marker's current {@link CornerMarkerBlock#POWERED} state straight off the world. */
+    @Override
+    public boolean redstoneOutput() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+        return cornerMarkerPos()
+                .map(serverLevel::getBlockState)
+                .filter(state -> state.is(MicraDrone.CORNER_MARKER_BLOCK.get()))
+                .map(state -> state.getValue(CornerMarkerBlock.POWERED))
+                .orElse(false);
+    }
+
+    /** pair_with(): writes straight onto this plot's own marker's {@code pairedTargetId} - one-sided, see {@link #isPaired}. */
+    @Override
+    public void setPairTarget(String id) {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        cornerMarkerPos().flatMap(pos -> CornerMarkerBlockEntity.at(serverLevel, pos))
+                .ifPresent(mine -> mine.setPairedTargetId(id));
+    }
+
+    /** is_paired(): true only if {@link #pairedMarkerPos} actually resolves to something. */
+    @Override
+    public boolean isPaired() {
+        return level instanceof ServerLevel serverLevel && pairedMarkerPos(serverLevel).isPresent();
+    }
+
+    /**
+     * The mutually pair_with()-linked partner marker's position (a DIFFERENT relationship than
+     * {@link #cornerMarkerPos} - that one is this plot's own marker, found by diagonal scan; this one
+     * is whatever other marker, anywhere in the world, has named the same pair back), re-resolved
+     * fresh every call - nothing about a pairing is cached. Resolves this plot's own marker, follows
+     * its {@code pairedTargetId} (via {@link CornerMarkerBlockEntity#resolveId}, world-wide) to the
+     * OTHER marker, and only returns it if that one names this marker back too. Empty if this plot has
+     * no marker of its own, that marker has no pair target set, or the pairing isn't (yet, or anymore)
+     * mutual.
+     */
+    private Optional<BlockPos> pairedMarkerPos(ServerLevel serverLevel) {
+        Optional<CornerMarkerBlockEntity> mine = cornerMarkerPos().flatMap(pos -> CornerMarkerBlockEntity.at(serverLevel, pos));
+        if (mine.isEmpty() || mine.get().pairedTargetId().isEmpty()) {
+            return Optional.empty();
+        }
+        Optional<BlockPos> theirPos = CornerMarkerBlockEntity.resolveId(serverLevel, mine.get().pairedTargetId());
+        Optional<CornerMarkerBlockEntity> theirs = theirPos.flatMap(pos -> CornerMarkerBlockEntity.at(serverLevel, pos));
+        boolean mutual = theirs.isPresent() && theirs.get().pairedTargetId().equals(mine.get().displayId());
+        return mutual ? theirPos : Optional.empty();
+    }
+
     /** Removes the visible drone entity, e.g. when this controller block is broken. */
     public void discardDroneEntity() {
         if (level instanceof ServerLevel serverLevel) {
@@ -491,6 +600,11 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             }
         }
         droneEntityUuid = null;
+    }
+
+    /** Interrupts every create_task task this controller has started. Called on block removal so none outlive it. */
+    public void stopAllTasks() {
+        taskRegistry.stopAll();
     }
 
     @Override
@@ -536,6 +650,28 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     @Override
     public boolean isUnlocked(String crop) {
         return unlockedCrops.contains(crop);
+    }
+
+    @Override
+    public boolean takeSeedFromOwner(String crop) {
+        Item seed = seedItemFor(crop);
+        if (seed == null) {
+            return false;
+        }
+        return resolveOwner()
+                .map(owner -> owner.getInventory().clearOrCountMatchingItems(
+                        stack -> stack.is(seed), 1, owner.inventoryMenu.getCraftSlots()) > 0)
+                .orElse(false);
+    }
+
+    /** The vanilla item a player would plant {@code crop} with by hand - what the not-unlocked fallback consumes. */
+    private static Item seedItemFor(String crop) {
+        return switch (crop) {
+            case "wheat" -> Items.WHEAT_SEEDS;
+            case "carrot" -> Items.CARROT;
+            case "pumpkin" -> Items.PUMPKIN_SEEDS;
+            default -> null;
+        };
     }
 
     /**
@@ -608,9 +744,28 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         dirX = bounds.dirX();
         dirZ = bounds.dirZ();
         groundYOffset = bounds.groundYOffset();
+        markerDy = bounds.markerDy();
         // Ambient effects like the growth boost must never apply to the size-5-toward-SE guess used
         // when no marker has actually been placed/found - only to a plot the player explicitly marked.
         plotConfirmed = bounds.markerFound();
+    }
+
+    /**
+     * This plot's own Corner Marker's exact position - the one found by diagonal scan from this
+     * controller (a DIFFERENT relationship than {@link #pairedMarkerPos}'s mutual pair_with()
+     * partner, which can be any marker anywhere in the world) - reconstructed from the last
+     * {@link #scanForCornerMarker} (dirX/dirZ/worldSize/markerDy) rather than re-scanning, via
+     * {@link CornerMarkerScan.PlotBounds#markerOffset} - the same coordinate math
+     * {@code CornerMarkerScanTest} exercises, so a future change to it can't silently diverge between
+     * what's tested and what actually runs. Empty when this plot has no marker of its own
+     * ({@link #plotConfirmed} false).
+     */
+    private Optional<BlockPos> cornerMarkerPos() {
+        if (!plotConfirmed) {
+            return Optional.empty();
+        }
+        int[] offset = new CornerMarkerScan.PlotBounds(worldSize, dirX, dirZ, true, groundYOffset, markerDy).markerOffset();
+        return Optional.of(getBlockPos().offset(offset[0], offset[1], offset[2]));
     }
 
     /**
@@ -655,12 +810,20 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         if (!(level instanceof ServerLevel serverLevel)) {
             return Optional.empty();
         }
+        if (ScriptId.isControllerId(scriptName)) {
+            return Optional.of(builtInScript);
+        }
         if (ScriptId.isScrollId(scriptName)) {
             return ScriptChestLibrary.resolveScrollSource(serverLevel, getBlockPos(), scriptName);
         }
         if (ScriptId.isInventoryScrollId(scriptName)) {
-            return requester != null
-                    ? ScriptChestLibrary.resolveInventoryScrollSource(requester, scriptName)
+            // No requester (the redstone path): read from the controller's owner instead - the
+            // player who last ran it - so a lever re-runs the same inventory scroll the IDE's Run
+            // button just did, as long as that player is online and still holds it. Real-machine
+            // report: Run worked, the lever next to it said "could not read script 'inv:7'".
+            ServerPlayer reader = requester != null ? requester : resolveOwner().orElse(null);
+            return reader != null
+                    ? ScriptChestLibrary.resolveInventoryScrollSource(reader, scriptName)
                     : Optional.empty();
         }
         try {
@@ -711,7 +874,9 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             requester.sendSystemMessage(Component.literal("[ide] script too long (" + source.length() + " > " + MAX_SCRIPT_CHARS + " chars)"));
             return;
         }
-        if (ScriptId.isScrollId(scriptName)) {
+        if (ScriptId.isControllerId(scriptName)) {
+            builtInScript = source; // persisted with the block (see saveAdditional)
+        } else if (ScriptId.isScrollId(scriptName)) {
             // A chest scroll: write the edit back into the scroll item itself.
             if (!ScriptChestLibrary.saveScrollSource(serverLevel, getBlockPos(), scriptName, source)) {
                 requester.sendSystemMessage(Component.literal(
@@ -834,8 +999,20 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         if (!(level instanceof ServerLevel serverLevel)) {
             return;
         }
+        // Tear down whatever the previous Run left behind (create_task tasks, attach_isr handlers)
+        // as the very first thing any Run attempt does - even one that goes on to fail (invalid
+        // script id, missing scroll, a parse error) - so a Run always means "the previous
+        // generation is gone", not "only if this new script happens to load successfully"
+        // (Fable5.1 review finding: this used to sit after script loading/parsing, so an early
+        // return there would leave the previous Run's tasks running untracked). A task is meant to
+        // outlive the *script* that started it (see the design doc), but not outlive a re-Run.
+        taskRegistry.stopAll();
+        taskRegistry.reopen(); // stopAll() alone would leave create_task DENIED for this new run too
+        interruptTable.clear();
         if (!ScriptId.isValidId(scriptName)) {
-            appendLog("[error] invalid script id '" + scriptName + "'");
+            appendLog(scriptName.isEmpty()
+                    ? "[error] no script selected - open List and pick one"
+                    : "[error] invalid script id '" + scriptName + "'");
             return;
         }
         clearLog();
@@ -850,7 +1027,15 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
 
         Optional<String> loaded = loadScriptSource(requester, scriptName);
         if (loaded.isEmpty()) {
-            appendLog("[error] could not read script '" + scriptName + "' - missing scroll or file; reopen the screen to refresh the list");
+            if (requester == null && ScriptId.isInventoryScrollId(scriptName)) {
+                // The redstone path reads an inventory scroll from the controller's owner (see
+                // loadScriptSource); this is what's left when that owner is offline or moved it.
+                appendLog("[error] the inventory scroll " + scriptName + " isn't reachable from redstone right now"
+                        + " (its owner must be online and still holding it) - or select the Controller script");
+            } else {
+                appendLog("[error] could not read script '" + scriptName + "' - missing scroll or file;"
+                        + " reopen the screen to refresh the list, or pick the Controller script (it needs no scroll)");
+            }
             return;
         }
         String source = loaded.get();
@@ -874,7 +1059,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             debug.requestPause();
         }
         debugController = debug;
-        scriptRunner = new DroneScriptRunner(api, this::appendLog, debug);
+        scriptRunner = new DroneScriptRunner(api, this::appendLog, debug, taskRegistry, interruptTable);
         appendLog(startPaused ? "[run] stepping " + scriptName : "[run] running " + scriptName);
         scriptRunner.start(program);
     }
@@ -911,9 +1096,10 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      * the running script immediately and to every later run; echoed straight back so the IDE shows
      * the authoritative set.
      */
-    public void setBreakpoints(ServerPlayer requester, Set<Integer> lines) {
+    public void setBreakpoints(ServerPlayer requester, Set<Integer> lines, int revision) {
         addViewer(requester);
         breakpoints = Set.copyOf(lines);
+        breakpointRevision = revision;
         DebugController debug = debugController;
         if (debug != null) {
             debug.setBreakpoints(breakpoints);
@@ -954,7 +1140,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         int state = !running ? DebugStatePayload.STATE_IDLE
                 : debug.isPaused() ? DebugStatePayload.STATE_PAUSED : DebugStatePayload.STATE_RUNNING;
         int line = running ? debug.currentLine() : 0;
-        return new DebugStatePayload(getBlockPos(), state, line, breakpoints.stream().sorted().toList());
+        return new DebugStatePayload(getBlockPos(), state, line, breakpoints.stream().sorted().toList(), breakpointRevision);
     }
 
     /** Unconditional push, e.g. when the IDE opens - the client learns the server-held breakpoints. */
@@ -1002,21 +1188,43 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     /**
-     * Sent when the IDE's list mode opens, so it immediately shows log/points/alias history and an
-     * up-to-date script list instead of starting blank.
+     * Sent when the IDE opens (and when its list mode opens), so it immediately shows log/points/
+     * alias history and an up-to-date script list instead of starting blank - and so the IDE's
+     * edit target is something {@code requester} can actually load and save right now.
      */
     public void sendLogSnapshotTo(ServerPlayer requester) {
         addViewer(requester);
         if (level instanceof ServerLevel serverLevel) {
             refreshAvailableScripts(serverLevel);
         }
+        if (ScriptId.isInventoryScrollId(selectedScript)
+                && ScriptChestLibrary.resolveInventoryScroll(requester, selectedScript).isEmpty()) {
+            // The selection points into an inventory slot that, for this player right now, holds
+            // no scroll: it was moved or used up since it was picked, or a different player is
+            // opening the same controller. refreshAvailableScripts deliberately leaves inventory
+            // selections alone (they're per player), so this is the one place they get checked.
+            // Fall back to the always-present built-in script rather than open the IDE on a target
+            // that can neither load nor save - real-machine report: the IDE opened on a long-gone
+            // 'inv:33', and everything typed "on the controller" was refused until a scroll in
+            // hand was picked instead, which made it look as if a scroll were required at all.
+            selectedScript = ScriptId.CONTROLLER_ID;
+            setChanged();
+        }
         pushLogSnapshotTo(requester);
     }
 
     private void refreshAvailableScripts(ServerLevel level) {
-        List<ScriptEntry> entries = new ArrayList<>(ScriptChestLibrary.listScrolls(level, getBlockPos()));
+        List<ScriptEntry> entries = new ArrayList<>();
+        // The built-in script always heads the list, so the list is never empty and a stale or
+        // blank selection always falls back to something that can actually be saved and run.
+        entries.add(new ScriptEntry(ScriptId.CONTROLLER_ID, CONTROLLER_SCRIPT_DISPLAY_NAME,
+                ScriptFileStore.describeScript(builtInScript, CONTROLLER_SCRIPT_DISPLAY_NAME), builtInScript.isBlank()));
+        entries.addAll(ScriptChestLibrary.listScrolls(level, getBlockPos()));
         availableScripts = List.copyOf(entries);
-        if (!entries.isEmpty() && entries.stream().noneMatch(entry -> entry.id().equals(selectedScript))) {
+        if (entries.stream().noneMatch(entry -> entry.id().equals(selectedScript))
+                && !ScriptId.isInventoryScrollId(selectedScript)) {
+            // Inventory scrolls aren't in this per-controller list (they're per player), so a
+            // selection of that shape is left alone rather than overridden.
             selectedScript = entries.get(0).id();
         }
     }
@@ -1121,7 +1329,8 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
             lines = List.copyOf(logBuffer);
         }
         PacketDistributor.sendToPlayer(player,
-                new DroneLogPayload(getBlockPos(), lines, pointsByCrop(), availableScriptsFor(player), selectedScript, alias));
+                new DroneLogPayload(getBlockPos(), lines, pointsByCrop(), Set.copyOf(unlockedCrops),
+                        availableScriptsFor(player), selectedScript, alias));
     }
 
     /** Registered as this block's {@link net.minecraft.world.level.block.entity.BlockEntityTicker}; server-side only. */
@@ -1153,13 +1362,37 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         super.loadAdditional(tag, registries);
         gridX = tag.getInt("GridX");
         gridY = tag.getInt("GridY");
+        // Plot geometry: persisted so a server restart doesn't reset worldSize/dir/groundYOffset
+        // to the size-5-SE guess, which would silently stop boostGrowth (plotConfirmed=false) until
+        // the next scanForCornerMarker. Absent on older saves -> defaults remain (see field decls).
+        if (tag.contains("WorldSize")) {
+            worldSize = tag.getInt("WorldSize");
+        }
+        if (tag.contains("DirX")) {
+            dirX = tag.getInt("DirX");
+        }
+        if (tag.contains("DirZ")) {
+            dirZ = tag.getInt("DirZ");
+        }
+        if (tag.contains("GroundYOffset")) {
+            groundYOffset = tag.getInt("GroundYOffset");
+        }
+        if (tag.contains("PlotConfirmed")) {
+            plotConfirmed = tag.getBoolean("PlotConfirmed");
+        }
         pointsByCrop.clear();
         CompoundTag pointsTag = tag.getCompound("PointsByCrop");
         for (String crop : pointsTag.getAllKeys()) {
             pointsByCrop.put(crop, pointsTag.getLong(crop));
         }
         alias = tag.getString("Alias");
+        builtInScript = tag.getString("BuiltInScript"); // absent on older saves -> "" (empty script)
         selectedScript = tag.getString("SelectedScript");
+        if (selectedScript.isEmpty()) {
+            // Saves from before the built-in script existed could hold "" here; that used to make
+            // Save/Run fail until a scroll was picked. Fall back to the always-present script.
+            selectedScript = ScriptId.CONTROLLER_ID;
+        }
         unlockedCrops.clear();
         unlockedCrops.add("wheat");
         ListTag unlockedTag = tag.getList("UnlockedCrops", Tag.TAG_STRING);
@@ -1178,10 +1411,16 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         super.saveAdditional(tag, registries);
         tag.putInt("GridX", gridX);
         tag.putInt("GridY", gridY);
+        tag.putInt("WorldSize", worldSize);
+        tag.putInt("DirX", dirX);
+        tag.putInt("DirZ", dirZ);
+        tag.putInt("GroundYOffset", groundYOffset);
+        tag.putBoolean("PlotConfirmed", plotConfirmed);
         CompoundTag pointsTag = new CompoundTag();
         pointsByCrop.forEach(pointsTag::putLong);
         tag.put("PointsByCrop", pointsTag);
         tag.putString("Alias", alias);
+        tag.putString("BuiltInScript", builtInScript);
         tag.putString("SelectedScript", selectedScript);
         ListTag unlockedTag = new ListTag();
         unlockedCrops.forEach(crop -> unlockedTag.add(StringTag.valueOf(crop)));

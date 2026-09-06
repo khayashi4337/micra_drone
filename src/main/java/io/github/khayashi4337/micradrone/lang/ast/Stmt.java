@@ -21,4 +21,18 @@ public sealed interface Stmt {
 
     /** for name in <rangeExpr>: block — rangeExpr must be a Call to "range" (checked at interpret time). */
     record ForStmt(String varName, Expr rangeExpr, List<Stmt> block, int line) implements Stmt {}
+
+    /** def name(params...): block — nested def (funcDepth &gt; 0 at parse time) is rejected by the parser. */
+    record FunctionDef(String name, List<String> params, List<Stmt> body, int line) implements Stmt {}
+
+    /** {@code return [expr]} - value is null for a bare {@code return}. */
+    record ReturnStmt(Expr value, int line) implements Stmt {}
+
+    /** Rejected by the parser outside a loop (loopDepth == 0). */
+    record BreakStmt(int line) implements Stmt {}
+
+    /** Rejected by the parser outside a loop (loopDepth == 0). */
+    record ContinueStmt(int line) implements Stmt {}
+
+    record PassStmt(int line) implements Stmt {}
 }

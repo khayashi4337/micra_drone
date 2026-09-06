@@ -1,0 +1,7 @@
+{
+  "parent": "minecraft:block/cube_column",
+  "textures": {
+    "end": "micradrone:block/giant_pumpkin_n",
+    "side": "micradrone:block/giant_pumpkin_side"
+  }
+}

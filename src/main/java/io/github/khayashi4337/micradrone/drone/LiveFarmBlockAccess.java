@@ -1,32 +1,27 @@
 package io.github.khayashi4337.micradrone.drone;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
-import java.util.HashSet;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
-import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.BonemealableBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CropBlock;
 import net.minecraft.world.level.block.FarmBlock;
-import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.drone.FarmCellRules.CellFacts;
 import io.github.khayashi4337.micradrone.drone.GiantPatchDetector.Patch;
+import io.github.khayashi4337.micradrone.drone.GiantPatchDetector.Square;
 
 /**
  * Maps the drone's grid cell onto real world blocks, reusing vanilla farmland/crop mechanics
@@ -42,12 +37,8 @@ import io.github.khayashi4337.micradrone.drone.GiantPatchDetector.Patch;
 public final class LiveFarmBlockAccess implements FarmBlockAccess {
     /** Flat rate for every crop for now; a per-crop table can replace this if crops need to differ. */
     private static final long POINTS_PER_HARVEST = 1;
-    /**
-     * Matches the original game: "about 1 in 5 (~20%) pumpkins die right as they finish growing"
-     * (thefarmerwasreplaced.wiki.gg/wiki/Pumpkins, confirmed via live web research). See
-     * {@link #maybeRotAFreshPumpkin}.
-     */
-    private static final float PUMPKIN_ROT_CHANCE = 0.2f;
+    /** "This cell is in no fused square" in applyGiantPumpkinPatches' patch index. */
+    private static final int NO_PATCH = -1;
 
     private final Level level;
     private final BlockPos origin;
@@ -73,8 +64,9 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         BlockState aboveState = level.getBlockState(above);
         // A rotten pumpkin counts as "empty" for planting purposes: per the original game, "planting
         // a new plant in its place automatically removes the dead pumpkin, so there is no need to
-        // harvest it" - no separate clear step, plant() just overwrites it.
-        boolean clearable = aboveState.isAir() || aboveState.is(MicraDrone.ROTTEN_PUMPKIN_BLOCK.get());
+        // harvest it" - no separate clear step, plant() just overwrites it. A leftover vanilla stem
+        // (see isLegacyStem) is treated the same way so old plots can be replanted by script.
+        boolean clearable = aboveState.isAir() || isYieldlessClutter(aboveState);
         return new CellFacts(
                 groundState.is(BlockTags.DIRT),
                 groundState.is(Blocks.FARMLAND),
@@ -85,6 +77,39 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     @Override
     public boolean isRotten() {
         return level.getBlockState(cropPos()).is(MicraDrone.ROTTEN_PUMPKIN_BLOCK.get());
+    }
+
+    /**
+     * Reads the square back from the POSITION markers, exactly the way harvest() will (see
+     * attemptGiantPumpkinHarvest), so what measure() reports is what a harvest would pay for: a
+     * cell whose markers no longer describe a whole square counts as the lone pumpkin harvest()
+     * would treat it as (1). A cell mid-collapse is not a pumpkin any more (0).
+     */
+    @Override
+    public int giantPumpkinSide() {
+        BlockPos above = cropPos();
+        if (!GiantPumpkinBlock.isFusedCell(level.getBlockState(above))) {
+            return 0;
+        }
+        return GiantPumpkinBlock.squareAt(level, above).map(Square::side).orElse(1);
+    }
+
+    /**
+     * The vanilla pumpkin stem (bare or attached) that plant("pumpkin") used to put down before
+     * {@link PumpkinCropBlock} existed. Worlds saved back then still have them, and a stem never
+     * "ripens" on its own cell (its fruit pops onto a neighbour), so without this a script could
+     * neither harvest nor till nor plant over one - the cell was simply stuck.
+     */
+    private static boolean isLegacyStem(BlockState state) {
+        return state.is(Blocks.PUMPKIN_STEM) || state.is(Blocks.ATTACHED_PUMPKIN_STEM);
+    }
+
+    /**
+     * Things a cell can hold that harvest() clears for no points and plant() may overwrite: a
+     * rotten pumpkin (the original game's dead pumpkin) or a leftover vanilla stem.
+     */
+    private static boolean isYieldlessClutter(BlockState state) {
+        return state.is(MicraDrone.ROTTEN_PUMPKIN_BLOCK.get()) || isLegacyStem(state);
     }
 
     // ---- perception (GitHub issue #10) ----
@@ -156,28 +181,41 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         BlockPos ground = groundPos();
         BlockPos above = cropPos();
         Block cropBlock = simpleCropBlockFor(crop);
-        if (cropBlock == null || !FarmCellRules.canPlant(crop, grid.isUnlocked(crop), readFacts(ground, above))) {
+        // Cell rules first (no side effects), then the permission: unlocked in the shop, or - the
+        // fallback - one real seed item taken from the owner's inventory right now. Taking it at
+        // decision time rather than in apply() keeps "a seed was spent" and "planting succeeded"
+        // the same event as far as the script's return value is concerned.
+        if (cropBlock == null || !FarmCellRules.canPlant(crop, true, readFacts(ground, above))) {
             return Attempt.failure();
         }
-        return new Attempt(true, () -> level.setBlockAndUpdate(above, cropBlock.defaultBlockState()));
+        if (!grid.isUnlocked(crop) && !grid.takeSeedFromOwner(crop)) {
+            return Attempt.failure();
+        }
+        return new Attempt(true, () -> {
+            // Planting over a rotten pumpkin (or a leftover stem) clears it first, with the same
+            // crumbs and squelch that clearing it by harvest() gets - so the replant is visible
+            // from a distance.
+            if (isYieldlessClutter(level.getBlockState(above))) {
+                clearCrop(above);
+            }
+            level.setBlockAndUpdate(above, cropBlock.defaultBlockState());
+        });
     }
 
     /**
-     * Crops whose block-placement is a plain "set the block to its default (age 0) state" - this
-     * covers wheat and carrot (a CropBlock placed directly) and, just as simply, pumpkin: vanilla
-     * plants a PumpkinStemBlock (AGE 0-7, same shape as CropBlock) on the cell, which - once fully
-     * grown via boostGrowth()'s generic BonemealableBlock handling below - pops an actual Pumpkin
-     * block onto a free adjacent farmland/dirt cell on its own, using vanilla's own StemBlock logic
-     * (verified in decompiled sources; not reimplemented here). Deliberately a method, not a static
-     * field: eagerly initializing a Minecraft-typed static field (or even referencing certain
-     * Minecraft interfaces via instanceof) can break this class's verification on the test sourceSet
-     * - see PlotGeometry, which exists specifically to stay unaffected by that.
+     * Every crop is a CropBlock placed directly at its default (age 0) state: vanilla's wheat and
+     * carrot, and this mod's own {@link PumpkinCropBlock} (see its javadoc for why vanilla's
+     * pumpkin stem - which fruits onto a *neighbouring* cell - could not stand in for the original
+     * game's ripen-in-place pumpkin). Deliberately a method, not a static field: eagerly
+     * initializing a Minecraft-typed static field (or even referencing certain Minecraft interfaces
+     * via instanceof) can break this class's verification on the test sourceSet - see PlotGeometry,
+     * which exists specifically to stay unaffected by that.
      */
     private static Block simpleCropBlockFor(String crop) {
         return switch (crop) {
             case "wheat" -> Blocks.WHEAT;
             case "carrot" -> Blocks.CARROTS;
-            case "pumpkin" -> Blocks.PUMPKIN_STEM;
+            case "pumpkin" -> MicraDrone.PUMPKIN_CROP_BLOCK.get();
             default -> null;
         };
     }
@@ -187,69 +225,90 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
         BlockPos ground = groundPos();
         BlockPos above = cropPos();
         BlockState aboveState = level.getBlockState(above);
-        if (aboveState.is(MicraDrone.GIANT_PUMPKIN_BLOCK.get())) {
-            return attemptGiantPumpkinHarvest(above);
+        if (aboveState.getBlock() instanceof GiantPumpkinBlock) {
+            // A cell mid-collapse (hand-broken patch, see GiantPumpkinBlock#onRemove) is gone as far
+            // as the score is concerned - nothing to harvest.
+            return GiantPumpkinBlock.isFusedCell(aboveState) ? attemptGiantPumpkinHarvest(above) : Attempt.failure();
+        }
+        // Matches the original game ("if you harvest an entity that can't be harvested, it will be
+        // destroyed"): a dead pumpkin can be harvested - the attempt succeeds and clears the cell -
+        // but "won't drop anything", so no points, and can_harvest() stays false for it (see
+        // isMatureCrop). A leftover vanilla stem gets the same treatment (see isLegacyStem).
+        if (isYieldlessClutter(aboveState)) {
+            return new Attempt(true, () -> clearCrop(above));
         }
         if (!FarmCellRules.canHarvest(readFacts(ground, above))) {
             return Attempt.failure();
-        }
-        // Matches the original game: a dead pumpkin can be harvested (the attempt succeeds) but
-        // "won't drop anything when harvested" - no points, just clear the cell.
-        if (aboveState.is(MicraDrone.ROTTEN_PUMPKIN_BLOCK.get())) {
-            return new Attempt(true, () -> level.setBlockAndUpdate(above, Blocks.AIR.defaultBlockState()));
         }
         String cropName = cropNameOf(aboveState.getBlock());
         // Runs on the main thread (via the paced action queue), same as every other grid-state
         // mutation here - see DroneGridState's other writers for why that matters.
         return new Attempt(true, () -> {
-            level.setBlockAndUpdate(above, Blocks.AIR.defaultBlockState());
+            clearCrop(above);
             grid.addPoints(cropName, POINTS_PER_HARVEST);
         });
     }
 
     /**
-     * A giant-pumpkin patch is harvested as a whole: flood-fill every connected giant_pumpkin cell
-     * from wherever the drone called harvest() (the patch is always an axis-aligned square by
-     * construction, but flood-fill needs no assumption about that), clear it all to air, and award
-     * one lump-sum bonus (see GiantPatchDetector#bonusPoints) instead of the normal per-cell rate.
+     * Removes a harvested (or cleared) crop with the crumbs and sound a player breaking it would
+     * get (see PumpkinEffects#breakCell) - a silent setBlock-to-air made harvest() look like nothing
+     * happened. Attempts only ever apply on the server main thread, so the level is a ServerLevel
+     * there; the plain setBlock is just the fallback that keeps this correct anywhere else.
      */
-    private Attempt attemptGiantPumpkinHarvest(BlockPos anyCellInPatch) {
-        List<BlockPos> patchCells = floodFillGiantPumpkin(anyCellInPatch);
-        int side = (int) Math.round(Math.sqrt(patchCells.size()));
-        long bonus = GiantPatchDetector.bonusPoints(side);
-        return new Attempt(true, () -> {
-            for (BlockPos cell : patchCells) {
-                level.setBlockAndUpdate(cell, Blocks.AIR.defaultBlockState());
-            }
-            grid.addPoints("pumpkin", bonus);
-        });
+    private void clearCrop(BlockPos cell) {
+        if (level instanceof ServerLevel serverLevel) {
+            PumpkinEffects.breakCell(serverLevel, cell);
+        } else {
+            level.setBlockAndUpdate(cell, Blocks.AIR.defaultBlockState());
+        }
     }
 
-    private List<BlockPos> floodFillGiantPumpkin(BlockPos start) {
-        List<BlockPos> found = new ArrayList<>();
-        Set<BlockPos> seen = new HashSet<>();
-        Deque<BlockPos> queue = new ArrayDeque<>();
-        seen.add(start);
-        queue.add(start);
-        Block giantPumpkin = MicraDrone.GIANT_PUMPKIN_BLOCK.get();
-        while (!queue.isEmpty()) {
-            BlockPos pos = queue.poll();
-            found.add(pos);
-            for (Direction direction : Direction.Plane.HORIZONTAL) {
-                BlockPos next = pos.relative(direction);
-                if (seen.add(next) && level.getBlockState(next).is(giantPumpkin)) {
-                    queue.add(next);
-                }
+    /**
+     * A giant-pumpkin patch is harvested as a whole from whichever of its cells the drone is on:
+     * the square is read back from the POSITION markers (see GiantPumpkinBlock#squareAt - two
+     * patches touching each other are told apart, which a flood fill could not do), every cell is
+     * cleared to air, and one lump sum (see GiantPatchDetector#bonusPoints) is awarded instead of
+     * the per-cell rate. If the markers no longer describe a whole square (something outside the
+     * mod changed them between fusion passes), the cell is treated as the lone ripe pumpkin it is.
+     */
+    private Attempt attemptGiantPumpkinHarvest(BlockPos cell) {
+        Optional<Square> square = GiantPumpkinBlock.squareAt(level, cell);
+        if (square.isEmpty()) {
+            return new Attempt(true, () -> GiantPumpkinBlock.withPatchMutation(() -> {
+                clearCrop(cell);
+                grid.addPoints("pumpkin", POINTS_PER_HARVEST);
+            }));
+        }
+        Square s = square.get();
+        long bonus = GiantPatchDetector.bonusPoints(s.side());
+        List<BlockPos> cells = new ArrayList<>();
+        for (int lx = 0; lx < s.side(); lx++) {
+            for (int lz = 0; lz < s.side(); lz++) {
+                cells.add(new BlockPos(s.originX() + lx, cell.getY(), s.originZ() + lz));
             }
         }
-        return found;
+        return new Attempt(true, () -> GiantPumpkinBlock.withPatchMutation(() -> {
+            // The payout is the show here (one burst over the whole square, see PumpkinEffects), so
+            // the cells themselves go silently - n² break sounds in one tick would just be noise.
+            if (level instanceof ServerLevel serverLevel) {
+                PumpkinEffects.giantHarvest(serverLevel, cells, s.side());
+            }
+            for (BlockPos c : cells) {
+                level.setBlockAndUpdate(c, Blocks.AIR.defaultBlockState());
+            }
+            grid.addPoints("pumpkin", bonus);
+        }));
     }
 
+    /**
+     * Blocks.PUMPKIN is kept alongside the mod's own crop only for worlds saved before the crop
+     * existed: a vanilla pumpkin a stem had already dropped inside a plot stays harvestable (1 pt).
+     */
     private static String cropNameOf(Block block) {
         if (block == Blocks.CARROTS) {
             return "carrot";
         }
-        if (block == Blocks.PUMPKIN) {
+        if (block instanceof PumpkinCropBlock || block == Blocks.PUMPKIN) {
             return "pumpkin";
         }
         return "wheat"; // covers Blocks.WHEAT and, defensively, anything unexpected
@@ -262,26 +321,29 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     }
 
     /**
-     * A cell counts as harvestable once its CropBlock (wheat/carrot) reaches max age, or - for
-     * pumpkin - once an actual Pumpkin block exists there at all (the fruit itself has no growth
-     * stages; only the stem that spawned it did), or once it's part of a giant-pumpkin patch, or -
-     * matching the original game - once it's a rotten pumpkin (harvestable, just yields nothing; see
-     * attemptHarvest).
+     * A cell counts as harvestable (can_harvest() is true) once its CropBlock (wheat/carrot/pumpkin)
+     * reaches max age or once it's part of a giant-pumpkin patch. A rotten pumpkin is deliberately
+     * NOT harvestable here - the original game's "can_harvest() always returns False on dead
+     * pumpkins" - even though harvest() will still clear it (see attemptHarvest); same for a
+     * leftover vanilla stem. Blocks.PUMPKIN: see cropNameOf.
      */
     private static boolean isMatureCrop(BlockState state) {
         if (state.getBlock() instanceof CropBlock crop) {
             return crop.isMaxAge(state);
         }
-        return state.is(Blocks.PUMPKIN) || state.is(MicraDrone.GIANT_PUMPKIN_BLOCK.get())
-                || state.is(MicraDrone.ROTTEN_PUMPKIN_BLOCK.get());
+        return state.is(Blocks.PUMPKIN) || GiantPumpkinBlock.isFusedCell(state);
+    }
+
+    /** A ripe, non-rotten pumpkin - the only thing a giant patch is built from. Blocks.PUMPKIN: see cropNameOf. */
+    private static boolean isRipePumpkin(BlockState state) {
+        return (state.getBlock() instanceof PumpkinCropBlock crop && crop.isMaxAge(state)) || state.is(Blocks.PUMPKIN);
     }
 
     /**
      * Ages up every immature crop standing on actual farmland within the plot by one bonemeal-style
-     * jump, via the generic {@link BonemealableBlock} interface both CropBlock (wheat/carrot) and
-     * StemBlock (pumpkin) implement - so this needs no per-crop-type special casing, and for pumpkin
-     * specifically, reaching max age through this same call is what makes vanilla's own StemBlock
-     * logic pop an actual Pumpkin block onto a free neighboring cell (see simpleCropBlockFor's note).
+     * jump, via the generic {@link BonemealableBlock} interface every CropBlock implements - so this
+     * needs no per-crop-type special casing (pumpkin's 20% rot-on-ripening lives inside
+     * {@link PumpkinCropBlock#performBonemeal} itself, so it fires through this path too).
      * Called periodically from {@link DroneControllerBlockEntity#serverTick} - only once a corner
      * marker has confirmed the plot (see {@code plotConfirmed} there) - to make the claimed area grow
      * faster than vanilla, independent of whether a script is currently running. The farmland check
@@ -297,7 +359,7 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
             return;
         }
         int worldSize = grid.worldSize();
-        boolean[][] maturePumpkin = new boolean[worldSize][worldSize];
+        boolean[][] ripePumpkin = new boolean[worldSize][worldSize];
         for (int gx = 0; gx < worldSize; gx++) {
             for (int gy = 0; gy < worldSize; gy++) {
                 int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), gx, gy);
@@ -312,13 +374,14 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
                 if (state.getBlock() instanceof BonemealableBlock bonemealable
                         && bonemealable.isValidBonemealTarget(level, above, state)) {
                     bonemealable.performBonemeal(serverLevel, serverLevel.getRandom(), above, state);
-                    maybeRotAFreshPumpkin(above, serverLevel.getRandom());
-                    state = level.getBlockState(above); // may have just matured into a fruit (or rotted)
+                    state = level.getBlockState(above); // may have just ripened (or rotted)
                 }
-                maturePumpkin[gx][gy] = state.is(Blocks.PUMPKIN);
+                // An already fused cell counts as ripe too, so a patch can grow as its neighbours
+                // ripen instead of being frozen at whatever size fused first.
+                ripePumpkin[gx][gy] = isRipePumpkin(state) || GiantPumpkinBlock.isFusedCell(state);
             }
         }
-        applyGiantPumpkinPatch(maturePumpkin);
+        applyGiantPumpkinPatches(ripePumpkin);
     }
 
     /**
@@ -334,48 +397,68 @@ public final class LiveFarmBlockAccess implements FarmBlockAccess {
     }
 
     /**
-     * If {@code stemPos} just turned into an ATTACHED_PUMPKIN_STEM (vanilla's own sign that its
-     * StemBlock just popped a fresh Pumpkin onto the neighboring cell its FACING points at - see
-     * StemBlock.randomTick, not reimplemented here), rolls the original game's ~20% "grew defective"
-     * chance and, on a hit, swaps that fresh Pumpkin for {@link MicraDrone#ROTTEN_PUMPKIN_BLOCK}
-     * instead. Matches the original: dying only ever happens right as a pumpkin finishes growing,
-     * never before.
+     * Re-partitions every ripe pumpkin in the plot (fused cells included) into fused squares (see
+     * GiantPatchDetector#findAllSquares) and repaints the plot to match: cells in a square become
+     * {@link MicraDrone#GIANT_PUMPKIN_BLOCK} with the POSITION marker for their spot, and fused cells
+     * that no square covers any more (a bigger square just formed around part of an older one, leaving
+     * a sliver of it outside) revert to ordinary ripe pumpkins. Only states that actually differ are
+     * written, so a stable plot costs no block updates. Deliberately a simplification of the original
+     * game's "grew together with zero deaths" rule: this only checks which cells are ripe right now,
+     * not growth history. Only ever called from boostGrowth(), which is itself only active once a
+     * corner marker has confirmed the plot - so this can't affect anything outside the claimed area.
      */
-    private void maybeRotAFreshPumpkin(BlockPos stemPos, RandomSource random) {
-        BlockState stemNowState = level.getBlockState(stemPos);
-        if (!stemNowState.is(Blocks.ATTACHED_PUMPKIN_STEM)) {
-            return;
+    private void applyGiantPumpkinPatches(boolean[][] ripePumpkin) {
+        int worldSize = ripePumpkin.length;
+        List<Patch> patches = GiantPatchDetector.findAllSquares(ripePumpkin);
+        BlockState[][] target = new BlockState[worldSize][worldSize]; // null = leave the cell alone
+        int[][] patchOf = new int[worldSize][worldSize]; // index into patches, or NO_PATCH
+        for (int[] row : patchOf) {
+            Arrays.fill(row, NO_PATCH);
         }
-        Direction facing = stemNowState.getValue(HorizontalDirectionalBlock.FACING);
-        BlockPos fruitPos = stemPos.relative(facing);
-        if (level.getBlockState(fruitPos).is(Blocks.PUMPKIN) && random.nextFloat() < PUMPKIN_ROT_CHANCE) {
-            level.setBlockAndUpdate(fruitPos, MicraDrone.ROTTEN_PUMPKIN_BLOCK.get().defaultBlockState());
-        }
-    }
-
-    /**
-     * Reskins the largest square of simultaneously-mature pumpkins (if any, see GiantPatchDetector)
-     * with {@link MicraDrone#GIANT_PUMPKIN_BLOCK} so it reads as one fused patch. Deliberately a
-     * simplification of the original game's "grew together with zero deaths" rule: this only checks
-     * which cells are mature right now, not growth history (see LiveFarmBlockAccess's Phase 3 commit
-     * for why). Only ever called from boostGrowth(), which is itself only active once a corner marker
-     * has confirmed the plot - so this can't affect anything outside the claimed farming area.
-     */
-    private void applyGiantPumpkinPatch(boolean[][] maturePumpkin) {
-        Optional<Patch> found = GiantPatchDetector.findLargestSquare(maturePumpkin);
-        if (found.isEmpty()) {
-            return;
-        }
-        Patch patch = found.get();
         BlockState giantPumpkin = MicraDrone.GIANT_PUMPKIN_BLOCK.get().defaultBlockState();
-        for (int lx = 0; lx < patch.side(); lx++) {
-            for (int ly = 0; ly < patch.side(); ly++) {
-                int gx = patch.originGx() + lx;
-                int gy = patch.originGy() + ly;
-                int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), gx, gy);
-                BlockPos above = origin.offset(offset[0], grid.groundYOffset() + 1, offset[1]);
-                int position = GiantPatchDetector.classifyPosition(lx, ly, patch.side());
-                level.setBlockAndUpdate(above, giantPumpkin.setValue(GiantPumpkinBlock.POSITION, position));
+        for (int p = 0; p < patches.size(); p++) {
+            Patch patch = patches.get(p);
+            for (int lx = 0; lx < patch.side(); lx++) {
+                for (int ly = 0; ly < patch.side(); ly++) {
+                    int position = GiantPatchDetector.worldOrientedPosition(lx, ly, patch.side(), grid.dirX(), grid.dirZ());
+                    target[patch.originGx() + lx][patch.originGy() + ly] = giantPumpkin.setValue(GiantPumpkinBlock.POSITION, position);
+                    patchOf[patch.originGx() + lx][patch.originGy() + ly] = p;
+                }
+            }
+        }
+        // A patch that took in a cell that wasn't fused before - a brand-new giant, or one that just
+        // grew - gets the fusion effect over its whole square; a stable patch stays quiet.
+        boolean[] grew = new boolean[patches.size()];
+        List<List<BlockPos>> patchCells = new ArrayList<>();
+        for (int p = 0; p < patches.size(); p++) {
+            patchCells.add(new ArrayList<>());
+        }
+        GiantPumpkinBlock.withPatchMutation(() -> {
+            for (int gx = 0; gx < worldSize; gx++) {
+                for (int gy = 0; gy < worldSize; gy++) {
+                    int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), gx, gy);
+                    BlockPos above = origin.offset(offset[0], grid.groundYOffset() + 1, offset[1]);
+                    BlockState current = level.getBlockState(above);
+                    BlockState wanted = target[gx][gy];
+                    int p = patchOf[gx][gy];
+                    if (p != NO_PATCH) {
+                        patchCells.get(p).add(above);
+                        grew[p] |= !GiantPumpkinBlock.isFusedCell(current);
+                    }
+                    if (wanted == null && GiantPumpkinBlock.isFusedCell(current)) {
+                        wanted = GiantPumpkinBlock.ripePumpkinState();
+                    }
+                    if (wanted != null && !current.equals(wanted)) {
+                        level.setBlockAndUpdate(above, wanted);
+                    }
+                }
+            }
+        });
+        if (level instanceof ServerLevel serverLevel) {
+            for (int p = 0; p < patches.size(); p++) {
+                if (grew[p]) {
+                    PumpkinEffects.fusion(serverLevel, patchCells.get(p), patches.get(p).side());
+                }
             }
         }
     }

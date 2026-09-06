@@ -17,8 +17,14 @@ import net.minecraft.resources.ResourceLocation;
  * {@code IdeScreen} gets its breakpoints back). Pushed to the viewing player when something
  * changed (at most once per tick - see DroneControllerBlockEntity#maybePushDebugState) and
  * immediately when the IDE opens. See issue #6 (debugger).
+ *
+ * <p>{@code breakpointRevision} is the server's copy of whichever {@code SetBreakpointsPayload
+ * #revision} last wrote {@code breakpoints} (0 if nothing ever has) - see that field's own doc for
+ * why a client compares it against its own last-sent revision before trusting {@code breakpoints}.
+ * {@code state}/{@code currentLine} carry no such staleness risk (the server is their only writer)
+ * and are always applied.
  */
-public record DebugStatePayload(BlockPos pos, int state, int currentLine, List<Integer> breakpoints) implements CustomPacketPayload {
+public record DebugStatePayload(BlockPos pos, int state, int currentLine, List<Integer> breakpoints, int breakpointRevision) implements CustomPacketPayload {
     public static final int STATE_IDLE = 0;
     public static final int STATE_RUNNING = 1;
     public static final int STATE_PAUSED = 2;
@@ -30,6 +36,7 @@ public record DebugStatePayload(BlockPos pos, int state, int currentLine, List<I
             ByteBufCodecs.VAR_INT, DebugStatePayload::state,
             ByteBufCodecs.VAR_INT, DebugStatePayload::currentLine,
             ByteBufCodecs.collection(ArrayList::new, ByteBufCodecs.VAR_INT), DebugStatePayload::breakpoints,
+            ByteBufCodecs.VAR_INT, DebugStatePayload::breakpointRevision,
             DebugStatePayload::new);
 
     @Override

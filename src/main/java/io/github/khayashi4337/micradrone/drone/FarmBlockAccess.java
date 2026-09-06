@@ -17,6 +17,9 @@ public interface FarmBlockAccess {
     /** True if the cell under the drone holds a defective ("rotten") pumpkin - see LiveFarmBlockAccess. */
     boolean isRotten();
 
+    /** Side length of the giant pumpkin under the drone, 0 if it isn't standing on one - see LiveFarmBlockAccess. */
+    int giantPumpkinSide();
+
     // ---- perception (issue #10) ----
     // Names are normalized through SenseNames.simplify, so a script sees "dirt" rather than
     // "minecraft:dirt". These are what let a script branch on the actual world instead of only on

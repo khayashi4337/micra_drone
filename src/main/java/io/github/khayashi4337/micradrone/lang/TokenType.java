@@ -6,6 +6,7 @@ public enum TokenType {
 
     // keywords
     IF, ELIF, ELSE, WHILE, FOR, IN, AND, OR, NOT, TRUE, FALSE, NONE,
+    DEF, RETURN, BREAK, CONTINUE, PASS,
 
     // operators & punctuation
     EQUAL, EQUAL_EQUAL, BANG_EQUAL, LESS, GREATER, LESS_EQUAL, GREATER_EQUAL,
