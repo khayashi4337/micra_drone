@@ -800,6 +800,46 @@ public final class Interpreter {
                 requireArgCount(call, 0);
                 yield api.getPlotId();
             }
+            case "cast_line" -> {
+                requireArgCount(call, 0);
+                yield api.castLine();
+            }
+            case "reel_in" -> {
+                requireArgCount(call, 0);
+                yield api.reelIn();
+            }
+            case "is_fishing" -> {
+                requireArgCount(call, 0);
+                yield api.isFishing();
+            }
+            case "is_bobber_bobbing" -> {
+                requireArgCount(call, 0);
+                yield api.isBobberBobbing();
+            }
+            case "did_fish_bite" -> {
+                requireArgCount(call, 0);
+                yield api.didFishBite();
+            }
+            case "is_open_water_cast" -> {
+                requireArgCount(call, 0);
+                yield api.isOpenWaterCast();
+            }
+            case "get_rod_durability" -> {
+                requireArgCount(call, 0);
+                yield api.getRodDurability();
+            }
+            case "is_anvil" -> {
+                requireArgCount(call, 0);
+                yield api.isAnvil();
+            }
+            case "get_repair_cost" -> {
+                requireArgCount(call, 0);
+                yield api.getRepairCost();
+            }
+            case "repair_rod" -> {
+                requireArgCount(call, 0);
+                yield api.repairRod();
+            }
             case "print" -> {
                 requireArgCount(call, 1);
                 api.print(stringify(eval(args.get(0))));

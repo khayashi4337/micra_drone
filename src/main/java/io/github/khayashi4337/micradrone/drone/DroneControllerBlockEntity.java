@@ -1,6 +1,7 @@
 package io.github.khayashi4337.micradrone.drone;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
@@ -16,6 +17,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 import javax.annotation.Nullable;
+
+import com.mojang.authlib.GameProfile;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
 import io.github.khayashi4337.micradrone.drone.net.DebugCommandPayload;
@@ -39,12 +42,20 @@ import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.StringTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.Containers;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.PlayerList;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResultHolder;
+import net.minecraft.world.entity.projectile.FishingHook;
 import net.minecraft.world.inventory.AnvilMenu;
+import net.minecraft.world.inventory.ContainerLevelAccess;
+import net.minecraft.world.inventory.Slot;
+import net.minecraft.world.item.FishingRodItem;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
@@ -52,6 +63,8 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.LevelResource;
+import net.neoforged.neoforge.common.util.FakePlayer;
+import net.neoforged.neoforge.common.util.FakePlayerFactory;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
@@ -162,6 +175,16 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     private DroneScriptRunner scriptRunner;
     /** The visible {@link DroneEntity} tracked by UUID (entities aren't safe to hold direct references to across reloads). */
     private UUID droneEntityUuid;
+    /**
+     * cast_line()/reel_in(): the rod this controller's automated angling currently uses, persisted
+     * here (not on the {@link FakePlayer} itself - {@link FakePlayerFactory} caches instances in a
+     * plain in-memory map with no NBT round-trip, so anything held in its hand would be lost on
+     * server restart). Loaded into the resolved angler's main hand immediately before every fishing/
+     * anvil action and read back immediately after (durability damage, breaking, repair results),
+     * matching the "BlockEntity owns the source of truth" pattern {@code points}/{@code unlockedCrops}
+     * already use.
+     */
+    private ItemStack currentRod = ItemStack.EMPTY;
 
     // RTOS task foundation (create_task/attach_isr): owned here, not by DroneScriptRunner, because
     // a fresh DroneScriptRunner is built on every Run (see startFreshRun below) - these must live
@@ -238,6 +261,42 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         return level.getEntity(droneEntityUuid) instanceof DroneEntity drone ? drone : null;
     }
 
+    /**
+     * cast_line()/reel_in()/repair_rod(): resolves this controller's "angler" - a headless
+     * {@link FakePlayer}, NeoForge's own utility for a server-side actor that real vanilla item logic
+     * (e.g. {@code FishingRodItem.use()}, {@code AnvilMenu}) can run against without a real network
+     * connection. Deliberately NOT spawned into the level via {@code addFreshEntity} - unlike
+     * {@link DroneEntity}, it has no appearance and is never meant to be seen; it is a plain Java
+     * actor, not world state. {@link FakePlayerFactory#get} itself caches by (level, profile) and
+     * explicitly documents "call this every time" as a valid usage - resolved fresh on every use
+     * rather than stored as a field, matching this class's general "resolve fresh, never cache
+     * position-derived state" idiom (see {@link #cornerMarkerPos}). Positioned at the drone's own
+     * grid cell each time, standing due south (yaw 0) and looking level (pitch 0) - {@code
+     * FishingHook}'s own constructor throws the hook FORWARD from there using real vanilla physics
+     * (Fable5.1 review finding: an earlier version of this javadoc wrongly claimed the hook lands
+     * "where the drone visibly stands" - it travels several blocks south first, the same way a real
+     * player's cast does, so open water needs to be south of the drone, not just under its feet).
+     * {@link #currentRod} - the only part of the angler's state this controller actually persists -
+     * is loaded into its main hand before returning; callers must read it back out (it may have
+     * taken durability damage or broken) once the action completes.
+     */
+    private FakePlayer resolveAngler(ServerLevel level) {
+        GameProfile profile = new GameProfile(anglerUuid(), "[MicraDrone Angler]");
+        FakePlayer angler = FakePlayerFactory.get(level, profile);
+        int[] offset = PlotGeometry.groundOffset(dirX, dirZ, gridX, gridY);
+        double x = getBlockPos().getX() + offset[0] + 0.5;
+        double y = getBlockPos().getY() + 1.0 + groundYOffset;
+        double z = getBlockPos().getZ() + offset[1] + 0.5;
+        angler.moveTo(x, y, z, 0.0F, 0.0F); // yaw 0 = facing south; the hook flies forward from here, not straight down
+        angler.setItemInHand(InteractionHand.MAIN_HAND, currentRod);
+        return angler;
+    }
+
+    /** A deterministic, per-controller-position UUID - so this controller always resolves the SAME cached angler. */
+    private UUID anglerUuid() {
+        return UUID.nameUUIDFromBytes(("micradrone:angler:" + getBlockPos().asLong()).getBytes(StandardCharsets.UTF_8));
+    }
+
     /** do_a_flip(): a no-op action visually, other than spinning the visible drone once - see DroneEntity#startFlip. */
     @Override
     public void triggerDroneFlip() {
@@ -247,6 +306,261 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
                 drone.startFlip();
             }
         }
+    }
+
+    /**
+     * cast_line(): throws a real hook via the SAME method vanilla's own right-click dispatch calls
+     * ({@code FishingRodItem.use()}), so enchantments (Lure/Luck of the Sea, read off {@link #currentRod}
+     * inside that method) and the bite-timing state machine are entirely vanilla's, not reimplemented
+     * here. No-op (false) if there's still no rod after {@link #ensureRodFromStock} (empty hand AND
+     * empty stock), or a hook is already out.
+     *
+     * <p>Codex review finding (confirmed bug): a brand-new controller's {@link #currentRod} starts
+     * {@code ItemStack.EMPTY} and this used to bail out right here before ever consulting
+     * {@link RodStock} - the "put a rod in an adjacent chest" README/help-scroll promise only ever
+     * became true AFTER a first successful {@link #reelIn()}, which itself could never happen. Pulling
+     * from stock here too closes that gap.
+     */
+    @Override
+    public boolean castLine() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+        ensureRodFromStock(serverLevel);
+        if (currentRod.isEmpty()) {
+            return false;
+        }
+        FakePlayer angler = resolveAngler(serverLevel);
+        if (angler.fishing != null || !(angler.getMainHandItem().getItem() instanceof FishingRodItem rodItem)) {
+            return false;
+        }
+        InteractionResultHolder<ItemStack> result = rodItem.use(serverLevel, angler, InteractionHand.MAIN_HAND);
+        currentRod = result.getObject();
+        setChanged();
+        return angler.fishing != null;
+    }
+
+    /**
+     * reel_in(): retrieves the currently-out hook via the same {@code FishingRodItem.use()} vanilla's
+     * second right-click calls - the real loot table roll and real durability damage happen inside
+     * that call, unmodified. No-op (false) if nothing is currently out.
+     */
+    @Override
+    public boolean reelIn() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+        FakePlayer angler = resolveAngler(serverLevel);
+        if (angler.fishing == null || !(angler.getMainHandItem().getItem() instanceof FishingRodItem rodItem)) {
+            return false;
+        }
+        InteractionResultHolder<ItemStack> result = rodItem.use(serverLevel, angler, InteractionHand.MAIN_HAND);
+        currentRod = result.getObject();
+        maybeSwapRod(serverLevel);
+        setChanged();
+        return true;
+    }
+
+    /**
+     * Rod durability margin below which reel_in() proactively retires an enchanted rod for a fresh
+     * one from stock, rather than risk it snapping (and its enchantments with it) on a future catch.
+     * Not a vanilla constant - there's no equivalent to borrow, so this is a small hand-picked buffer
+     * (a couple of catches' worth) rather than an arbitrary large number.
+     */
+    private static final int LOW_DURABILITY_MARGIN = 8;
+
+    /**
+     * Called after every reel_in(): if the rod just broke (now empty), pulls a spare from
+     * {@link RodStock}. Otherwise, if it's enchanted and running low on durability, proactively swaps
+     * it for a spare too - an in-place trade ({@link RodStock.RodLocation#swap}) so the retired rod
+     * is never discarded, just stashed exactly where the spare came from.
+     */
+    private void maybeSwapRod(ServerLevel level) {
+        if (currentRod.isEmpty()) {
+            ensureRodFromStock(level);
+            return;
+        }
+        boolean runningLow = currentRod.getMaxDamage() - currentRod.getDamageValue() <= LOW_DURABILITY_MARGIN;
+        if (currentRod.isEnchanted() && runningLow) {
+            RodStock.findSpareRod(level, getBlockPos()).ifPresent(spare -> currentRod = spare.swap(currentRod));
+        }
+    }
+
+    /**
+     * Pulls one rod from {@link RodStock} into {@link #currentRod} if (and only if) the hand is
+     * currently empty - the shared "get a rod from stock" step {@link #castLine} needs before its
+     * very first cast, and {@link #maybeSwapRod} needs after a rod breaks. A no-op if a rod is
+     * already held, or the stock has none.
+     */
+    private void ensureRodFromStock(ServerLevel level) {
+        if (!currentRod.isEmpty()) {
+            return;
+        }
+        RodStock.findSpareRod(level, getBlockPos()).ifPresent(spare -> {
+            currentRod = spare.take();
+            setChanged();
+        });
+    }
+
+    /** is_fishing()/internal guard: true while a hook thrown by {@link #castLine} is still out. */
+    @Override
+    public boolean isFishing() {
+        return currentHook().isPresent();
+    }
+
+    /**
+     * is_bobber_bobbing(): reads {@code FishingHook.currentState} directly (exposed via Access
+     * Transformer) rather than re-deriving it - the FLYING/BOBBING transition is vanilla's own timing,
+     * not something worth reimplementing.
+     */
+    @Override
+    public boolean isBobberBobbing() {
+        return currentHook().map(hook -> hook.currentState == FishingHook.FishHookState.BOBBING).orElse(false);
+    }
+
+    /**
+     * did_fish_bite(): reads {@code FishingHook.biting} directly (exposed via Access Transformer) -
+     * the same flag vanilla's own client bobber animation and reel timing key off of.
+     */
+    @Override
+    public boolean didFishBite() {
+        return currentHook().map(hook -> hook.biting).orElse(false);
+    }
+
+    /**
+     * is_open_water_cast(): {@code FishingHook.openWater} defaults to {@code true} and is only ever
+     * recalculated once the hook reaches {@code BOBBING} (decompiled source confirmed: the FLYING
+     * branch never touches it) - so a hook still flying toward dry land would otherwise read as
+     * open water too. Requiring BOBBING first is what makes "false" actually mean "landed somewhere
+     * that isn't open water" (Codex review finding: confirmed bug, the un-gated version could never
+     * truthfully report a bad cast before the hook landed).
+     */
+    @Override
+    public boolean isOpenWaterCast() {
+        return currentHook()
+                .filter(hook -> hook.currentState == FishingHook.FishHookState.BOBBING)
+                .map(FishingHook::isOpenWaterFishing)
+                .orElse(false);
+    }
+
+    /** Shared by the 4 read-only hook perception commands above: the angler's current hook, if any. */
+    private Optional<FishingHook> currentHook() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(resolveAngler(serverLevel).fishing);
+    }
+
+    /** get_rod_durability(): remaining uses on {@link #currentRod}, or -1 if no rod is held. */
+    @Override
+    public double rodDurability() {
+        if (currentRod.isEmpty()) {
+            return -1;
+        }
+        return currentRod.getMaxDamage() - currentRod.getDamageValue();
+    }
+
+    /** is_anvil(): true if a real anvil (any damage state) touches one of this controller's 6 faces. */
+    @Override
+    public boolean isAnvil() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+        return AnvilLookup.findAnvil(serverLevel, getBlockPos()).isPresent();
+    }
+
+    /** get_repair_cost(): peeks the combine {@link #planRepair} sets up, without committing it. */
+    @Override
+    public double repairCost() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return -1;
+        }
+        return planRepair(serverLevel).map(plan -> (double) plan.menu().getCost()).orElse(-1.0);
+    }
+
+    /**
+     * repair_rod(): re-plans the same combine as {@link #repairCost}, and if the paying owner (see
+     * {@link #resolvePayingOwner}) can actually afford it, commits it - takes the spare rod from
+     * stock, then hands off to {@code AnvilMenu.onTake()} for the XP deduction and the anvil's own
+     * chance to chip/break, exactly as vanilla would for a player-driven repair.
+     */
+    @Override
+    public boolean repairRod() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+        Optional<ServerPlayer> payer = resolvePayingOwner();
+        if (payer.isEmpty()) {
+            return false;
+        }
+        Optional<AnvilAttempt> plan = planRepair(serverLevel);
+        if (plan.isEmpty()) {
+            return false;
+        }
+        Slot resultSlot = plan.get().menu().getSlot(AnvilMenu.RESULT_SLOT);
+        ItemStack resultStack = resultSlot.getItem();
+        if (!resultSlot.mayPickup(payer.get())) {
+            return false;
+        }
+        plan.get().spareLocation().take();
+        resultSlot.onTake(payer.get(), resultStack);
+        currentRod = resultStack;
+        setChanged();
+        return true;
+    }
+
+    /**
+     * Shared by {@link #repairCost}/{@link #repairRod}: headlessly builds a real {@link AnvilMenu}
+     * against {@link #currentRod} and a spare rod from {@link RodStock} (peeked, not yet removed from
+     * its container - only {@link #repairRod} actually takes it) and lets vanilla's own combine
+     * algorithm ({@code AnvilMenu.createResult()}, triggered automatically by filling the input
+     * slots) decide the result. Empty if there's no adjacent anvil, no current rod, no spare, or
+     * vanilla's own algorithm rejects the combination outright (result slot stays empty - e.g.
+     * incompatible enchantments).
+     */
+    private Optional<AnvilAttempt> planRepair(ServerLevel level) {
+        if (currentRod.isEmpty()) {
+            return Optional.empty();
+        }
+        Optional<BlockPos> anvilPos = AnvilLookup.findAnvil(level, getBlockPos());
+        Optional<RodStock.RodLocation> spare = RodStock.findSpareRod(level, getBlockPos());
+        if (anvilPos.isEmpty() || spare.isEmpty()) {
+            return Optional.empty();
+        }
+        RodStock.RodLocation spareLocation = spare.get();
+        ItemStack spareRod = spareLocation.container().getItem(spareLocation.slot());
+        FakePlayer angler = resolveAngler(level);
+        AnvilMenu menu = new AnvilMenu(0, angler.getInventory(), ContainerLevelAccess.create(level, anvilPos.get()));
+        menu.getSlot(AnvilMenu.INPUT_SLOT).set(currentRod);
+        menu.getSlot(AnvilMenu.ADDITIONAL_SLOT).set(spareRod);
+        if (menu.getSlot(AnvilMenu.RESULT_SLOT).getItem().isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(new AnvilAttempt(menu, spareLocation));
+    }
+
+    private record AnvilAttempt(AnvilMenu menu, RodStock.RodLocation spareLocation) {
+    }
+
+    /**
+     * The player who pays repair_rod()'s XP cost - this controller's existing owner (whoever last ran
+     * a script here, see {@link #ownerUuid}/{@link #resolveOwner}), same as every other place
+     * credit/cost already flows through this controller. Must be online, in the SAME dimension as
+     * this controller, AND within the same 32-block tether vanilla's own
+     * {@code FishingHook.shouldStopFishing()} uses to decide a player has wandered off - not a
+     * distance invented for this feature.
+     *
+     * <p>Codex review finding (confirmed bug): {@link #resolveOwner} looks the owner up by UUID
+     * across the WHOLE server (any dimension), and {@code distanceToSqr} is a bare XYZ comparison
+     * with no dimension of its own - without the {@code player.level() == level} check, an owner
+     * standing at this controller's numeric coordinates in a DIFFERENT dimension (e.g. the Nether)
+     * would pass the distance filter and get charged XP for a repair they aren't actually near.
+     */
+    private Optional<ServerPlayer> resolvePayingOwner() {
+        return resolveOwner()
+                .filter(player -> player.level() == level)
+                .filter(player -> player.distanceToSqr(
+                        getBlockPos().getX() + 0.5, getBlockPos().getY() + 0.5, getBlockPos().getZ() + 0.5) <= 1024.0);
     }
 
     /**
@@ -339,9 +653,49 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         droneEntityUuid = null;
     }
 
+    /**
+     * Discards this controller's angler's active {@link FishingHook} (if any), drops {@link #currentRod}
+     * into the world, and empties the angler's hand. Called on block removal so none of the three
+     * lingers or is silently lost: {@link #resolveAngler}'s {@code FakePlayer} is a long-lived,
+     * factory-cached actor (NOT world state {@link #discardDroneEntity} removes), so a hook it's
+     * holding open would otherwise never get vanilla's normal despawn treatment - a real player
+     * entity going away is what usually ends a cast. And unlike {@link #points}/{@code unlockedCrops},
+     * this controller's block item has no component that would carry {@link #currentRod} into a
+     * broken-and-picked-back-up copy (Codex review finding: confirmed bugs - the hook/held rod
+     * previously survived a broken controller indefinitely, and the rod itself was simply lost).
+     */
+    public void discardAnglerState() {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        FakePlayer angler = resolveAngler(serverLevel);
+        if (angler.fishing != null) {
+            angler.fishing.discard();
+            angler.fishing = null;
+        }
+        angler.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+        if (!currentRod.isEmpty()) {
+            BlockPos pos = getBlockPos();
+            Containers.dropItemStack(serverLevel, pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, currentRod);
+            currentRod = ItemStack.EMPTY;
+        }
+    }
+
     /** Interrupts every create_task task this controller has started. Called on block removal so none outlive it. */
     public void stopAllTasks() {
         taskRegistry.stopAll();
+    }
+
+    /**
+     * Interrupts the main script itself (not just its create_task tasks), if one is running. Called
+     * on block removal for the same reason as {@link #stopAllTasks} - without it, the worker thread
+     * could still run one more action (e.g. cast_line()) after the controller is gone, taking a rod
+     * from stock that this now-orphaned BlockEntity can never return (Fable5.1 review finding).
+     */
+    public void stopScriptForRemoval() {
+        if (scriptRunner != null) {
+            scriptRunner.stop();
+        }
     }
 
     @Override
@@ -1140,6 +1494,7 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         // Absent on controllers saved before owner tracking existed - they simply have no owner
         // until someone next hits Run.
         ownerUuid = tag.hasUUID("OwnerUuid") ? tag.getUUID("OwnerUuid") : null;
+        currentRod = ItemStack.parseOptional(registries, tag.getCompound("CurrentRod"));
     }
 
     @Override
@@ -1167,5 +1522,6 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         if (ownerUuid != null) {
             tag.putUUID("OwnerUuid", ownerUuid);
         }
+        tag.put("CurrentRod", currentRod.save(registries));
     }
 }

@@ -12,6 +12,18 @@ final class FakeGridState implements DroneGridState {
     private final Map<String, Long> pointsByCrop = new HashMap<>();
     private final Set<String> unlockedCrops = new HashSet<>(Set.of("wheat"));
     private int flipCount;
+    private boolean hasRod;
+    private boolean fishing;
+    private int castCount;
+    private int reelCount;
+    private boolean bobbing;
+    private boolean biting;
+    private boolean openWaterCast;
+    private double rodDurability = -1;
+    private boolean anvil;
+    private double repairCost = -1;
+    private boolean repairPossible;
+    private int repairCount;
     private boolean redstoneOutput;
     private String pairTarget = "";
     private boolean paired;
@@ -99,6 +111,114 @@ final class FakeGridState implements DroneGridState {
             return false;
         }
         ownerSeeds.put(crop, have - 1);
+        return true;
+    }
+
+    void setHasRod(boolean hasRod) {
+        this.hasRod = hasRod;
+    }
+
+    int castCount() {
+        return castCount;
+    }
+
+    int reelCount() {
+        return reelCount;
+    }
+
+    @Override
+    public boolean castLine() {
+        if (!hasRod || fishing) {
+            return false;
+        }
+        fishing = true;
+        castCount++;
+        return true;
+    }
+
+    @Override
+    public boolean reelIn() {
+        if (!fishing) {
+            return false;
+        }
+        fishing = false;
+        reelCount++;
+        return true;
+    }
+
+    @Override
+    public boolean isFishing() {
+        return fishing;
+    }
+
+    void setBobbing(boolean bobbing) {
+        this.bobbing = bobbing;
+    }
+
+    void setBiting(boolean biting) {
+        this.biting = biting;
+    }
+
+    void setOpenWaterCast(boolean openWaterCast) {
+        this.openWaterCast = openWaterCast;
+    }
+
+    void setRodDurability(double rodDurability) {
+        this.rodDurability = rodDurability;
+    }
+
+    @Override
+    public boolean isBobberBobbing() {
+        return bobbing;
+    }
+
+    @Override
+    public boolean didFishBite() {
+        return biting;
+    }
+
+    @Override
+    public boolean isOpenWaterCast() {
+        return openWaterCast;
+    }
+
+    @Override
+    public double rodDurability() {
+        return rodDurability;
+    }
+
+    void setAnvil(boolean anvil) {
+        this.anvil = anvil;
+    }
+
+    void setRepairCost(double repairCost) {
+        this.repairCost = repairCost;
+    }
+
+    void setRepairPossible(boolean repairPossible) {
+        this.repairPossible = repairPossible;
+    }
+
+    int repairCount() {
+        return repairCount;
+    }
+
+    @Override
+    public boolean isAnvil() {
+        return anvil;
+    }
+
+    @Override
+    public double repairCost() {
+        return repairCost;
+    }
+
+    @Override
+    public boolean repairRod() {
+        if (!repairPossible) {
+            return false;
+        }
+        repairCount++;
         return true;
     }
 

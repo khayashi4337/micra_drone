@@ -50,6 +50,61 @@ public interface DroneGridState {
     void triggerDroneFlip();
 
     /**
+     * cast_line(): throws a real {@code FishingHook} the same way a player's right-click does (via
+     * the resolved angler - see {@code DroneControllerBlockEntity#resolveAngler}), so vanilla's own
+     * enchantment/physics/timing logic runs unmodified. False (no-op) if already fishing, or if this
+     * controller has no rod ({@link #currentRod}/task #66's swap logic decides that).
+     */
+    boolean castLine();
+
+    /**
+     * reel_in(): retrieves the currently-out hook the same way a player's second right-click does -
+     * real loot table roll, real durability damage, all vanilla. False (no-op) if not currently
+     * fishing (nothing was cast, or it was already reeled in).
+     */
+    boolean reelIn();
+
+    /** Read-only: true if a hook is currently out (cast_line() succeeded and reel_in() hasn't run yet). */
+    boolean isFishing();
+
+    /** Read-only: true if a hook is out AND has landed in water (still flying through the air otherwise). */
+    boolean isBobberBobbing();
+
+    /** Read-only: true if a hook is out and a fish is currently biting (the active bite window). */
+    boolean didFishBite();
+
+    /** Read-only: true if the current cast landed in a valid open-water fishing spot. */
+    boolean isOpenWaterCast();
+
+    /**
+     * Read-only: the current rod's remaining uses (max durability minus damage taken so far), or -1
+     * if no rod is currently held (a broken rod's stack becomes empty rather than reaching a real
+     * zero-durability state, so -1 is the unambiguous "no rod" sentinel).
+     */
+    double rodDurability();
+
+    // ---- automated anvil repair: heals the current rod (durability/enchantments) by sacrificing a
+    // spare from stock, via a real headless AnvilMenu - see DroneControllerBlockEntity.
+
+    /** Read-only: true if a real anvil (any damage state) touches one of this controller's 6 faces. */
+    boolean isAnvil();
+
+    /**
+     * Read-only: the XP-level cost vanilla's own anvil algorithm computes for repairing the current
+     * rod with a spare from stock, without touching either item. -1 if a repair isn't currently
+     * possible (no anvil, no current rod, no spare, or vanilla's own algorithm rejects the
+     * combination outright).
+     */
+    double repairCost();
+
+    /**
+     * repair_rod(): commits the same combine {@link #repairCost()} previews - consumes the spare rod
+     * from stock, deducts the plot owner's XP, and rolls the anvil's own chance to chip/break. False
+     * if a repair isn't currently possible, or the owner is offline/too far away/can't afford it.
+     */
+    boolean repairRod();
+
+    /**
      * Sets this plot's own Corner Marker's redstone output on (full power) or off - see set_output().
      * Silently does nothing if this plot has no marker (none placed, or none found on a diagonal).
      */

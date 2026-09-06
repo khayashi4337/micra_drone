@@ -31,6 +31,15 @@ final class FakeDroneApi implements DroneApi {
     private String biome = "plains";
     private double light = 15;
     private String plotId = "";
+    private boolean hasRod;
+    private boolean fishing;
+    private boolean bobbing;
+    private boolean biting;
+    private boolean openWaterCast;
+    private double rodDurability = -1;
+    private boolean anvil;
+    private double repairCost = -1;
+    private boolean repairPossible;
     private boolean output = false;
     private String pairTarget = "";
     private boolean pairedResult = false;
@@ -74,6 +83,38 @@ final class FakeDroneApi implements DroneApi {
 
     synchronized void setPlotId(String plotId) {
         this.plotId = plotId;
+    }
+
+    synchronized void setHasRod(boolean hasRod) {
+        this.hasRod = hasRod;
+    }
+
+    synchronized void setBobbing(boolean bobbing) {
+        this.bobbing = bobbing;
+    }
+
+    synchronized void setBiting(boolean biting) {
+        this.biting = biting;
+    }
+
+    synchronized void setOpenWaterCast(boolean openWaterCast) {
+        this.openWaterCast = openWaterCast;
+    }
+
+    synchronized void setRodDurability(double rodDurability) {
+        this.rodDurability = rodDurability;
+    }
+
+    synchronized void setAnvil(boolean anvil) {
+        this.anvil = anvil;
+    }
+
+    synchronized void setRepairCost(double repairCost) {
+        this.repairCost = repairCost;
+    }
+
+    synchronized void setRepairPossible(boolean repairPossible) {
+        this.repairPossible = repairPossible;
     }
 
     synchronized void setPairedResult(boolean paired) {
@@ -264,6 +305,74 @@ final class FakeDroneApi implements DroneApi {
     @Override
     public synchronized void print(String text) {
         printed.add(text);
+    }
+
+    @Override
+    public synchronized boolean castLine() {
+        calls.add("cast_line");
+        if (!hasRod || fishing) {
+            return false;
+        }
+        fishing = true;
+        return true;
+    }
+
+    @Override
+    public synchronized boolean reelIn() {
+        calls.add("reel_in");
+        if (!fishing) {
+            return false;
+        }
+        fishing = false;
+        return true;
+    }
+
+    @Override
+    public synchronized boolean isFishing() {
+        calls.add("is_fishing");
+        return fishing;
+    }
+
+    @Override
+    public synchronized boolean isBobberBobbing() {
+        calls.add("is_bobber_bobbing");
+        return bobbing;
+    }
+
+    @Override
+    public synchronized boolean didFishBite() {
+        calls.add("did_fish_bite");
+        return biting;
+    }
+
+    @Override
+    public synchronized boolean isOpenWaterCast() {
+        calls.add("is_open_water_cast");
+        return openWaterCast;
+    }
+
+    @Override
+    public synchronized double getRodDurability() {
+        calls.add("get_rod_durability");
+        return rodDurability;
+    }
+
+    @Override
+    public synchronized boolean isAnvil() {
+        calls.add("is_anvil");
+        return anvil;
+    }
+
+    @Override
+    public synchronized double getRepairCost() {
+        calls.add("get_repair_cost");
+        return repairCost;
+    }
+
+    @Override
+    public synchronized boolean repairRod() {
+        calls.add("repair_rod");
+        return repairPossible;
     }
 
     /**

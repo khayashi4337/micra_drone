@@ -143,6 +143,20 @@ own. Inspired by the Steam game
 - **Multiplayer-friendly** — several players can watch the same
   controller's log/debugger output at once, and harvest achievements are
   credited to whoever started the run.
+- **Automated fishing and anvil repair** — `cast_line()` and `reel_in()`
+  throw and retrieve a real fishing rod through vanilla's own item logic
+  (no hopper/dispenser contraptions to break on a future update), with
+  perception commands (`is_fishing`, `is_bobber_bobbing`, `did_fish_bite`,
+  `is_open_water_cast`, `get_rod_durability`) to script around the bite
+  timing. The cast flies forward the same distance a real player's would
+  before landing, so open water needs to be south of the drone, not just
+  at its feet. Keep spare `minecraft:fishing_rod`s in any container touching
+  the controller and it auto-restocks a broken rod, or proactively retires
+  an enchanted one before it snaps. With a real anvil also touching the
+  controller, `get_repair_cost()` and `repair_rod()` combine the current rod
+  with a spare from that same stock — a real headless anvil menu, XP charged
+  to whichever player is credited with the plot (must be online, in the
+  same dimension, and within 32 blocks).
 
 ### Getting started
 

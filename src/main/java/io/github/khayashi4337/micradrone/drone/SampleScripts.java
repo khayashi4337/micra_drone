@@ -376,6 +376,40 @@ public final class SampleScripts {
             print(get_points("pumpkin"))
             """;
 
+    public static final String AUTO_FISH_AND_REPAIR = """
+            # 自動釣り+アンヴィル自動修理のデモ。「投げる/巻く/直す」の判断だけをここに
+            # 書けばよく、竿の物理・戦利品・耐久値・アンヴィルの合成計算はすべて本物の
+            # vanillaロジックがそのまま行う(ホッパー等のブロックのハック的な組み合わせは
+            # 一切使っていない)。コントローラの隣接6面のどこかに minecraft:fishing_rod を
+            # 入れたチェスト等を置いておくこと。アンヴィル修理も使うなら本物のアンヴィルも
+            # 隣接させておく(どちらも無くても投げる/巻くだけは動く)。
+            # vanillaのアタリはすぐには来ない(数秒〜数十秒)ので、sleep_ticks()で
+            # 実際に時間を進めながら待つ(即座にループを回すだけだと一度も釣れない)。
+            caught = 0
+            repaired = 0
+            for cast_num in range(5):
+                if not is_fishing():
+                    cast_line()
+                bit = False
+                for wait in range(40):
+                    sleep_ticks(10)
+                    if did_fish_bite():
+                        bit = True
+                        break
+                reeled = reel_in()
+                if bit and reeled:
+                    caught = caught + 1
+                durability = get_rod_durability()
+                if durability >= 0 and durability < 10:
+                    if is_anvil() and get_repair_cost() >= 0:
+                        if repair_rod():
+                            repaired = repaired + 1
+            print("釣れた回数:")
+            print(caught)
+            print("修理した回数:")
+            print(repaired)
+            """;
+
     /**
      * RTOS-style: a background task blinks the plot marker's redstone output forever while the
      * main script is free to finish and do something else. Demonstrates create_task()/
@@ -418,6 +452,7 @@ public final class SampleScripts {
         all.put("carrot_farm.mdrone", CARROT_FARM);
         all.put("pair_and_signal_harvest.mdrone", PAIR_AND_SIGNAL_HARVEST);
         all.put("pumpkin_smart_harvest.mdrone", PUMPKIN_SMART_HARVEST);
+        all.put("auto_fish_and_repair.mdrone", AUTO_FISH_AND_REPAIR);
         all.put("blink_task.mdrone", BLINK_TASK);
         return Map.copyOf(all);
     }

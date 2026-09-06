@@ -18,6 +18,11 @@ public final class CommandNames {
             "get_ground", "get_block_above", "get_time", "get_weather", "get_biome", "get_light", "get_plot_id",
             "set_output", "get_output", "pair_with", "is_paired",
             "print", "range",
+            // Automated fishing - see DroneControllerBlockEntity/LiveDroneApi.
+            "cast_line", "reel_in", "is_fishing",
+            "is_bobber_bobbing", "did_fish_bite", "is_open_water_cast", "get_rod_durability",
+            // Automated anvil repair - shares its rod stock with the fishing commands above.
+            "is_anvil", "get_repair_cost", "repair_rod",
             // General-purpose, nothing to do with the drone - see Interpreter's "general-purpose builtins".
             "len", "abs", "min", "max", "random", "str", "list", "dict", "set", "semaphore", "create_task",
             "attach_isr", "raise_interrupt");

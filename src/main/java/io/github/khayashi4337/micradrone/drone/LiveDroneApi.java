@@ -181,6 +181,75 @@ public final class LiveDroneApi implements DroneApi {
         logSink.accept(text);
     }
 
+    @Override
+    public boolean castLine() {
+        return dispatch(this::castAttempt);
+    }
+
+    @Override
+    public boolean reelIn() {
+        return dispatch(this::reelAttempt);
+    }
+
+    @Override
+    public boolean isFishing() {
+        return queryMainThread(grid::isFishing);
+    }
+
+    @Override
+    public boolean isBobberBobbing() {
+        return queryMainThread(grid::isBobberBobbing);
+    }
+
+    @Override
+    public boolean didFishBite() {
+        return queryMainThread(grid::didFishBite);
+    }
+
+    @Override
+    public boolean isOpenWaterCast() {
+        return queryMainThread(grid::isOpenWaterCast);
+    }
+
+    @Override
+    public double getRodDurability() {
+        return queryMainThread(grid::rodDurability);
+    }
+
+    @Override
+    public boolean isAnvil() {
+        return queryMainThread(grid::isAnvil);
+    }
+
+    @Override
+    public double getRepairCost() {
+        return queryMainThread(grid::repairCost);
+    }
+
+    @Override
+    public boolean repairRod() {
+        return dispatch(() -> new Attempt(grid.repairRod(), () -> {
+        }));
+    }
+
+    /**
+     * cast_line()/reel_in() decide success/failure by ACTUALLY performing the vanilla call
+     * (unlike move/till/plant, there's no way to check "would this succeed" without doing it -
+     * {@code FishingRodItem.use()} has no side-effect-free query form) - so, unlike every other
+     * paced action here, the mutation happens up front and {@link Attempt#apply} is a no-op.
+     * Pacing is still applied afterward, matching how every other world-changing command costs the
+     * same 4-tick delay.
+     */
+    private Attempt castAttempt() {
+        return new Attempt(grid.castLine(), () -> {
+        });
+    }
+
+    private Attempt reelAttempt() {
+        return new Attempt(grid.reelIn(), () -> {
+        });
+    }
+
     /**
      * Waits {@code ticks} game ticks without touching the world - RTOS-style tasks (create_task)
      * use this to pace/yield themselves, sharing the exact same tick-driven pacing as move/till/

@@ -510,38 +510,155 @@ class InterpreterTest {
     }
 
     @Test
-    void setOutputDispatchesAndGetOutputReadsBackTheSameFake() {
-        FakeDroneApi api = run("""
-                set_output(True)
-                print(get_output())
-                set_output(False)
-                print(get_output())
-                """);
-        assertEquals(List.of("set_output:true", "get_output", "set_output:false", "get_output"), api.calls);
-        assertEquals(List.of("True", "False"), api.printed);
+    void castLineFailsWithoutARodAndSucceedsOnceOneIsGiven() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                print(cast_line())
+                """).scan()).parseProgram());
+        assertEquals(List.of("False"), api.printed);
+
+        api.setHasRod(true);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                print(cast_line())
+                print(is_fishing())
+                """).scan()).parseProgram());
+        assertEquals(List.of("False", "True", "True"), api.printed);
     }
 
     @Test
-    void setOutputRejectsANonBooleanArgument() {
+    void reelInFailsWithNothingOutAndSucceedsAfterACast() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        api.setHasRod(true);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                print(reel_in())
+                cast_line()
+                print(is_fishing())
+                print(reel_in())
+                print(is_fishing())
+                """).scan()).parseProgram());
+        assertEquals(List.of("False", "True", "True", "False"), api.printed);
+    }
+
+    @Test
+    void castLineFailsWhileAlreadyFishing() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        api.setHasRod(true);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                cast_line()
+                print(cast_line())
+                """).scan()).parseProgram());
+        assertEquals(List.of("False"), api.printed);
+    }
+
+    @Test
+    void castLineRejectsArguments() {
         assertThrows(MicraLangException.class, () -> run("""
-                set_output(1)
+                cast_line(1)
                 """));
     }
 
     @Test
-    void setOutputRejectsTheWrongArgumentCount() {
+    void reelInRejectsArguments() {
         assertThrows(MicraLangException.class, () -> run("""
-                set_output()
-                """));
-        assertThrows(MicraLangException.class, () -> run("""
-                set_output(True, False)
+                reel_in(1)
                 """));
     }
 
     @Test
-    void getOutputRejectsArguments() {
+    void isFishingRejectsArguments() {
         assertThrows(MicraLangException.class, () -> run("""
-                get_output(True)
+                is_fishing(1)
+                """));
+    }
+
+    @Test
+    void fishingPerceptionCommandsReadStateFromTheApi() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                print(get_rod_durability())
+                """).scan()).parseProgram());
+        assertEquals(List.of("-1"), api.printed);
+
+        api.setBobbing(true);
+        api.setBiting(true);
+        api.setOpenWaterCast(true);
+        api.setRodDurability(10);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                print(is_bobber_bobbing())
+                print(did_fish_bite())
+                print(is_open_water_cast())
+                print(get_rod_durability())
+                """).scan()).parseProgram());
+        assertEquals(List.of("-1", "True", "True", "True", "10"), api.printed);
+    }
+
+    @Test
+    void isBobberBobbingRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                is_bobber_bobbing(1)
+                """));
+    }
+
+    @Test
+    void didFishBiteRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                did_fish_bite(1)
+                """));
+    }
+
+    @Test
+    void isOpenWaterCastRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                is_open_water_cast(1)
+                """));
+    }
+
+    @Test
+    void getRodDurabilityRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                get_rod_durability(1)
+                """));
+    }
+
+    @Test
+    void anvilRepairCommandsReadAndActThroughTheApi() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                print(is_anvil())
+                print(get_repair_cost())
+                print(repair_rod())
+                """).scan()).parseProgram());
+        assertEquals(List.of("False", "-1", "False"), api.printed);
+
+        api.setAnvil(true);
+        api.setRepairCost(3);
+        api.setRepairPossible(true);
+        new Interpreter(api).run(new Parser(new Lexer("""
+                print(is_anvil())
+                print(get_repair_cost())
+                print(repair_rod())
+                """).scan()).parseProgram());
+        assertEquals(List.of("False", "-1", "False", "True", "3", "True"), api.printed);
+    }
+
+    @Test
+    void isAnvilRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                is_anvil(1)
+                """));
+    }
+
+    @Test
+    void getRepairCostRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                get_repair_cost(1)
+                """));
+    }
+
+    @Test
+    void repairRodRejectsArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                repair_rod(1)
                 """));
     }
 

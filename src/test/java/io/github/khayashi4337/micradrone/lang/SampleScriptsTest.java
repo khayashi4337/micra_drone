@@ -235,4 +235,35 @@ class SampleScriptsTest {
         assertEquals(1, harvestCount, "one harvest() on any cell takes the whole fused patch");
         assertTrue(api.printed.contains("all ripe - harvesting the giant pumpkin:"));
     }
+
+    /**
+     * With a rod, a bite on every check, and a rod that's always "running low" next to a working
+     * anvil, every one of the 5 casts should both catch (on the inner wait loop's very first
+     * did_fish_bite() check) and repair - proves the sample actually calls through to
+     * cast_line()/reel_in()/repair_rod() rather than just reading state.
+     */
+    @Test
+    void autoFishAndRepairCastsReelsAndRepairsOnEveryIterationWhenEverythingIsReady() {
+        FakeDroneApi api = new FakeDroneApi(3);
+        api.setHasRod(true);
+        api.setBiting(true);
+        api.setRodDurability(5);
+        api.setAnvil(true);
+        api.setRepairCost(3);
+        api.setRepairPossible(true);
+
+        new Interpreter(api).run(parse(SampleScripts.AUTO_FISH_AND_REPAIR));
+
+        assertEquals(List.of("釣れた回数:", "5", "修理した回数:", "5"), api.printed);
+    }
+
+    /** With no rod and no anvil in reach, the sample must still run its 5 casts harmlessly. */
+    @Test
+    void autoFishAndRepairDoesNothingHarmfulWithNoRodOrAnvil() {
+        FakeDroneApi api = new FakeDroneApi(3);
+
+        new Interpreter(api).run(parse(SampleScripts.AUTO_FISH_AND_REPAIR));
+
+        assertEquals(List.of("釣れた回数:", "0", "修理した回数:", "0"), api.printed);
+    }
 }

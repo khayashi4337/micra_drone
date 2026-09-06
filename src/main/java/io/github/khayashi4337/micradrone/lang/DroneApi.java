@@ -118,6 +118,42 @@ public interface DroneApi {
     /** Appends text to the script's log panel. */
     void print(String text);
 
+    // ---- automated fishing: a real fishing rod, thrown by a real (headless) angler, so vanilla's
+    // own enchantment/loot-table/durability logic runs unmodified - see DroneControllerBlockEntity.
+
+    /** Throws a real hook the same way a right-click cast does. False if there's no rod, or one is already out. */
+    boolean castLine();
+
+    /** Retrieves the currently-out hook the same way a second right-click does. False if nothing is out. */
+    boolean reelIn();
+
+    /** Read-only: true while a hook thrown by cast_line() is still out (hasn't been reeled in yet). */
+    boolean isFishing();
+
+    /** Read-only: true if a hook is out AND has landed in water (still flying through the air otherwise). */
+    boolean isBobberBobbing();
+
+    /** Read-only: true if a hook is out and a fish is currently biting (the active bite window). */
+    boolean didFishBite();
+
+    /** Read-only: true if the current cast landed in a valid open-water fishing spot. */
+    boolean isOpenWaterCast();
+
+    /** Read-only: the current rod's remaining uses, or -1 if no rod is currently held. */
+    double getRodDurability();
+
+    // ---- automated anvil repair: heals the current rod by sacrificing a spare rod from stock,
+    // via a real (headless) anvil menu - see DroneControllerBlockEntity.
+
+    /** Read-only: true if a real anvil touches the controller. */
+    boolean isAnvil();
+
+    /** Read-only: XP-level cost to repair the current rod with a spare, or -1 if not currently possible. */
+    double getRepairCost();
+
+    /** Repairs the current rod using a spare from stock, if the plot owner can afford it. */
+    boolean repairRod();
+
     /**
      * Waits {@code ticks} game ticks without touching the world - the basic pacing primitive a
      * task uses to yield/pause itself (e.g. a blink loop). Uses the exact same tick-driven pacing
