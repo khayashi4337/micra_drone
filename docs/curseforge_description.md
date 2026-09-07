@@ -157,6 +157,18 @@ own. Inspired by the Steam game
   with a spare from that same stock — a real headless anvil menu, XP charged
   to whichever player is credited with the plot (must be online, in the
   same dimension, and within 32 blocks).
+- **Real-world coordinates and a bindable waypoint compass** —
+  `get_world_x()`/`get_world_y()`/`get_world_z()`/`get_dimension()` expose
+  the drone's actual world position (distinct from the 0..worldSize grid
+  coordinates `get_pos_x()`/`get_pos_y()` return), and `sqrt()` lets a
+  script compute a straight-line distance to any saved landmark. The
+  craftable **Waypoint Compass** (compass + paper) works like a vanilla
+  lodestone compass you can bind to any spot just by right-clicking there —
+  no block to place at the destination. While held, it traces a particle
+  trail toward the bound point and shows the distance in the action bar
+  (and says so plainly if you've wandered into a different dimension).
+  Craft a few to remember several places — a landing pad, a Nether portal —
+  independently.
 
 ### Getting started
 

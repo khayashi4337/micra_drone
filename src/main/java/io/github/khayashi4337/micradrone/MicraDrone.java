@@ -17,6 +17,9 @@ import io.github.khayashi4337.micradrone.drone.PumpkinCropBlock;
 import io.github.khayashi4337.micradrone.drone.RegionPointerItem;
 import io.github.khayashi4337.micradrone.drone.ScriptScrollItem;
 import io.github.khayashi4337.micradrone.drone.ScrollEnchanter;
+import io.github.khayashi4337.micradrone.drone.WaypointCompassItem;
+import io.github.khayashi4337.micradrone.drone.WaypointCompassListener;
+import io.github.khayashi4337.micradrone.drone.WaypointData;
 import io.github.khayashi4337.micradrone.drone.net.DebugCommandPayload;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
@@ -35,6 +38,7 @@ import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.StopScriptPayload;
 import io.github.khayashi4337.micradrone.drone.net.StopViewingPayload;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponentType;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -83,6 +87,8 @@ public class MicraDrone {
     public static final DeferredRegister<CreativeModeTab> CREATIVE_MODE_TABS = DeferredRegister.create(Registries.CREATIVE_MODE_TAB, MODID);
     // Create a Deferred Register to hold BlockEntityTypes which will all be registered under the "micradrone" namespace
     public static final DeferredRegister<BlockEntityType<?>> BLOCK_ENTITY_TYPES = DeferredRegister.create(Registries.BLOCK_ENTITY_TYPE, MODID);
+    // Create a Deferred Register to hold DataComponentTypes which will all be registered under the "micradrone" namespace
+    public static final DeferredRegister<DataComponentType<?>> DATA_COMPONENT_TYPES = DeferredRegister.create(Registries.DATA_COMPONENT_TYPE, MODID);
 
     public static final DeferredBlock<DroneControllerBlock> DRONE_CONTROLLER_BLOCK = BLOCKS.registerBlock(
             "drone_controller", DroneControllerBlock::new,
@@ -117,6 +123,16 @@ public class MicraDrone {
     // Stacks to 1, like ScriptScrollItem - a tool the player holds and reuses, not a stackable good.
     public static final DeferredItem<RegionPointerItem> REGION_POINTER_ITEM =
             ITEMS.registerItem("region_pointer", RegionPointerItem::new, new Item.Properties().stacksTo(1));
+
+    // A lodestone-compass-like wand bindable to any spot by right-clicking there, no block needed
+    // at the destination (see WaypointCompassItem/WaypointCompassListener/WaypointCompassRenderer).
+    // Stacks to 1 - a tool, not a stackable good.
+    public static final DeferredItem<WaypointCompassItem> WAYPOINT_COMPASS_ITEM =
+            ITEMS.registerItem("waypoint_compass", WaypointCompassItem::new, new Item.Properties().stacksTo(1));
+    // Absence of this component on the stack means "not bound yet" - see WaypointData's javadoc.
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<WaypointData>> WAYPOINT_DATA =
+            DATA_COMPONENT_TYPES.register("waypoint", () -> DataComponentType.<WaypointData>builder()
+                    .persistent(WaypointData.CODEC).build());
 
     // The mod's own pumpkin crop (see PumpkinCropBlock for why vanilla's stem couldn't be used).
     // Properties mirror vanilla Blocks.WHEAT/CARROTS exactly - noCollission in particular, so the
@@ -169,9 +185,11 @@ public class MicraDrone {
         CREATIVE_MODE_TABS.register(modEventBus);
         BLOCK_ENTITY_TYPES.register(modEventBus);
         ENTITY_TYPES.register(modEventBus);
+        DATA_COMPONENT_TYPES.register(modEventBus);
 
         // Register ourselves for server and other game events we are interested in.
         NeoForge.EVENT_BUS.register(this);
+        NeoForge.EVENT_BUS.register(new WaypointCompassListener());
 
         // Add the drone controller to the vanilla "Functional Blocks" creative tab
         modEventBus.addListener(this::addCreative);
@@ -196,6 +214,7 @@ public class MicraDrone {
             // JEI builds its ingredient list from creative tabs: an item in no tab is hidden there,
             // and so is its recipe - which is exactly how the pointer's recipe "didn't work" at first.
             event.accept(REGION_POINTER_ITEM);
+            event.accept(WAYPOINT_COMPASS_ITEM);
         }
     }
 

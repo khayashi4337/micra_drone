@@ -8,6 +8,7 @@ import io.github.khayashi4337.micradrone.client.IdeScreen;
 import io.github.khayashi4337.micradrone.client.RegionPointerListener;
 import io.github.khayashi4337.micradrone.client.RegionSelectionRenderer;
 import io.github.khayashi4337.micradrone.client.ShopScreen;
+import io.github.khayashi4337.micradrone.client.WaypointCompassRenderer;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
@@ -45,6 +46,7 @@ public class MicraDroneClient {
         NeoForge.EVENT_BUS.register(new EnchantTableWatcher());
         NeoForge.EVENT_BUS.register(new RegionPointerListener());
         NeoForge.EVENT_BUS.register(new RegionSelectionRenderer());
+        NeoForge.EVENT_BUS.register(new WaypointCompassRenderer());
         // The unsaved drafts and the undo histories are keyed the same way, and that key carries no
         // save/server identity, so neither may outlive the world it was written in - why, and what
         // the key is made of, is documented once, on IdeScreen#unsavedDrafts. Logged (not just
