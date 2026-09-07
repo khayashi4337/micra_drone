@@ -9,13 +9,17 @@ import io.github.khayashi4337.micradrone.client.RegionPointerListener;
 import io.github.khayashi4337.micradrone.client.RegionSelectionRenderer;
 import io.github.khayashi4337.micradrone.client.ShopScreen;
 import io.github.khayashi4337.micradrone.client.WaypointCompassRenderer;
+import io.github.khayashi4337.micradrone.drone.WaypointData;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
 import io.github.khayashi4337.micradrone.drone.net.ShopStatePayload;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.geom.ModelLayerLocation;
+import net.minecraft.client.renderer.item.CompassItemPropertyFunction;
+import net.minecraft.client.renderer.item.ItemProperties;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.GlobalPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.inventory.EnchantmentMenu;
@@ -64,6 +68,16 @@ public class MicraDroneClient {
     @SubscribeEvent
     static void onClientSetup(FMLClientSetupEvent event) {
         MicraDrone.LOGGER.info("MicraDrone: client setup complete");
+        // ItemProperties' backing maps are plain (non-concurrent) HashMaps shared with every other
+        // mod's client setup - enqueueWork defers this onto the main thread instead of whatever
+        // parallel loading thread FMLClientSetupEvent itself runs on, avoiding a concurrent-mutation
+        // race with another mod registering its own property at the same time.
+        event.enqueueWork(() -> ItemProperties.register(MicraDrone.WAYPOINT_COMPASS_ITEM.get(),
+                ResourceLocation.fromNamespaceAndPath(MicraDrone.MODID, "angle"),
+                new CompassItemPropertyFunction((level, stack, entity) -> {
+                    WaypointData data = stack.get(MicraDrone.WAYPOINT_DATA.get());
+                    return data == null ? null : GlobalPos.of(data.dimension(), data.pos());
+                })));
     }
 
     @SubscribeEvent

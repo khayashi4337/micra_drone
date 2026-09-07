@@ -164,9 +164,11 @@ own. Inspired by the Steam game
   script compute a straight-line distance to any saved landmark. The
   craftable **Waypoint Compass** (compass + paper) works like a vanilla
   lodestone compass you can bind to any spot just by right-clicking there —
-  no block to place at the destination. While held, it traces a particle
-  trail toward the bound point and shows the distance in the action bar
-  (and says so plainly if you've wandered into a different dimension).
+  no block to place at the destination. Its needle actually spins to point
+  at the bound spot, wobble and all, the same rotation code vanilla's own
+  compass uses — while held it also traces a particle trail toward it and
+  shows the distance in the action bar (and says so plainly, needle
+  spinning aimlessly, if you've wandered into a different dimension).
   Craft a few to remember several places — a landing pad, a Nether portal —
   independently.
 
