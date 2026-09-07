@@ -54,20 +54,42 @@ class LiveDroneApiTest {
     /**
      * get_world_x()/y()/z() translate the grid cell to real coordinates using the SAME
      * PlotGeometry math syncDronePosition/resolveAngler use to place the visible drone/angler -
-     * this is the one place that math is exercised against the real (non-fake) LiveDroneApi.
+     * this is the one place that math is exercised against the real (non-fake) LiveDroneApi. The
+     * +0.5 on X/Z matters (Codex review finding: an earlier version omitted it, landing half a
+     * block off from where the visible drone/angler actually stand).
      */
     @Test
     void worldCoordinatesAreAnchoredOnTheControllersOwnOriginPlusTheGridOffset() {
         FakeGridState grid = new FakeGridState(5);
         grid.setOrigin(100, 64, 200);
-        grid.setGridPos(2, 3); // dirX()/dirZ() are fixed at 1 in FakeGridState
+        grid.setGridPos(2, 3);
         grid.setDimensionId("minecraft:the_nether");
         LiveDroneApi api = newApi(new FakeMainThreadGateway(), new PacedActionQueue(), grid, new FakeFarmBlockAccess(), msg -> {});
 
-        assertEquals(103.0, api.getWorldX());
+        assertEquals(103.5, api.getWorldX());
         assertEquals(65.0, api.getWorldY()); // origin Y + 1 (drone stands above ground) + groundYOffset(0)
-        assertEquals(204.0, api.getWorldZ());
+        assertEquals(204.5, api.getWorldZ());
         assertEquals("minecraft:the_nether", api.getDimension());
+    }
+
+    /**
+     * Same math, but with the two cases the previous test's fixed dirX()/dirZ()=+1 and
+     * groundYOffset()=0 couldn't exercise (Codex review finding: a coverage gap, not a bug) - a
+     * plot growing in the negative world direction, and a surface-mounted controller (farmland one
+     * block down from the controller itself).
+     */
+    @Test
+    void worldCoordinatesHandleNegativeDirectionsAndASurfaceMountedController() {
+        FakeGridState grid = new FakeGridState(5);
+        grid.setOrigin(100, 64, 200);
+        grid.setDirection(-1, -1);
+        grid.setGroundYOffset(-1);
+        grid.setGridPos(2, 3);
+        LiveDroneApi api = newApi(new FakeMainThreadGateway(), new PacedActionQueue(), grid, new FakeFarmBlockAccess(), msg -> {});
+
+        assertEquals(97.5, api.getWorldX()); // 100 + (-1*(1+2)) + 0.5
+        assertEquals(64.0, api.getWorldY()); // 64 + 1 + (-1)
+        assertEquals(196.5, api.getWorldZ()); // 200 + (-1*(1+3)) + 0.5
     }
 
     @Test

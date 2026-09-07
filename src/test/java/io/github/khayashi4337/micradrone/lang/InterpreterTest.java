@@ -1959,6 +1959,7 @@ class InterpreterTest {
                 def handler():
                     seen.append(len([1, 2, 3]))
                     seen.append(abs(-5))
+                    seen.append(sqrt(9))
                     seen.append(str(7))
                     local_sem = semaphore()
                     local_sem.post()
@@ -1967,6 +1968,6 @@ class InterpreterTest {
                 raise_interrupt("edge")
                 print(seen)
                 """);
-        assertEquals(List.of("[3, 5, \"7\", \"semaphore ok\"]"), api.printed);
+        assertEquals(List.of("[3, 5, 3, \"7\", \"semaphore ok\"]"), api.printed);
     }
 }

@@ -31,6 +31,9 @@ final class FakeGridState implements DroneGridState {
     private int originY;
     private int originZ;
     private String dimensionId = "minecraft:overworld";
+    private int dirX = 1;
+    private int dirZ = 1;
+    private int groundYOffset = 0;
 
     FakeGridState(int size) {
         this.size = size;
@@ -67,17 +70,26 @@ final class FakeGridState implements DroneGridState {
 
     @Override
     public int dirX() {
-        return 1;
+        return dirX;
     }
 
     @Override
     public int dirZ() {
-        return 1;
+        return dirZ;
     }
 
     @Override
     public int groundYOffset() {
-        return 0;
+        return groundYOffset;
+    }
+
+    void setDirection(int dirX, int dirZ) {
+        this.dirX = dirX;
+        this.dirZ = dirZ;
+    }
+
+    void setGroundYOffset(int groundYOffset) {
+        this.groundYOffset = groundYOffset;
     }
 
     void setOrigin(int x, int y, int z) {

@@ -94,6 +94,21 @@ public final class CommandsHelpDoc {
             get_world_size()
                 畑の一辺の長さ（マス数）。コントローラとコーナーマーカーの置き方で変わる。
 
+            get_world_x()
+            get_world_y()
+            get_world_z()
+                ドローンの今いるマスを、Minecraftワールドの実座標に変換して
+                返す（get_pos_x()/get_pos_y()の0始まりの相対座標とは別物）。
+                保存しておいた別の場所の座標との距離計算などに使う:
+                dx = get_world_x() - 目的地のx
+                dz = get_world_z() - 目的地のz
+                print(sqrt(dx * dx + dz * dz))
+
+            get_dimension()
+                今いるディメンションのID（例: "minecraft:overworld",
+                "minecraft:the_nether"）。ディメンションをまたいだ距離計算は
+                意味を持たないので、比較してから使うこと。
+
             get_points()
                 このプロットが今まで稼いだ資源ポイントの合計（全作物の合計）。
 
@@ -335,6 +350,10 @@ public final class CommandsHelpDoc {
 
             abs(数)
                 絶対値。abs(-3) は 3。
+
+            sqrt(数)
+                平方根。sqrt(9) は 3。負の数を渡すとエラーになる。
+                二点間の距離を求めるのに使える: sqrt(dx*dx + dz*dz)
 
             random()
                 0以上1未満の乱数。

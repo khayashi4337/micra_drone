@@ -113,11 +113,16 @@ public final class LiveDroneApi implements DroneApi {
      * entity and the fishing angler, just exposed to scripts directly. No new movement model: the
      * drone is still confined to the same worldSize x worldSize plot, this just answers "where is
      * that, in real coordinates" for math against an arbitrary landmark (e.g. a saved waypoint).
+     *
+     * <p>The {@code + 0.5} on X/Z matters (Codex review finding: confirmed bug without it) -
+     * {@code syncDronePosition}/{@code resolveAngler} both center the visible entity/angler on the
+     * block, so a script comparing get_world_x()/z() against, say, a waypoint's block coordinates
+     * would otherwise be systematically half a block off from where the drone actually stands.
      */
     @Override
     public double getWorldX() {
         int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), grid.gridX(), grid.gridY());
-        return grid.originX() + offset[0];
+        return grid.originX() + offset[0] + 0.5;
     }
 
     @Override
@@ -128,7 +133,7 @@ public final class LiveDroneApi implements DroneApi {
     @Override
     public double getWorldZ() {
         int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), grid.gridX(), grid.gridY());
-        return grid.originZ() + offset[1];
+        return grid.originZ() + offset[1] + 0.5;
     }
 
     @Override
