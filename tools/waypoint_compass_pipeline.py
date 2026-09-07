@@ -84,8 +84,10 @@ def paint_ticks(img):
 
 
 def needle_color(t):
-    # Dark teal at the tail, brightening through the centre pivot, to a near-white highlight at
-    # the tip - the gem-line look in the reference image.
+    # Both ends fade to dark teal, brightest right at the centre pivot (Codex review finding: an
+    # earlier comment claimed the +t tip was "near-white", but it's dark like the -t tail on
+    # purpose - a needle that's brightest in the middle and dims toward both ends reads as a single
+    # gem, not an arrow, at 32px; see the pivot gem in paint_needle for the pointing cue instead).
     if t <= -3:
         return GLOW_LO
     if t <= -1:
@@ -147,11 +149,24 @@ def main():
 
     # Main model: frame 0's own texture as the base, plus threshold overrides for the rest - same
     # "midpoint of each frame's angle range" scheme vanilla's compass.json uses, just in straight
-    # ascending order (frame i at threshold (2i+1)/64) since these are new frames, not vanilla's.
-    overrides = [{"predicate": {"angle": 0.0}, "model": f"micradrone:item/{frame_name(0)}"}]
+    # ascending order (frame i at threshold (2i-1)/64) since these are new frames, not vanilla's.
+    #
+    # Two Codex review findings, both fixed here:
+    # 1. The predicate key MUST be namespaced ("micradrone:angle", matching what
+    #    ItemProperties.register() in MicraDroneClient.java registers under) - a bare "angle" key
+    #    parses as "minecraft:angle" (ResourceLocation's default-namespace rule), which is never
+    #    registered for this item, so every override would silently fail to match and the needle
+    #    would never move at all.
+    # 2. Vanilla's own compass.json has 33 entries, not 32 - the last one re-wraps the top of the
+    #    range ([63/64, 1.0)) back to frame 0, the same way angle 0.0 itself does at the bottom.
+    #    Without it, that top sliver stays pinned to frame 31 instead of wrapping smoothly.
+    ANGLE_KEY = "micradrone:angle"
+    overrides = [{"predicate": {ANGLE_KEY: 0.0}, "model": f"micradrone:item/{frame_name(0)}"}]
     for i in range(1, FRAME_COUNT):
-        overrides.append({"predicate": {"angle": (2 * i - 1) / (2 * FRAME_COUNT)},
+        overrides.append({"predicate": {ANGLE_KEY: (2 * i - 1) / (2 * FRAME_COUNT)},
                            "model": f"micradrone:item/{frame_name(i)}"})
+    overrides.append({"predicate": {ANGLE_KEY: (2 * FRAME_COUNT - 1) / (2 * FRAME_COUNT)},
+                       "model": f"micradrone:item/{frame_name(0)}"})
     main_model = {
         "parent": "minecraft:item/generated",
         "textures": {"layer0": f"micradrone:item/{frame_name(0)}"},

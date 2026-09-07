@@ -6,195 +6,201 @@
   "overrides": [
     {
       "predicate": {
-        "angle": 0.0
+        "micradrone:angle": 0.0
       },
       "model": "micradrone:item/waypoint_compass_00"
     },
     {
       "predicate": {
-        "angle": 0.015625
+        "micradrone:angle": 0.015625
       },
       "model": "micradrone:item/waypoint_compass_01"
     },
     {
       "predicate": {
-        "angle": 0.046875
+        "micradrone:angle": 0.046875
       },
       "model": "micradrone:item/waypoint_compass_02"
     },
     {
       "predicate": {
-        "angle": 0.078125
+        "micradrone:angle": 0.078125
       },
       "model": "micradrone:item/waypoint_compass_03"
     },
     {
       "predicate": {
-        "angle": 0.109375
+        "micradrone:angle": 0.109375
       },
       "model": "micradrone:item/waypoint_compass_04"
     },
     {
       "predicate": {
-        "angle": 0.140625
+        "micradrone:angle": 0.140625
       },
       "model": "micradrone:item/waypoint_compass_05"
     },
     {
       "predicate": {
-        "angle": 0.171875
+        "micradrone:angle": 0.171875
       },
       "model": "micradrone:item/waypoint_compass_06"
     },
     {
       "predicate": {
-        "angle": 0.203125
+        "micradrone:angle": 0.203125
       },
       "model": "micradrone:item/waypoint_compass_07"
     },
     {
       "predicate": {
-        "angle": 0.234375
+        "micradrone:angle": 0.234375
       },
       "model": "micradrone:item/waypoint_compass_08"
     },
     {
       "predicate": {
-        "angle": 0.265625
+        "micradrone:angle": 0.265625
       },
       "model": "micradrone:item/waypoint_compass_09"
     },
     {
       "predicate": {
-        "angle": 0.296875
+        "micradrone:angle": 0.296875
       },
       "model": "micradrone:item/waypoint_compass_10"
     },
     {
       "predicate": {
-        "angle": 0.328125
+        "micradrone:angle": 0.328125
       },
       "model": "micradrone:item/waypoint_compass_11"
     },
     {
       "predicate": {
-        "angle": 0.359375
+        "micradrone:angle": 0.359375
       },
       "model": "micradrone:item/waypoint_compass_12"
     },
     {
       "predicate": {
-        "angle": 0.390625
+        "micradrone:angle": 0.390625
       },
       "model": "micradrone:item/waypoint_compass_13"
     },
     {
       "predicate": {
-        "angle": 0.421875
+        "micradrone:angle": 0.421875
       },
       "model": "micradrone:item/waypoint_compass_14"
     },
     {
       "predicate": {
-        "angle": 0.453125
+        "micradrone:angle": 0.453125
       },
       "model": "micradrone:item/waypoint_compass_15"
     },
     {
       "predicate": {
-        "angle": 0.484375
+        "micradrone:angle": 0.484375
       },
       "model": "micradrone:item/waypoint_compass_16"
     },
     {
       "predicate": {
-        "angle": 0.515625
+        "micradrone:angle": 0.515625
       },
       "model": "micradrone:item/waypoint_compass_17"
     },
     {
       "predicate": {
-        "angle": 0.546875
+        "micradrone:angle": 0.546875
       },
       "model": "micradrone:item/waypoint_compass_18"
     },
     {
       "predicate": {
-        "angle": 0.578125
+        "micradrone:angle": 0.578125
       },
       "model": "micradrone:item/waypoint_compass_19"
     },
     {
       "predicate": {
-        "angle": 0.609375
+        "micradrone:angle": 0.609375
       },
       "model": "micradrone:item/waypoint_compass_20"
     },
     {
       "predicate": {
-        "angle": 0.640625
+        "micradrone:angle": 0.640625
       },
       "model": "micradrone:item/waypoint_compass_21"
     },
     {
       "predicate": {
-        "angle": 0.671875
+        "micradrone:angle": 0.671875
       },
       "model": "micradrone:item/waypoint_compass_22"
     },
     {
       "predicate": {
-        "angle": 0.703125
+        "micradrone:angle": 0.703125
       },
       "model": "micradrone:item/waypoint_compass_23"
     },
     {
       "predicate": {
-        "angle": 0.734375
+        "micradrone:angle": 0.734375
       },
       "model": "micradrone:item/waypoint_compass_24"
     },
     {
       "predicate": {
-        "angle": 0.765625
+        "micradrone:angle": 0.765625
       },
       "model": "micradrone:item/waypoint_compass_25"
     },
     {
       "predicate": {
-        "angle": 0.796875
+        "micradrone:angle": 0.796875
       },
       "model": "micradrone:item/waypoint_compass_26"
     },
     {
       "predicate": {
-        "angle": 0.828125
+        "micradrone:angle": 0.828125
       },
       "model": "micradrone:item/waypoint_compass_27"
     },
     {
       "predicate": {
-        "angle": 0.859375
+        "micradrone:angle": 0.859375
       },
       "model": "micradrone:item/waypoint_compass_28"
     },
     {
       "predicate": {
-        "angle": 0.890625
+        "micradrone:angle": 0.890625
       },
       "model": "micradrone:item/waypoint_compass_29"
     },
     {
       "predicate": {
-        "angle": 0.921875
+        "micradrone:angle": 0.921875
       },
       "model": "micradrone:item/waypoint_compass_30"
     },
     {
       "predicate": {
-        "angle": 0.953125
+        "micradrone:angle": 0.953125
       },
       "model": "micradrone:item/waypoint_compass_31"
+    },
+    {
+      "predicate": {
+        "micradrone:angle": 0.984375
+      },
+      "model": "micradrone:item/waypoint_compass_00"
     }
   ]
 }
