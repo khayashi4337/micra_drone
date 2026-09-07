@@ -15,6 +15,7 @@ public final class CommandNames {
             "move", "till", "plant", "harvest", "do_a_flip", "sleep_ticks",
             "can_harvest", "is_rotten", "measure",
             "get_pos_x", "get_pos_y", "get_world_size", "get_points",
+            "get_world_x", "get_world_y", "get_world_z", "get_dimension",
             "get_ground", "get_block_above", "get_time", "get_weather", "get_biome", "get_light", "get_plot_id",
             "set_output", "get_output", "pair_with", "is_paired",
             "print", "range",
@@ -24,7 +25,7 @@ public final class CommandNames {
             // Automated anvil repair - shares its rod stock with the fishing commands above.
             "is_anvil", "get_repair_cost", "repair_rod",
             // General-purpose, nothing to do with the drone - see Interpreter's "general-purpose builtins".
-            "len", "abs", "min", "max", "random", "str", "list", "dict", "set", "semaphore", "create_task",
+            "len", "abs", "min", "max", "sqrt", "random", "str", "list", "dict", "set", "semaphore", "create_task",
             "attach_isr", "raise_interrupt");
 
     private CommandNames() {

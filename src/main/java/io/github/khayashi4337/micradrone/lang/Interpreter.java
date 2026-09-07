@@ -31,8 +31,8 @@ public final class Interpreter {
      * the same as pure arithmetic - otherwise it never trips and can exhaust the heap.
      */
     private static final Set<String> GENERAL_PURPOSE_BUILTINS =
-            Set.of("len", "abs", "min", "max", "random", "str", "list", "set", "dict", "semaphore", "create_task",
-                    "attach_isr", "raise_interrupt");
+            Set.of("len", "abs", "min", "max", "sqrt", "random", "str", "list", "set", "dict", "semaphore",
+                    "create_task", "attach_isr", "raise_interrupt");
     /**
      * The subset of {@link #GENERAL_PURPOSE_BUILTINS} also safe to call from inside an ISR handler
      * (see {@link #isrContext}) - deliberately NOT the same set as GENERAL_PURPOSE_BUILTINS
@@ -45,7 +45,7 @@ public final class Interpreter {
      * future) is refused too, for the same reason - see the ISR gate in {@link #evalCall}.
      */
     private static final Set<String> ISR_SAFE_BUILTINS =
-            Set.of("len", "abs", "min", "max", "random", "str", "list", "set", "dict", "semaphore");
+            Set.of("len", "abs", "min", "max", "sqrt", "random", "str", "list", "set", "dict", "semaphore");
     /** How deep {@link #stringify(Object, int)} descends into nested collections before giving up. */
     private static final int MAX_STRINGIFY_DEPTH = 8;
 
@@ -745,6 +745,22 @@ public final class Interpreter {
                 requireArgCount(call, 0);
                 yield api.getWorldSize();
             }
+            case "get_world_x" -> {
+                requireArgCount(call, 0);
+                yield api.getWorldX();
+            }
+            case "get_world_y" -> {
+                requireArgCount(call, 0);
+                yield api.getWorldY();
+            }
+            case "get_world_z" -> {
+                requireArgCount(call, 0);
+                yield api.getWorldZ();
+            }
+            case "get_dimension" -> {
+                requireArgCount(call, 0);
+                yield api.getDimension();
+            }
             case "get_points" -> {
                 if (args.isEmpty()) {
                     yield api.getPoints();
@@ -853,6 +869,14 @@ public final class Interpreter {
             case "abs" -> {
                 requireArgCount(call, 1);
                 yield Math.abs(asDouble(argAt(call, 0), call.line()));
+            }
+            case "sqrt" -> {
+                requireArgCount(call, 1);
+                double value = asDouble(argAt(call, 0), call.line());
+                if (value < 0) {
+                    throw new MicraLangException(call.line(), "sqrt() argument must not be negative but was " + stringify(value));
+                }
+                yield Math.sqrt(value);
             }
             case "min" -> extreme(call, true);
             case "max" -> extreme(call, false);

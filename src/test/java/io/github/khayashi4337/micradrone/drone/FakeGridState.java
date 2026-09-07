@@ -27,6 +27,10 @@ final class FakeGridState implements DroneGridState {
     private boolean redstoneOutput;
     private String pairTarget = "";
     private boolean paired;
+    private int originX;
+    private int originY;
+    private int originZ;
+    private String dimensionId = "minecraft:overworld";
 
     FakeGridState(int size) {
         this.size = size;
@@ -74,6 +78,36 @@ final class FakeGridState implements DroneGridState {
     @Override
     public int groundYOffset() {
         return 0;
+    }
+
+    void setOrigin(int x, int y, int z) {
+        this.originX = x;
+        this.originY = y;
+        this.originZ = z;
+    }
+
+    void setDimensionId(String dimensionId) {
+        this.dimensionId = dimensionId;
+    }
+
+    @Override
+    public int originX() {
+        return originX;
+    }
+
+    @Override
+    public int originY() {
+        return originY;
+    }
+
+    @Override
+    public int originZ() {
+        return originZ;
+    }
+
+    @Override
+    public String dimensionId() {
+        return dimensionId;
     }
 
     @Override

@@ -106,6 +106,36 @@ public final class LiveDroneApi implements DroneApi {
         return grid.worldSize();
     }
 
+    /**
+     * get_world_x()/y()/z(): the drone's current grid cell translated to real world block
+     * coordinates, anchored on the controller's own position - the same {@link PlotGeometry}
+     * math {@code syncDronePosition}/{@code resolveAngler} already use to place the visible drone
+     * entity and the fishing angler, just exposed to scripts directly. No new movement model: the
+     * drone is still confined to the same worldSize x worldSize plot, this just answers "where is
+     * that, in real coordinates" for math against an arbitrary landmark (e.g. a saved waypoint).
+     */
+    @Override
+    public double getWorldX() {
+        int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), grid.gridX(), grid.gridY());
+        return grid.originX() + offset[0];
+    }
+
+    @Override
+    public double getWorldY() {
+        return grid.originY() + 1.0 + grid.groundYOffset();
+    }
+
+    @Override
+    public double getWorldZ() {
+        int[] offset = PlotGeometry.groundOffset(grid.dirX(), grid.dirZ(), grid.gridX(), grid.gridY());
+        return grid.originZ() + offset[1];
+    }
+
+    @Override
+    public String getDimension() {
+        return grid.dimensionId();
+    }
+
     @Override
     public double getPoints() {
         return grid.pointsByCrop().values().stream().mapToLong(Long::longValue).sum();

@@ -265,6 +265,75 @@ class InterpreterTest {
         assertEquals(List.of("3", "3", "2.5"), api.printed);
     }
 
+    @Test
+    void sqrtReturnsThePositiveRoot() {
+        FakeDroneApi api = run("""
+                print(sqrt(9))
+                print(sqrt(2))
+                print(sqrt(0))
+                """);
+        assertEquals(List.of("9", "2", "0").size(), api.printed.size());
+        assertEquals("3", api.printed.get(0));
+        assertEquals(Math.sqrt(2), Double.parseDouble(api.printed.get(1)), 1e-9);
+        assertEquals("0", api.printed.get(2));
+    }
+
+    @Test
+    void sqrtRejectsANegativeArgument() {
+        MicraLangException e = assertThrows(MicraLangException.class, () -> run("""
+                sqrt(-1)
+                """));
+        assertTrue(e.getMessage().contains("negative"));
+    }
+
+    @Test
+    void sqrtRejectsTheWrongArgumentCount() {
+        assertThrows(MicraLangException.class, () -> run("""
+                sqrt()
+                """));
+        assertThrows(MicraLangException.class, () -> run("""
+                sqrt(1, 2)
+                """));
+    }
+
+    /**
+     * get_world_x()/y()/z()/get_dimension() read real coordinates (via DroneApi), unrelated to the
+     * 0..worldSize grid get_pos_x()/get_pos_y() report - combined with sqrt(), a script can compute
+     * a straight-line distance to an arbitrary landmark.
+     */
+    @Test
+    void worldCoordinatesAndDimensionAreReadableAndUsableForDistanceMath() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        api.setWorldPos(3, 70, 4);
+        api.setDimension("minecraft:the_nether");
+        new Interpreter(api).run(new Parser(new Lexer("""
+                print(get_world_x())
+                print(get_world_y())
+                print(get_world_z())
+                print(get_dimension())
+                dx = get_world_x() - 0
+                dz = get_world_z() - 0
+                print(sqrt(dx * dx + dz * dz))
+                """).scan()).parseProgram());
+        assertEquals(List.of("3", "70", "4", "minecraft:the_nether", "5"), api.printed);
+    }
+
+    @Test
+    void worldCoordinateGettersRejectArguments() {
+        assertThrows(MicraLangException.class, () -> run("""
+                get_world_x(1)
+                """));
+        assertThrows(MicraLangException.class, () -> run("""
+                get_world_y(1)
+                """));
+        assertThrows(MicraLangException.class, () -> run("""
+                get_world_z(1)
+                """));
+        assertThrows(MicraLangException.class, () -> run("""
+                get_dimension(1)
+                """));
+    }
+
     /** Python's two shapes: several arguments, or one collection to scan. */
     @Test
     void minAndMaxTakeArgumentsOrACollection() {

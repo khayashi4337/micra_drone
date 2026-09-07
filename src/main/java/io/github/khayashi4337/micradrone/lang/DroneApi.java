@@ -50,6 +50,20 @@ public interface DroneApi {
 
     double getWorldSize();
 
+    /**
+     * Read-only: the drone's current grid cell in real world block coordinates (not the 0..worldSize
+     * grid coordinates {@link #getPosX}/{@link #getPosY} return) - for math against an arbitrary
+     * real-world landmark (a saved waypoint, another plot, etc.), not just this plot's own grid.
+     */
+    double getWorldX();
+
+    double getWorldY();
+
+    double getWorldZ();
+
+    /** Read-only: this plot's dimension id, e.g. "minecraft:overworld" - so a script can tell dimensions apart. */
+    String getDimension();
+
     /** Read-only: this plot's current resource point balance, summed across every crop type. */
     double getPoints();
 

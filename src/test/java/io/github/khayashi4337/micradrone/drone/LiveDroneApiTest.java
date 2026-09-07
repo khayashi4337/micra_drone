@@ -51,6 +51,25 @@ class LiveDroneApiTest {
         assertEquals(0, grid.gridY());
     }
 
+    /**
+     * get_world_x()/y()/z() translate the grid cell to real coordinates using the SAME
+     * PlotGeometry math syncDronePosition/resolveAngler use to place the visible drone/angler -
+     * this is the one place that math is exercised against the real (non-fake) LiveDroneApi.
+     */
+    @Test
+    void worldCoordinatesAreAnchoredOnTheControllersOwnOriginPlusTheGridOffset() {
+        FakeGridState grid = new FakeGridState(5);
+        grid.setOrigin(100, 64, 200);
+        grid.setGridPos(2, 3); // dirX()/dirZ() are fixed at 1 in FakeGridState
+        grid.setDimensionId("minecraft:the_nether");
+        LiveDroneApi api = newApi(new FakeMainThreadGateway(), new PacedActionQueue(), grid, new FakeFarmBlockAccess(), msg -> {});
+
+        assertEquals(103.0, api.getWorldX());
+        assertEquals(65.0, api.getWorldY()); // origin Y + 1 (drone stands above ground) + groundYOffset(0)
+        assertEquals(204.0, api.getWorldZ());
+        assertEquals("minecraft:the_nether", api.getDimension());
+    }
+
     @Test
     void moveOutOfBoundsFailsImmediatelyAndDoesNotMove() throws Exception {
         FakeMainThreadGateway gateway = new FakeMainThreadGateway();

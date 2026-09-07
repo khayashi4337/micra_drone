@@ -25,6 +25,16 @@ public interface DroneGridState {
      */
     int groundYOffset();
 
+    /** The controller block's own real-world coordinates - what get_world_x()/y()/z() are anchored to. */
+    int originX();
+
+    int originY();
+
+    int originZ();
+
+    /** The dimension this controller is in, e.g. "minecraft:overworld" - what get_dimension() returns. */
+    String dimensionId();
+
     /** This plot's point balance for one crop type (0 if it has never earned any). Never resets on its own. */
     long getPoints(String crop);
 

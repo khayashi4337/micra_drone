@@ -43,6 +43,10 @@ final class FakeDroneApi implements DroneApi {
     private boolean output = false;
     private String pairTarget = "";
     private boolean pairedResult = false;
+    private double worldX = 0;
+    private double worldY = 64;
+    private double worldZ = 0;
+    private String dimension = "minecraft:overworld";
 
     final List<String> calls = new ArrayList<>();
     final List<String> printed = new ArrayList<>();
@@ -71,6 +75,16 @@ final class FakeDroneApi implements DroneApi {
 
     synchronized void setWeather(String weather) {
         this.weather = weather;
+    }
+
+    synchronized void setWorldPos(double worldX, double worldY, double worldZ) {
+        this.worldX = worldX;
+        this.worldY = worldY;
+        this.worldZ = worldZ;
+    }
+
+    synchronized void setDimension(String dimension) {
+        this.dimension = dimension;
     }
 
     synchronized void setDayTime(long dayTime) {
@@ -217,6 +231,26 @@ final class FakeDroneApi implements DroneApi {
     @Override
     public double getWorldSize() {
         return size; // final, never mutated - no synchronization needed
+    }
+
+    @Override
+    public synchronized double getWorldX() {
+        return worldX;
+    }
+
+    @Override
+    public synchronized double getWorldY() {
+        return worldY;
+    }
+
+    @Override
+    public synchronized double getWorldZ() {
+        return worldZ;
+    }
+
+    @Override
+    public synchronized String getDimension() {
+        return dimension;
     }
 
     @Override

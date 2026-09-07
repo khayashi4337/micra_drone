@@ -719,6 +719,27 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
     }
 
     @Override
+    public int originX() {
+        return getBlockPos().getX();
+    }
+
+    @Override
+    public int originY() {
+        return getBlockPos().getY();
+    }
+
+    @Override
+    public int originZ() {
+        return getBlockPos().getZ();
+    }
+
+    /** get_dimension(): "unknown" only while this BlockEntity isn't attached to a Level yet (never true in-game). */
+    @Override
+    public String dimensionId() {
+        return level != null ? level.dimension().location().toString() : "unknown";
+    }
+
+    @Override
     public long getPoints(String crop) {
         return pointsByCrop.getOrDefault(crop, 0L);
     }
