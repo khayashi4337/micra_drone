@@ -157,6 +157,21 @@ Failure message: Mod offroad requires sable 2.0.0 or above, and below 3.0.0
 
 Aeronauticsのbundled版はjarJarで`aeronautics`/`simulated`/`offroad`の3modを内包しており、全てが`sable`(公式ドキュメント未記載の共有ライブラリmod)を要求していた。実機の`mods`フォルダにあった`sable-neoforge-1.21.1-2.0.3.jar`と同一ファイルをModrinth API(`https://api.modrinth.com/v2/project/sable/version`)で特定し(project T9PomCSv, version 1L6XJqnY)、追加した上で2回目の`runClient`で成功(13mod構成、クラッシュなし)。この追加分はTask 2側のコミット(`4756410`)に含まれる。
 
+**追記2(Opus 5レビュー2回目、本コミットで対応): Phase1所有ファイルへの後続変更の記録**
+
+上記の一連の作業の後、以下の追加修正をPhase1が所有するファイル(`build.gradle`, `src/main/templates/META-INF/neoforge.mods.toml`, `gradle.properties`)に対して行った。1回目のOpus 5レビュー対応時と2回目のOpus 5レビュー対応時、いずれもこの計画書への追記が漏れていたため、まとめてここに記録する(指摘#9・#I-4と同種の記録漏れの是正)。
+
+1. `build.gradle`の3つの新規Mavenリポジトリ(`maven.createmod.net`, `maven.ithundxr.dev/snapshots`, `api.modrinth.com/maven`)に`content { includeGroup(...) }`/`includeGroupByRegex(...)`を追加(JUnit等無関係な依存解決まで毎回問い合わせる非効率を解消)
+2. `gradle.properties`の`aeronautics_version`/`sable_version`(Modrinthの不透明なバージョンID)に、何のファイルに対応するかの説明コメントを追加
+3. `neoforge.mods.toml`に`create`/`aeronautics`/`sable`の`required`依存宣言を追加。**この作業中、テンプレートに書いた日本語コメントが`generateModMetadata`タスクの文字化け(Windows上のプラットフォームデフォルトエンコーディング問題)でTOML構文を破壊し、実機`runClient`で`ParsingException: Failed to parse data from Reader`のクラッシュが実際に発生することを発見した。** 根本原因は`build.gradle`の`generateModMetadata`タスクに`filteringCharset = 'UTF-8'`が指定されていなかったこと。1回目の対応ではコメントを英語に置き換える対症療法のみを行ったが、2回目のレビューで「非ASCII文字が入るたびに再発する」と指摘され、`filteringCharset = 'UTF-8'`を追加して根本原因を修正した(日本語コメントを含む一時テスト文字列で文字化けが解消することを実機で再確認済み)
+4. `neoforge.mods.toml`の`create`/`aeronautics`/`sable`の`ordering`を、当初`"AFTER"`にしていたが、これは参照元として明記していた公式wiki(`ordering="NONE"`)と矛盾しており、かつ既存の`neoforge`/`minecraft`依存宣言(`ordering="NONE"`)とも不整合だった。2回目のレビューで、この`ordering="AFTER"`が**Registrateの"Found unused register callbacks"という非決定的なクラッシュ(順序依存の失敗)の最有力候補**と指摘され、`ordering="NONE"`に戻した。当初この非決定的クラッシュを「二重起動による汚染」と誤って結論づけていたが、これは実測に基づかない誤った推測だった(ログのタイムスタンプ・JVMメモリ空間の独立性から二重起動説は機序が説明できないとレビューで指摘された)
+
+**追記3: `ordering="NONE"`に戻した後の複数回実機確認**
+
+レビューで「1回通っただけでは失敗率1/2の非決定的バグの検証にならない」と指摘されたため、単一プロセスでの`runClient`を**5回連続**実行した。各回、前回のプロセスが完全に終了していること(`Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Where-Object { $_.CommandLine -like '*fml.modFolders*' }`で0件)を確認してから次を起動した。
+
+結果: **5/5回とも成功**(`Complete loading of 13 mods`→`Sound engine started`まで到達、`FATAL`/`Crash Report`/`unused register`のログ一致ゼロ)。`ordering="NONE"`への差し戻しがこの非決定的クラッシュを解消したことを実測で確認した。
+
 - [x] **Step 6: コミット**
 
 ```bash

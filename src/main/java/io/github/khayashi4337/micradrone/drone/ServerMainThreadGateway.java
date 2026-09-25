@@ -19,4 +19,9 @@ public final class ServerMainThreadGateway implements MainThreadGateway {
     public long currentTick() {
         return server.getTickCount();
     }
+
+    @Override
+    public boolean isOnMainThread() {
+        return server.isSameThread();
+    }
 }

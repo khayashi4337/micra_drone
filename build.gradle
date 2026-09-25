@@ -222,6 +222,12 @@ var generateModMetadata = tasks.register("generateModMetadata", ProcessResources
             mod_version            : mod_version,
     ]
     inputs.properties replaceProperties
+    // Without this, ProcessResources reads/writes src/main/templates using the JVM's platform
+    // default charset - MS932 on a Japanese Windows install, not UTF-8 - which corrupts any
+    // non-ASCII character in a template file into invalid bytes and crashes the TOML parser at
+    // runtime (code review finding: this project's templates get Japanese comments routinely, so
+    // this isn't hypothetical - it broke neoforge.mods.toml the first time one was added there).
+    filteringCharset = 'UTF-8'
     expand replaceProperties
     from "src/main/templates"
     into "build/generated/sources/modMetadata"

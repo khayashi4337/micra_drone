@@ -43,6 +43,14 @@ public final class ServerBlockSnapshotReader implements BlockSnapshotReader {
 
     @Override
     public Optional<String> read(int x1, int y1, int z1, int x2, int y2, int z2) {
+        // A caller already on the main thread (e.g. a future Factory Analyzer running from
+        // serverTick) must run inline rather than queue behind itself: queuing would deadlock the
+        // wait, or - since runOnMainThread queues rather than blocking the caller - silently stall
+        // for the full timeout and report "world state unavailable" even though the world is fine
+        // (review finding). Only a caller on some OTHER thread needs the queue+timeout dispatch.
+        if (gateway.isOnMainThread()) {
+            return describe(x1, y1, z1, x2, y2, z2);
+        }
         try {
             return ClientMainThreadDispatch.runAndWait(
                     gateway::runOnMainThread, () -> describe(x1, y1, z1, x2, y2, z2), MAIN_THREAD_TIMEOUT_MS);
