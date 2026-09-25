@@ -157,6 +157,16 @@ class BuildingPartsTest {
     }
 
     @Test
+    void theRotationUnsupportedPartsAreExactlyTheParentAndWallBoundOnesAndAllRegistered() {
+        assertEquals(Set.of("micra:structure", "micra:foundation", "micra:floor", "micra:wall", "micra:roof",
+                "micra:door", "micra:window", "micra:sign", "micra:planter", "micra:trim", "micra:balcony"),
+                BuildingParts.ROTATION_UNSUPPORTED);
+        for (String id : BuildingParts.ROTATION_UNSUPPORTED) {
+            assertTrue(BuildingParts.registry().contains(id), id + " must be a registered building part");
+        }
+    }
+
+    @Test
     void doorsDeclareTheirVolatileState() {
         assertEquals(Set.of("open", "powered"), BuildingParts.registry().get("micra:door").volatileProps());
     }
