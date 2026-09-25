@@ -31,6 +31,10 @@ import io.github.khayashi4337.micradrone.build.model.SemanticPlan;
 import io.github.khayashi4337.micradrone.build.model.Site;
 import io.github.khayashi4337.micradrone.build.model.StyleSpec;
 import io.github.khayashi4337.micradrone.build.parts.BuildPhase;
+import io.github.khayashi4337.micradrone.build.parts.BuildingParts;
+import io.github.khayashi4337.micradrone.build.parts.ParamSpec;
+import io.github.khayashi4337.micradrone.build.parts.PartType;
+import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
 import io.github.khayashi4337.micradrone.build.parts.PartCategory;
 import io.github.khayashi4337.micradrone.build.parts.VerifyMode;
 import io.github.khayashi4337.micradrone.build.parts.VersionRange;
@@ -146,6 +150,12 @@ class PlanCompilerTest {
         assertEquals(a.hash(), b.hash(), "renaming a part does not change what is built");
         assertEquals(a.hash(), ManifestJson.computeHash(a.dimension(), a.registryVersion(), a.worldBounds(), a.placements(),
                 a.assemblies(), a.bom()));
+        Map<String, Object> hashed = ManifestJson.hashTree(a.dimension(), a.registryVersion(), a.worldBounds(), a.placements(),
+                a.assemblies(), a.bom());
+        for (Object placement : (List<?>) hashed.get("placements")) {
+            Map<?, ?> fields = (Map<?, ?>) placement;
+            assertTrue(!fields.containsKey("index") && !fields.containsKey("node"), fields.toString());
+        }
         Map<String, Object> tree = ManifestJson.toTree(a);
         assertEquals(a.hash(), tree.get("hash"));
         assertEquals(a.placements().size(), ((List<?>) tree.get("placements")).size());
@@ -272,6 +282,8 @@ class PlanCompilerTest {
         assertNull(r.manifest());
         assertEquals(List.of("E-OVERLAP"), codes(r), "only walls on different sides merge at a corner");
         assertEquals(List.of("wall-n", "wall-n2"), r.issues().get(0).subjects());
+        // u=0..3 on 3 rows: the cell at u=4 is the corner the east wall generated first, which both north walls merge into
+        assertEquals("12", r.issues().get(0).data().get("count"));
     }
 
     @Test
@@ -379,12 +391,123 @@ class PlanCompilerTest {
 
     @Test
     void aGeneratorThatFailsUnexpectedlyBecomesAnIssueOnItsNode() {
-        // The patcher would have typed "thickness" as an integer; a hand-built plan can carry any value.
+        // A registry whose wall part lacks the parameters the wall generator reads: validation passes, generation throws.
+        PartTypeRegistry.Builder b = PartTypeRegistry.builder().defaultPalette(BuildingParts.DEFAULT_PALETTE);
+        for (PartType t : BuildingParts.registry().all()) {
+            if (!t.id().equals(WALL)) {
+                b.register(t);
+            }
+        }
+        b.register(PartType.builder(WALL, PartCategory.STRUCTURE).displayNameKey("t.wall").phase(BuildPhase.ENVELOPE)
+                .params(ParamSpec.enumOf("side", null, "north", "east", "south", "west")).build());
+        PartTypeRegistry bare = b.build();
+        List<PlanNode> nodes = new ArrayList<>(shell(5, 5, 1, 4));
+        nodes.removeIf(n -> !n.id().equals("s") && !n.id().equals("wall-n"));
+        SemanticPlan plan = new SemanticPlan(SemanticPlan.SCHEMA_VERSION, "hand", 0, null, CompileFixtures.site(Facing.NORTH),
+                StyleSpec.EMPTY, nodes, List.of(), null, Provenance.NONE);
+        CompileResult r = new PlanCompiler().compile(new ExpandedPlan(plan, nodes, List.of(), List.of()), bare,
+                PlaceableBlockPolicy.builtin(), CompileFixtures.survey());
+        assertNull(r.manifest());
+        assertEquals(List.of("E-UNKNOWN-PART:wall-n#generator"), ids(r));
+        assertTrue(r.issues().get(0).message().contains("IllegalArgumentException"), r.issues().get(0).message());
+    }
+
+    // ------------------------------------------------------------------ parameters that skipped the patcher
+
+    @Test
+    void aWrongParameterTypeIsARangeIssueNotAGeneratorFailure() {
         List<PlanNode> nodes = new ArrayList<>(shell(5, 5, 1, 4));
         nodes.set(1, node("wall-n", WALL, "s", 0, 0, 0, params("side", "north", "thickness", "thick")));
         CompileResult r = compileHandBuilt(CompileFixtures.site(Facing.NORTH), nodes);
         assertNull(r.manifest());
-        assertEquals(List.of("E-UNKNOWN-PART:wall-n#generator"), ids(r));
-        assertTrue(r.issues().get(0).message().contains("IllegalArgumentException"), r.issues().get(0).message());
+        assertEquals(List.of("E-PARAM-RANGE:wall-n#thickness"), ids(r));
+    }
+
+    @Test
+    void aHugeBuildingWhoseFloorIsAllHolesIsRefusedQuickly() {
+        // Without the range check this loops over n*n cells placing none, so the cell budget never stops it.
+        int n = 60_000;
+        List<PlanNode> nodes = List.of(
+                node("s", STRUCTURE, null, 0, 0, 0, params("width", n, "depth", n, "floors", 1, "floor_height", 4)),
+                node("f", FLOOR, "s", 0, 0, 0, params("holes", new ParamValue.ListV(List.of(i(0), i(0), i(n - 1), i(n - 1))))));
+        CompileResult r = assertTimeoutPreemptively(Duration.ofSeconds(2), () -> compileHandBuilt(CompileFixtures.site(Facing.NORTH), nodes));
+        assertNull(r.manifest());
+        assertEquals(List.of("E-PARAM-RANGE:s#depth", "E-PARAM-RANGE:s#width", "E-PARAM-RANGE:f#holes"), ids(r));
+    }
+
+    @Test
+    void aWallLongerThanAnyRangeIsARangeIssueNotTheCellBudget() {
+        List<PlanNode> nodes = new ArrayList<>(shell(5, 5, 1, 4));
+        nodes.set(1, node("wall-n", WALL, "s", 0, 0, 0, params("side", "north", "from", 1, "length", Integer.MAX_VALUE)));
+        CompileResult r = compileHandBuilt(CompileFixtures.site(Facing.NORTH), nodes);
+        assertNull(r.manifest());
+        assertEquals(List.of("E-PARAM-RANGE:wall-n#length"), ids(r));
+    }
+
+    @Test
+    void aHugeFloorLevelIsARangeIssue() {
+        // a negative level passes "level < floors" and level * floor_height wraps around; the range 0..7 refuses it
+        List<PlanNode> nodes = new ArrayList<>(shell(5, 5, 1, 4));
+        nodes.add(node("f", FLOOR, "s", 0, 0, 0, params("level", Integer.MIN_VALUE)));
+        CompileResult r = compileHandBuilt(CompileFixtures.site(Facing.NORTH), nodes);
+        assertNull(r.manifest());
+        assertEquals(List.of("E-PARAM-RANGE:f#level"), ids(r));
+    }
+
+    @Test
+    void partsPiledOnOneSpotAreStoppedByTheWorkBudget() {
+        // 100 identical 5x5 foundations: 25 cells placed, every other attempt an overlap; the budget is 2 x 1,000 attempts
+        List<PlanNode> nodes = new ArrayList<>();
+        nodes.add(node("s", STRUCTURE, null, 0, 0, 0, params("width", 5, "depth", 5)));
+        for (int k = 0; k < 100; k++) {
+            nodes.add(node("fd" + k, "micra:foundation", "s", 0, 0, 0, Map.of()));
+        }
+        CompileResult piled = CompileFixtures.compile(CompileFixtures.plan(CompileFixtures.site(Facing.NORTH), StyleSpec.EMPTY, nodes),
+                new PlanCompiler(1_000));
+        assertNull(piled.manifest());
+        assertEquals(List.of("E-OUT-OF-BOUNDS:#cells"), ids(piled));
+        // a floor that is all hole places nothing but still spends its 25 cells of work (budget 2 x 10)
+        List<PlanNode> holes = new ArrayList<>();
+        holes.add(node("s", STRUCTURE, null, 0, 0, 0, params("width", 5, "depth", 5)));
+        holes.add(node("f", FLOOR, "s", 0, 0, 0, params("holes", new ParamValue.ListV(List.of(i(0), i(0), i(4), i(4))))));
+        CompileResult hollow = CompileFixtures.compile(CompileFixtures.plan(CompileFixtures.site(Facing.NORTH), StyleSpec.EMPTY, holes),
+                new PlanCompiler(10));
+        assertEquals(List.of("E-OUT-OF-BOUNDS:#cells"), ids(hollow));
+    }
+
+    @Test
+    void aFrameWithoutOriginOrFacingIsASchemaIssue() {
+        for (BuildFrame frame : List.of(new BuildFrame(null, Facing.NORTH), new BuildFrame(CompileFixtures.ORIGIN, null))) {
+            Site site = new Site(CompileFixtures.DIMENSION, frame, CompileFixtures.BOUNDS, "", "");
+            CompileResult r = compileHandBuilt(site, box5());
+            assertNull(r.manifest());
+            assertEquals(List.of("E-SCHEMA:site#site.frame"), ids(r));
+        }
+    }
+
+    @Test
+    void onlyTheBlockActuallyPlacedMustBeAllowed() {
+        // a slab floor derives oak_slab from the "floor" role (oak_planks); the planks themselves are never placed
+        List<PlanNode> nodes = new ArrayList<>(shell(5, 5, 1, 4));
+        nodes.add(node("f", FLOOR, "s", 0, 0, 0, params("kind", "slab")));
+        SemanticPlan plan = CompileFixtures.plan(CompileFixtures.site(Facing.NORTH), StyleSpec.EMPTY, nodes);
+        PlaceableBlockPolicy slabsOnly = new PlaceableBlockPolicy(Set.of("minecraft:oak_slab", STONE_BRICKS));
+        CompileResult r = new PlanCompiler().compile(
+                new PlanExpander(CompileFixtures.REGISTRY, SlotResolver.NONE).expand(plan, TemplateBundle.EMPTY, Router.NONE).plan(),
+                CompileFixtures.REGISTRY, slabsOnly, CompileFixtures.survey());
+        assertTrue(r.issues().isEmpty(), r.issues().toString());
+        assertNotNull(r.manifest());
+    }
+
+    @Test
+    void blockStatesTurnWithTheSiteFacing() {
+        BuildFrame east = new BuildFrame(CompileFixtures.ORIGIN, Facing.EAST);
+        assertEquals(BlockSpec.of("minecraft:oak_log", "axis", "z"),
+                PlanCompiler.worldBlock(BlockSpec.of("minecraft:oak_log", "axis", "x"), east), "one quarter turn swaps x and z");
+        assertEquals(BlockSpec.of("minecraft:oak_stairs", "facing", "east", "half", "bottom"),
+                PlanCompiler.worldBlock(BlockSpec.of("minecraft:oak_stairs", "facing", "north", "half", "bottom"), east));
+        BuildFrame north = new BuildFrame(CompileFixtures.ORIGIN, Facing.NORTH);
+        assertEquals(BlockSpec.of("minecraft:oak_log", "axis", "x"),
+                PlanCompiler.worldBlock(BlockSpec.of("minecraft:oak_log", "axis", "x"), north));
     }
 }

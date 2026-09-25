@@ -37,7 +37,9 @@ final class FloorGen implements PartGenerator {
         int v = st.origin().v() + level * st.floorHeight();
         for (int u = 0; u < st.width(); u++) {
             for (int w = 0; w < st.depth(); w++) {
-                if (!inHole(holes, u, w)) {
+                if (inHole(holes, u, w)) {
+                    ctx.canvas().charge();
+                } else {
                     ctx.emitAbs(node, new LocalPos(st.origin().u() + u, v, st.origin().w() + w), block);
                 }
             }

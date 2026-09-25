@@ -4,7 +4,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/** The generator of each building part. A test keeps this table equal to the registry's micra:* parts. */
+/** The generator of each building part. Task 16 adds a test that keeps this table equal to the registry's micra:* parts. */
 public final class PartGenerators {
     /** BASE parts lay down blocks; CARVE parts (openings) run after all of them and cut into what BASE laid. */
     public enum Stage { BASE, CARVE }

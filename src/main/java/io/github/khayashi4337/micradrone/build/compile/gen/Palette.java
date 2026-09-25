@@ -5,6 +5,7 @@ import io.github.khayashi4337.micradrone.build.model.Issue;
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.parts.MaterialFamilies;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -42,9 +43,11 @@ public final class Palette {
         roles.putAll(planPalette);
     }
 
-    /** Block id to the ids of the parts it was handed out to. */
+    /** Block id to the ids of the parts it was handed out to (a read-only copy). */
     public Map<String, Set<String>> usedBy() {
-        return usedBy;
+        Map<String, Set<String>> out = new TreeMap<>();
+        usedBy.forEach((id, parts) -> out.put(id, Collections.unmodifiableSet(new TreeSet<>(parts))));
+        return Collections.unmodifiableMap(out);
     }
 
     private String note(String id, PlanNode node) {
@@ -58,14 +61,22 @@ public final class Palette {
     }
 
     public String full(String material, PlanNode node) {
+        return note(resolveFull(material, node), node);
+    }
+
+    /**
+     * The full block a material names, without recording it: stairs and slabs are derived from it but only the
+     * derived block is placed, so only that one must pass the block policy.
+     */
+    private String resolveFull(String material, PlanNode node) {
         if (role(material) == null) {
-            return note(material, node);
+            return material;
         }
         String id = roles.get(material);
         if (id == null) {
             throw unknownRole(material, node);
         }
-        return note(id, node);
+        return id;
     }
 
     public String stairs(String material, PlanNode node) {
@@ -73,9 +84,9 @@ public final class Palette {
         if (role != null && roles.containsKey(role + BlockForms.STAIRS_SUFFIX)) {
             return note(roles.get(role + BlockForms.STAIRS_SUFFIX), node);
         }
-        String full = full(material, node);
+        String full = resolveFull(material, node);
         if (full.endsWith(BlockForms.STAIRS_SUFFIX)) {
-            return full; // the role already names a stairs block (e.g. the default "stairs" role)
+            return note(full, node); // the role already names a stairs block (e.g. the default "stairs" role)
         }
         MaterialFamilies.Family f = MaterialFamilies.family(full).orElse(null);
         if (f == null || f.stairs() == null) {
@@ -89,9 +100,9 @@ public final class Palette {
         if (role != null && roles.containsKey(role + BlockForms.SLAB_SUFFIX)) {
             return note(roles.get(role + BlockForms.SLAB_SUFFIX), node);
         }
-        String full = full(material, node);
+        String full = resolveFull(material, node);
         if (full.endsWith(BlockForms.SLAB_SUFFIX)) {
-            return full;
+            return note(full, node);
         }
         MaterialFamilies.Family f = MaterialFamilies.family(full).orElse(null);
         if (f == null) {

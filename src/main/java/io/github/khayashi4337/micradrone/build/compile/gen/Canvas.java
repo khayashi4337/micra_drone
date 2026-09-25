@@ -8,6 +8,7 @@ import io.github.khayashi4337.micradrone.build.parts.BuildPhase;
 import io.github.khayashi4337.micradrone.build.parts.VerifyMode;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +25,11 @@ public final class Canvas {
     private static final String DATA_REASON = "reason";
     private static final String OWNER_PAIR_SEPARATOR = "|";
     private static final String POS_SEPARATOR = ",";
+    /**
+     * Placement attempts allowed per cell of the budget. Parts that overlap place nothing new, so the cell budget alone
+     * would not bound the work of many parts piled on one spot; a plan that needs more attempts is all overlap anyway.
+     */
+    private static final int ATTEMPTS_PER_CELL = 2;
 
     /** {@code mergeGroup}/{@code mergeVariant}: two cells of one group with the same block but different variants join (wall corners). */
     public record Cell(LocalPos pos, BlockSpec block, VerifyMode verify, BuildPhase phase, Map<String, String> blockEntity,
@@ -36,9 +42,12 @@ public final class Canvas {
     private final Map<LocalPos, Cell> cells = new HashMap<>();
     private final TreeMap<String, Overlap> overlaps = new TreeMap<>();
     private final int maxCells;
+    private final long maxAttempts;
+    private long attempts;
 
     public Canvas(int maxCells) {
         this.maxCells = maxCells;
+        this.maxAttempts = (long) maxCells * ATTEMPTS_PER_CELL;
     }
 
     /** "u,v,w": the form positions take in issue messages and data. */
@@ -58,12 +67,14 @@ public final class Canvas {
         return cells.size();
     }
 
+    /** A read-only view; cells change only through {@link #put} and {@link #remove}. */
     public Collection<Cell> all() {
-        return cells.values();
+        return Collections.unmodifiableCollection(cells.values());
     }
 
     /** Places a cell. A cell already there means an overlap, unless both belong to the same merge group with the same block. */
     public boolean put(Cell cell) {
+        charge();
         Cell existing = cells.get(cell.pos());
         if (existing != null) {
             boolean merge = existing.mergeGroup() != null && existing.mergeGroup().equals(cell.mergeGroup())
@@ -75,11 +86,26 @@ public final class Canvas {
             return false;
         }
         if (cells.size() >= maxCells) {
-            throw new GenAbort(Issue.of(IssueCode.E_OUT_OF_BOUNDS, KEY_CELLS, List.of(),
-                    "施工の大きさの上限(" + maxCells + "マス)を超えました", Map.of(KEY_CELLS, String.valueOf(maxCells)), List.of()), true);
+            throw budgetExceeded("施工の大きさの上限(" + maxCells + "マス)を超えました");
         }
         cells.put(cell.pos(), cell);
         return true;
+    }
+
+    /**
+     * Counts one cell of work against the budget. {@link #put} charges itself; a generator that considers a cell and
+     * then leaves it empty (a floor hole) charges it too, so a part that places nothing still has bounded work.
+     */
+    public void charge() {
+        if (++attempts > maxAttempts) {
+            throw budgetExceeded("施工の作業量の上限(" + maxAttempts + "マス分。ほとんどが重なりか穴です)を超えました");
+        }
+    }
+
+    /** Fatal: the whole compile stops, since every further part would only add to the work. */
+    private GenAbort budgetExceeded(String message) {
+        return new GenAbort(Issue.of(IssueCode.E_OUT_OF_BOUNDS, KEY_CELLS, List.of(), message,
+                Map.of(KEY_CELLS, String.valueOf(maxCells)), List.of()), true);
     }
 
     public void recordOverlap(String ownerA, String ownerB, LocalPos pos) {

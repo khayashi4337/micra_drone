@@ -7,6 +7,7 @@ import io.github.khayashi4337.micradrone.build.compile.gen.Palette;
 import io.github.khayashi4337.micradrone.build.compile.gen.PartGenerators;
 import io.github.khayashi4337.micradrone.build.model.Anchor;
 import io.github.khayashi4337.micradrone.build.model.BlockRotation;
+import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.Box;
 import io.github.khayashi4337.micradrone.build.model.BuildFrame;
 import io.github.khayashi4337.micradrone.build.model.IntPos;
@@ -18,6 +19,7 @@ import io.github.khayashi4337.micradrone.build.model.Rot;
 import io.github.khayashi4337.micradrone.build.model.SemanticPlan;
 import io.github.khayashi4337.micradrone.build.model.Site;
 import io.github.khayashi4337.micradrone.build.parts.BuildingParts;
+import io.github.khayashi4337.micradrone.build.parts.ParamValidator;
 import io.github.khayashi4337.micradrone.build.parts.Params;
 import io.github.khayashi4337.micradrone.build.parts.PartType;
 import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
@@ -47,6 +49,7 @@ public final class PlanCompiler {
     // Issue keys and subjects.
     private static final String KEY_ROT = "rot";
     private static final String KEY_SITE = "site";
+    private static final String KEY_SITE_FRAME = "site.frame";
     private static final String SITE_SUBJECT = "site";
     private static final String KEY_GENERATOR = "generator";
     private static final String DATA_EXCEPTION = "exception";
@@ -77,6 +80,12 @@ public final class PlanCompiler {
             issues.add(Issue.of(IssueCode.E_SITE_MISSING, List.of(), "敷地(site)が決まっていません。site(...)で、場所と向きと範囲を決めてください"));
             return new CompileResult(null, issues);
         }
+        if (site.frame().origin() == null || site.frame().facing() == null) {
+            // BuildFrame does not check its fields; the other nulls (style, site.frame, Absolute.rot) are normalised
+            // or refused by their records' constructors.
+            issues.add(Issue.of(IssueCode.E_SCHEMA, KEY_SITE_FRAME, List.of(SITE_SUBJECT), "site.frame needs an origin and a facing"));
+            return new CompileResult(null, issues);
+        }
         if (!siteFitsTheWorld(site)) {
             issues.add(Issue.of(IssueCode.E_PARAM_RANGE, KEY_SITE, List.of(SITE_SUBJECT),
                     "敷地の原点と範囲は、各成分を±" + PlanPatcher.MAX_COORD + "以内にしてください"));
@@ -95,12 +104,19 @@ public final class PlanCompiler {
             }
             return new CompileResult(null, issues);
         }
-        Map<String, LocalPos> origins = Origins.resolve(expanded.primitiveNodes(), SlotResolver.NONE, issues);
+        List<PlanNode> nodes = validated(expanded.primitiveNodes(), registry, issues);
+        if (issues.stream().anyMatch(Issue::isError)) {
+            return new CompileResult(null, issues);
+        }
+        for (PlanNode n : nodes) {
+            byId.put(n.id(), n);
+        }
+        Map<String, LocalPos> origins = Origins.resolve(nodes, SlotResolver.NONE, issues);
         Palette palette = new Palette(registry.defaultPalette(), plan.style().palette());
         Canvas canvas = new Canvas(maxCells);
         GenContext ctx = new GenContext(registry, palette, canvas, issues, byId, origins);
 
-        List<PlanNode> ordered = order(expanded.primitiveNodes(), byId);
+        List<PlanNode> ordered = order(nodes, byId);
         try {
             for (PartGenerators.Stage stage : PartGenerators.Stage.values()) {
                 for (PlanNode node : ordered) {
@@ -121,6 +137,26 @@ public final class PlanCompiler {
             return new CompileResult(null, issues);
         }
         return new CompileResult(build(plan, site, registry, canvas, byId), issues);
+    }
+
+    /**
+     * The nodes with their parameters typed and range-checked against the registry, as the patcher does. The plan may
+     * not have passed the patcher, and the generators loop over and add up these values: the spec ranges are what keeps
+     * every loop short and every sum inside int range. Nodes of unknown parts are kept as they are (E-UNKNOWN-PART later).
+     */
+    private static List<PlanNode> validated(List<PlanNode> nodes, PartTypeRegistry registry, List<Issue> issues) {
+        List<PlanNode> out = new ArrayList<>();
+        for (PlanNode n : nodes) {
+            PartType type = registry.find(n.type()).orElse(null);
+            if (type == null) {
+                out.add(n);
+                continue;
+            }
+            ParamValidator.Result checked = ParamValidator.validate(n.id(), type, n.params());
+            issues.addAll(checked.issues());
+            out.add(new PlanNode(n.id(), n.type(), n.parent(), n.anchor(), checked.typed(), n.tags(), n.label()));
+        }
+        return out;
     }
 
     /**
@@ -249,12 +285,11 @@ public final class PlanCompiler {
         List<Canvas.Cell> cells = new ArrayList<>(canvas.all());
         cells.sort(CONSTRUCTION_ORDER);
         BuildFrame frame = site.frame();
-        int turns = frame.facing().quarterTurns();
         List<Placement> placements = new ArrayList<>();
         for (int i = 0; i < cells.size(); i++) {
             Canvas.Cell c = cells.get(i);
             PartType owner = registry.get(byId.get(c.ownerId()).type());
-            placements.add(new Placement(i, frame.toWorld(c.pos()), BlockRotation.rotate(c.block(), turns), c.blockEntity(),
+            placements.add(new Placement(i, frame.toWorld(c.pos()), worldBlock(c.block(), frame), c.blockEntity(),
                     c.ownerId(), c.phase(), owner.placer(), c.verify(), ReplacePolicy.REPLACEABLE, null));
         }
         List<PhaseRange> phases = new ArrayList<>();
@@ -270,6 +305,11 @@ public final class PlanCompiler {
         String hash = ManifestJson.computeHash(site.dimension(), registry.version(), worldBounds, placements, List.of(), bom);
         return new PlacementManifest(PlacementManifest.MANIFEST_VERSION, plan.planId(), plan.revision(), registry.version(),
                 site.dimension(), frame, worldBounds, placements, List.of(), bom, phases, hash);
+    }
+
+    /** A block generated in the local frame, as it is placed in the world: its states turn with the site's facing. */
+    static BlockSpec worldBlock(BlockSpec local, BuildFrame frame) {
+        return BlockRotation.rotate(local, frame.facing().quarterTurns());
     }
 
     /** The world box around the eight corners of the local bounds. */
