@@ -1,0 +1,31 @@
+package io.github.khayashi4337.micradrone.build.compile.gen;
+
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+/** The generator of each building part. A test keeps this table equal to the registry's micra:* parts. */
+public final class PartGenerators {
+    /** BASE parts lay down blocks; CARVE parts (openings) run after all of them and cut into what BASE laid. */
+    public enum Stage { BASE, CARVE }
+
+    public record Entry(PartGenerator generator, Stage stage) {
+    }
+
+    private static final Map<String, Entry> ENTRIES = Map.ofEntries(
+            Map.entry("micra:structure", new Entry(new StructureGen(), Stage.BASE)),
+            Map.entry("micra:foundation", new Entry(new FoundationGen(), Stage.BASE)),
+            Map.entry("micra:floor", new Entry(new FloorGen(), Stage.BASE)),
+            Map.entry("micra:wall", new Entry(new WallGen(), Stage.BASE)));
+
+    private PartGenerators() {
+    }
+
+    public static Optional<Entry> find(String partId) {
+        return Optional.ofNullable(ENTRIES.get(partId));
+    }
+
+    public static Set<String> ids() {
+        return ENTRIES.keySet();
+    }
+}
