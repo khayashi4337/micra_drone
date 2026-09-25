@@ -16,7 +16,12 @@ public final class PartGenerators {
             Map.entry("micra:structure", new Entry(new StructureGen(), Stage.BASE)),
             Map.entry("micra:foundation", new Entry(new FoundationGen(), Stage.BASE)),
             Map.entry("micra:floor", new Entry(new FloorGen(), Stage.BASE)),
-            Map.entry("micra:wall", new Entry(new WallGen(), Stage.BASE)));
+            Map.entry("micra:wall", new Entry(new WallGen(), Stage.BASE)),
+            Map.entry("micra:pillar", new Entry(new PillarGen(), Stage.BASE)),
+            Map.entry("micra:beam", new Entry(new BeamGen(), Stage.BASE)),
+            Map.entry("micra:chimney", new Entry(new ChimneyGen(), Stage.BASE)),
+            Map.entry("micra:road", new Entry(new RoadGen(), Stage.BASE)),
+            Map.entry("micra:dock_pad", new Entry(new DockPadGen(), Stage.BASE)));
 
     private PartGenerators() {
     }

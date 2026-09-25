@@ -90,6 +90,11 @@ public final class GenContext {
         return nodes.get(id);
     }
 
+    /** The block a material (a role name or a block id) names, without block states. */
+    public BlockSpec plainBlock(String material, PlanNode node) {
+        return BlockForms.plain(palette.full(material, node));
+    }
+
     public GenAbort fail(PlanNode node, IssueCode code, String key, String message) {
         return new GenAbort(Issue.of(code, key, List.of(node.id()), message, Map.of(), List.of()), false);
     }

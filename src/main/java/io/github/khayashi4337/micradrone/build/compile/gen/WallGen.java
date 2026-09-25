@@ -15,7 +15,7 @@ final class WallGen implements PartGenerator {
         if (wall == null) {
             return; // the reason was reported when the wall's geometry was built
         }
-        BlockSpec block = BlockForms.plain(ctx.palette().full(p.s(P_MATERIAL), node));
+        BlockSpec block = ctx.plainBlock(p.s(P_MATERIAL), node);
         String mergeGroup = wall.cornerGroup();
         for (int i = 0; i < wall.length(); i++) {
             for (int layer = 0; layer < wall.thickness(); layer++) {

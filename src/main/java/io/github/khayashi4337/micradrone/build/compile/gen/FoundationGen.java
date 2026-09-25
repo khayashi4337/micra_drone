@@ -17,7 +17,7 @@ final class FoundationGen implements PartGenerator {
         StructureInfo st = ctx.structureOf(node);
         int margin = p.i(P_MARGIN);
         int depth = p.i(P_DEPTH);
-        BlockSpec block = BlockForms.plain(ctx.palette().full(p.s(P_MATERIAL), node));
+        BlockSpec block = ctx.plainBlock(p.s(P_MATERIAL), node);
         for (int u = -margin; u <= st.width() - 1 + margin; u++) {
             for (int w = -margin; w <= st.depth() - 1 + margin; w++) {
                 for (int v = -depth; v <= TOP_ROW; v++) {
