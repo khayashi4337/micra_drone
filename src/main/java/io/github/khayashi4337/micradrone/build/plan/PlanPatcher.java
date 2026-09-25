@@ -30,7 +30,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.regex.Pattern;
 
 /**
  * Applies a {@link PlanPatch} to a {@link SemanticPlan}, deterministically. Operations apply in order; any ERROR
@@ -41,8 +40,6 @@ public final class PlanPatcher {
     /** Positions stay far inside int range so sums along a parent chain cannot wrap around. */
     public static final int MAX_COORD = 30_000_000;
 
-    private static final int MAX_ID_LENGTH = 48;
-    private static final Pattern ID = Pattern.compile("[a-z0-9-]{1," + MAX_ID_LENGTH + "}");
     private static final int SUGGESTION_LIMIT = 3;
 
     /** The revision of an empty plan; normalize() builds its patch against it. */
@@ -193,9 +190,8 @@ public final class PlanPatcher {
 
     /** True when the id is well formed and not yet in {@code taken}; otherwise the issue is added and it is false. */
     private static boolean checkNewId(String id, Set<String> taken, String duplicateMessageStart, List<Issue> issues) {
-        if (!ID.matcher(id).matches()) {
-            issues.add(Issue.of(IssueCode.E_ID_INVALID, List.of(id),
-                    "IDは半角の小文字・数字・ハイフンで" + MAX_ID_LENGTH + "字以内にしてください: " + id));
+        if (!PlanIds.isValid(id)) {
+            issues.add(Issue.of(IssueCode.E_ID_INVALID, List.of(id), PlanIds.invalidMessage(id)));
             return false;
         }
         if (taken.contains(id)) {

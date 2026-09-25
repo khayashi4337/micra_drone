@@ -194,10 +194,13 @@ class PlanExpanderTest {
         SemanticPlan rotated = p.apply(SemanticPlan.empty("p"), new PlanPatch("p", 0, "t", List.of(
                 new PlanOp.AddNode(new PlanNode("h", "mod:hut", null, abs(0, 0, 0, 1), Map.of(), Set.of(), ""))))).plan();
         ExpandResult r = expander.expand(rotated, bundle, Router.NONE);
-        assertEquals(IssueCode.E_ANCHOR, r.issues().get(0).code());
+        assertNull(r.plan());
+        assertEquals(List.of("E-ANCHOR:h#rot"), ids(r));
         SemanticPlan straight = p.apply(SemanticPlan.empty("p"), new PlanPatch("p", 0, "t", List.of(
                 new PlanOp.AddNode(new PlanNode("h", "mod:hut", null, abs(3, 0, 3, 0), Map.of(), Set.of(), ""))))).plan();
-        assertTrue(expander.expand(straight, bundle, Router.NONE).issues().isEmpty());
+        ExpandResult unturned = expander.expand(straight, bundle, Router.NONE);
+        assertTrue(unturned.issues().isEmpty(), unturned.issues().toString());
+        assertEquals(new Anchor.Absolute(new LocalPos(3, 0, 3), Rot.NONE), find(unturned.plan(), "h/shell").anchor());
         assertTrue(BuildingParts.ROTATION_UNSUPPORTED.contains("micra:structure"));
         assertFalse(BuildingParts.ROTATION_UNSUPPORTED.contains("micra:pillar"));
     }
@@ -377,7 +380,9 @@ class PlanExpanderTest {
                         ConnKind.ROTATION, new Routing.Explicit(List.of()), Constraints.NONE))));
         ExpandResult ok = expander.expand(plan, TestParts.bundle(), Router.NONE);
         assertTrue(ok.issues().isEmpty(), ok.issues().toString());
-        assertEquals(2, ok.plan().routed().size());
+        // the plan's connection first, then the instance's internal one; both are explicit with no via parts
+        assertEquals(List.of(new RoutedConnection("c-1", List.of(), List.of()), new RoutedConnection("line-1/link", List.of(), List.of())),
+                ok.plan().routed());
     }
 
     @Test
@@ -467,6 +472,101 @@ class PlanExpanderTest {
         assertEquals(IssueCode.E_UNKNOWN_PART, expander.expand(withNest, bundle, Router.NONE).issues().get(0).code());
     }
 
+    /** A motor with a shaft below it in the template tree, so an internal connection can join the two. */
+    private static List<PlanNode> motorAndShaft(String motorId, String shaftId) {
+        return List.of(TestParts.at(motorId, "test:motor", null, 0, 0, 0), TestParts.at(shaftId, "test:shaft", motorId, 1, 0, 0));
+    }
+
+    private ExpandResult expandOne(ModuleTemplate template, String instanceId, Anchor anchor) {
+        TemplateBundle bundle = new TemplateBundle(List.of(template));
+        SemanticPlan plan = planWith(bundle, List.of(new PlanOp.AddNode(instanceOf(template.id(), instanceId, null, anchor))));
+        return expander.expand(plan, bundle, Router.NONE);
+    }
+
+    @Test
+    void aTemplateWithTheSameNodeIdTwiceIsRefusedAndItsInstanceIsNotExpanded() {
+        ModuleTemplate twin = template("mod:twin", List.of(
+                TestParts.at("x", "test:motor", null, 0, 0, 0),
+                TestParts.at("x", "test:motor", null, 5, 0, 0),
+                TestParts.at("y", "test:shaft", "x", 1, 0, 0),
+                TestParts.at("x", "test:motor", null, 9, 0, 0),
+                TestParts.at("inner", "mod:test_line", null, 3, 0, 0)), List.of(explicit("run", "x", "out", "y", "in")));
+        ExpandResult r = expandOne(twin, "t1", abs(0, 0, 0, 0));
+        assertNull(r.plan());
+        assertEquals(List.of("E-ID-DUPLICATE:t1/x#template"), ids(r),
+                "one issue for the id; the instance is skipped, so the part that would be E-UNKNOWN-PART is never looked at");
+        assertEquals(List.of("t1/x"), r.issues().get(0).subjects());
+    }
+
+    @Test
+    void templateNodeIdsMustBeWellFormed() {
+        String tooLong = "a".repeat(49);
+        ModuleTemplate bad = template("mod:bad-ids", List.of(
+                TestParts.at("Motor", "test:motor", null, 0, 0, 0),
+                TestParts.at("Motor", "test:motor", null, 2, 0, 0),
+                TestParts.at("", "test:motor", null, 4, 0, 0),
+                TestParts.at("a/b", "test:motor", null, 6, 0, 0),
+                TestParts.at(tooLong, "test:motor", null, 8, 0, 0)), List.of());
+        ExpandResult r = expandOne(bad, "t1", abs(0, 0, 0, 0));
+        assertNull(r.plan());
+        assertEquals(List.of("E-ID-INVALID:t1/Motor#template", "E-ID-INVALID:t1/#template", "E-ID-INVALID:t1/a/b#template",
+                "E-ID-INVALID:t1/" + tooLong + "#template"), ids(r), "a repeated bad id is one issue, not also a duplicate");
+        assertEquals(List.of("t1/Motor"), r.issues().get(0).subjects());
+    }
+
+    @Test
+    void templateIdsOfTheLongestAllowedLengthAreAccepted() {
+        String longest = "n".repeat(48);
+        String longestConnection = "c".repeat(48);
+        ModuleTemplate ok = template("mod:long-ids", motorAndShaft("motor", longest),
+                List.of(explicit(longestConnection, "motor", "out", longest, "in")));
+        ExpandResult r = expandOne(ok, "t1", abs(0, 0, 0, 0));
+        assertTrue(r.issues().isEmpty(), r.issues().toString());
+        assertEquals("t1/" + longest, find(r.plan(), "t1/" + longest).id());
+        assertEquals("t1/" + longestConnection, r.plan().routed().get(0).connectionId());
+    }
+
+    @Test
+    void templateConnectionIdsMustBeWellFormedAndUnique() {
+        // the extra part would be E-UNKNOWN-PART if the instance were expanded despite its bad connection ids
+        List<PlanNode> nodes = new ArrayList<>(motorAndShaft("motor", "s"));
+        nodes.add(TestParts.at("inner", "mod:test_line", null, 3, 0, 0));
+        Connection run = explicit("run", "motor", "out", "s", "in");
+        ModuleTemplate repeated = template("mod:dup-conn", nodes, List.of(run, run, explicit("run", "motor", "out", "s", "in", "s")));
+        String tooLong = "c".repeat(49);
+        ModuleTemplate badForm = template("mod:bad-conn", nodes, List.of(
+                explicit("RUN", "motor", "out", "s", "in"), explicit("RUN", "motor", "out", "s", "in"),
+                explicit(tooLong, "motor", "out", "s", "in"), run));
+        TemplateBundle bundle = new TemplateBundle(List.of(repeated, badForm));
+        SemanticPlan plan = planWith(bundle, List.of(
+                new PlanOp.AddNode(instanceOf("mod:dup-conn", "t1", null, abs(0, 0, 0, 0))),
+                new PlanOp.AddNode(instanceOf("mod:bad-conn", "t2", null, abs(10, 0, 0, 0)))));
+        ExpandResult r = expander.expand(plan, bundle, Router.NONE);
+        assertNull(r.plan());
+        assertEquals(List.of("E-ID-DUPLICATE:t1/run#template", "E-ID-INVALID:t2/RUN#template",
+                "E-ID-INVALID:t2/" + tooLong + "#template"), ids(r));
+    }
+
+    @Test
+    void aNodeAndAConnectionOfATemplateMayShareAnId() {
+        ModuleTemplate shared = template("mod:shared-name", motorAndShaft("motor", "run"),
+                List.of(explicit("run", "motor", "out", "run", "in")));
+        ExpandResult r = expandOne(shared, "t1", abs(0, 0, 0, 0));
+        assertTrue(r.issues().isEmpty(), r.issues().toString());
+        assertEquals("t1/run", find(r.plan(), "t1/run").id());
+        assertEquals("t1/run", r.plan().routed().get(0).connectionId());
+    }
+
+    @Test
+    void templateIdProblemsAreReportedWithNodesBeforeConnectionsAndBesideThePlacementProblem() {
+        ModuleTemplate messy = template("mod:messy", List.of(
+                TestParts.at("x", "test:motor", null, 0, 0, 0), TestParts.at("x", "test:motor", null, 2, 0, 0)),
+                List.of(explicit("RUN", "x", "out", "x", "out")));
+        ExpandResult r = expandOne(messy, "t1", new Anchor.InSlot("slot-a", Rot.NONE));
+        assertNull(r.plan());
+        assertEquals(List.of("E-ID-DUPLICATE:t1/x#template", "E-ID-INVALID:t1/RUN#template", "E-ANCHOR:t1#slot"), ids(r));
+    }
+
     @Test
     void aNodeInsideAModuleInstanceAndSlotPartsAreHandledExplicitly() {
         SemanticPlan inside = plan(List.of(new PlanOp.AddNode(module("line-1", null, abs(0, 0, 0, 0))),
@@ -514,6 +614,22 @@ class PlanExpanderTest {
         assertEquals(new LocalPos(2, 0, 3), o.get("a"));
         assertEquals(new LocalPos(3, 0, 4), o.get("b"));
         assertTrue(issues.isEmpty());
+    }
+
+    @Test
+    void theExpandedListsFollowThePlanOrderWithEachInstanceSplicedInPlace() {
+        SemanticPlan plan = plan(List.of(
+                new PlanOp.AddNode(TestParts.at("m", "test:motor", null, 0, 0, 0)),
+                new PlanOp.AddNode(module("line-2", null, abs(10, 0, 0, 0))),
+                new PlanOp.AddNode(TestParts.at("p", "test:press", null, 3, 0, 0)),
+                new PlanOp.AddNode(module("line-1", null, abs(20, 0, 0, 0))),
+                new PlanOp.AddConnection(explicit("c-2", "m", "out", "p", "power_in")),
+                new PlanOp.AddConnection(explicit("c-1", "m", "out", "p", "power_in"))));
+        ExpandedPlan e = expander.expand(plan, TestParts.bundle(), Router.NONE).plan();
+        assertEquals(List.of("m", "line-2/motor", "line-2/shaft", "p", "line-1/motor", "line-1/shaft"),
+                e.primitiveNodes().stream().map(PlanNode::id).toList());
+        assertEquals(List.of("c-2", "c-1", "line-2/link", "line-1/link"),
+                e.routed().stream().map(RoutedConnection::connectionId).toList());
     }
 
     @Test

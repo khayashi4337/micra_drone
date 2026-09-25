@@ -23,6 +23,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Expands a plan into parts only: module instances become their template's parts, connections are resolved.
@@ -36,7 +38,11 @@ public final class PlanExpander {
     private static final String PORT_SEPARATOR = ".";
     // Keys that tell apart several issues of one code on one subject (see also Origins).
     private static final String KEY_ROT = "rot";
+    private static final String KEY_TEMPLATE = "template";
     private static final String KEY_VIA_PREFIX = "via:";
+    // What a template's ids name, for the start of the messages about them.
+    private static final String PART_LABEL = "部品";
+    private static final String CONNECTION_LABEL = "接続";
 
     private final PartTypeRegistry registry;
     private final SlotResolver slots;
@@ -159,14 +165,21 @@ public final class PlanExpander {
         };
     }
 
-    /** Adds the template's parts and connections under the instance's id. False (nothing added) after reporting an issue. */
+    /**
+     * Adds the template's parts and connections under the instance's id. False (nothing added) after reporting an
+     * issue. Every problem of the ids and of the placement is reported; a bad part stops at the first one.
+     */
     private boolean instantiate(PlanNode instance, ModuleTemplate template, List<PlanNode> out, List<Connection> connections,
                                 List<Issue> issues) {
+        String prefix = instance.id() + ID_SEPARATOR;
+        List<String> nodeIds = template.nodes().stream().map(PlanNode::id).toList();
+        List<String> connectionIds = template.internal().stream().map(Connection::id).toList();
+        boolean nodeIdsOk = idsAreValid(template, prefix, nodeIds, PART_LABEL, issues);
+        boolean connectionIdsOk = idsAreValid(template, prefix, connectionIds, CONNECTION_LABEL, issues);
         Placement at = placementOf(instance, issues);
-        if (at == null) {
+        if (!nodeIdsOk || !connectionIdsOk || at == null) {
             return false;
         }
-        String prefix = instance.id() + ID_SEPARATOR;
         List<PlanNode> produced = new ArrayList<>();
         for (PlanNode t : template.nodes()) {
             PlanNode part = instantiatePart(t, instance, at, prefix, issues);
@@ -180,6 +193,34 @@ public final class PlanExpander {
             connections.add(prefixed(c, prefix));
         }
         return true;
+    }
+
+    /**
+     * Whether the ids of a template's parts (or of its connections) are well formed and unique. Each bad id is
+     * reported once, as E-ID-INVALID or E-ID-DUPLICATE on {@code <instance>/<id>}. The template may come from a
+     * client, and with a repeated id every lookup by id (parent, via, ports) would pick one of the parts arbitrarily;
+     * a "/" in an id could also name another instance's part.
+     */
+    private static boolean idsAreValid(ModuleTemplate template, String prefix, List<String> ids, String label, List<Issue> issues) {
+        boolean ok = true;
+        Set<String> seen = new HashSet<>();
+        Set<String> reported = new HashSet<>();
+        for (String id : ids) {
+            if (!PlanIds.isValid(id)) {
+                ok = false;
+                if (reported.add(id)) {
+                    issues.add(Issue.of(IssueCode.E_ID_INVALID, KEY_TEMPLATE, List.of(prefix + id),
+                            "テンプレート" + template.id() + "の" + label + "の" + PlanIds.invalidMessage(id)));
+                }
+            } else if (!seen.add(id)) {
+                ok = false;
+                if (reported.add(id)) {
+                    issues.add(Issue.of(IssueCode.E_ID_DUPLICATE, KEY_TEMPLATE, List.of(prefix + id),
+                            "テンプレート" + template.id() + "の" + label + "のIDが重複しています: " + id));
+                }
+            }
+        }
+        return ok;
     }
 
     /** One template part inside the instance, or null after reporting an issue. */
@@ -218,7 +259,10 @@ public final class PlanExpander {
         return switch (t.anchor()) {
             case Anchor.Absolute a -> {
                 LocalPos offset = t.parent() == null ? at.pos() : Origins.PLAN_ORIGIN;
-                // a template from a client may hold any int, so the sum is bounded rather than trusted to fit
+                // A template from a client may hold any int, so the sum is bounded rather than trusted to fit. The
+                // patcher bounds a plan node at +-MAX_COORD, so a template position at that limit on top of an
+                // instance position at that limit reaches 2 * MAX_COORD; that is where the bound sits (see
+                // Origins.sum), and a sum of that size cannot overflow an int.
                 LocalPos placed = Origins.sum(at.rot().apply(a.pos()), offset);
                 if (placed == null) {
                     issues.add(Origins.positionTooLarge(prefix + t.id()));
@@ -238,10 +282,11 @@ public final class PlanExpander {
 
     /** A template's connection inside an instance: its id, its ends, the nodes it names and the nodes it avoids move under the prefix. */
     private static Connection prefixed(Connection c, String prefix) {
-        Routing routing = c.routing() instanceof Routing.Explicit e ? new Routing.Explicit(prefixAll(e.viaNodeIds(), prefix)) : c.routing();
+        Routing routing = c.routing() instanceof Routing.Explicit e
+                ? new Routing.Explicit(prefixAll(e.viaNodeIds(), prefix).toList()) : c.routing();
         Constraints k = c.constraints();
-        Constraints constraints = new Constraints(k.maxLength(), Set.copyOf(prefixAll(k.avoidNodeIds(), prefix)), k.maxTurns(),
-                k.allowedEntryDirs());
+        Constraints constraints = new Constraints(k.maxLength(), prefixAll(k.avoidNodeIds(), prefix).collect(Collectors.toSet()),
+                k.maxTurns(), k.allowedEntryDirs());
         return new Connection(prefix + c.id(), prefixed(c.from(), prefix), prefixed(c.to(), prefix), c.kind(), routing, constraints);
     }
 
@@ -249,8 +294,8 @@ public final class PlanExpander {
         return new PortRef(prefix + ref.nodeId(), ref.port());
     }
 
-    private static List<String> prefixAll(Collection<String> ids, String prefix) {
-        return ids.stream().map(id -> prefix + id).toList();
+    private static Stream<String> prefixAll(Collection<String> ids, String prefix) {
+        return ids.stream().map(id -> prefix + id);
     }
 
     private boolean portExists(PortRef ref, Targets targets) {
