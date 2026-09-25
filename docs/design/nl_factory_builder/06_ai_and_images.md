@@ -23,13 +23,13 @@
 | 目的 | フラグ | 状態 |
 |---|---|---|
 | 型付き出力 | `--json-schema <スキーマJSON>` | **実測**。応答JSONの`structured_output`(解析済みオブジェクト)と、`result`(JSON文字列)の両方に入る。内部でツール呼び出しを1回挟むため`num_turns`は2になる |
-| 画像入力 | `--input-format stream-json`(標準入力に、`{"type":"user","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"…"}},{"type":"text","text":"…"}]}}`を1行で) | **実測**。安全フラグのまま動作。応答は`--output-format stream-json --verbose`で確認(最後の行の`result`)。`--output-format json`との組み合わせは未確認(S-2で確認) |
+| 画像入力 | `--input-format stream-json`(標準入力に、`{"type":"user","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"…"}},{"type":"text","text":"…"}]}}`を1行で) | **実測**。安全フラグのまま動作。**`--input-format stream-json`は、`--output-format stream-json`とセットでないと起動しない**(`--output-format json`にすると`Error: --input-format=stream-json requires output-format=stream-json.`)。`--verbose`を付け、応答の最後の`result`行(`type:"result"`)から`result`・`structured_output`・`total_cost_usd`を読む。`--json-schema`との併用も動作を実測(`structured_output`が返る) |
 | 費用上限 | `--max-budget-usd <額>` | フラグの存在を`--help`で確認。挙動は未確認(S-2) |
 | モデル指定 | `--model` | 段ごとの設定(強い段=Architect・Module Planner・Vision Critic、軽い段=Critique Router)。既定は利用者のCLIの既定。**既定のままでも動く**(実測時の既定は`claude-opus-5-5`) |
 | 追加の指示 | `--append-system-prompt` | 各段の役割と出力の作法。既存の方針と同じ |
 
 - 応答から読むもの: `is_error`、`result`、`structured_output`、`session_id`、`total_cost_usd`(**実測で存在を確認**。`CostLedger`に記録)、`num_turns`、`usage`。
-- 既存の`chat/ClaudeCliJson.java`は`result`と`session_id`しか拾わないので、`structured_output`と`total_cost_usd`を拾うよう拡張する。既存のテスト(`ClaudeCliJsonTest`)は維持する。
+- 既存の`chat/ClaudeCliJson.java`は`result`と`session_id`しか拾わないので、`structured_output`と`total_cost_usd`を拾うよう拡張する。既存のテスト(`ClaudeCliJsonTest`)は維持する。**画像を渡す段は`stream-json`の出力になる**ので、その最後の`result`行を読む別のパーサ(`ClaudeCliStreamJson`)を、同じ`ClaudeCliResult`を返す形で新設する(既存の`json`の経路は変えない)。
 - **タイムアウト**: 既存の定数`CLI_TIMEOUT_SECONDS=120`は対話用のまま。構造化出力の段は`StageSpec.timeoutSeconds`で個別に指定する(Architect、Module Planner、視覚の段は既定300秒)。
 - **取消**: 既存の`cancel()`(プロセスツリーごと終了)をそのまま使う。取消された段は、状態を変えずに前の状態へ戻す。
 - **記録と再生**: 各段の呼び出しの「入力の`Dossier`」と「生の応答」を、プロジェクトの`journal`に保存する。テストは、この応答を再生して、解析・検証・状態遷移だけを検査する(モデルの品質は検査しない)。
@@ -51,7 +51,7 @@
 
 | 段 | 資料(入力) | 出力 | 検証(決定論) | 許可ツール |
 |---|---|---|---|---|
-| Refiner N-02 | 会話、`ChatContext`、`KnowledgeStore`の好み・失敗例 | `ConceptBrief` | 生産物がレシピ解決できる、必須項目が埋まる | `query_recipes`、`query_module_library` |
+| Refiner N-02 | 会話、`ChatContext`、`KnowledgeStore`の好み・失敗例 | `ConceptBrief` | 生産物がレシピ解決できる、必須項目が埋まる | `query_recipes`(P7から)、`query_module_library`(ライブラリに工場用のテンプレートが載るP11から。それまでは空を返す) |
 | Vision Reader N-05 | 承認画像、`PartAtlas`(絞り込み版)、`ConceptBrief` | `StructureDescription` | 部品名が登録簿のenum内、`region`が0〜1の範囲 | なし |
 | Process Planner N-06 | `ConceptBrief`、`RecipeOption`候補、L3の`Issue` | `ProcessGraph` | 各工程が実在レシピ、流量の保存 | `query_recipes` |
 | Site Planner N-10 | `ConceptBrief`、`StructureDescription`、`SiteSurvey`、床面積 | `ZoningPlan` | 敷地内、重なり(→Zoning Fixerに渡す) | `get_site_survey` |
@@ -62,7 +62,7 @@
 | Vision Critic N-23 | 参考画像、スクリーンショット、`CameraPreset` | `CritiqueReport` | スコアが0〜1、差分の種類がenum | なし |
 | Critique Router N-25 | ユーザーのダメ出し文、現在の状態の要約 | `RouteDecision` | 分類がenum | なし |
 | Reconciler(AI部分) N-09 | 決定論の突き合わせ結果 | 提案(`絵を優先`/`工程を優先`+制約) | 制約が数値として妥当 | なし |
-| Runtime Monitor提案(L8) N-30 | `RuntimeReport`、`SemanticPlan` | 増設案(`PlanPatch`の下書き) | `PlanPatcher`、`FactoryAnalyzer` | `get_capacity_report` |
+| Module Planner(L8の増設案) N-16 | `RuntimeReport`、`SemanticPlan`(増設案を出すAIの段は、L8ではModule Plannerだけ) | 増設案(`PlanPatch`の下書き) | `PlanPatcher`、`FactoryAnalyzer` | `get_capacity_report` |
 
 - **書き込みツールは1つも無い**(D-1)。AIの成果物は、必ず`PlanPatch`などのデータで、決定論の検証器を通ってからでないと次へ進まない。
 - 「許可ツール」は、その段の`--mcp-config`と`--allowedTools`で許可するツール名を絞る(既存の`ClaudeCliBridge.MCP_ALLOWED_TOOL`を、リストに拡張)。
@@ -104,7 +104,7 @@
 | `ImageKind` | 何の絵 | 誰が作る | 誰が読む | 参考として渡すもの |
 |---|---|---|---|---|
 | `PART_ATLAS` | 部品見本帳(実在部品を並べた見本) | ゲーム内描画(`PartAtlasRenderer`) | 画像生成、Claude視覚 | (なし) |
-| `CONCEPT_ART` | 工場全景の鳥瞰図 | 画像生成 | Vision Reader、Vision Critic、人 | 部品見本帳(絞り込み)、L1・L2では前回の承認画像 |
+| `CONCEPT_ART` | 工場全景の**カットアウェイ(屋根を一部外して、内部の機械が見える)鳥瞰図** | 画像生成 | Vision Reader、Vision Critic、人 | 部品見本帳(絞り込み)、L1・L2では前回の承認画像 |
 | `BUILDING_RENDER` | 建屋の完成予想図 | 画像生成 | Architect、Decorator、Vision Critic | コンセプト画像、部品見本帳 |
 | `STRUCTURE_GUIDE` | 構造用画像(壁・屋根・開口部・機械を色で塗り分け) | 画像生成 | Architect | 完成予想図(同じ構図) |
 | `INTERIOR_SECTION` | 内部断面図(2階建て・キャットウォーク等の雰囲気) | 画像生成 | Module Planner | コンセプト画像、部品見本帳 |
@@ -113,10 +113,10 @@
 
 ### 5.2 画像生成: `codex exec`
 
-- 呼び出し(**実測済みの形**): `codex exec --enable image_generation -s workspace-write --skip-git-repo-check -C <作業フォルダ> -i <参考1> -i <参考2> … -`(指示文は標準入力)。実行するのは新設の`chat/CodexCliBridge.java`(`ClaudeCliBridge`と同型: 別スレッド、タイムアウト、取消でプロセスツリーごと終了、Windowsの`cmd.exe /c`経由の起動)。
+- 呼び出し(**実測済みの形**): `codex exec --enable image_generation -s workspace-write --skip-git-repo-check -C <作業フォルダ> -i <参考1> -i <参考2> … -`(指示文は標準入力)。**利用者のグローバル設定・規則・セッション保存の混入を避けるため、`--ephemeral --ignore-user-config --ignore-rules`を付ける**(3つとも`codex exec --help`にあることを確認。付けても画像生成が動くこと、認証が維持されることは、S-3で確認してから確定する。Claude側の`--setting-sources ""`と同じ目的)。実行するのは新設の`chat/CodexCliBridge.java`(`ClaudeCliBridge`と同型: 別スレッド、タイムアウト、取消でプロセスツリーごと終了、Windowsの`cmd.exe /c`経由の起動)。
 - **作業フォルダ**は、プロジェクトの`images/_codex_work/<回>/`(使い捨て)。実測で、`.agents/`と`.git/`が作られたので、そこに閉じ込める。生成物は作業フォルダに保存させ、`ImageStore`が**新しく増えたPNGを検出**してプロジェクトの`images/`へ移し、`ImageArtifact`(ハッシュ・指示文・参考画像・費用)を記録する。作業フォルダは終了時に削除する。
 - **所要時間**: 参考2枚で約2分(実測)。UIには進行表示と、取消ボタンを出す。同時に走らせるのは1つだけ。
-- **費用**: Codexは報告のトークン数(実測: 25,224)を出すが、金額への換算は未確認(S-3)。`CostLedger`にはトークン数を記録し、金額は`null`にしておく(推測で埋めない)。
+- **費用**: Codexは報告のトークン数(実測: 25,224)を出すが、金額への換算は未確認(S-3)。`CostLedger`にはトークン数と**画像生成の回数**を記録し、金額は`null`にしておく(推測で埋めない)。**上限は、金額ではなく、回数(`softImages`/`hardImages`)とトークン数(`softCodexTokens`/`hardCodexTokens`)で効かせる**(`01` 9節の`Caps`)。
 - Codex CLIが無い、ログインしていない場合は、案内を出す。工場機能の画像以外の部分(手書きの計画・スクリプト・施工)は、Codexなしで使える。
 
 ### 5.3 参考画像の上限と、その対処(重要)
@@ -134,7 +134,7 @@
 
 1. **部品見本帳は、1枚に部品を並べた画像(見本シート)にする。** 1部品1枚で渡さない。1枚のシートが、多くの部品を運ぶ。
 2. **依頼に必要な部品だけの絞り込みシートを、毎回作る。** `AtlasSlicer`が、`ConceptBrief`・`ProcessGraph`が使う部品(例: 「鉄板と真鍮」ならメカニカルプレス、デポ、メカニカルベルト、メカニカルミキサー、鉢、ブレイズバーナー、水車、シャフト、歯車、ファンネル)と、建屋の基本部品(壁・屋根・窓・扉など)を選び、**1シートあたり最大12部品(4×3、1セル256px、シート1024×768px)**に収める。12を超える場合は、種類で最大2シートに分ける(機械・加工用、動力・搬送用)。全部品の見本は、登録簿の版ごとに1回だけ描画してキャッシュし、シートはそこから切り出して組み立てる(毎回ゲームで描画し直さない)。
-3. **1回の画像生成に渡す参考画像は、既定で最大4枚**(設定で変更可、上限は資料の16枚)。優先順位(高い順): ① 部品見本シート(絞り込み) ② 承認済みコンセプト画像(構図・雰囲気の一貫性) ③ スクリーンショットまたは前回の絵(L5'・L1・L2) ④ 敷地の雰囲気(任意)。**枠を超える場合は、優先順位の低いものから外し、外した事実を`ImageArtifact`に記録する。** 外した物の内容は、文章(部品名と`visualDescription`)で補う。
+3. **1回の画像生成に渡す参考画像は、既定で最大4枚**(設定で変更可、上限は資料の16枚)。優先順位(高い順): ① 部品見本シート(絞り込み) ② 承認済みコンセプト画像(構図・雰囲気の一貫性) ③ スクリーンショットまたは前回の絵(L5'・L1・L2) ④ 敷地の雰囲気(任意)。**枠を超える場合は、優先順位の低いものから外し、外した事実を、理由つきで`ImageArtifact.droppedReferences`に記録する(参考画像の判断を後から再現できるように)。** 外した物の内容は、文章(部品名と`visualDescription`)で補う。
 4. **文章で補う**: 参考画像に入らない部品でも、指示文には、使ってよい部品の名前(JEIと同じ表示名、D-18)と見た目の短い説明を全部入れる。画像は「特に見た目が難しい部品」に優先して使う。
 5. **サイズの管理**: 参考画像は、PNGで1枚8MB以下、長辺2048px以下に縮小して渡す(生成側の出力制約とは別に、転送と処理を軽くするため)。
 6. **役割の明示**: 指示文で、`画像1: 部品見本(この機械だけを使って描く)`、`画像2: 承認済みコンセプト(構図と雰囲気を維持)`のように、番号と役割を書く(Codex同梱の指針: 複数画像は番号で参照し、使い方を書く)。
@@ -158,7 +158,7 @@
 
 1. 用途: 「Minecraftのmod『Create』を使った工場の、コンセプトアート」
 2. 場面と構図: `CameraPreset`の文(例: 「南東の斜め45度上からの鳥瞰図」)、時間帯・天気
-3. 主題: 建屋の数と外観(`StyleSpec`の色・素材)、発着場、生産する物
+3. 主題: 建屋の数と外観(`StyleSpec`の色・素材)、発着場、生産する物。**コンセプトアートは「屋根を一部外して(カットアウェイ)、内部の機械の並びが見える鳥瞰図」と指示する**(建屋の外側だけでは機械が写らず、L2の照合が測れないため。`03` L2)
 4. **使ってよい機械(実在部品)**: 部品名(JEIの表示名)+見た目の説明の一覧、「画像1の部品見本の見た目に合わせる」
 5. 制約: 「一覧にない機械は描かない」「文字を入れない」「Minecraftのブロックの見た目(立方体の格子)にする」
 6. 画像の役割: `画像1: …、画像2: …`
@@ -170,17 +170,19 @@
 
 - Claudeに渡す画像は、5.3節の7のとおり。渡す前に、`ImageResizer`(クライアント側、AWTまたは`NativeImage`)で縮小する。
 - 出力スキーマの部品名は登録簿のenum(D-19)。絵の中の登録簿に無い機械は`unrecognized`に入る。Reconcilerがその扱い(絵を直す/部品を追加する候補にする/無視)を決める。
+- **enumは形を整えるだけで、実在性は保証しない**(絵の架空の機械を、似た実在部品に誤って当てはめる恐れがある)。そこで、次の**合格ゲート**を置く: (a)Approve0の承認画面に、**認識された部品の一覧と、`unrecognized`の警告**(「この絵には登録簿にない機械が描かれています」)を必ず出す。(b)評価画像セット(`6`節)で、**部品名の適合率(認識した部品のうち正しい割合)**、**必須部品の再現率**、**登録簿外の機械を実在部品と誤認した率**を測り、初期の合格線(適合率0.9以上、必須部品の再現率0.7以上、誤認率0.1以下)を満たさなければ、P8を完了としない。合格線は、S-10で人手ラベルの実測に基づいて較正してから凍結する。(c)`DescribedObject.visibility`が`HIDDEN`(屋根や壁で見えない)の部品は、再現率の分母に入れない。
 
 ### 5.7 In-game Renderer(ゲーム内撮影)と`CameraPreset`
 
 - `CameraPreset`は、指示文の文章とゲーム内カメラの両方の**唯一の定義**(ずれを防ぐ)。既定のプリセット: `BIRD_SE45`(南東斜め45度の鳥瞰、距離は建屋全体の外接箱の大きさから決める)、`FRONT`(正面)、`INTERIOR_SECTION`(断面に近い側面、壁の一部を非表示にして撮る)。
 - 撮影の条件: 昼間(夜なら待つか、撮影中だけ明るさを固定)、HUD非表示、エンティティ(ドローン等)非表示、チャンクの読み込みと描画の完了待ち、撮影後にカメラと設定を元に戻す。既存`client/IdeCameraController.java`のカメラ操作を再利用する。
 - 撮影: `Screenshot`の機構でフレームバッファを`NativeImage`に取り、PNGにする。マルチプレイでも、撮影は自分のクライアントだけで完結する。
+- **生成画像とゲーム画像は、同じカメラにはならない**: ゲーム側のyaw・pitch・FOVは固定できるが、画像生成AIは指示した角度・距離・遠近を保証しない。そこで、Vision Criticは**画素の類似ではなく意味の比較**をし、比較の前に両画像を被写体の外接矩形でクロップして大きさを揃える(`03` 0.5節)。生成画像が指示した`CameraPreset`にどの程度従うかは、S-3(生成)とS-10(較正)で実測する。
 
 ### 5.8 費用と時間の台帳
 
 - 実測の目安(2026-09-25): Claudeの視覚の呼び出し(小さな画像1枚)約4秒・$0.0129。構造化出力の小さな呼び出し約$0.021(内部で2ターン)。Codexの画像生成(参考2枚)約2分・25,224トークン。
-- `CostLedger`は、段ごとに、Claudeは`total_cost_usd`を、Codexはトークン数を記録する。プロジェクトごとに警告線と上限線(既定は設定、初回に利用者へ提示して同意を得る)。L2・L5・L5'は画像生成を含むので、回るたびに費用を表示して、上限に近づいたら止める(`03_loops.md`)。
+- `CostLedger`は、段ごとに、Claudeは`total_cost_usd`(金額)を、Codexはトークン数と画像生成の回数を記録する。**警告線と上限線は3種類の単位で持つ**(金額=Claude、回数=画像生成、トークン数=Codex。`01` 9節の`Caps`。既定は設定、初回に利用者へ提示して同意を得る)。Codexの金額は不明なので、金額の上限とは比べない。L1・L2・L5'は画像生成を含むので、回るたびに費用(金額・回数・トークン)を表示して、**回数またはトークン数の上限線で止める**(`03_loops.md`)。
 
 ### 5.9 プライバシー
 
@@ -197,3 +199,11 @@
 - `docs/design/nl_factory_builder/evals/`に、日本語の依頼20件以上と、評価の観点を置く(小屋、赤い屋根の家、鉄板の工場、真鍮の工場、鉄板と真鍮の工場+発着場、存在しない品物(ネジ)の依頼、曖昧な依頼、矛盾する依頼など)。
 - 指標: スキーマ通過率、`PlanPatcher`・`PlanCompiler`通過率、アナライザ通過までのループ回数、`Issue`の種類、費用、時間、絵から読んだ部品名の正答率(部品見本と人手ラベル)、Vision Criticのスコアと人の評価の相関。
 - 実行は手動(費用がかかる)。結果は`docs/design/nl_factory_builder/evals/results/`に日付つきで記録し、プロンプト・スキーマ・モデルを変えるたびに比べる。
+- **合格線(初期値。P4・P7・P8でベースラインを実測して調整し、緩める場合は理由を記録して林さんに報告する)**:
+  | 指標 | 初期の合格線 | 使うフェーズ |
+  |---|---|---|
+  | 建築系の依頼で、スキーマ通過→コンパイル通過まで到達する率 | 0.9以上 | P7 |
+  | 絵から読んだ部品名の適合率 / 必須部品の再現率 / 誤認率 | 0.9以上 / 0.7以上 / 0.1以下 | P8 |
+  | Vision Criticのスコアと人の評価の相関(較正用の比較ペア) | 順位相関0.6以上 | P9 |
+  | 工場系の依頼で、`ERROR`0件に到達する率(L3・L4の上限内) | 0.8以上 | P12 |
+  | 1つの依頼あたりの費用(金額・画像回数・トークン)の中央値 | 記録し、上限線の既定値を決める根拠にする | P7〜P12 |

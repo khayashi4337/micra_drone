@@ -16,7 +16,7 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 - 種別: UI・既存。
 - 役割: 依頼の入口。日本語で依頼、画像の承認、ダメ出し。
 - 実装: 既存`client/IdeScreen.java`+`client/IdeChatPanel.java`のチャット欄。**新規**: 「工場を建てる」モード切替と、施工の進捗表示(`client/build/BuildProgressHud`)。`IdeScreen`は既に1610行あるので、建設用の画面は別クラスに分ける。
-- フェーズ: P5(レビュー画面と進捗)、P7(依頼入力)。
+- フェーズ: P5(レビュー画面と進捗)、P7(依頼入力、ループの上限画面`LoopEscalationScreen`)、P8(戻し先を選ぶ`RouteChooserScreen`。L1の上限超過で最初に要る。L6のCritique Routerが分類できないとき(`OTHER`)にも使う)。
 - 完了条件: 日本語で依頼を入力→プロジェクトが作られ、状態が画面に出る。実機で確認。
 
 ### N-02 Refiner(コンセプト洗練)
@@ -24,14 +24,14 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 - 役割: 生産物・生産量/分・動力源・外観を、ユーザーと詰める。`ConceptBrief`を作る。存在しない品物(例: 「ネジ」)を頼まれたら、Recipe Resolverの結果を見て「Createには無い。近い品物はこれ」と返して確認する(勝手に置き換えない)。
 - 入力: ユーザーの発話、既存の`ChatContextBuilder`の文脈、`RecipeSource`への問い合わせ結果(MCP読み取りツール`query_recipes`)、`ModuleLibrary`の一覧、`KnowledgeStore`の好み・失敗例(L9)。
 - 出力: `ConceptBrief`(構造化)。未確定の質問は`openQuestions`に残す。
-- 実装: 既存`chat/ChatSession.java`・`chat/ChatContextBuilder.java`・`chat/ClaudeCliBridge.java`を流用。**新規**: 工場用のシステムプロンプト(`build/ai/prompts/RefinerPrompt`)。
+- 実装: 既存`chat/ChatSession.java`・`chat/ChatContextBuilder.java`・`chat/ClaudeCliBridge.java`を流用。**新規**: 工場用のシステムプロンプト(`build/ai/prompts/RefinerPrompt`)。**セッションは制御ブロックではなくプロジェクトに結びつける**(既存の`ControllerKey`は制御ブロックの座標単位のため、共通の窓口`ChatKey`と新設の`ProjectKey`を導入する。`04` F-23)。ツールは、`query_recipes`(P7から使える)と`query_module_library`(ライブラリに工場用テンプレートが載るP11から。それまでは空)。
 - 失敗時: 品物が解決できない→`W-NO-RECIPE`を出してユーザーへ。
 - フェーズ: P7。
 - 完了条件: 「鉄板と真鍮を作る工場」から、鉄板(プレス)と真鍮(混合・加熱)が`ConceptBrief`に入る。「ネジ」では、勝手に置き換えずに質問が返る。
 
 ### N-03 ConceptImg(コンセプトアート生成)
 - 種別: 画像生成。
-- 役割: 工場全景の鳥瞰図を作る。**部品見本帳(`PartAtlas`)と、依頼に必要な部品の名前・見た目の説明を参考として渡し、登録簿にある実在部品だけで描かせる**(D-17、P-16)。カメラ角度は`CameraPreset`で固定し、指示文に書く(In-game Rendererと同じ角度にするため)。
+- 役割: 工場全景の鳥瞰図を作る。**部品見本帳(`PartAtlas`)と、依頼に必要な部品の名前・見た目の説明を参考として渡し、登録簿にある実在部品だけで描かせる**(D-17、P-16)。カメラ角度は`CameraPreset`で固定し、指示文に書く(In-game Rendererと同じ角度にするため)。**様式は、屋根を一部外して内部の機械の並びが見えるカットアウェイの鳥瞰図**(建屋の外側だけでは機械が写らず、L2で機械の照合が測れないため)。
 - 入力: `ConceptBrief`、`PartAtlas`(依頼に関係する部品だけの絞り込み版、`06_ai_and_images.md`の参考画像の予算)、前回の承認画像(L1・L2の再生成時)、`CameraPreset`。
 - 出力: `ImageArtifact`(`CONCEPT_ART`)。
 - 実装: **新規** `chat/CodexCliBridge.java`(`ClaudeCliBridge`と同型)、`build/ai/image/ImagePromptBuilder`(登録簿から指示文を生成)、`build/ai/image/ImageStore`。
@@ -51,7 +51,7 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 
 ### N-05 Vision Reader(絵 → 構造記述)
 - 種別: AI-視覚+AI-構造化。
-- 役割: 承認された絵から`StructureDescription`を作る。建屋数、屋根、煙突、そして**絵に描かれた機械の種類(登録簿の識別子のenumに限る、D-19)と並び、ベルト等の流れ**。登録簿に無い物は`unrecognized`に入れる。
+- 役割: 承認された絵から`StructureDescription`を作る。建屋数、屋根、煙突、そして**絵に描かれた機械の種類(登録簿の識別子のenumに限る、D-19)と並び、ベルト等の流れ**。登録簿に無い物は`unrecognized`に入れる。各建屋・物体・流れに**安定ID**を付け(流れは物体のIDで結ぶ)、物体には**見え方**(`VISIBLE`/`PARTIAL`/`HIDDEN`。屋根や壁で見えない可能性)を付ける。**合格ゲート**は`06` 5.6節(適合率・再現率・誤認率の合格線、Approve0での認識一覧と警告)。
 - 入力: 承認画像(長辺を縮小)、`PartAtlas`(絞り込み版。名前の照合に使う)、`ConceptBrief`。
 - 出力: `StructureDescription`。
 - 実装: **新規** `build/ai/stages/VisionReaderStage`(`ClaudeCliBridge`に画像入力を追加)。
@@ -72,18 +72,18 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 - 役割: ゲーム内`RecipeManager`から、指定品物を作るレシピの候補を、Createのレシピ種別(`create:pressing`、`create:mixing`、`create:milling`、`create:crushing`、`create:splashing`、`create:haunting`、`create:compacting`、`create:deploying`、`create:cutting`、`create:sequenced_assembly`、`create:filling`、`create:emptying`など)を含めて、正規化した`RecipeOption`で返す。タグ(例: `c:ingots/iron`)は展開する。
 - 実装: **新規** `construction/ServerRecipeSource`(`RecipeManager`を読む)、純Java側`build/analyze/RecipeSource`。MCPツール`query_recipes`が、クライアントからサーバーへの問い合わせ(F-8)経由で呼ぶ。JEIには依存しない(JEIはクライアント表示専用)。
 - 失敗時: 該当なし→空リスト(`W-NO-RECIPE`の根拠)。
-- フェーズ: P10。完了条件: 実機のサーバーで`create:iron_sheet`と`create:brass_ingot`の候補が返る(自動テスト: GameTest)。
+- フェーズ: **P7**(`RecipeSource`インターフェース、サーバー実装、MCPツール`query_recipes`。Refinerが「ネジ」を判定するために要る)、**P10**(Createの全レシピ種別の正規化の網羅テスト、GameTestでの確認)。完了条件: P7=実機のサーバーで`create:iron_sheet`と`create:brass_ingot`の候補が返り、「ネジ」は空になる。P10=各レシピ種別(液体・保持道具・手順・形状を含む)が`RecipeOption`に正規化され、網羅テストが緑。
 
 ### N-08 Capacity Calculator(機械台数・RPM・応力・床面積)
 - 種別: 決定論。
-- 役割: `ProcessGraph`から`CapacityReport`を計算する。台数=目標毎分÷機械の毎分処理量、必要RPM、応力の合計、必要な動力源の数(D-9: 数値は実行時に`BlockStressValues`から)、必要な床面積(モジュールの占有+余白)。
+- 役割: `ProcessGraph`から`CapacityReport`を計算する。台数=目標毎分÷機械の毎分処理量、必要RPM、応力の合計、必要な動力源(`PowerPolicy`の範囲で`PowerPlantChoice`を選ぶ。D-9: 応力の数値は実行時に`BlockStressValues`から、動力源の出力は`PowerSourceModel`が水流・帆の数・ボイラーの状態から計算)、必要な床面積(モジュールの占有+余白)。
 - 実装: **新規** `build/analyze/CapacityCalculator`+`StressValueSource`(テストでは差し替え、実行時はCreate公開APIの実装)。
 - 失敗時: 動力不足・過大→`Issue`(`E-POWER-NONE`、`E-STRESS-OVER`、`W-OVERSIZED-POWER`)→L3。
 - フェーズ: P11。完了条件: 実機のCreateの値で、鉄板ライン1本・真鍮ライン1本の必要動力が、実際に組んで回した結果と一致する(GameTestの忠実度テスト)。
 
 ### N-09 Reconciler(絵と工程の突き合わせ)
 - 種別: 決定論(数値の突き合わせ)+AI-構造化(食い違いの解釈と提案)。
-- 役割: `StructureDescription`(絵の建屋構成)と、`CapacityReport`(必要な床面積・機械)を比べる。決定論部分が、建屋ごとの必要床面積と絵の推定面積、部品の種類と数の過不足、を計算する。AI部分が、「絵を優先して機械を減らす」か「工程を優先して建屋を大きくする(絵を再生成)」かを判断して提案する。
+- 役割: `StructureDescription`(絵の建屋構成)と、`CapacityReport`(必要な床面積・機械)を比べる。**絵は透視投影でブロック単位の縮尺を持たないので、絶対の面積では比べない**。決定論部分が、(1)建屋の数、(2)建屋どうしの**相対的な大きさの比**と、必要な床面積の比、(3)**見えている**必須部品の検出率(`HIDDEN`は数えない)、(4)登録簿外の目立つ機械の有無、を計算する。実寸はSite Plannerが決める。AI部分が、「絵を優先して機械を減らす」か「工程を優先して建屋を大きくする(絵を再生成)」かを判断して提案する。再生成された絵は、**必ずユーザーがApprove0で承認する**(`03` L2)。
 - 出力: `ReconcileResult`(OK | `Constraints`つきのL2フィードバック)。
 - 実装: **新規** `build/process/Reconciler`(決定論)、`build/ai/stages/ReconcilerStage`。
 - フェーズ: P12。完了条件: 収容できない絵(建屋が小さすぎる)で、L2が制約つきの再生成を要求する。収容できる絵では通る。
@@ -132,7 +132,7 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 ### N-15 Blueprint Analyzer(構造の意味解析)
 - 種別: 決定論。
 - 役割: 施工リスト(予測)または実際のスナップショット(観測)から、`SemanticMap`(壁・屋根・開口部・部屋・階・スロット・出入口)を作る。
-- 実装: **新規** `build/analyze/BlueprintAnalyzer`+`VoxelGrid`。
+- 実装: **新規** `build/analyze/BlueprintAnalyzer`+`VoxelClassGrid`。
 - フェーズ: P6。完了条件: 箱形の小屋で、内部が1部屋として検出され、穴あきの壁では`E-ENCLOSURE-LEAK`が出る。設計データ由来と、実際に建てたスナップショット由来で、同じ`SemanticMap`になる。
 
 ### N-16 Module Planner(モジュール配置・接続)
@@ -146,9 +146,9 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 ### N-17 Module Library(検証済みテンプレート)
 - 種別: 決定論(データ+検証)。
 - 役割: 検証済みのモジュール(プレス台=プレス+デポ+ファンネル+シャフト、ミキサー台、動力室、倉庫、搬入口・搬出口、キャットウォークなど)を持つ。テンプレートは`SemanticPlan`の断片で、読み込み時に**Factory Analyzerで検証**し、通らないものは載せない。
-- 実装: **新規** `build/knowledge/ModuleLibrary`+`ModuleTemplate`。保存場所は、同梱(jar内リソース)と、プレイヤーのプロジェクト(L9で追加される物)。保存の作法は既存`drone/ScriptFileStore`を踏襲。
+- 実装: **新規** `build/knowledge/ModuleLibrary`+`ModuleTemplate`。保存場所は、同梱(jar内リソース)と、プレイヤーのプロジェクト(L9で追加される物)。保存の作法は既存`drone/ScriptFileStore`を踏襲。**載る条件は由来で決まる**(`05` 3節): 同梱=開発時に静的検証・忠実度テスト(GameTest)・試運転を通した物、プレイヤーが昇格した物=静的検証+そのプレイヤーの環境での試運転+ユーザーの承認(GameTestは走らせられないため)。
 - フェーズ: P11(同梱テンプレート)、P14(L9で成長)。
-- 完了条件: 同梱テンプレートの全部が、Factory Analyzerの静的検証と、実機の試運転(Commissioning)の両方を通る。
+- 完了条件: 同梱テンプレートの全部が、Factory Analyzerの静的検証と、忠実度テストと、実機の試運転(Commissioning)を通る。プレイヤーが昇格したテンプレートは、静的検証と試運転を通らないと載らない。
 
 ### N-18 Router(経路探索)
 - 種別: 決定論。
@@ -157,11 +157,11 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 - フェーズ: P11。完了条件: 障害物のある小さな3D迷路(単体テスト)で最短経路が出る。実機で、Routerが作ったシャフト・ベルトが実際に回り、品物が流れる。
 
 ### N-19 Factory Analyzer(応力・回転・物流・詰まり)
-- 種別: 決定論(静的)+計測(動的、N-27の試運転)。
-- 役割: 静的: `KineticModel`で回転ネットワークの速度・方向・応力を計算し、`E-ROT-CONFLICT`、`E-STRESS-OVER`を検出。物流(品物・流体)の行き止まり、詰まりの危険、ポートの不一致を検出。`PredictionReport`(毎分の生産量・応力の使用率)を出す。
+- 種別: 決定論(静的)+計測(動的、N-30の試運転)。
+- 役割: 静的: `KineticModel`で回転ネットワークの速度・方向・応力を計算し、`E-ROT-CONFLICT`、`E-STRESS-OVER`を検出。**熱**(加熱を要求する機械に熱源があるか=`E-HEAT-NONE`、燃料の補給手段=`W-FUEL-SUPPLY`)と**係留**(`E-DOCK-MISALIGN`)も検査する。物流(品物・流体)の行き止まり、詰まりの危険、ポートの不一致を検出。`PredictionReport`(毎分の生産量・応力の使用率)を出す。
 - 実装: **新規** `build/analyze/FactoryAnalyzer`+`KineticModel`。
 - フェーズ: P11。完了条件: 予測が、実機で建てて回した結果(回転数・応力・生産量)と、許容誤差内で一致する(忠実度テスト)。
-- 失敗時: 未対応の部品→`W-UNMODELED`(推測せず、試運転に任せる)。
+- 失敗時: 未対応の部品→`W-UNMODELED`(推測せず、試運転に任せる)。**解析の通過は「検証済み」ではない**: `W-UNMODELED`の部品を含む計画は「未検証」と表示し、試運転が通るまで`VERIFIED`にしない(`03` L4、`05` 4.7節)。
 
 ### N-20 Decorator(外装装飾)
 - 種別: AI-視覚+AI-構造化。
@@ -172,8 +172,9 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 ### N-21 Logistics Planner(発着場・飛行ルート)
 - 種別: AI-構造化。
 - 役割: 発着場(`DockPad`)と飛行ルートの計画(`LogisticsPlan`)。搬入・搬出口と発着場を物流でつなぐ。
-- 実装: **新規** `build/ai/stages/LogisticsPlannerStage`。飛行船の操縦の仕組みは、スパイクS-8で確定してから設計を固める(`07`)。
-- フェーズ: P13。完了条件: 発着場が建ち、搬出口から発着場の荷積み位置まで品物が流れる。飛行船の運用は、S-8の結果に沿って完成させる。
+- 入力: `SemanticPlan`(建屋・搬出口の位置)、`ProcessGraph`の搬入出、敷地(`SiteSurvey`)。出力: `LogisticsPlan`(`Dock`・`Route`・`CargoFlow`、`01` 10節)。失敗時: 発着場の空間(上空の余白)が確保できなければ`E-SPACE-SHORT`で建屋・区画の見直しへ。
+- 実装: **新規** `build/ai/stages/LogisticsPlannerStage`。飛行船の組み立て・操縦・係留は`simulated`の部品(`05` 1.3節)。仕組みはスパイクS-8で確定してから設計を固める(`07`)。
+- フェーズ: P13。完了条件: 発着場が建ち、搬出口から発着場の荷積み位置まで品物が流れ、飛行船が係留でき、荷積み位置から荷を運べる。運航の自動化はS-8で可能と分かった方式で完成させる(`07` P13の規則)。
 
 ---
 
@@ -199,14 +200,14 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 - 種別: UI。
 - 役割: 施工リストを、半透明のホログラムとして現地に重ねて見せる。絵と実物(またはホログラム)の並列表示。予測レポート(生産量/分・応力)、材料表(BOM)、検証結果(`Issue`)、所要時間の見積もり。承認ボタン(D-3: 承認するのはハッシュ)。
 - 実装: **新規** `client/build/HologramRenderer`、`client/build/BuildReviewHud`、`client/build/SideBySideView`。承認は`ApprovePlanPayload(manifestHash)`。
-- フェーズ: P5(ホログラム・承認・材料表)、P9(並列表示)、P11(予測レポート)。同じ画面に表示欄を追加していく。
+- フェーズ: P5(ホログラム・承認・材料表・**差分ホログラム**(建てた後の変更用。追加=緑、撤去=赤、変更=黄))、P9(並列表示)、P11(予測レポート)。同じ画面に表示欄を追加していく。
 - 完了条件: ホログラムがブロックの位置と向きどおりに出る。クライアントとサーバーのハッシュが一致しないと承認できない。
 
 ### N-25 Critique Router(ダメ出しの分類)
 - 種別: AI-構造化。
 - 役割: ユーザーのダメ出しを、雰囲気・全体像=Refiner、生産量・製品=Process Planner、建屋の形・色=DesignGen、ラインの並び=Module Plannerに振り分け(`RouteDecision`)、制約を取り出す。
 - 実装: **新規** `build/ai/stages/CritiqueRouterStage`。
-- フェーズ: P14(戻し先の全ノードが揃った後に、1回で完成させる)。それまでは、ユーザーが戻し先を選ぶ画面から手動で戻せる。
+- フェーズ: P14(戻し先の全ノードが揃った後に、1回で完成させる)。それまでは、ユーザーが`RouteChooserScreen`(P8で作る)で戻し先を選んで手動で戻す。P14の後も、分類できない(`OTHER`)ときの入口として残る。
 - 完了条件: 4分類のダメ出し文が、正しい戻し先に振り分けられる(評価セット)。
 
 ---
@@ -221,16 +222,24 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 - 失敗時: 置けない→`Deviation`→L7。
 
 ### N-27 Drone(micra drone)
-- 上記N-26に含む。既存の畑の`DroneControllerBlockEntity`・`LiveDroneApi`・`PacedActionQueue`には手を入れない(P-15)。
+- 種別: 施工の演出。
+- 役割: 各置き場所に飛び、パーティクルと音で「置いている」ことを見せる。**実際の設置はN-26のジョブが行う**(D-11)。ドローンの数は総設置数に応じて増える(04 F-2)。
+- 入力: `ConstructionJob`の現在の設置位置(サーバーtickごと)。出力: 演出(`DroneEntity`の移動、パーティクル、音)。失敗時: ドローンが消えても(チャンクの読み込み解除など)、ジョブは進行する(演出だけが止まる)。
+- 実装: **新規** `construction/DroneShow`。既存の`drone/DroneEntity.java`を演出用に流用(施工専用の`DroneEntity`をジョブごとに生成し、終了で消す。畑の制御ブロックのドローンとは別)。既存の畑の`DroneControllerBlockEntity`・`LiveDroneApi`・`PacedActionQueue`には手を入れない(P-15)。
+- フェーズ: P4。完了条件: 実機で、ドローンが設置位置に飛んで見せ、ジョブが完了するとドローンが消える。ドローンを強制的に消しても、ジョブは完了する。
 
 ### N-28 Aero(Create: Aeronautics)
 - 種別: 施工・部品。
-- 役割: 発着場、飛行船(気球エンベロープ・バーナー・プロペラ・ジャイロ付きプロペラベアリング等)の部品を登録簿に載せ、テンプレート化する。
-- 実装: **新規** `build/parts/AeroParts`、`build/knowledge`のドックテンプレート。依存はPhase 1で追加済み。
-- フェーズ: P13(S-8の後)。完了条件: 発着場テンプレートが建ち、飛行船テンプレートが組み上がって飛べる状態になる(実機)。
+- 役割: 発着場、飛行船(気球・バーナー・プロペラ・物理アセンブラ・操縦部・係留部)の部品を登録簿に載せ、テンプレート化する。**組み立てでブロックが世界から消えて動く構造物になる**ので、`AssemblySpec`・`ASSEMBLED_AWAY`で扱う(`01` 4節)。
+- 入力: `LogisticsPlan`の`Dock`・`Route`、飛行船のテンプレート。出力: 発着場と飛行船の施工リストの部分(`PlacementManifest`に入る)と、組み立ての手順(`AssemblyStep`)。失敗時: 組み立ての結果が期待と違えば`E-ASSEMBLY-FAILED`、係留部が合わなければ`E-DOCK-MISALIGN`。
+- 実装: **新規** `build/parts/AeroParts`(`aeronautics:`・`simulated:`・`offroad:`の部品、`05` 1.3節)、`build/knowledge`のドック・飛行船テンプレート。依存はPhase 1で追加済み。
+- フェーズ: P13(S-8の後)。完了条件: 実機で、発着場が建ち、飛行船が組み上がり(期待のエンティティが生成され、L7が欠落と誤判定しない)、係留でき、荷積み位置から荷を運べる。
 
 ### N-29 MC(ワールド)
-- ノードではなく環境。`ServerBlockSnapshotReader`(Phase 2で追加済み)を拡張した状態つきスナップショットで検査する。
+- 種別: 環境(v3ではワールドを表すノード)。
+- 役割: 設置の結果を、**検査に使う唯一の真実**として提供する。サーバーの本物のワールド。
+- 入力: サーバー側の読み取り要求。出力: 状態つきの観測(`SparseSnapshot`、`VoxelClassGrid`)。**既存の`drone/ServerBlockSnapshotReader.java`(文字列でブロック名だけを返す既存の契約)は変更せず**、L7と意味解析用に別契約の`construction/ServerStateReader`を新設して読む(`01` 8節)。失敗時: チャンクが読み込まれていない位置は「不明」として返し、欠落とは扱わない(`PAUSED(CHUNK_UNLOADED)`)。
+- フェーズ: P4。完了条件: 実機で、施工リストの位置のブロックとブロック状態を、既存のMCPツールを壊さずに読める(既存の`get_block_snapshot`のテストが緑)。
 
 ### L7の検査: ワールド → ドローン
 - N-26の一部。詳細は`03_loops.md`のL7。
@@ -249,7 +258,7 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 - 種別: 決定論(保存と検索)。
 - 役割: 成功したモジュール、修正履歴、ダメ出し履歴、好み、失敗例を、セッションをまたいで蓄積する(`KnowledgeRecord`)。
 - 実装: **新規** `build/knowledge/KnowledgeStore`(プレイヤーごとのファイル。既存`chat/ChatHistoryStore`の保存の作法を踏襲)。
-- フェーズ: P14。完了条件: 成功した施工(試運転まで成功、ユーザーが承認)が記録され、次回のRefinerの資料に入る。
+- フェーズ: **記録(書き込み)=P7**(L1・L4・L5・L7・L8などが終端イベントを書き込む先が、最初から在るように)、**昇格・検索・整理・L9=P14**。完了条件: P7=終端イベント(承認・却下・ダメ出し・修正)が保存される。P14=成功した施工(試運転まで成功、ユーザーが承認)が記録され、次回のRefinerの資料に入る。上限で自動では消さず、画面が出る。
 
 ---
 
@@ -260,6 +269,9 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 | `PartTypeRegistry` | 使ってよい部品の名簿(D-17〜D-19の土台) | `build/parts` | P3(建築部品)、P10(Create部品)、P13(Aeronautics) |
 | `PartAtlas`+`PartAtlasRenderer` | 部品見本帳を作る | `client/build/PartAtlasRenderer` | P8 |
 | `BuildOrchestrator` | 状態機械。各ノードとループを進行、保存 | `build/ai` | P7 |
+| `LoopEscalationScreen`・`RouteChooserScreen` | ループの上限超過の画面、戻し先を選ぶ画面 | `client/build` | P7・P8 |
+| `ServerStateReader`・`ServerWorkerPool`・`ConstructionBudget` | 状態つき読み取り、重い計算のワーカー、サーバー全体の施工予算 | `construction` | P4 |
+| `PlaceableBlockPolicy` | 置いてよいブロックの許可リスト(D-22) | `construction`・`build/compile` | P3(判定の純Java部分)・P4 |
 | MCP読み取りツール群 | AIが調べるための読み取り専用ツール(書き込み無し) | `chat`の`BlockSnapshotToolServer`を拡張 | P7 |
 | `ConstructionJob`保存・`SiteClaim` | ジョブ・区画予約の永続化 | `construction` | P4 |
 | 承認・権限 | ハッシュ承認、所有者/OP確認 | `construction` | P4 |

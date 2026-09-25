@@ -43,7 +43,7 @@
 
 ### 0.3 前提環境(実測)
 
-- NeoForge 1.21.1 (21.1.238)、Java 21、Create 6.0.10、Create Aeronautics 1.3.0(bundled)、Sable 2.0.3。ブランチは`feature/nl-factory-builder`、Phase 1・2は実装済み(コミット`75b94a0`まで)。
+- NeoForge 1.21.1 (21.1.238)、Java 21、Create 6.0.10、Create Aeronautics 1.3.0(bundled。同梱jarの中に`aeronautics`・`simulated`・`offroad`の3つのmodが入っている)、Sable 2.0.3。ブランチは`feature/nl-factory-builder`、Phase 1・2は実装済み(コミット`75b94a0`まで)。
 - Claude Code CLI 2.1.282、Codex CLI 0.144.1(2026-09-25時点)。
 
 ---
@@ -110,9 +110,9 @@
 4. **Site Planner** → **Zoning Fixer** → 建屋ごとに**DesignGen**(完成予想図・構造用画像・内部断面図) → **Architect**(2段階) → **Carpenter**(施工リスト化)。
 5. **Blueprint Analyzer**が建屋の意味地図と内部空間(スロット)を出す → **Module Planner**が機械を置き、`connect`で接続 → **Router**が経路を作り → **Factory Analyzer**が検証(L4・L4')。
 6. OKなら**Decorator**(装飾)と**Logistics Planner**(発着場・飛行ルート)。
-7. **Preview**(ホログラム、絵と並べた表示、予測レポート、材料表)→ ユーザー承認(L6)。
-8. サーバーが**施工ジョブ**を実行。ドローンが動力→上流→下流の順に設置(L7で検査・再施工)。
-9. **In-game Renderer**が同じカメラ角度で撮影 → **Vision Critic**が絵と比較(L5・L5')。
+7. **In-game Renderer**が、施工前の**PREVIEW撮影**(クライアント側だけで描く不透明プレビュー。世界は書き換えない)を、コンセプト画像と同じカメラ角度で撮影 → **Vision Critic**が絵と比較(L5・L5')。
+8. **Preview**(ホログラム、絵と並べた表示、予測レポート、材料表)→ ユーザー承認(L6)。
+9. サーバーが**施工ジョブ**を実行。ドローンが動力→上流→下流の順に設置(L7で検査・再施工)。施工後に**AS_BUILT撮影**で最終確認。
 10. **試運転**と**Runtime Monitor**が実測(L8)。成功も失敗も**Knowledge Store**へ(L9)。
 
 ### 2.3 題材(全体を通す確認シナリオ)
@@ -161,6 +161,9 @@ Createに**実在する**品物だけで組んである(4.1節で実物のjarか
 | D-17 | **部品見本帳(`PartAtlas`)**を作る。登録簿の全部品を、ゲーム内で描画して1枚の見本画像にし、部品名(JEIと同じ表示名)を添える。この見本を、画像生成(`codex exec -i`)とClaudeの視覚(絵から部品を読み取る)の両方に参考として渡す | 画像生成AIはCreateの機械の見た目を知らない。実物を見せて、実在部品だけで描かせる。絵から部品を読み取る側も、同じ見本と名前で照合できる |
 | D-18 | 部品の表示名は、ゲームの言語ファイル(JEIと同じ翻訳キー)から取る。ユーザーが見る名前(例: メカニカルベルト)と、AIに渡す名前・スキーマの選択肢を一致させる | 林さんが「JEIで検索して出るもの」と言った通りの名前でやり取りできる。内部の識別子(例: `create:belt`)との対応は登録簿が持つ |
 | D-19 | 絵から読み取る構造記述(Vision Readerの出力スキーマ)の部品名は、登録簿の識別子の**列挙(enum)に限る**。登録簿に無い機械は、出力できない | 絵の中の想像上の機械が、そのまま設計に紛れ込むのを防ぐ。登録簿に無い物が描かれていたら「該当部品なし」として扱い、Reconcilerに返す |
+| D-20 | **施工順序は、依存の下から上(ベース層 → 工場層)を優先する。** 引き継ぎ文のMVP候補(「鉄インゴット→鉄板を先に、L4とL7を先に」)は、林さんの後の明確化(ベース層が先、家は通過点)で置き換わった。ループの実装順は、L7=P4(最初)、L4=P12。**優先順位が高い物を先に造るが、後の物も全部造る** | 引き継ぎ文の候補と設計図の順序が違う理由を、決定として残す。工場層はベース層の`SemanticMap`を入力にするので、下が無いと上が成り立たない(記憶`project_factory_builds_on_bananacraft_base`) |
+| D-21 | 引き継ぎ文の「建屋はCreateの設計図(.nbt)として出力」は、**独自の施工リスト(`PlacementManifest`)に置き換える**。ホログラム・承認・ジョブ・差分・ロールバックが、ブロック状態と組み立てを含む1つの型で完結するため。必要なら`.nbt`への書き出しは、施工リストからの変換として後から足せる | `.nbt`はブロックの並びを持つが、承認のハッシュ・材料表・部品ID(エラーの逆引き)・組み立て手順を持てない |
+| D-22 | **置けるブロックを許可制にする**(`PlaceableBlockPolicy`)。素材(`StyleSpec.palette`)と部品が生成するブロックは、許可リスト(`micradrone:palette_allowed`タグ+登録部品の出力)に載る物だけ。コマンドブロック・岩盤・スポナー・バリア等は常に禁止(`E-BLOCK-FORBIDDEN`)。AIが素材に何を書いても、サーバーの検査で弾く | 置換の制限(F-5)だけでは、「何を置けるか」が無制限になり、通常は権限が要るブロックを、権限なしで置けてしまう |
 
 ---
 
@@ -173,6 +176,9 @@ Createに**実在する**品物だけで組んである(4.1節で実物のjarか
 | `claude -p --input-format stream-json`にbase64のPNGを渡すと画像を認識する。既存の安全フラグ(`--setting-sources "" --restricted --strict-mcp-config --tools ""`)のままで動く | 赤い64×64のPNGを送り、応答`"赤"`、所要4.1秒、費用$0.0129 |
 | `--json-schema`を付けると、応答JSONに`structured_output`(解析済みオブジェクト)と`result`(JSON文字列)の両方が入る。`total_cost_usd`と`num_turns`も入る | 型付きの小さなスキーマで実行し、`{"color":"blue","n":1}`を確認。`num_turns`は2、費用$0.0214 |
 | `codex exec --enable image_generation -s workspace-write`は、非対話で画像(PNG)を生成できる。追加のAPIキーは不要 | 本セッションの前半で実際に生成し、1254×1254のPNGを確認 |
+| `claude -p --input-format stream-json`は、**`--output-format stream-json`とセットでないと起動しない**(`--output-format json`にすると`Error: --input-format=stream-json requires output-format=stream-json.`)。`--json-schema`との併用は動作し、最後の`result`行に`structured_output`と`result`が入る(`num_turns`は2) | Opus 5.5のレビュー担当と、私が同じ結果を実測(2026-09-26) |
+| Aeronautics同梱jarの中の`simulated`(95ブロック)に、飛行船の組み立て・操縦・係留の部品がある: `physics_assembler`(物理アセンブラ)、`docking_connector`(ドッキングコネクター)、`paired_docking_connector`(ペアリングされたドッキングコネクタ)、`steering_wheel`(舵輪)、`throttle_lever`(操縦桿)、`navigation_table`(羅針盤)、`rope_connector`、`rope_winch`、`swivel_bearing`、各種センサー(`altitude_sensor`、`velocity_sensor`、`gimbal_sensor`、`optical_sensor`、`laser_sensor`)、`redstone_magnet`、色付きの`symmetric_sail`と`portable_engine`など。`offroad`(3ブロック)は`borehead_bearing`、`rockcutting_wheel`、`wheel_mount` | 同梱jarの中のjarのblockstatesと`assets/simulated/lang/ja_jp.json` |
+| `create:powered_shaft`(パワードシャフト)は**アイテムを持たない**(item modelが無い)。`create:belt`はブロックだけで、アイテムは`create:belt_connector` | jar内`assets/create/models/item/`の有無 |
 | `codex exec`には`-i/--image`(画像入力)、`--output-schema`、`--json`、`-C/--cd`、`--ephemeral`がある | `codex exec --help` |
 | **`codex exec -i`で渡した参考画像2枚が、画像生成に反映される**。橙背景の緑の三角形と、濃紫背景の黄色い円環の2枚を渡し、両方のモチーフと配色を1枚に入れた画像が生成された。指示文は標準入力(`-`)で渡し、`-C`で作業フォルダ、`-s workspace-write`、`--skip-git-repo-check`を付けた。所要は約2分、Codex報告は25,224トークン。**作業フォルダに`.agents/`と`.git/`が作られた**(副作用) | 本セッションで実際に実行(モデル`gpt-5.6-sol`)、生成画像を目視で確認。参考画像の**枚数上限**の実測はまだ(スパイクS-3) |
 | 画像生成の参考画像の上限: GPT Image系のAPIは**最大16枚**。Codexの組み込みツール経由の上限は、資料に記載が無い。出力画像の制約(`gpt-image-2`): 最大辺3840px以下、両辺16の倍数、縦横比3:1以下、総画素数655,360〜8,294,400 | Codex同梱の`~/.codex/skills/.system/imagegen/references/image-api.md`と`SKILL.md` |
@@ -216,3 +222,19 @@ Createに**実在する**品物だけで組んである(4.1節で実物のjarか
 | ループ(L1〜L9) | 「やり直しの矢印」。ダメなら前に戻って直す。何回まで、どうなったら終わりか、を決めてある |
 | スパイク | 本格的に作る前に、小さく試して事実を確かめる調査 |
 | ハンドオフの`connect(A.out, B.in)` | 座標ではなく「AのoutとBのinをつなぐ」と書くやり方。向きが変わっても書き直さなくてよい |
+
+
+---
+
+## 6. 変更履歴
+
+- **第1版**(コミット`44617b1`・`0bfd447`、2026-09-25): 初版。v3の全31ノード・全ループ・P3〜P15・スパイク13件。
+- **第2版**(2026-09-26): **Opus 5.5のレビュー**(重要13件・軽微多数)と**Codexのレビュー**(致命8件・重要26件・軽微3件)を、事実を裏取りしたうえで反映。裏取りした事実は4.1節に追記した(`stream-json`の制約、`simulated`の部品、`powered_shaft`にアイテムが無いこと、既存言語の禁止対象)。
+  - **型(`01`)**: 全面改訂。`ConnKind`/`PortKind`に`HEAT`・`DOCK`(`AIR`を廃止)、`ExpandedPlan`・`PlanExpander`・`TemplateBundle`(サーバーの再展開)、`AssemblyStep`・`ASSEMBLED_AWAY`・`BuildPhase.ASSEMBLE`(組み立てで消えるブロック)、`ManifestDiff`の`RemovalEntry`・`Conflict`(世界を壊さない撤去)、`PowerPlantChoice`・`PowerPolicy`(L3の変更対象)、`RecipeOption`の拡張(液体・道具・手順・形状・機械の組み合わせ)、`Flow`の端点、`Visibility`(部品`USER`/`IMPLICIT`)、安定ID(画像の構造記述)、`Caps`(金額・画像回数・Codexトークンの3種)、`SparseSnapshot`・`VoxelClassGrid`(メモリ)、ジョブの記録の別ファイル化、`ChatKey`/`ProjectKey`、未定義だった型の全定義、名前の衝突の解消(`VolumeSpec`・`BuildingFootprint`・`VerifyMode`)。
+  - **ループ(`03`)**: 全面改訂。頭打ちのスコアの定義、L2(比率・数・種類で判定、カットアウェイの絵、**再生成でもユーザーが承認**、`HIDDEN`は数えない)、L3の変更対象、L4(受け入れ不可の`ERROR`が残るときは「進む」を出さない、未検証部品の扱い)、L6・L9の実際の停止、画像の無効化(`Invalidation`)、`MODIFY`の`Conflict`、L7の組み立ての扱い、カメラの一致の限界と意味の比較。
+  - **基盤(`04`)**: ワーカーと`ConstructionBudget`(重い計算・全体の予算・自動減速)、ジョブの記録の原子的書き込みと復旧、**取消では材料を返さない(複製防止)**、ブロックエンティティの置換を禁止(ロールバックの完了の定義)、`PlaceableBlockPolicy`(D-22)、許可リスト方式の決定論プロファイル、サーバーの再展開(F-3)、`simulated`の扱い(F-11)、F-23(プロジェクトとチャット)、F-24(試運転とサバイバルの経済)。
+  - **部品・アナライザ(`05`)**: `HEAT`・`DOCK`の接続、`simulated:`・`offroad:`の部品、`IMPLICIT`の部品、P10の優先度(a/b)、`PowerSourceModel`、テンプレートの検証の由来(同梱/プレイヤー)、新しい問題コード、試運転の経済と燃料。
+  - **AIと画像(`06`)**: `stream-json`の制約、画像の合格ゲート(適合率・再現率・誤認率)、Codexの隔離フラグ、費用の3種の上限、カットアウェイ、L8の担当を`Module Planner`に統一。
+  - **フェーズ(`07`)**: 全面改訂。P7に`RecipeSource`・`KnowledgeStore`の書き込み・`LoopEscalationScreen`を前倒し、P8に`RouteChooserScreen`、P10をP10a/P10bに区分(全部作る)、Aeronautics部品をP13へ、S-4bの分割、S-5d追加、性能・品質の**数値の合格線**、網羅性表の更新、リスクの追加。
+  - **決定事項(`00`)**: D-20(施工順序と、引き継ぎ文のMVP候補との違い)、D-21(`.nbt`を独自の施工リストに置き換える)、D-22(置いてよいブロックの許可制)。
+  - **反映しなかった指摘**: Codexの指摘34「部品範囲が必要以上に広い」は、範囲を削る提案なので採用しない(林さんの方針)。代わりに、P10を確認題材に要る部品(P10a)と残り(P10b)の順序に区分し、**両方を作る**こととした。

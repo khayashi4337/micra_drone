@@ -1,14 +1,15 @@
 # 01 データモデル
 
-すべての型の定義。0節は共通の約束、1〜9節は型の一覧。表記はJavaの`record`風の擬似コード(フィールド名と意味が設計、細かい構文は実装時に決める)。
+すべての型の定義。0節は共通の約束、1〜10節は型の一覧、11節は補助型、12節はパッケージ配置。表記はJavaの`record`風の擬似コード(フィールド名と意味が設計、細かい構文は実装時に決める)。**この文書に出てくる型は、すべてこの文書のどこかで定義する**(未定義の型を残さない)。
 
 ## 0. 共通の約束
 
 - **純Javaの核**(`io.github.khayashi4337.micradrone.build.*`)は、`net.minecraft.*`と`net.neoforged.*`を一切importしない(D-16)。座標は`int`3つ、ブロックは文字列の識別子とプロパティ表で持つ。MinecraftのBlockPos・BlockState・Levelとの変換は、サーバー側の薄いアダプタ(`construction`パッケージ)だけが行う。
 - **JSON**は、既存の`chat/MiniJson.java`(外部ライブラリなし)で読み書きする。ハッシュ用の**正規形**は、キーを辞書順、数値は整数か固定小数、余計な空白なし、で書いたバイト列。ハッシュは正規形のSHA-256(小文字16進)。
-- **ID**は、AIにも人にも見える安定した文字列(例: `wall-north-1`、`press-station-2`)。AIが付け、決定論コードが重複と形式(`[a-z0-9-]{1,48}`)を検査する。問題の指摘(`Issue`)は、必ずこのIDで対象を指す。
+- **ID**は、AIにも人にも見える安定した文字列(例: `wall-north-1`、`press-station-2`)。AIが付け、決定論コードが重複と形式(`[a-z0-9-]{1,48}`)を検査する。問題の指摘(`Issue`)は、必ずこのIDで対象を指す。**画像から読み取る構造記述(`StructureDescription`)の建屋・物体・流れも、安定IDで指す**(一覧の添字では指さない)。
 - **座標系**(`BuildFrame`): `u`=右、`v`=上、`w`=前。`BuildFrame(origin, facing)`の`facing`が向いている方向が`w`、そこから時計回りに90度が`u`。変換は`world = origin + u*right + v*up + w*forward`。計画はすべて局所座標(u,v,w)で書き、向きに依存しない(P-4)。
 - **版**: 型には`schemaVersion`を持たせ、古い保存データは読み込み時に変換する(変換できなければ理由つきで拒否)。
+- **大きなデータの置き場**: 施工リスト本体・ジョブの記録(`journal`)・材料台帳は、`SavedData`ではなく別ファイルに保存する(04 F-2)。
 
 ## 1. 基本型
 
@@ -17,7 +18,7 @@ enum Facing { NORTH, EAST, SOUTH, WEST }                 // 水平の向き
 enum Dir6   { UP, DOWN, NORTH, EAST, SOUTH, WEST }        // ポートの向き
 record IntPos(int x, int y, int z)                        // ワールド座標(Minecraft非依存)
 record LocalPos(int u, int v, int w)                      // BuildFrameの局所座標
-record Box(int minA, int minB, int minC, int maxA, int maxB, int maxC)  // 両端を含む直方体
+record Box(int minA, int minB, int minC, int maxA, int maxB, int maxC)  // 両端を含む直方体(局所・ワールド両用)
 record Rot(int quarterTurns /*0..3*/, boolean mirror)     // 回転と鏡像
 record BuildFrame(IntPos origin, Facing facing) {
     IntPos toWorld(LocalPos p);   LocalPos toLocal(IntPos p);   Facing toWorldFacing(Facing local);
@@ -35,7 +36,7 @@ record SemanticPlan(
     Provenance provenance)
 
 record Site(BuildFrame frame, Box localBounds, String terrainDigest /*地形調査のハッシュ*/, String claimId)
-record StyleSpec(Map<String,String> palette /*役割→素材。例 "roof"→"minecraft:red_terracotta"*/, Set<String> moodTags)
+record StyleSpec(Map<String,String> palette /*役割→素材。例 "roof"→"minecraft:red_terracotta"。許可された素材だけ(D-22)*/, Set<String> moodTags)
 
 record PlanNode(
     String id, String type /*PartTypeRegistryの識別子*/, String parent /*入れ子の親。無ければnull*/,
@@ -48,13 +49,13 @@ sealed interface Anchor {
 }
 
 record Connection(
-    String id, PortRef from, PortRef to, ConnKind kind /*ROTATION|ITEM|FLUID|REDSTONE|AIR*/,
-    Routing routing /*AUTO(Routerに任せる) | EXPLICIT(経由する部品のIDを列挙)*/, Constraints constraints)
+    String id, PortRef from, PortRef to, ConnKind kind /*ROTATION|ITEM|FLUID|REDSTONE|HEAT|DOCK*/,
+    Routing routing /*Auto(Routerに任せる) | Explicit(経由する部品のIDを列挙)*/, Constraints constraints)
 record PortRef(String nodeId, String port)                          // 例 press-1 / "power_in"
 ```
 
 - `PlanNode`は平らな一覧。親子は`parent`で表す。建物(`structure`)の中に壁・床・屋根・モジュールが入る。
-- 接続(`Connection`)は、座標ではなくポートで書く(P-4)。経路の中間部品(シャフト・ベルト・シュートなど)は、`AUTO`ならRouterが作り、**AIは書かない**(P-5)。
+- 接続(`Connection`)は、座標ではなくポートで書く(P-4)。経路の中間部品(シャフト・ベルト・シュートなど)は、`Auto`ならRouterが作り、**AIは書かない**(P-5)。
 
 **AIが出すのは全体ではなく差分**(トークンの節約、改訂の追跡、ループでの修正のため):
 
@@ -69,29 +70,48 @@ sealed interface PlanOp {
 - `PlanPatcher.apply(plan, patch)`は決定論。`baseRevision`が現在と違えば拒否(古い前提で書かれた差分を混ぜない)。結果は新しい`revision`の`SemanticPlan`と`Issue`の一覧。
 - 独自言語のスクリプトは、この`PlanPatch`の**プログラム表現**(1命令=1操作)。スクリプトを実行(記録)すると`PlanPatch`になり、`PlanScriptWriter`は`SemanticPlan`から等価なスクリプトを出す。往復してもハッシュが変わらないことをテストで保証する(D-2、`04_foundations.md` F-6)。
 
+### 2.1 展開済みの計画(`ExpandedPlan`)— サーバーが自分で作り直す物
+
+`SemanticPlan`のモジュール(テンプレート)と`Auto`の接続は、次の決定論の関数で、部品だけの計画に展開する:
+
+```
+PlanExpander.expand(SemanticPlan plan, TemplateBundle templates, Router router) → ExpandedPlan
+record TemplateBundle(List<ModuleTemplate> templates)   // 参照されるテンプレート。同梱の物はIDとハッシュで照合、プレイヤーが昇格した物は本体を含める
+record ExpandedPlan(SemanticPlan source, List<PlanNode> primitiveNodes /*テンプレート展開後の部品*/,
+                    List<RoutedConnection> routed, List<String> templateHashes)
+record RoutedConnection(String connectionId, List<PlanNode> intermediateNodes, List<LocalPos> path)
+```
+
+- **サーバーは、クライアントの展開結果を信用しない**。受け取るのは`SemanticPlan`・`ProcessGraph`・`TemplateBundle`だけで、展開・コンパイル・解析は、サーバーが自分の手持ちのコードで作り直す(04 F-3)。同梱テンプレートは、IDとハッシュがサーバーの手持ちと一致しなければ拒否。
+
 ## 3. 部品(`PartType`)
 
 ```
 record PartType(
     String id,                  // 例 "create:mechanical_press"、"micra:wall"
     PartCategory category,      // STRUCTURE|OPENING|ROOF|DECOR|POWER|TRANSMISSION|PROCESSING|LOGISTICS|STORAGE|FLUID|AERO|MODULE
-    String displayNameKey,      // 翻訳キー(JEIと同じ表示名。D-18)
+    Visibility visibility,      // USER(JEIに出る・AIと画像に出す) | IMPLICIT(他の部品や設置処理が作る内部ブロック。名簿・見本帳・スキーマの選択肢に出さない)
+    String displayNameKey,      // 翻訳キー(JEIと同じ表示名。D-18)。USERのみ必須
     String visualDescription,   // 見た目の短い説明(画像生成の指示文用)
     List<ParamSpec> params,     // 名前・型(int/enum/bool/material等)・範囲・既定値
     List<PortSpec> ports,       // 下記
-    Footprint footprint,        // 占める体積(パラメータの関数)
+    VolumeSpec volume,          // 占める体積(パラメータの関数)。建物の足跡(BuildingFootprint)とは別の型
     VersionRange requires,      // 例 create [6.0.10,6.1.0)。範囲外なら無効(D-13)
-    PlacerId placer,            // どう置くか(SIMPLE / BELT / ARM / MULTIBLOCK …)
-    VerifyPolicy verify,        // EXACT / STATE_SUBSET(listed) / BLOCK_ONLY
+    PlacerId placer,            // どう置くか(SIMPLE / BELT / ARM / MULTIBLOCK / …)
+    VerifyMode verify,          // この部品の既定の検証: EXACT / STATE_SUBSET(listed) / BLOCK_ONLY / ASSEMBLED_AWAY
+    AssemblySpec assembly,      // 組み立てで世界から消える部品の場合の手順(無ければnull)。風車・飛行船など
     ModelRef kineticModel,      // 工場アナライザ用の挙動モデル(無ければ null → W-UNMODELED)
     BuildPhase phase)           // 施工順のグループ
 
-record PortSpec(String name, PortKind kind /*ROTATION_IN|ROTATION_OUT|ITEM_IN|ITEM_OUT|FLUID_IN|FLUID_OUT|REDSTONE|HEAT*/,
+record PortSpec(String name, PortKind kind /*ROTATION_IN|ROTATION_OUT|ITEM_IN|ITEM_OUT|FLUID_IN|FLUID_OUT|REDSTONE|HEAT|DOCK*/,
                 LocalPos offset, Dir6 facing, Set<String> accepts /*相手が満たすべき条件*/)
+record VolumeSpec(List<Box> boxes /*部品の局所座標での占有*/, Map<String,String> sizeFromParams /*パラメータから大きさを決める式*/)
+record AssemblySpec(AssemblyKind kind /*WINDMILL|BEARING|PHYSICS_ASSEMBLER*/, String triggerPort, AssemblyExpectation expect)
 ```
 
 - 部品登録簿(`PartTypeRegistry`)は、`PartType`の集合と**版ハッシュ**(登録内容から計算)を持つ。施工リスト・ジョブ・承認は、この版ハッシュを記録し、版が違うものは承認・実行を拒否する。
-- 登録簿から、次の3つを**自動生成**する(P-16): (a) AIの出力スキーマ(部品の選択肢はenum)、(b) 画像生成の「使ってよい部品リスト」の文、(c) 部品見本帳(`PartAtlas`)。
+- 登録簿から、次の3つを**自動生成**する(P-16): (a)AIの出力スキーマ(部品の選択肢はenum。`USER`のみ)、(b)画像生成の「使ってよい部品リスト」の文、(c)部品見本帳(`PartAtlas`)。
+- **`IMPLICIT`の部品**: `create:belt`(ブロック。アイテムは`create:belt_connector`)、`create:powered_shaft`(アイテムを持たず、蒸気機関などが内部で作る)のように、JEIに部品として出ない物。`USER`部品の設置処理が作るので、登録簿には載るが、AI・画像・見本帳には出ない。材料の対応(F-7)は、設置する側の`USER`部品(ベルトなら`belt_connector`)で数える。
 
 ## 4. 施工リスト(`PlacementManifest`)
 
@@ -99,66 +119,95 @@ record PortSpec(String name, PortKind kind /*ROTATION_IN|ROTATION_OUT|ITEM_IN|IT
 record PlacementManifest(
     int manifestVersion, String planId, int planRevision, String registryVersion,
     BuildFrame frame, Box worldBounds, List<Placement> placements /*施工順に整列済み*/,
+    List<AssemblyStep> assemblies /*組み立ての手順*/,
     Map<String,Integer> bom /*材料表: 品物ID→個数*/, List<PhaseRange> phases, String hash)
 
 record Placement(
     int index, IntPos pos, BlockSpec block, Map<String,String> blockEntityConfig /*許可済みキーのみ*/,
     String partNodeId /*どの設計ノード由来か。エラーの逆引き用*/, BuildPhase phase,
-    PlacerId placer, VerifyMode verify, ReplacePolicy replaces /*AIR_ONLY|REPLACEABLE|EXPECT(blockId)*/)
+    PlacerId placer, VerifyMode verify, ReplacePolicy replaces /*AIR_ONLY|REPLACEABLE|EXPECT(blockId)*/,
+    String assemblyGroup /*組み立てに含まれる場合のグループID。無ければnull*/)
 
-enum BuildPhase { SITE_PREP, STRUCTURE, ENVELOPE, POWER, UPSTREAM, DOWNSTREAM, LOGISTICS, DECORATION, FINISH }
+enum BuildPhase { SITE_PREP, STRUCTURE, ENVELOPE, POWER, UPSTREAM, DOWNSTREAM, LOGISTICS, ASSEMBLE, DECORATION, FINISH }
+enum VerifyMode { EXACT, STATE_SUBSET, BLOCK_ONLY, ASSEMBLED_AWAY }
+record AssemblyStep(String groupId, AssemblyKind kind, IntPos trigger, List<Integer> memberIndexes,
+                    AssemblyExpectation expect /*組み立て後に期待する結果*/)
+record AssemblyExpectation(int entityCount, int movedBlockCount, String entityType /*コントラプション/サブレベルの種類*/)
 ```
 
 - `PlanCompiler.compile(expandedPlan, registry, siteSurvey) → CompileResult(manifest | issues)`は**決定論**: 同じ入力から、バイト単位で同じ施工リスト(=同じハッシュ)ができる。
-- 施工順は`BuildPhase`の昇順、その中は下から上・手前から奥(v3の「動力 → 上流 → 下流」を`POWER→UPSTREAM→DOWNSTREAM`で表す)。
-- `hash`は`placements`・`bom`・`registryVersion`・`worldBounds`から作る。**承認の対象はこのハッシュ**(D-3)。
+- 施工順は`BuildPhase`の昇順、その中は下から上・手前から奥(v3の「動力 → 上流 → 下流」を`POWER→UPSTREAM→DOWNSTREAM`で表す)。`ASSEMBLE`は、同じグループの部品を全部置いた後に、組み立てを実行する(風車の帆、飛行船)。
+- `hash`は`placements`・`assemblies`・`bom`・`registryVersion`・`worldBounds`から作る。**承認の対象はこのハッシュ**(D-3)。
+- **組み立てで消える部品の検証**(`VerifyMode.ASSEMBLED_AWAY`): 組み立て後は、その位置に元のブロックは無いのが正しい。`SnapshotDiff`はこの配置を「不在=正常」とみなし、代わりに`AssemblyStep.expect`(生成されたエンティティの数・移動したブロック数)を検査する。組み立て前の検査で、置いたブロックが有ることも確認する。L7が、組み立てで消えたブロックを「欠落」と誤判定して置き直すことは無い。
+
+### 4.1 建てた後の変更(`ManifestDiff`)— 世界を壊さない撤去
 
 ```
 record ManifestDiff(String fromHash, String toHash,
-    List<Placement> removed, List<Placement> added, List<PlacementChange> changed, int unchanged)
+    List<RemovalEntry> removals, List<Placement> additions, List<PlacementChange> changes, int unchanged)
+record RemovalEntry(Placement old, BlockSpec expectedNow /*旧施工リストが期待する現状*/,
+                    BlockSpec restoreTo /*撤去後に戻すブロック。元ジョブのUndoEntry由来。無ければ空気*/)
+record PlacementChange(Placement old, Placement now, BlockSpec expectedNow)
+record Conflict(IntPos pos, BlockSpec expected, ObservedBlock observed, ConflictKind kind /*PLAYER_MODIFIED|MISSING*/)
 ```
 
-- 建てた後の変更(L4'・L5・L6・L8、D-14)は、旧施工リストと新施工リストの差分から`MODIFY`ジョブを作る。撤去は上から下、追加は`BuildPhase`順。
+- `MODIFY`ジョブは、**撤去も変更も、実行の直前に世界の現状を読み、`expectedNow`と一致するときだけ**行う。一致しなければ`Conflict`として記録して**その位置には触れず**、実行後にユーザーへ「あなたが変更した箇所です。そのままにしますか、施工リストの状態へ戻しますか」を返す(既定はそのまま)。旧マニフェスト由来という理由だけで、プレイヤーが置き換えたブロックを消さない。
+- 撤去は上から下、追加は`BuildPhase`順。
 
 ## 5. 問題(`Issue`)— ループの共通語
 
 ```
 record Issue(String id /*例 "E-STRESS-OVER:net-3"*/, IssueCode code, Severity severity /*ERROR|WARN|INFO*/,
+             boolean acceptable /*ユーザーがリスクを承知で受け入れてよいか。コードごとに固定(05)*/,
              List<String> subjects /*設計ノード/接続のID*/, String message /*日本語*/,
              Map<String,String> data /*数値など*/, List<FixHint> hints)
 record FixHint(String kind, Map<String,String> args)   // 例 ADD_POWER_SOURCE{need_su=512}、WIDEN_ROOM{room=r1,by=3}
 ```
 
-`IssueCode`(全ループで共通、追加は登録簿に載せる。網羅一覧は`05_parts_and_analyzers.md`):
-`E-SCHEMA`、`E-UNKNOWN-PART`、`E-PARAM-RANGE`、`E-ANCHOR`、`E-OVERLAP`、`E-OUT-OF-BOUNDS`、`E-NOT-SUPPORTED`(支持なし)、`E-OPENING-NO-WALL`、`E-ENCLOSURE-LEAK`、`E-PORT-UNCONNECTED`、`E-PORT-MISMATCH`、`E-NO-ROUTE`、`E-ROT-CONFLICT`、`E-STRESS-OVER`、`E-POWER-NONE`、`E-ITEM-DEADEND`、`E-CLOG-RISK`、`E-FLUID-LEAK`、`E-SPACE-SHORT`、`E-REGISTRY-VERSION`、`E-SITE-BLOCKED`、`E-MATERIAL-SHORT`、`W-UNMODELED`、`W-STRESS-MARGIN`、`W-OVERSIZED-POWER`、`W-NO-RECIPE`、`W-DECOR-COLLIDE`、`I-*`(情報)。
+`IssueCode`は、全ループで共通(追加は登録簿に載せる。網羅一覧は`05_parts_and_analyzers.md` 4.1節)。**受け入れ可能(`acceptable=true`)なのは、危険が世界や工場の動作の根幹に及ばないコードだけ**(例: `W-*`、`E-CLOG-RISK`)。`E-ROT-CONFLICT`、`E-STRESS-OVER`、`E-PORT-*`、`E-NO-ROUTE`、`E-BLOCK-FORBIDDEN`などは受け入れ不可で、残っていれば承認できない。
 
 ## 6. 工程・生産(工場層)
 
 ```
-record RecipeOption(String recipeId, String recipeType /*create:pressing など*/, List<Ingredient> inputs,
-                    List<Result> outputs, List<String> machinePartTypes, Integer processingTicks,
-                    Heat heat /*NONE|HEATED|SUPERHEATED*/, String sourceHash)
+record RecipeOption(String recipeId, String recipeType /*create:pressing など*/,
+    List<Ingredient> inputs, List<Result> outputs,
+    List<FluidIngredient> fluidInputs, List<FluidResult> fluidOutputs,
+    List<HeldTool> tools /*保持アイテム・触媒(デプロイヤー等)*/,
+    SequencedSpec sequenced /*sequenced_assemblyの手順(反復・遷移)。無ければnull*/,
+    CraftingShape crafting /*mechanical_craftingの形状。無ければnull*/,
+    List<MachineSetup> setups /*この加工が成立する機械の組み合わせ*/,
+    Integer processingTicks, Heat heat /*NONE|HEATED|SUPERHEATED*/, String sourceHash)
+record MachineSetup(String id, List<String> partTypes /*例 mixer+basin+blaze_burner*/, Heat provides)
 record Ingredient(Set<String> itemIds /*タグは展開済み*/, String tagOrNull, int count)
 record Result(String itemId, int count, double chance)
 
-record ProcessGraph(List<ProcessStep> steps, List<Flow> flows, List<ExternalInput> inputs, List<ProductTarget> products)
-record ProcessStep(String id, RecipeOption recipe, double targetPerMin, String machinePartType)
-record Flow(String fromStep, String toStep, String itemId, double perMin)
-record ExternalInput(String itemId, double perMin, String viaDock /*搬入口*/)
-record ProductTarget(String itemId, double perMin, String viaDock /*搬出口*/)
+record ProcessGraph(List<ProcessStep> steps, List<Flow> flows, List<ExternalInput> inputs,
+                    List<ProductTarget> products, PowerPolicy power)
+record ProcessStep(String id, RecipeOption recipe, double targetPerMin, MachineSetup setup)
+record Flow(FlowEnd from, FlowEnd to, String itemId, double perMin)
+record FlowEnd(String stepId)
+record ExternalInput(String itemId, double perMin, String viaDock /*搬入口*/, String toStepId)
+record ProductTarget(String itemId, double perMin, String viaDock /*搬出口*/, String fromStepId)
+record PowerPolicy(Set<String> allowedPlantTemplates /*例 mod:power_waterwheel*/, Integer maxPlants,
+                   double marginRatio /*既定0.10*/, Map<String,String> siteLimits /*例 水源の有無*/)
 
 record CapacityReport(List<StepCapacity> steps, PowerNetworkPlan power, Map<String,Double> floorAreaByZone, List<Issue> issues)
 record StepCapacity(String stepId, int machineCount, double rpmRequired, double stressImpactSu, int footprintCells)
-record PowerNetworkPlan(double totalImpactSu, List<PowerChoice> sources /*部品ID×台数*/, double capacitySu, double marginRatio)
+record PowerNetworkPlan(double totalImpactSu, List<PowerPlantChoice> plants, double capacitySu, double marginRatio)
+record PowerPlantChoice(String templateId, Map<String,ParamValue> params /*水車の数・水流の配置、帆の数、ボイラーの大きさ・熱源の状態など*/,
+                        int count, double capacitySu /*PowerSourceModelが params から計算*/)
 ```
 
-- 数値(応力の影響・容量)は、実行時にCreateの`BlockStressValues`から読む(D-9)。テストでは、同じ形の`StressValueSource`を差し替える。
+- **L3(動力不足・過大)でProcess Plannerが変えられる物**: 目標の毎分(`targetPerMin`)、レシピの選択、機械の組み合わせ(`setup`)、`PowerPolicy`(許す動力源・台数の上限)。Capacity Calculatorは`PowerPolicy`の範囲で動力源(`PowerPlantChoice`)を選び、範囲内で足りなければ`E-POWER-NONE`と`FixHint`(例: 「目標を毎分◯以下に」「`mod:power_windmill`も許すと足りる」)を返す。
+- 数値(応力の影響・容量・回転数)は、実行時にCreateの`BlockStressValues`から読む(D-9)。**動力源の出力は、部品の表の値だけでは決まらない**(水車は水流の配置、風車は帆の数、蒸気機関はボイラーの状態に依存)ので、`PowerSourceModel`が`PowerPlantChoice.params`から`capacitySu`を計算する。モデルの数値は忠実度テストで実測して確定する(`05` 4.5節)。
 
 ## 7. 建屋の意味解析・敷地
 
 ```
-record ZoningPlan(List<Footprint> footprints, List<Corridor> corridors)
-record Footprint(String id, Box baseLocal, int height, Rot rot, int minGapBlocks)
+record ZoningPlan(List<BuildingFootprint> footprints, List<Corridor> corridors)
+record BuildingFootprint(String id, Box baseLocal, int height, Rot rot, int minGapBlocks)   // 建屋の足跡(部品の体積とは別の型)
+record Corridor(String id, List<LocalPos> path, int width)
+record Adjustment(String footprintId, String description, LocalPos from, LocalPos to)   // Zoning Fixerが動かした内容
 record SiteSurvey(Box worldBounds, int[][] surfaceY, String[][] surfaceBlock, boolean[][] water, boolean[][] tree, String digest)
 
 record SemanticMap(List<Level> levels, List<WallSegment> walls, List<RoofPlane> roofs, List<Opening> openings,
@@ -166,46 +215,57 @@ record SemanticMap(List<Level> levels, List<WallSegment> walls, List<RoofPlane> 
 record Room(String id, int levelIndex, Box bbox, int volumeCells, boolean enclosed)
 record Slot(String id, String roomId, Box box, Set<Facing> allowedFacings, int clearanceAbove,
             int clearanceSides, boolean nearPower, boolean nearWindow, boolean nearEntrance)
+record SpaceRequest(String structureId, int needFloorCells, int needHeight, int needLevels, List<String> slotIds)  // L4'
 ```
 
-- `SemanticMap`は、**設計データから**(予測)も、**実際のスナップショットから**(観測)も、同じアルゴリズムで作る(`VoxelGrid`経由)。予測と観測を比べることで、厳密な差分では気づけない意味の違い(壁に穴、部屋がつながっていない)を検出できる。
+- `SemanticMap`は、**設計データから**(予測)も、**実際の状態から**(観測)も、同じアルゴリズムで作る(`VoxelClassGrid`経由)。予測と観測を比べることで、厳密な差分では気づけない意味の違い(壁に穴、部屋がつながっていない)を検出できる。
 
 ## 8. 施工ジョブ・検証(サーバー)
 
 ```
 record ConstructionJob(
     String jobId, UUID ownerUuid, String dimension, String manifestHash, JobKind kind /*BUILD|MODIFY|REPAIR|ROLLBACK*/,
+    String parentJobId /*REPAIR/ROLLBACK/MODIFYが対象とする元のジョブ*/,
     JobState state, PauseReason pauseReason, int cursor, int total, int repairRound,
-    String claimId, MaterialPolicy materialPolicy, List<UndoEntry> journal, String lastError, long createdTick)
-enum JobState { PENDING_APPROVAL, QUEUED, RUNNING, PAUSED, VERIFYING, REPAIRING, VERIFIED, PARTIAL, FAILED, CANCELLED, ROLLED_BACK }
-enum PauseReason { OWNER_OFFLINE, CHUNK_UNLOADED, MATERIALS_MISSING, USER }
-record UndoEntry(IntPos pos, BlockSpec before, String beDataDigest)
+    String claimId, MaterialPolicy materialPolicy,
+    String journalFile, String ledgerFile /*別ファイル。SavedDataには置かない*/,
+    String lastError, long createdTick)
+enum JobState { PENDING_APPROVAL, QUEUED, RUNNING, PAUSED, VERIFYING, REPAIRING, ASSEMBLING, VERIFIED, PARTIAL, FAILED, CANCELLED, ROLLED_BACK }
+enum PauseReason { OWNER_OFFLINE, CHUNK_UNLOADED, MATERIALS_MISSING, SERVER_BUSY, USER }
 
-record Snapshot(Box worldBounds, Map<IntPos,ObservedBlock> blocks)
+record UndoEntry(IntPos pos, BlockSpec before)          // ブロックエンティティを持つブロックの置換は禁止(F-5)なので、NBT本体は持たない
+record MaterialLedger(Map<Integer,String> consumedByPlacementIndex /*設置ごとの消費。冪等*/, Map<String,Integer> reserved)
+
+record SparseSnapshot(Map<IntPos,ObservedBlock> blocks)   // L7は、施工リストの配置位置だけを読む(範囲全体のマップを作らない)
+record VoxelClassGrid(Box worldBox, byte[] classes)       // 意味解析用。1セル1バイトの分類(最大約157万セルで約1.5MB)
 record ObservedBlock(BlockSpec spec, boolean hasBlockEntity, String blockEntityType)
 record Deviation(int placementIndex, BlockSpec expected, ObservedBlock observed, DeviationKind kind /*MISSING|WRONG_BLOCK|WRONG_STATE|EXTRA|BLOCKED*/)
+
 record SiteClaim(String claimId, UUID ownerUuid, String dimension, Box worldBox, String jobId, long createdTick)
 record ApprovalRequest(String manifestHash, UUID playerUuid, long expiresTick)
 ```
 
-- `Snapshot`は、既存の`drone/BlockRangeDescription.java`(IDのみ)を、**ブロックの状態(向き・軸・段など)まで**読む形に拡張したもの。既存の`drone/ServerBlockSnapshotReader.java`(Phase 2で追加済み、まだどこからも呼ばれていない)の出力を拡張して使う。
-- `SnapshotDiff.compare(manifest, snapshot)`は決定論。`VerifyMode`に従い、設置後に`Deviation`の一覧を返す。
+- **既存の`drone/ServerBlockSnapshotReader.java`(Phase 2で追加済み。まだどこからも呼ばれていない)と`drone/BlockRangeDescription.java`は変更しない。** これらは、既存の`BlockSnapshotReader`インターフェース(文字列でブロック名だけを返し、1,000ブロック上限)を実装しており、クライアント実装とMCPツールと契約を共有しているため、状態つきの型に拡張すると既存のMCPを壊す。L7と意味解析用に、**別の契約**として、新設の`construction/ServerStateReader`(型付き、指定した座標の一覧を読む/範囲を複数tickに分けて分類グリッドに詰める)を作る。ブロック名の読み取りロジックだけは、`BlockRangeDescription`と共有する。
+- `SparseSnapshot`と`SnapshotDiff.compare(manifest, snapshot)`は決定論。`VerifyMode`に従い、設置後に`Deviation`の一覧を返す。
 
 ## 9. AI進行・画像・知見(クライアント)
 
 ```
-record BuildProject(String projectId, UUID ownerUuid, String worldId, ProjectState state,
+record BuildProject(String projectId, UUID ownerUuid, String worldId, ProjectKey chatKey, ProjectState state,
                     ConceptBrief brief, List<ImageArtifact> images, List<PlanRevisionRef> planRevisions,
                     List<ManifestRef> manifests, List<String> jobIds, List<CritiqueRecord> critiques,
                     Map<String,LoopCounter> loops, CostLedger ledger, String journalPath)
 
-record ConceptBrief(List<ProductTarget> products, String powerPreference, StyleSpec style, int buildingCountHint,
+record ConceptBrief(List<ProductTarget> products, PowerPolicy power, StyleSpec style, int buildingCountHint,
                     boolean needsDock, Box siteHint, List<String> openQuestions)
 
 record ImageArtifact(String imageId, ImageKind kind, String path, String sha256, int width, int height,
                      String prompt, String promptHash, List<String> referenceImageIds,
+                     List<DroppedReference> droppedReferences /*枠の都合で外した参考画像と理由(再現用)*/,
                      String generator /*codex-cli 0.144.1 等*/, String cameraPresetId,
-                     ApprovalStatus approval, Double costEstimateUsd, long createdAtMillis)
+                     ApprovalStatus approval, Integer codexTokens, Double costEstimateUsd /*不明ならnull*/, long createdAtMillis,
+                     boolean stale /*上流が変わり、今の計画と食い違う可能性がある(03 0.3)*/)
+record DroppedReference(String imageId, String reason)
 enum ImageKind { CONCEPT_ART, BUILDING_RENDER, STRUCTURE_GUIDE, INTERIOR_SECTION, PART_ATLAS, SCREENSHOT, REVISION }
 
 record PartAtlas(String atlasId, String registryVersion, String imageId, List<AtlasEntry> entries)
@@ -213,9 +273,12 @@ record AtlasEntry(String partTypeId, String displayName, int x, int y, int w, in
 
 record StructureDescription(String imageId, List<DescribedBuilding> buildings, List<DescribedObject> objects,
                             List<DescribedFlow> flows, List<Unrecognized> unrecognized, double confidence)
-record DescribedObject(String partType /*登録簿の識別子のenum(D-19)*/, String buildingId, NormBox region, int count, String note)
-record DescribedFlow(int fromObject, int toObject, ConnKind kind, boolean forward)
-record Unrecognized(String description, NormBox region)    // 登録簿に無い物
+record DescribedBuilding(String id, ShapeKind shape, NormBox region, int stories, RoofKind roof,
+                         List<String> colors, List<String> features /*煙突など*/, double relativeFootprint /*全建屋の中での比(0〜1)*/)
+record DescribedObject(String id, String partType /*登録簿の識別子のenum(D-19)*/, String buildingId, NormBox region,
+                       int count, ObjectVisibility visibility /*VISIBLE|PARTIAL|HIDDEN(屋根や壁で見えない可能性)*/, String note)
+record DescribedFlow(String fromObjectId, String toObjectId, ConnKind kind, boolean forward)
+record Unrecognized(String id, String description, NormBox region, boolean prominent /*目立つ大きさか*/)
 
 record CameraPreset(String id, double yawDeg, double pitchDeg, double distanceFactor, double fovDeg, String targetRule)
 record CritiqueReport(double matchScore, List<Diff> diffs, String summary)
@@ -223,31 +286,143 @@ record Diff(String area, DiffKind kind /*SHAPE|ROOF|LAYOUT|DECOR|COLOR|IMPOSSIBL
 record RouteDecision(CritiqueCategory category /*MOOD|PRODUCT|BUILDING_FORM|LINE_LAYOUT|OTHER*/, String targetStage, Map<String,String> constraints)
 
 record LoopBudget(String loopId, int maxIterations, Double threshold, Double plateauDelta, OnExceed onExceed /*ESCALATE*/)
-record LoopCounter(String loopId, int used, List<Double> scores, boolean escalated)
-record CostLedger(List<CostEntry> entries, double softCapUsd, double hardCapUsd)
+record LoopCounter(String loopId, int used, List<Double> scores /*ループごとの定義の量。03 0.1*/, boolean escalated)
+
+record CostLedger(List<CostEntry> entries, Caps caps)
 record CostEntry(String stageId, Provider provider /*CLAUDE|CODEX*/, Double usd, Integer inputTokens, Integer outputTokens, long millis)
+record Caps(double softUsd, double hardUsd,                 // Claude(金額で測れる物)
+            int softImages, int hardImages,                 // 画像生成の回数(プロジェクトごと)
+            long softCodexTokens, long hardCodexTokens)     // Codexのトークン数(金額に換算できないため)
 
 record KnowledgeRecord(String id, KnowledgeKind kind /*SUCCESS_MODULE|FIX_HISTORY|CRITIQUE|PREFERENCE|FAILURE*/,
                        Set<String> tags, String payloadJson, String provenance, PromotionState promotion, long createdAtMillis)
 record ModuleTemplate(String id, String displayNameKey, PartCategory category, VersionRange requires, Box footprint,
                       List<PortSpec> ports, List<PlanNode> nodes, List<Connection> internal,
-                      TemplateStats stats /*RPM・応力・毎分の生産量*/, Verification verification /*解析版・試運転の結果ハッシュ*/, Set<String> tags)
+                      TemplateStats stats /*RPM・応力・毎分の生産量*/, Verification verification /*解析版・忠実度/試運転の結果ハッシュ・検証の由来(BUNDLED_CI|PLAYER_COMMISSIONED)*/, Set<String> tags)
 ```
 
-## 10. パッケージ配置(案)
+- **費用の上限**(D-10): Claudeは金額(`total_cost_usd`)、画像生成は**回数**、Codexは**トークン数**で、それぞれ警告線・上限線を持つ。Codexの金額は不明なので`null`のまま記録し、金額に換算した値を作って上限と比べることはしない。
+
+## 10. 施工後の観測・物流・照合(補助の出力型)
+
+```
+record ReconcileConstraints(Map<String,Double> minRelativeFootprintByBuilding /*建屋IDごとの、全建屋に対する最低の比*/,
+                            int minBuildingCount, Set<String> mustShow /*絵に描かれるべき部品ID(見える物だけ)*/,
+                            Set<String> mustDrop /*絵から消すべき登録簿外の機械*/, String rationale)
+record ReconcileResult(ReconcileStatus status /*OK|REGENERATE|ESCALATE*/, ReconcileConstraints constraints,
+                       List<Issue> issues, double coverageScore /*0〜1*/)
+
+record PredictionReport(Map<String,Double> perMinByProduct, Map<String,Double> stressUsageByNetwork,
+                        Map<String,Double> rpmByNetwork, List<Issue> issues, List<String> unmodeledParts)
+record CommissioningReport(String jobId, List<CommissioningCheck> checks, boolean passed,
+                           List<String> leftoverItemsRecovered /*試運転で使った品物の回収記録*/)
+record CommissioningCheck(String id, String description, boolean passed, String measured, String expected)
+
+record RuntimeReport(long periodTicks, Map<String,Double> actualPerMin, Map<String,Double> plannedPerMin,
+                     List<Bottleneck> bottlenecks, List<Issue> issues)
+record Bottleneck(String subjectId, BottleneckKind kind /*STALLED|OVERSTRESSED|BELT_BACKLOG|OUTPUT_FULL|LOW_SPEED|NO_FUEL*/, double severity)
+
+record LogisticsPlan(List<Dock> docks, List<Route> routes, List<CargoFlow> flows)
+record Dock(String id, Box padBox, Box clearanceBox /*上空の空き*/, Facing approach, List<PortRef> linkedPorts,
+            List<String> dockingConnectorNodeIds /*係留部品*/)
+record Route(String id, String fromDock, String toDock, List<LocalPos> waypoints, String airshipTemplateId)
+record CargoFlow(String itemId, double perMin, String fromDock, String toDock)
+```
+
+## 11. 補助型(上の各節で使った型の定義)
+
+```
+sealed interface ParamValue { IntV(int) | NumV(double) | BoolV(boolean) | StrV(String) | EnumV(String) | MaterialV(String /*役割名か許可された素材ID*/) | ListV(List<ParamValue>) }
+record Provenance(String stageId, String modelId, String promptHash, List<String> imageIds, long createdAtMillis)
+enum Side { NORTH, EAST, SOUTH, WEST, TOP, BOTTOM, INNER, OUTER }                  // 面(部品の局所)
+sealed interface Routing { Auto | Explicit(List<String> viaNodeIds) }
+record Constraints(Integer maxLength, Set<String> avoidNodeIds, Integer maxTurns, Set<Dir6> allowedEntryDirs)
+record NormBox(double x0, double y0, double x1, double y1)                           // 画像内の割合(0〜1)。実寸は持たない
+enum ConnKind { ROTATION, ITEM, FLUID, REDSTONE, HEAT, DOCK }
+enum PortKind { ROTATION_IN, ROTATION_OUT, ITEM_IN, ITEM_OUT, FLUID_IN, FLUID_OUT, REDSTONE, HEAT, DOCK }
+enum Visibility { USER, IMPLICIT }                                                   // 部品の見え方(3節)
+enum ObjectVisibility { VISIBLE, PARTIAL, HIDDEN }                                        // 絵の中での物体の見え方
+enum AssemblyKind { WINDMILL, BEARING, PHYSICS_ASSEMBLER }
+enum JobKind { BUILD, MODIFY, REPAIR, ROLLBACK }
+interface ChatKey { String storageFileName(); }                                       // 既存のControllerKeyと新設のProjectKeyが実装
+record ProjectKey(String worldId, String projectId) implements ChatKey
+```
+
+- `ChatKey`は、既存の`chat/ControllerKey`(制御ブロックの座標)と、新設の`ProjectKey`(プロジェクトID)を、同じ保存・セッションの仕組み(`ChatSession`、`ChatHistoryStore`)で扱うための共通の窓口。`ControllerKey`は`ChatKey`を実装するだけで、既存の挙動は変わらない。**Refinerのセッションは、制御ブロックではなくプロジェクトに結びつく**ので、同じ制御ブロックから複数の工場プロジェクトを作っても履歴が混ざらない。
+### 11.1 二次的な型と列挙(すべての値を定義)
+
+```
+// 部品・パラメータ
+enum PartCategory { STRUCTURE, OPENING, ROOF, DECOR, POWER, TRANSMISSION, PROCESSING, LOGISTICS, STORAGE, FLUID, AERO, MODULE }
+enum PlacerId { SIMPLE, BELT, ARM, MULTIBLOCK, ASSEMBLY }                 // 設置戦略(05 1.2。部品ごとの割り当てはS-5で確定)
+record ModelRef(String modelId)                                            // KineticModel・PowerSourceModel内の挙動モデルの名前
+enum ParamType { INT, NUM, BOOL, STR, ENUM, MATERIAL }
+record ParamSpec(String name, ParamType type, String unit, ParamValue min, ParamValue max,
+                 ParamValue defaultValue, List<String> enumValues)
+record VersionRange(String modId, String mavenRange /*例 [6.0.10,6.1.0)*/)
+sealed interface ReplacePolicy { AirOnly | Replaceable | Expect(String blockId) }
+record PhaseRange(BuildPhase phase, int fromIndex, int toIndexExclusive)
+
+// 建屋の意味解析
+record Level(int index, int floorY, int height)
+record WallSegment(String id, Side side, int level, Box box)
+record RoofPlane(String id, Box box, RoofKind kind)
+enum OpeningKind { DOOR, WINDOW, GATE }
+record Opening(String id, String wallId, int u, int v, OpeningKind kind)
+record Entrance(String id, String roomId, Side outsideSide)
+enum ShapeKind { BOX, L_SHAPE, HALL, TOWER, SHED, OTHER }
+enum RoofKind { GABLE, HIP, FLAT, SHED, SAWTOOTH, MONITOR }
+
+// レシピ
+enum Heat { NONE, HEATED, SUPERHEATED }
+record HeldTool(Set<String> itemIds, boolean consumed)                      // デプロイヤーが持つ物など
+record FluidIngredient(String fluidId, int amountMb)
+record FluidResult(String fluidId, int amountMb)
+record SequenceStep(String action /*deploy|press|fill|cut など*/, Set<String> itemIds, String fluidId)
+record SequencedSpec(List<SequenceStep> steps, int loops)
+record CraftingShape(List<String> rows, Map<Character,Set<String>> key)     // mechanical_crafting の形状
+
+// プロジェクト・ループ・記録
+enum ProjectState { BRIEFING, CONCEPT_ART, RECONCILING, DESIGNING, PREVIEWING, AWAITING_APPROVAL, BUILDING,
+                    COMMISSIONING, OPERATING, ESCALATED, CANCELLED }
+enum ApprovalStatus { PENDING, APPROVED, REJECTED }
+enum OnExceed { ESCALATE }
+enum Severity { ERROR, WARN, INFO }
+enum Provider { CLAUDE, CODEX }
+enum ReconcileStatus { OK, REGENERATE, ESCALATE }
+enum DiffKind { SHAPE, ROOF, LAYOUT, DECOR, COLOR, IMPOSSIBLE }
+enum CritiqueCategory { MOOD, PRODUCT, BUILDING_FORM, LINE_LAYOUT, OTHER }
+enum CritiqueSource { USER, VISION_CRITIC }
+record CritiqueRecord(String id, long atMillis, CritiqueSource source, String text, RouteDecision decision)
+record PlanRevisionRef(String planId, int revision, String path, String hash)
+record ManifestRef(String hash, String path, String planId, int revision)
+enum KnowledgeKind { SUCCESS_MODULE, FIX_HISTORY, CRITIQUE, PREFERENCE, FAILURE }
+enum PromotionState { CANDIDATE, PROMOTED, REJECTED, PINNED }                // PINNED=整理で消さない
+enum VerificationOrigin { BUNDLED_CI, PLAYER_COMMISSIONED }
+record Verification(VerificationOrigin origin, String analyzerVersion, String resultHash, long atMillis)
+record TemplateStats(double rpm, double stressSu, Map<String,Double> perMinByProduct)
+
+// 観測・ジョブ
+enum BottleneckKind { STALLED, OVERSTRESSED, BELT_BACKLOG, OUTPUT_FULL, LOW_SPEED, NO_FUEL }
+enum ConflictKind { PLAYER_MODIFIED, MISSING }
+enum DeviationKind { MISSING, WRONG_BLOCK, WRONG_STATE, EXTRA, BLOCKED }
+enum MaterialPolicy { CREATIVE_FREE, SURVIVAL_CONSUME }
+```
+
+## 12. パッケージ配置(案)
 
 | パッケージ | 中身 | Minecraft依存 |
 |---|---|---|
-| `build.model` | 1・2・4・5節の型、`PlanPatcher` | なし |
+| `build.model` | 1・2・4・5節の型、`PlanPatcher`、`PlanExpander` | なし |
 | `build.parts` | `PartType`、`PartTypeRegistry`、パラメータ検証、スキーマ生成 | なし |
 | `build.compile` | `PlanCompiler`、`ManifestDiff`、ハッシュ | なし |
-| `build.analyze` | `VoxelGrid`、`BlueprintAnalyzer`、`ZoningFixer`、`CapacityCalculator`、`Router`、`KineticModel`、`FactoryAnalyzer`、`RecipeSource`(IF) | なし |
+| `build.analyze` | `VoxelClassGrid`、`BlueprintAnalyzer`、`ZoningFixer`、`CapacityCalculator`、`PowerSourceModel`、`Router`、`KineticModel`、`FactoryAnalyzer`、`RecipeSource`(IF) | なし |
 | `build.process` | `ProcessGraph`、`Reconciler`の決定論部分 | なし |
-| `build.verify` | `Snapshot`、`SnapshotDiff`、`RepairPlanner` | なし |
+| `build.verify` | `SparseSnapshot`、`SnapshotDiff`、`RepairPlanner` | なし |
 | `build.script` | `PlanRecorder`、`PlanScriptWriter` | なし |
 | `build.knowledge` | `ModuleLibrary`、`KnowledgeStore`の型 | なし |
 | `build.ai` | `BuildOrchestrator`、`StageSpec`、`LoopBudget`、各段のプロンプトと検証 | なし(CLI呼び出しは`chat`側の橋渡し) |
-| `construction` | `ConstructionJob`、`ConstructionExecutor`、`PlacementApplier`、`SafetyEnvelope`、`MaterialPolicy`、`SiteClaimStore`、`DroneShow`、`Commissioning`、`RuntimeMonitor`、サーバー側の調査と`RecipeSource`実装 | **あり(サーバー)** |
+| `construction` | `ConstructionJob`、`ConstructionExecutor`、`PlacementApplier`、`SafetyEnvelope`、`PlaceableBlockPolicy`、`MaterialPolicy`、`SiteClaimStore`、`ServerStateReader`、`ServerWorkerPool`、`ConstructionBudget`、`DroneShow`、`Commissioning`、`RuntimeMonitor`、サーバー側の調査と`RecipeSource`実装 | **あり(サーバー)** |
 | `construction.net` | ペイロード群 | あり |
-| `client.build` | レビュー画面、ホログラム、`PartAtlasRenderer`、`InGameRenderer`、画像表示 | **あり(クライアント)** |
-| `chat`(既存) | `ClaudeCliBridge`に構造化出力・画像入力・予算指定を追加、`CodexCliBridge`を新設 | なし |
+| `client.build` | レビュー画面、ホログラム、`PartAtlasRenderer`、`InGameRenderer`、画像表示、`LoopEscalationScreen`、`RouteChooserScreen` | **あり(クライアント)** |
+| `chat`(既存) | `ClaudeCliBridge`に構造化出力・画像入力・予算指定を追加、`CodexCliBridge`を新設、`ChatKey`の導入 | なし |
