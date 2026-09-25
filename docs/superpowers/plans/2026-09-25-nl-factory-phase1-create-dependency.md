@@ -1,6 +1,6 @@
 # 自然言語→工場建設 Phase 1: Create/Aeronautics依存追加 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** micra_droneのbuild.gradleにCreate本体とCreate: Aeronauticsをコンパイル/実行時依存として追加し、`./gradlew build`と`./gradlew runClient`が実際に(クラッシュせず)通ることを実測で確認する。この段階では新しいゲームロジックは一切書かない。
 
@@ -30,7 +30,7 @@
 - Consumes: なし（このタスクはビルド設定のみ、Javaコードの変更なし）
 - Produces: Gradleビルドスクリプトが`com.simibubi.create`、`net.createmod.ponder`、`dev.engine-room.flywheel`、`com.tterrag.registrate`のクラスをコンパイル時に解決できる状態。後続タスク(Recipe Resolver、Factory Analyzer等)はこれらのAPIをimportして使う。
 
-- [ ] **Step 1: gradle.propertiesにバージョン変数を追記**
+- [x] **Step 1: gradle.propertiesにバージョン変数を追記**
 
 `gradle.properties`の末尾（`mod_group_id=...`の後）に追記:
 
@@ -43,7 +43,7 @@ flywheel_version=1.0.6
 registrate_version=MC1.21-1.3.0+67
 ```
 
-- [ ] **Step 2: build.gradleのrepositoriesブロックにCreateのMavenリポジトリを追加**
+- [x] **Step 2: build.gradleのrepositoriesブロックにCreateのMavenリポジトリを追加**
 
 `build.gradle`の既存の空`repositories { }`ブロックを以下に置き換える:
 
@@ -55,7 +55,7 @@ repositories {
 }
 ```
 
-- [ ] **Step 3: build.gradleのdependenciesブロックにCreate関連の依存を追加**
+- [x] **Step 3: build.gradleのdependenciesブロックにCreate関連の依存を追加**
 
 `dependencies { }`ブロック内、既存のJEIコメント例の直後・`testImplementation`群の直前に追記:
 
@@ -71,17 +71,17 @@ repositories {
     implementation("com.tterrag.registrate:Registrate:${registrate_version}")
 ```
 
-- [ ] **Step 4: コンパイルを確認**
+- [x] **Step 4: コンパイルを確認**
 
 Run: `./gradlew compileJava --console=plain`
 Expected: `BUILD SUCCESSFUL`。失敗する場合は依存解決エラー(404等)かバージョン不整合のログを確認し、該当バージョン文字列をmaven-metadata.xmlで再確認する。
 
-- [ ] **Step 5: runClientでの起動を確認(実機確認)**
+- [x] **Step 5: runClientでの起動を確認(実機確認)**
 
 Run: `./gradlew runClient --console=plain`（GUIが起動するので、タイトル画面まで到達しCreateがMod一覧に出ることを目視確認してからクライアントを閉じる。起動したクライアントは確認後に必ず終了する）
 Expected: クラッシュせずタイトル画面に到達し、Mod一覧(またはログ)に`create`が読み込まれていること。ログに`Duplicate mod`等の致命的エラーが出ていないこと。
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```bash
 git add gradle.properties build.gradle
@@ -110,7 +110,7 @@ EOF
 - Consumes: Task 1で解決済みのCreate本体クラスパス
 - Produces: `com.create_aeronautics`(または実際のパッケージ名、依存解決後にjarを展開して確認)のクラスをコンパイル時に解決できる状態
 
-- [ ] **Step 1: gradle.propertiesにAeronauticsのバージョン変数を追記**
+- [x] **Step 1: gradle.propertiesにAeronauticsのバージョン変数を追記**
 
 Task 1で追加したブロックの末尾に追記:
 
@@ -118,13 +118,13 @@ Task 1で追加したブロックの末尾に追記:
 aeronautics_version=w7zlLnea
 ```
 
-- [ ] **Step 2: build.gradleのrepositoriesブロックにModrinth Mavenを追加**
+- [x] **Step 2: build.gradleのrepositoriesブロックにModrinth Mavenを追加**
 
 ```gradle
     maven { url = "https://api.modrinth.com/maven" }
 ```
 
-- [ ] **Step 3: build.gradleのdependenciesブロックにAeronauticsを追加**
+- [x] **Step 3: build.gradleのdependenciesブロックにAeronauticsを追加**
 
 ```gradle
     // Create: Aeronautics (自然言語→工場建設機能, 発着場/飛行ルート用。Phase1では依存解決の
@@ -133,17 +133,17 @@ aeronautics_version=w7zlLnea
     implementation("maven.modrinth:oWaK0Q19:${aeronautics_version}")
 ```
 
-- [ ] **Step 4: コンパイルを確認**
+- [x] **Step 4: コンパイルを確認**
 
 Run: `./gradlew compileJava --console=plain`
 Expected: `BUILD SUCCESSFUL`。Aeronauticsが「bundled」(Create本体を内包)であることに起因するクラス重複エラーが出ないか特に注意する。
 
-- [ ] **Step 5: runClientでの起動を確認(実機確認)**
+- [x] **Step 5: runClientでの起動を確認(実機確認)**
 
 Run: `./gradlew runClient --console=plain`
 Expected: クラッシュせずタイトル画面に到達。**特に「Duplicate mod id」「Duplicate mod: create」のようなエラーが出ないことを確認する**(bundled版が別途Create本体を読み込もうとして衝突する可能性がCodexレビューで指摘されている既知リスク)。衝突する場合はAeronautics側を`transitive = false`にしてCreateの重複部分を除外することを検討し、その対処は別途相談する。
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```bash
 git add gradle.properties build.gradle
