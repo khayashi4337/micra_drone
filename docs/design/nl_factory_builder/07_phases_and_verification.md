@@ -34,7 +34,7 @@
 
 ### P3 意味の核(純Java)
 
-- **作る物**: `01_data_model.md`の1〜5節・11節の型と、`ModuleTemplate`・`TemplateBundle`(9節。`PlanExpander`が使う)、`PartTypeRegistry`(建築部品`micra:*`)、`PlanPatcher`、`PlanExpander`(テンプレート展開と`Explicit`の経路。`Auto`はRouterが入るP11で追加するので、P3では`Auto`の接続を`E-NO-ROUTE`(ルーター未搭載)で拒否する)、`PlanCompiler`(建築部品→施工リスト)、`ManifestDiff`(`RemovalEntry`・`Conflict`)、`PlaceableBlockPolicy`の判定(許可リスト。純Java部分)、正規JSONとハッシュ、`SchemaGenerator`、`PlanApi`インターフェースと建設用の命令(`CommandNames`・`Interpreter`・`CommandsHelpDoc`。許可リスト方式の決定論プロファイル)、`PlanRecorder`、`PlanScriptWriter`。
+- **作る物**: `01_data_model.md`の1〜5節・11節の型と、`ModuleTemplate`・`TemplateBundle`(9節。`PlanExpander`が使う)、`PartTypeRegistry`(建築部品`micra:*`)、`PlanPatcher`、`PlanExpander`(テンプレート展開と`Explicit`の経路。`Auto`はRouterが入るP11で追加するので、P3では`Auto`の接続を`E-NO-ROUTE`(ルーター未搭載)で拒否する)、`PlanCompiler`(建築部品→施工リスト)、`ManifestDiff`(`RemovalEntry`・`Conflict`)、`PlaceableBlockPolicy`の判定(許可リスト。純Java部分)、正規JSONとハッシュ、`SchemaGenerator`、`PlanApi`インターフェースと建設用の命令(`CommandNames.PLAN`・`Interpreter`の`PlanApi`対応・`CommandsHelpDoc.BUILD_COMMANDS`・`SyntaxHighlighter`の多重定義。許可リスト方式の決定論プロファイル`PlanScriptProfile`と、実行の上限`PlanRunLimits`)、`PlanRecorder`、`PlanScriptWriter`。
 - **依存**: なし(純Java)。**先に必要なスパイク**: S-1(スキーマの機能)。
 - **完了の実測条件**:
   1. 手書きの`PlanPatch`(JSON)から施工リストができ、**同じ入力を1,000回変換して同じハッシュ**。
@@ -42,10 +42,13 @@
   3. **往復**: `SemanticPlan → スクリプト → PlanRecorder → SemanticPlan`でハッシュが変わらない(複数スクリプト分割も)。
   4. **許可リスト方式の決定論プロファイル**: 許可した命令以外(乱数・時刻・知覚・畑の命令・`create_task`・`semaphore`・`attach_isr`・`raise_interrupt`・`sleep_ticks`)を使ったスクリプトが静的検査で拒否される。農場の命令との混在も拒否される。
   5. `build.*`が`net.minecraft`をimportしていないことを検査するテストが緑(D-16)。
-  6. 既存のテスト47ファイルがすべて緑。`CommandNames`/`CommandsHelpDoc`/構文ハイライトが新命令を認識。
+  6. 既存のテスト47ファイルがすべて緑(畑の`CommandNames.ALL`・`Interpreter`の既存挙動は無変更)。`CommandNames.PLAN`の全命令が、建設用の`Interpreter`で認識され(unknown functionにならない)、`CommandsHelpDoc.BUILD_COMMANDS`が全命令を載せ、構文ハイライト(命令名の一覧を渡す多重定義)が認識する。
   7. 部品ごとのパラメータ範囲・不正入力(`E-PARAM-RANGE`等)の`Issue`が出る。
   8. `E-BLOCK-FORBIDDEN`: コマンドブロック・岩盤・スポナーなどを素材や部品で指定した計画が、コンパイルで拒否される。
   9. `ManifestDiff`: 旧→新の差分から、`expectedNow`と`restoreTo`を持つ`RemovalEntry`が作られる(単体テスト)。
+  10. **建築部品の生成**: 登録簿の`micra:`部品(22種)のすべてが生成器を持ち(登録簿と生成器の一致を検査するテスト)、金のファイル(小屋: 壁・床・屋根・扉・窓)と一致する。各部品の生成物が、宣言した占有体積(`VolumeSpec`)に収まる。`Conflict`の判定(`volatileProps`を無視し、別のブロックなら`PLAYER_MODIFIED`、空気なら`MISSING`)が単体テストで通る。
+  11. **`SchemaGenerator`**: 登録簿から`PlanPatch`のスキーマを作り、`USER`の部品識別子が`enum`、`IMPLICIT`が出ず、`additionalProperties:false`が基本で、S-1で測った上限の文字数に収まる(超える規模では、パラメータ配列の方式に切り替わる)。
+  12. **スクリプトの実行の限界**: 建設用の`Interpreter`が、総ステップ上限(既定100,000)と時間の上限(既定5秒)で止まり、`E-SCRIPT-LIMIT`になる。
 - **実機確認**: なし(純Java)。ただし`runClient`が従来どおり起動することを確認。
 
 ### P4 サーバー施工ランタイム

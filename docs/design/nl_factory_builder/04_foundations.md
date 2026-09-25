@@ -80,9 +80,24 @@
 ## F-6 独自言語との往復(決定論プロファイル)
 
 - 人が読んで直せる形(引き継ぎ文の要件): 計画は独自言語のスクリプトとして見える。`PlanScriptWriter`が`SemanticPlan`から出力し、`PlanRecorder`(新設の`PlanApi`の実装)がスクリプトを実行して`PlanPatch`を作る。**往復してもハッシュが変わらない**ことをテストで保証する(D-2)。
-- 命令(案、P3の計画書で確定): `frame(facing)`、`style(role, material)`、`structure(id, width, depth, floors)`、`floor_slab`、`wall(id, structure, side, level, material)`、`pillar`、`roof(id, structure, kind, color)`、`door(id, wall, u, kind)`、`window(id, wall, u, v, kind)`、`stairs`、`catwalk`、`module(id, template, structure, slot, facing)`、`place(id, part_type, u, v, w, facing)`、`connect(from, to, kind, via, constraints)`(`via`は経由する部品IDのリスト。空ならAutoで`Routing.Auto`、指定すれば`Routing.Explicit`。`constraints`は`dict`で、`max_length`・`avoid`・`max_turns`・`entry_dirs`を持てる)、`power(id, part_type, …)`、`dock(id, …)`、`decorate(wall, element, u, v)`、**`site(dimension, origin_x, origin_y, origin_z, facing, bounds)`**(`SetSite`)、**`logistics(docks, routes, flows)`**(`SetLogistics`。引数は`list`と`dict`)。`PlanPatch`の全操作が、命令に1対1で対応する(往復の`contentHash`が一致するため、`01` 2節)。
-- 追加の作法(既存の慣習どおり): `lang/CommandNames.ALL`に登録、`lang/Interpreter.evalCall`にcaseを追加(Lexer/Parser/ASTは無改修)、`drone/CommandsHelpDoc`に説明、`lang/SyntaxHighlighter`は`CommandNames`から自動。**ただし既存の`DroneApi`には足さず、別インターフェース`PlanApi`にする**(P-15)。`Interpreter`は`PlanApi`を任意で受け取り、農場の命令と建設の命令の混在は、実行前の静的検査で拒否する。
-- **決定論プロファイル(許可リスト方式)**: 建設スクリプトで使えるのは、**許可した命令だけ**。許可するのは、建設の命令(上の一覧)、制御構造(if・for・while・関数・変数)、純粋な補助(`len`、`abs`、`min`、`max`、`str`、`list`、`dict`、`set`、`range`、`print`)。**それ以外は静的検査で拒否する**。拒否される既存の命令(`lang/CommandNames.ALL`の実物): 畑の操作(`move`、`till`、`plant`、`harvest`、`do_a_flip`、`sleep_ticks`、釣り・金床の各命令、`set_output`、`pair_with`など)、知覚(`get_pos_x`、`get_time`、`get_weather`、`get_ground`、`can_harvest`など)、**`random`、`create_task`(本物のスレッド)、`semaphore`、`attach_isr`、`raise_interrupt`**。理由: これらは実行の順序や結果が毎回同じにならず、同じスクリプトから同じ`PlanPatch`が出る保証(往復のハッシュ一致、D-2)が崩れるため。ブラックリストではなく許可リストなので、将来`CommandNames`に命令が増えても、自動では建設で使えるようにならない。実行回数の上限(既定100,000ステップ)と時間の上限を設ける。
+- **命令(P3で確定)**: 位置引数だけ(この言語にキーワード引数は無い)。`PlanOp`の全操作が、命令に1対1で対応する。**部品を置く命令の名前は、登録簿から機械的に決まる**(P-16)。
+
+  | 命令 | `PlanOp` | 引数 |
+  |---|---|---|
+  | `site(dimension, x, y, z, facing, bounds[, terrain_digest[, claim_id]])` | `SetSite` | `facing`は`"north"`等、`bounds`は`[minU,minV,minW,maxU,maxV,maxW]` |
+  | `style(role, material)`、`mood(tag)` | `SetStyle` | 呼んだ分を集めて、1つの`SetStyle`にする |
+  | `<部品名>(id, parent, anchor, params[, tags[, label]])` | `AddNode` | `<部品名>`は、`micra:`の部品なら接頭辞を除いた名前(`wall`、`roof`、`door`…) |
+  | `part(id, type, parent, anchor, params[, tags[, label]])` | `AddNode` | `type`は部品ID全体(`"create:mechanical_press"`、`"mod:press_station"`)。`micra:`以外の部品はこちら |
+  | `update_params(id, params)` | `UpdateParams` | |
+  | `relocate(id, anchor)` | `MoveNode` | (`move`は畑の命令なので使わない) |
+  | `remove_part(id)` | `RemoveNode` | |
+  | `connect(id, from, to, kind[, via[, constraints]])` | `AddConnection` | `from`・`to`は`"ノードID.ポート名"`。`via`は経由する部品IDのリストで、空・省略なら`Routing.Auto`、指定すれば`Explicit`。`constraints`は`dict`(`max_length`・`avoid`・`max_turns`・`entry_dirs`) |
+  | `disconnect(id)` | `RemoveConnection` | |
+  | `logistics(docks, routes, flows)` | `SetLogistics` | `list`と`dict`(`01` 10節の`Dock`・`Route`・`CargoFlow`の欄名) |
+
+  `anchor`は、`[u, v, w]`または`[u, v, w, 回転数, 鏡像]`(`Absolute`。回転数は0〜3、鏡像は`True`/`False`)、`["surface", 壁ID, "outer"または"inner", u, v]`(`OnSurface`)、`["slot", スロットID, 回転数, 鏡像]`(`InSlot`)。`parent`は親のID(なければ`None`)。`params`は`dict`で、検証は`PlanPatcher`が部品の`ParamSpec`で行う。案にあった`frame`(枠は`site`が持つ)、`place`・`power`・`dock`・`decorate`・`module`・`floor_slab`は、すべて`<部品名>`または`part`で表せるので置かない(名前を別に持つと、登録簿とずれる)。
+- **追加の作法(P3で確定。既存の慣習に沿うが、畑の側を壊さない)**: (a)`lang/CommandNames`に**`PLAN`(建設の命令の一覧。部品を置く命令は登録簿から作る)を新設し、畑用の`ALL`は変えない**。`ALL`は`Interpreter.defineFunction`(`Interpreter.java:183`。組み込みと同名の関数の定義を拒否する)、`CommandNamesTest`、`SyntaxHighlighterTest`、IDEの補完が使っており、`wall`・`place`・`power`のような一般的な名前を入れると、既存の畑のスクリプトが「組み込みの命令なので再定義できない」で壊れる(P-15違反)。(b)`Interpreter`は`PlanApi`を任意で受け取り(`Interpreter(PlanApi, PlanRunLimits)`)、`PlanApi`があるときだけ`CommandNames.PLAN`の呼び出しを`PlanApi`へ渡す。`PlanApi`が無い(畑の)`Interpreter`では、建設の命令は従来どおり「unknown function」で、利用者が同名の関数を定義しても壊れない。(c)`lang/SyntaxHighlighter.highlight`に、命令名の一覧を渡す多重定義を足す(既存の`highlight(source)`は`ALL`のまま)。(d)`drone/CommandsHelpDoc`に、建設の命令の説明`BUILD_COMMANDS`を足す。**既存の`DroneApi`には足さず、別インターフェース`lang.PlanApi`にする**(P-15)。`Lexer`/`Parser`/ASTは無改修。農場の命令と建設の命令の混在は、実行前の静的検査(`PlanScriptProfile`)で拒否する。
+- **決定論プロファイル(許可リスト方式)**: 建設スクリプトで使えるのは、**許可した命令だけ**。許可するのは、建設の命令(上の一覧)、制御構造(if・for・while・関数・変数)、純粋な補助(`len`、`abs`、`min`、`max`、`str`、`list`、`dict`、`set`、`range`、`print`)。**それ以外は静的検査で拒否する**。拒否される既存の命令(`lang/CommandNames.ALL`の実物): 畑の操作(`move`、`till`、`plant`、`harvest`、`do_a_flip`、`sleep_ticks`、釣り・金床の各命令、`set_output`、`pair_with`など)、知覚(`get_pos_x`、`get_time`、`get_weather`、`get_ground`、`can_harvest`など)、**`random`、`create_task`(本物のスレッド)、`semaphore`、`attach_isr`、`raise_interrupt`**。理由: これらは実行の順序や結果が毎回同じにならず、同じスクリプトから同じ`PlanPatch`が出る保証(往復のハッシュ一致、D-2)が崩れるため。ブラックリストではなく許可リストなので、将来`CommandNames`に命令が増えても、自動では建設で使えるようにならない。実行回数の上限(既定100,000文=ステップ)と時間の上限(既定5秒)を、`PlanRunLimits`として`Interpreter`に足す(既存の「畑の操作なしで100万文」の暴走検出とは別。`PlanApi`があるときだけ有効)。超えれば`E-SCRIPT-LIMIT`。
 - **スクリプトの長さ**: 既存の`MAX_SCRIPT_CHARS=10000`は、1つのスクリプトに適用される。大きな計画は、`PlanScriptWriter`が**建物・モジュールごとの複数のスクリプト**に分割して出力する(各10,000字以内)。`PlanRecorder`は、複数のスクリプトを順番に取り込める。
 - スクリプトを人が直して保存すると、それは新しい`PlanPatch`(新しい版)になる。承認は、**コンパイル後のハッシュ**に対して行う(D-3。スクリプトの文字列ではない)。
 

@@ -5,7 +5,7 @@
 ## 0. 共通の約束
 
 - **純Javaの核**(`io.github.khayashi4337.micradrone.build.*`)は、`net.minecraft.*`と`net.neoforged.*`を一切importしない(D-16)。座標は`int`3つ、ブロックは文字列の識別子とプロパティ表で持つ。MinecraftのBlockPos・BlockState・Levelとの変換は、サーバー側の薄いアダプタ(`construction`パッケージ)だけが行う。
-- **JSON**は、既存の`chat/MiniJson.java`(外部ライブラリなし)で読み書きする。ハッシュ用の**正規形**は、キーを辞書順、数値は整数か固定小数、余計な空白なし、で書いたバイト列。ハッシュは正規形のSHA-256(小文字16進)。
+- **JSON**は、既存の`chat/MiniJson.java`(外部ライブラリなし)で読み書きする。ただし`MiniJson`は現状`chat`パッケージ限定の可視性で、`build.*`から使えないので、**公開(`public`)にする**(P3。挙動は変えない)。`MiniJson`は数をすべて`Double`で読むので、整数か小数かの区別は、`build.model`の`PlanJson`が部品のパラメータ仕様(`ParamSpec`)に照らして行う。ハッシュ用の**正規形**(`CanonicalJson`)は、キーを辞書順、整数はそのまま、小数は`BigDecimal.valueOf(d).stripTrailingZeros().toPlainString()`(`NaN`・無限大は拒否)、余計な空白なし、で書いたUTF-8のバイト列。ハッシュは正規形のSHA-256(小文字16進)。**`SemanticPlan.contentHash`の正規形では、`nodes`と`connections`を`id`の辞書順に、`Set`を辞書順に並べる**(並びが違うだけの同じ設計を、同じハッシュにするため。スクリプトの往復で、出力の並びが変わっても一致する)。
 - **ID**は、AIにも人にも見える安定した文字列(例: `wall-north-1`、`press-station-2`)。AIが付け、決定論コードが重複と形式(`[a-z0-9-]{1,48}`)を検査する。問題の指摘(`Issue`)は、必ずこのIDで対象を指す。**画像から読み取る構造記述(`StructureDescription`)の建屋・物体・流れも、安定IDで指す**(一覧の添字では指さない)。
 - **座標系**(`BuildFrame`): `u`=右、`v`=上、`w`=前。`BuildFrame(origin, facing)`の`facing`が向いている方向が`w`、そこから時計回りに90度が`u`。変換は`world = origin + u*right + v*up + w*forward`。計画はすべて局所座標(u,v,w)で書き、向きに依存しない(P-4)。
 - **版**: **保存される型**(`SemanticPlan`、`PlacementManifest`、`ConstructionJob`、`MaterialLedger`、`PlacedRegistry`、`SiteClaim`、`CommissioningJournal`、`BuildProject`、`ImageArtifact`、`KnowledgeRecord`、`ModuleTemplate`)は、先頭の欄に`int schemaVersion`を持つ。保存は`PersistenceEnvelope(type, schemaVersion, payload)`で包み、読み込み時に、版の移行表(`Migrations`: 版→変換関数)で現在の版へ変換する。**新しい版のデータを古いコードが読んだ場合や、変換できない場合は、読み込みを拒否して理由を示す**(壊さない・黙って捨てない)。
@@ -25,6 +25,9 @@ record BuildFrame(IntPos origin, Facing facing) {
 }
 record BlockSpec(String blockId, SortedMap<String,String> properties)   // 例: create:shaft {axis=x}
 ```
+
+- **局所の向き(P3で確定)**: 局所座標の`Facing`は、`NORTH`=+w(前)、`EAST`=+u(右)、`SOUTH`=-w、`WEST`=-u。`Rot(quarterTurns, mirror)`は、まず鏡像(u→-u。`EAST`と`WEST`が入れ替わる)、次に時計回り(上から見て)に`quarterTurns`回90度回す。局所の1回転は`(u,w) → (w,-u)`(`NORTH`→`EAST`→`SOUTH`→`WEST`)。
+- **`BuildFrame`の変換(P3で確定)**: `facing`の番号`q`は、`NORTH`=0、`EAST`=1、`SOUTH`=2、`WEST`=3。`facing=NORTH`のとき`world = origin + (u, v, -w)`(マイクラの北は-z)。それ以外は、水平の成分`(dx, dz) = (u, -w)`を、時計回りに`q`回(1回は`(dx,dz) → (-dz, dx)`)回してから足す。局所の向きは、`Facing.rotate(q)`で世界の向きになる。**回転不変は、この変換で作る(局所でコンパイルしてから世界へ写す)ので、構造的に成り立つ**。写すときは、ブロック状態の`facing`・`axis`(`x`と`z`は奇数回で入れ替え)・`north`/`east`/`south`/`west`の各キー・`rotation`(1回で+4)も同じだけ回す。
 
 ## 2. 設計データ(`SemanticPlan`)と差分(`PlanPatch`)
 
@@ -59,6 +62,8 @@ record PortRef(String nodeId, String port)                          // 例 press
 
 - `PlanNode`は平らな一覧。親子は`parent`で表す。建物(`structure`)の中に壁・床・屋根・モジュールが入る。
 - 接続(`Connection`)は、座標ではなくポートで書く(P-4)。経路の中間部品(シャフト・ベルト・シュートなど)は、`Auto`ならRouterが作り、**AIは書かない**(P-5)。
+- **`Anchor`の意味(P3で確定)**: `Absolute(pos, rot)`は、**親があれば親の原点からの相対**、無ければ計画の局所座標(`Site.frame`の原点)からの絶対。`OnSurface(nodeId, side, u, v)`は、対象の壁の面上の位置で、`u`は壁の始点から、壁が伸びる向き(北・南の壁は+u、東・西の壁は+w)に数え、`v`は壁の最下段から上へ数える。`side`は`OUTER`(外側から付く)か`INNER`(内側から付く)だけを使い、他の値は`E-ANCHOR`。`InSlot(slotId, rot)`は、スロットの解決(建屋の意味解析、P6)が要るので、P3の`SlotResolver`は`E-ANCHOR`(「スロットの解決はP6で載る」)を返す(黙って無視しない)。
+- **パラメータの型付け(P3で確定)**: 計画のJSON・スクリプトから入ってくるパラメータは、まず型を推測して読む(整数の値は`IntV`、小数は`NumV`、文字列は`StrV`、真偽は`BoolV`、配列は`ListV`)。`PlanPatcher`が、部品の`ParamSpec`に照らして型を確定する(`ENUM`の文字列は`EnumV`、`MATERIAL`は`MaterialV`、`NUM`に来た整数は`NumV`)。確定後の型で保存・ハッシュを取るので、同じ設計は、どの経路(JSON・スクリプト)から入っても同じハッシュになる。
 
 **AIが出すのは全体ではなく差分**(トークンの節約、改訂の追跡、ループでの修正のため):
 
@@ -71,7 +76,7 @@ sealed interface PlanOp {
 }
 ```
 
-- `PlanPatcher.apply(plan, patch)`は決定論。`baseRevision`が現在と違えば拒否(古い前提で書かれた差分を混ぜない)。結果は新しい`revision`の`SemanticPlan`と`Issue`の一覧。
+- `PlanPatcher(registry, templates)`の`apply(plan, patch) → PatchResult(SemanticPlan plan, List<Issue> issues)`は決定論。`baseRevision`が現在の`revision`と違えば拒否(`E-PATCH-STALE`。古い前提で書かれた差分を混ぜない)。**`ERROR`が1つでもあれば、パッチ全体を拒否して`plan`は`null`**(半端に適用しない。元の計画は変わらない)。成功時は、`revision`=`baseRevision+1`、`parentRevision`=`baseRevision`。`RemoveNode`は、子または接続が残るノードには使えない(`E-ANCHOR`。残っている依存先を`FixHint`で示す)。IDは`[a-z0-9-]{1,48}`(違えば`E-ID-INVALID`)で、重複は`E-ID-DUPLICATE`。`nodes`の並びは追加順で、親は子より先に来る(親が無いノードは追加できない)。
 - 独自言語のスクリプトは、この`PlanPatch`の**プログラム表現**(1命令=1操作)。スクリプトを実行(記録)すると`PlanPatch`になり、`PlanScriptWriter`は`SemanticPlan`から等価なスクリプトを出す。往復しても`contentHash`が変わらないことをテストで保証する(D-2、`04_foundations.md` F-6)。`planId`・`revision`・`provenance`はスクリプトの外(メタ情報)。
 
 ### 2.1 展開済みの計画(`ExpandedPlan`)— サーバーが自分で作り直す物
@@ -87,6 +92,7 @@ record RoutedConnection(String connectionId, List<PlanNode> intermediateNodes, L
 ```
 
 - **サーバーは、クライアントの展開結果を信用しない**。受け取るのは`SemanticPlan`・`ProcessGraph`・`TemplateBundle`だけで、展開・コンパイル・解析は、サーバーが自分の手持ちのコードで作り直す(04 F-3)。同梱テンプレートは、IDとハッシュがサーバーの手持ちと一致しなければ拒否。
+- **展開の規則(P3で確定)**: テンプレートのインスタンス(`type`が`mod:`で始まるノード)は、テンプレートの`nodes`・`internal`を、ID`<インスタンスID>/<元のID>`で展開する(`/`は利用者が書くIDの正規表現に含まれないので、衝突しない)。子の`Absolute`の位置と回転は、インスタンスの`anchor`(位置と`Rot`)を合成する。子の`OnSurface`・`parent`は、同じ接頭辞に付け替える。`Explicit`の接続は、経由するノードの存在を確かめ、経路をその位置の並びで記録する(端点や経由ノードが無ければ`E-CONN-INVALID`)。`Auto`の接続は、Routerが載るP11まで、`E-NO-ROUTE`(ルーター未搭載)で拒否する。
 
 ## 3. 部品(`PartType`)
 
@@ -147,9 +153,9 @@ record AssemblyResult(String groupId, String assembledId /*エンティティUUI
 // 組み立て後の個体は、PlacedRegistry.assembliesに記録する。解体・撤去・ロールバックは、この記録で個体を特定して行う
 ```
 
-- `PlanCompiler.compile(expandedPlan, registry, SurveyRef survey) → CompileResult(manifest | issues)`は**決定論**(入力は、サーバーが発行して固定した地形調査。世界の現在の状態そのものではない。04 F-3): 同じ入力から、バイト単位で同じ施工リスト(=同じハッシュ)ができる。
-- 施工順は`BuildPhase`の昇順、その中は下から上・手前から奥(v3の「動力 → 上流 → 下流」を`POWER→UPSTREAM→DOWNSTREAM`で表す)。`ASSEMBLE`は、同じグループの部品を全部置いた後に、組み立てを実行する(風車の帆、飛行船)。
-- `hash`は`dimension`・`placements`・`assemblies`・`bom`・`registryVersion`・`worldBounds`から作る。**承認の対象はこのハッシュ**(D-3)。
+- `PlanCompiler.compile(expandedPlan, registry, policy, SurveyRef survey) → CompileResult(manifest | issues)`は**決定論**(`policy`は`PlaceableBlockPolicy`。入力は、サーバーが発行して固定した地形調査。世界の現在の状態そのものではない。04 F-3。**P3では`SurveyRef`は記録するだけで、地形の切り盛りはP4が載せる**): 同じ入力から、バイト単位で同じ施工リスト(=同じハッシュ)ができる。`ERROR`があれば`manifest`は`null`。
+- 施工順は`BuildPhase`の昇順、その中は、局所座標で下から上(v)・手前から奥(w)・左から右(u)(v3の「動力 → 上流 → 下流」を`POWER→UPSTREAM→DOWNSTREAM`で表す)。`ASSEMBLE`は、同じグループの部品を全部置いた後に、組み立てを実行する(風車の帆、飛行船)。
+- `hash`は`dimension`・`placements`・`assemblies`・`bom`・`registryVersion`・`worldBounds`から作る(`Placement`の`index`と`partNodeId`は含めない。並びは施工順で決まるので`index`は冗長で、`partNodeId`は逆引き用の情報。同じ建物は同じハッシュにする)。**承認の対象はこのハッシュ**(D-3)。
 - **組み立てで消える部品の検証**(`VerifyMode.ASSEMBLED_AWAY`): 組み立て後は、その位置に元のブロックは無いのが正しい。`SnapshotDiff`はこの配置を「不在=正常」とみなし、代わりに`AssemblyStep.expect`(生成されたエンティティの数・移動したブロック数)を検査する。組み立て前の検査で、置いたブロックが有ることも確認する。L7が、組み立てで消えたブロックを「欠落」と誤判定して置き直すことは無い。
 
 ### 4.1 建てた後の変更(`ManifestDiff`)— 世界を壊さない撤去
