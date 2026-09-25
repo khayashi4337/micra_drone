@@ -70,7 +70,7 @@
 | 5. `build.*`が`net.minecraft`をimportしていない検査 | Task 23 |
 | 6. 既存の47テストが緑。`CommandNames.PLAN`・`CommandsHelpDoc.BUILD_COMMANDS`・構文ハイライトが新命令を認識 | Task 19、Task 22、Task 23 |
 | 7. `E-PARAM-RANGE`等の`Issue` | Task 6、Task 8 |
-| 8. `E-BLOCK-FORBIDDEN` | Task 10(方針)、Task 16(素材・部品の両経路) |
+| 8. `E-BLOCK-FORBIDDEN` | Task 10(方針と、コンパイルでの検査。ブロックIDで直接・パレットの役割・許可リスト外の3経路のテスト) |
 | 9. `ManifestDiff`(`RemovalEntry`の`expectedNow`・`restoreTo`) | Task 17 |
 | 10. 建築部品22種の生成(登録簿と生成器の一致、金のファイル、`Conflict`の判定) | Task 7、Task 10〜16、Task 17 |
 | 11. `SchemaGenerator` | Task 18(Task 1のS-1の結果に従う) |
@@ -1167,7 +1167,7 @@ EOF
   - `enum Severity {ERROR,WARN,INFO}`
   - `enum IssueCode`: 設計図05の4.1節の全47コード(`E_SCHEMA("E-SCHEMA")`のように、列挙名は`-`を`_`にした物)。`String label()`、`Severity severity()`(ラベルの先頭が`E`→ERROR、`W`→WARN)、`boolean acceptable()`(`W-*`と`E-CLOG-RISK`だけtrue)、`static Optional<IssueCode> fromLabel(String)`
   - `record FixHint(String kind, Map<String,String> args)`(引数は辞書順に複製)
-  - `record Issue(String id, IssueCode code, Severity severity, boolean acceptable, List<String> subjects, String message, Map<String,String> data, List<FixHint> hints)`: `static Issue of(IssueCode code, String key, List<String> subjects, String message, Map<String,String> data, List<FixHint> hints)`、`static Issue of(IssueCode code, List<String> subjects, String message)`。`id`=`<ラベル>:<対象をカンマでつないだ物>`に、`key`が空でなければ`#<key>`を付ける。`boolean isError()`
+  - `record Issue(String id, IssueCode code, Severity severity, boolean acceptable, List<String> subjects, String message, Map<String,String> data, List<FixHint> hints)`: `static Issue of(IssueCode code, String key, List<String> subjects, String message, Map<String,String> data, List<FixHint> hints)`、`static Issue of(IssueCode code, String key, List<String> subjects, String message)`、`static Issue of(IssueCode code, List<String> subjects, String message)`。`id`=`<ラベル>:<対象をカンマでつないだ物>`に、`key`が空でなければ`#<key>`を付ける。`boolean isError()`
 
 - [ ] **Step 1: 失敗するテストを書く**
 
@@ -1224,6 +1224,7 @@ class IssueTest {
         assertEquals("E-STRESS-OVER:net-3", a.id());
         Issue b = Issue.of(IssueCode.E_PARAM_RANGE, "height", List.of("wall-1"), "too high", Map.of("max", "16"), List.of());
         assertEquals("E-PARAM-RANGE:wall-1#height", b.id());
+        assertEquals("E-ANCHOR:a#parent", Issue.of(IssueCode.E_ANCHOR, "parent", List.of("a"), "m").id());
         assertEquals("16", b.data().get("max"));
         assertTrue(b.isError());
         assertFalse(Issue.of(IssueCode.W_UNMODELED, List.of("x"), "m").isError());
@@ -1414,6 +1415,10 @@ public record Issue(String id, IssueCode code, Severity severity, boolean accept
         return new Issue(id, code, code.severity(), code.acceptable(), subjects, message, data, hints);
     }
 
+    public static Issue of(IssueCode code, String key, List<String> subjects, String message) {
+        return of(code, key, subjects, message, Map.of(), List.of());
+    }
+
     public static Issue of(IssueCode code, List<String> subjects, String message) {
         return of(code, "", subjects, message, Map.of(), List.of());
     }
@@ -1599,6 +1604,7 @@ class PlanJsonTest {
     @Test
     void paramValueFromTreeReadsLooselyAndRejectsBadInput() {
         assertEquals(new IntV(3), ParamValue.fromTree(3.0));
+        assertEquals(new IntV(Integer.MIN_VALUE), ParamValue.fromTree((double) Integer.MIN_VALUE));
         assertEquals(new NumV(3.5), ParamValue.fromTree(3.5));
         assertEquals(new NumV(3_000_000_000.0), ParamValue.fromTree(3_000_000_000.0), "outside int range stays a number");
         assertEquals(new StrV("x"), ParamValue.fromTree("x"));
@@ -1761,7 +1767,7 @@ public sealed interface ParamValue {
             if (!Double.isFinite(d)) {
                 throw new IllegalArgumentException("number must be finite: " + d);
             }
-            if (d == Math.rint(d) && Math.abs(d) <= Integer.MAX_VALUE) {
+            if (d == Math.rint(d) && d >= Integer.MIN_VALUE && d <= Integer.MAX_VALUE) {
                 return new IntV((int) d);
             }
             return new NumV(d);
@@ -2204,7 +2210,7 @@ final class JsonTree {
     static int integer(Object value, String path) {
         if (value instanceof Number n) {
             double d = n.doubleValue();
-            if (d == Math.rint(d) && Math.abs(d) <= Integer.MAX_VALUE) {
+            if (d == Math.rint(d) && d >= Integer.MIN_VALUE && d <= Integer.MAX_VALUE) {
                 return (int) d;
             }
         }
@@ -3073,7 +3079,7 @@ class PartTypeRegistryTest {
     @Test
     void partTypeInvariants() {
         assertThrows(IllegalArgumentException.class, () -> part("Bad Id", Visibility.USER, "k"));
-        assertThrows(IllegalArgumentException.class, () -> part("test:user-without-name", Visibility.USER, null));
+        assertThrows(IllegalArgumentException.class, () -> part("test:user_without_name", Visibility.USER, null));
         assertThrows(IllegalArgumentException.class, () -> PartType.builder("test:dup", PartCategory.STRUCTURE)
                 .displayNameKey("k").params(ParamSpec.integer("n", 1, 2, 1), ParamSpec.integer("n", 1, 2, 1)).build());
         PartType t = part("test:a", Visibility.USER, "a");
@@ -3766,6 +3772,17 @@ public final class ParamValidator {
     public record Result(Map<String, ParamValue> typed, List<Issue> issues) {
     }
 
+    /** Control characters other than newline and tab do not survive being written into a script and read back. */
+    public static boolean hasForbiddenControl(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c < 0x20 && c != '\n' && c != '\t') {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static ParamValue coerce(ParamSpec spec, ParamValue loose) throws ParamException {
         return switch (spec.type()) {
             case INT -> coerceInt(spec, loose);
@@ -3782,6 +3799,9 @@ public final class ParamValidator {
                 }
                 if (spec.max() instanceof IntV max && s.value().length() > max.value()) {
                     throw new ParamException(max.value() + "字以内にしてください");
+                }
+                if (hasForbiddenControl(s.value())) {
+                    throw new ParamException("改行(\\n)とタブ以外の制御文字は使えません");
                 }
                 yield s;
             }
@@ -3810,7 +3830,7 @@ public final class ParamValidator {
         int value;
         if (loose instanceof IntV i) {
             value = i.value();
-        } else if (loose instanceof NumV n && n.value() == Math.rint(n.value()) && Math.abs(n.value()) <= Integer.MAX_VALUE) {
+        } else if (loose instanceof NumV n && n.value() == Math.rint(n.value()) && n.value() >= Integer.MIN_VALUE && n.value() <= Integer.MAX_VALUE) {
             value = (int) n.value();
         } else {
             throw new ParamException("整数が必要です");
@@ -4454,7 +4474,7 @@ EOF
 5. `MoveNode`: 対象が無ければ`E-ANCHOR`。新しい`anchor`を3と同じに検査。
 6. `RemoveNode`: 対象が無ければ`E-ANCHOR`。子・`OnSurface`で参照するノード・接続(端点・`via`・`avoid`)・物流(`linkedPorts`・`dockingConnectorNodeIds`)が残っていれば`E-ANCHOR`(依存先を`data.dependents`と`FixHint(REMOVE_FIRST)`で)。
 7. `AddConnection`: ID検査・重複(`E-ID-INVALID`/`E-ID-DUPLICATE`)。端点のノードが無い、ポートが無い(登録簿の部品の`ports`、またはテンプレートの`ports`に無い)、`via`のノードが無い、は`E-CONN-INVALID`。`RemoveConnection`: 無ければ`E-CONN-INVALID`。
-8. `SetStyle`: 役割名が`[a-z][a-z0-9_]*`でない、素材が`namespace:name`でない、は`E-PARAM-RANGE`(`key`=`style`)。`SetSite`: `dimension`が`namespace:name`でなければ`E-PARAM-RANGE`。`SetLogistics`: ドック・経路のIDの重複、経路・流れが存在しないドックを指す、は`E-CONN-INVALID`。`null`は消去。
+8. `SetStyle`: 役割名が`[a-z][a-z0-9_]*`でない、素材が`namespace:name`でない、は`E-PARAM-RANGE`(`key`=`style`)。`SetSite`: `dimension`が`namespace:name`でなければ`E-PARAM-RANGE`。`SetLogistics`: ドック・経路のIDの重複は`E-ID-DUPLICATE`、経路・流れが存在しないドックを指すのは`E-CONN-INVALID`(同じ行き先を2度指しても1件)。`null`は消去。
 
 - [ ] **Step 1: 失敗するテストを書く**
 
@@ -4686,6 +4706,27 @@ class PlanPatcherTest {
 
         assertEquals(List.of("E-PARAM-RANGE"), codes(patcher.apply(plan, patch(1, new PlanOp.UpdateParams("hut", Map.of("width", new IntV(99)))))));
         assertEquals(List.of("E-ANCHOR"), codes(patcher.apply(plan, patch(1, new PlanOp.UpdateParams("ghost", Map.of())))));
+    }
+
+    @Test
+    void hugePositionsAndControlCharactersAreRefused() {
+        PlanNode far = new PlanNode("a", "micra:pillar", null, new Anchor.Absolute(new LocalPos(Integer.MAX_VALUE, 0, 0), Rot.NONE), Map.of(), Set.of(), "");
+        assertEquals(List.of("E-PARAM-RANGE"), codes(patcher.apply(SemanticPlan.empty("p"), patch(0, new PlanOp.AddNode(far)))));
+        SemanticPlan plan = hut(patcher);
+        PlanNode wideDoor = new PlanNode("d", "micra:door", "hut", new Anchor.OnSurface("wall-n", Side.OUTER, 40_000_000, 0), Map.of(), Set.of(), "");
+        assertEquals(List.of("E-ANCHOR"), codes(patcher.apply(plan, patch(1, new PlanOp.AddNode(wideDoor)))));
+        Site farSite = new Site("minecraft:overworld", new BuildFrame(new IntPos(Integer.MAX_VALUE, 0, 0), Facing.NORTH), new Box(0, 0, 0, 5, 5, 5), "", "");
+        assertEquals(List.of("E-PARAM-RANGE"), codes(patcher.apply(SemanticPlan.empty("p"), patch(0, new PlanOp.SetSite(farSite)))));
+        PlanNode crLabel = new PlanNode("l", "micra:pillar", null, abs(0, 0, 0), Map.of(), Set.of(), "line\r\nbreak");
+        assertEquals(List.of("E-PARAM-RANGE"), codes(patcher.apply(SemanticPlan.empty("p"), patch(0, new PlanOp.AddNode(crLabel)))));
+        PlanNode crTag = new PlanNode("l", "micra:pillar", null, abs(0, 0, 0), Map.of(), Set.of("bad\rtag"), "");
+        assertEquals(List.of("E-PARAM-RANGE"), codes(patcher.apply(SemanticPlan.empty("p"), patch(0, new PlanOp.AddNode(crTag)))));
+        PlanNode fine = new PlanNode("l", "micra:pillar", null, abs(0, 0, 0), Map.of(), Set.of("tab\tok"), "two\nlines");
+        assertTrue(patcher.apply(SemanticPlan.empty("p"), patch(0, new PlanOp.AddNode(fine))).ok(), "newline and tab are allowed");
+    }
+
+    private static Anchor abs(int u, int v, int w) {
+        return new Anchor.Absolute(new LocalPos(u, v, w), Rot.NONE);
     }
 
     @Test
@@ -5013,6 +5054,7 @@ package io.github.khayashi4337.micradrone.build.plan;
 import io.github.khayashi4337.micradrone.build.model.Anchor;
 import io.github.khayashi4337.micradrone.build.model.Connection;
 import io.github.khayashi4337.micradrone.build.model.FixHint;
+import io.github.khayashi4337.micradrone.build.model.IntPos;
 import io.github.khayashi4337.micradrone.build.model.Issue;
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.LogisticsPlan;
@@ -5050,6 +5092,8 @@ public final class PlanPatcher {
     private static final Pattern BLOCK_ID = Pattern.compile("[a-z0-9_.-]+:[a-z0-9_/.-]+");
     private static final Pattern ROLE = Pattern.compile("[a-z][a-z0-9_]*");
     private static final int SUGGESTION_LIMIT = 3;
+    /** Positions stay far inside int range so sums along a parent chain cannot wrap around. */
+    public static final int MAX_COORD = 30_000_000;
 
     private final PartTypeRegistry registry;
     private final TemplateBundle templates;
@@ -5188,6 +5232,11 @@ public final class PlanPatcher {
             ok = false;
         }
         ok &= checkAnchor(st, node.id(), node.anchor(), issues);
+        if (ParamValidator.hasForbiddenControl(node.label()) || node.tags().stream().anyMatch(ParamValidator::hasForbiddenControl)) {
+            issues.add(Issue.of(IssueCode.E_PARAM_RANGE, "label", List.of(node.id()),
+                    "ラベル・タグに、改行(\\n)とタブ以外の制御文字は使えません(スクリプトの往復で失われるため)"));
+            ok = false;
+        }
         if (ok) {
             st.nodes.put(node.id(), new PlanNode(node.id(), node.type(), node.parent(), node.anchor(), typed, node.tags(), node.label()));
         }
@@ -5200,7 +5249,16 @@ public final class PlanPatcher {
                 List.of(new FixHint("USE_PART", Map.of("ids", String.join(",", near)))));
     }
 
+    private static boolean outOfRange(int v) {
+        return Math.abs((long) v) > MAX_COORD;
+    }
+
     private boolean checkAnchor(State st, String ownerId, Anchor anchor, List<Issue> issues) {
+        if (anchor instanceof Anchor.Absolute a && (outOfRange(a.pos().u()) || outOfRange(a.pos().v()) || outOfRange(a.pos().w()))) {
+            issues.add(Issue.of(IssueCode.E_PARAM_RANGE, "anchor", List.of(ownerId),
+                    "位置が大きすぎます(各成分は±" + MAX_COORD + "以内): " + a.pos()));
+            return false;
+        }
         if (!(anchor instanceof Anchor.OnSurface s)) {
             return true;
         }
@@ -5214,8 +5272,8 @@ public final class PlanPatcher {
             problem = "面の対象は壁(" + WALL_TYPE + ")でなければなりません: " + s.nodeId();
         } else if (s.side() != Side.OUTER && s.side() != Side.INNER) {
             problem = "面の側は outer か inner です";
-        } else if (s.u() < 0 || s.v() < 0) {
-            problem = "面の上の位置(u, v)は0以上にしてください";
+        } else if (s.u() < 0 || s.v() < 0 || s.u() > MAX_COORD || s.v() > MAX_COORD) {
+            problem = "面の上の位置(u, v)は、0以上" + MAX_COORD + "以下にしてください";
         }
         if (problem != null) {
             issues.add(Issue.of(IssueCode.E_ANCHOR, "anchor", List.of(ownerId), problem));
@@ -5352,6 +5410,11 @@ public final class PlanPatcher {
     }
 
     private void setSite(State st, Site site, List<Issue> issues) {
+        IntPos o = site.frame().origin();
+        if (outOfRange(o.x()) || outOfRange(o.y()) || outOfRange(o.z())) {
+            issues.add(Issue.of(IssueCode.E_PARAM_RANGE, "site", List.of("site"), "敷地の原点が大きすぎます(各成分は±" + MAX_COORD + "以内)"));
+            return;
+        }
         if (!DIMENSION.matcher(site.dimension()).matches()) {
             issues.add(Issue.of(IssueCode.E_PARAM_RANGE, "site", List.of("site"),
                     "ディメンションは namespace:name の形で書いてください: " + site.dimension()));
@@ -5379,7 +5442,7 @@ public final class PlanPatcher {
                 issues.add(Issue.of(IssueCode.E_ID_DUPLICATE, List.of(r.id()), "航路のIDが重複しています: " + r.id()));
                 ok = false;
             }
-            for (String dock : List.of(r.fromDock(), r.toDock())) {
+            for (String dock : new java.util.LinkedHashSet<>(List.of(r.fromDock(), r.toDock()))) {
                 if (!dockIds.contains(dock)) {
                     issues.add(Issue.of(IssueCode.E_CONN_INVALID, "dock:" + dock, List.of(r.id()), "存在しない発着場を指しています: " + dock));
                     ok = false;
@@ -5387,7 +5450,7 @@ public final class PlanPatcher {
             }
         }
         for (LogisticsPlan.CargoFlow f : logistics.flows()) {
-            for (String dock : List.of(f.fromDock(), f.toDock())) {
+            for (String dock : new java.util.LinkedHashSet<>(List.of(f.fromDock(), f.toDock()))) {
                 if (!dockIds.contains(dock)) {
                     issues.add(Issue.of(IssueCode.E_CONN_INVALID, "dock:" + dock, List.of(f.itemId()), "存在しない発着場を指しています: " + dock));
                     ok = false;
@@ -5441,7 +5504,7 @@ EOF
 
 **展開の規則(設計図01 2.1節。テストで固定):**
 1. `type`が`mod:`で始まるノードは、テンプレートの`nodes`・`internal`で置き換える(インスタンスのノード自身は`primitiveNodes`に残らない)。ID=`<インスタンスID>/<元のID>`。テンプレートが無ければ`E-UNKNOWN-PART`。
-2. インスタンスの`anchor`は`Absolute`(または`InSlot`→`slots`で位置を得て、`Rot`はそのまま)のみ。`OnSurface`は`E-ANCHOR`。
+2. インスタンスの`anchor`は`Absolute`(または`InSlot`→`slots`で位置を得て、`Rot`はそのまま)のみ。`OnSurface`は`E-ANCHOR`。`InSlot`のインスタンス・部品は親を持てない(`E-ANCHOR`)。`InSlot`の部品は、展開後は`Absolute`(スロットの絶対の位置)に書き換える。モジュールのインスタンスを親にするノード、テンプレートの中のテンプレート(登録簿に無い型)は`E-ANCHOR`・`E-UNKNOWN-PART`。テンプレートの部品のパラメータは、登録簿で検証し(範囲外は`E-PARAM-RANGE`)、型を確定して展開する(クライアントから来たテンプレートを信用しない)。
 3. テンプレートの根(`parent==null`)のノード: `parent`=インスタンスの`parent`、`Absolute(p, r)`→`Absolute(instRot.apply(p) + instPos, compose(instRot, r))`。テンプレート内の子(`parent!=null`): `parent`=`<インスタンスID>/<元のparent>`、`Absolute(p, r)`→`Absolute(instRot.apply(p), compose(instRot, r))`。`OnSurface(n, ...)`→`OnSurface(<インスタンスID>/n, ...)`。テンプレート内の`InSlot`は`E-ANCHOR`。
 4. `instRot`が`Rot.NONE`でなく、テンプレートに`ROTATION_UNSUPPORTED`の部品がある場合は`E-ANCHOR`(建屋は回転できない)。
 5. 接続(プランのものと、テンプレートの`internal`。後者はIDを`<インスタンスID>/<元のID>`に、端点・`via`のノードIDを同じ接頭辞に付け替える): 端点のノード(展開後の部品、またはモジュールのインスタンス)とポートの存在を確かめ、無ければ`E-CONN-INVALID`。`Explicit`は、`via`のノードの存在を確かめ、`RoutedConnection(id, [], viaノードの原点の並び)`を作る(`Origins`で解決できない`via`は原点を飛ばす)。`Auto`は`router.route(...)`が空なら`E-NO-ROUTE`。
@@ -5646,6 +5709,50 @@ class PlanExpanderTest {
     }
 
     @Test
+    void templatePartsAreValidatedLikeAnyOtherPart() {
+        ModuleTemplate badParam = new ModuleTemplate(1, "mod:bad", "k", io.github.khayashi4337.micradrone.build.parts.PartCategory.MODULE,
+                io.github.khayashi4337.micradrone.build.parts.VersionRange.ALWAYS, null, List.of(),
+                List.of(new PlanNode("p", "micra:pillar", null, new Anchor.Absolute(new LocalPos(0, 0, 0), Rot.NONE),
+                        Map.of("height", new io.github.khayashi4337.micradrone.build.model.ParamValue.IntV(999)), Set.of(), "")),
+                List.of(), null, null, Set.of());
+        ModuleTemplate nested = new ModuleTemplate(1, "mod:nest", "k", io.github.khayashi4337.micradrone.build.parts.PartCategory.MODULE,
+                io.github.khayashi4337.micradrone.build.parts.VersionRange.ALWAYS, null, List.of(),
+                List.of(TestParts.at("inner", "mod:test_line", null, 0, 0, 0)), List.of(), null, null, Set.of());
+        TemplateBundle bundle = new TemplateBundle(List.of(badParam, nested, TestParts.lineTemplate()));
+        PlanPatcher p = new PlanPatcher(TestParts.registry(), bundle);
+        SemanticPlan withBad = p.apply(SemanticPlan.empty("p"), new PlanPatch("p", 0, "t", List.of(
+                new PlanOp.AddNode(new PlanNode("x", "mod:bad", null, abs(0, 0, 0, 0), Map.of(), Set.of(), ""))))).plan();
+        ExpandResult bad = expander.expand(withBad, bundle, Router.NONE);
+        assertNull(bad.plan());
+        assertEquals(IssueCode.E_PARAM_RANGE, bad.issues().get(0).code());
+        assertEquals(List.of("x/p"), bad.issues().get(0).subjects());
+        SemanticPlan withNest = p.apply(SemanticPlan.empty("p"), new PlanPatch("p", 0, "t", List.of(
+                new PlanOp.AddNode(new PlanNode("y", "mod:nest", null, abs(0, 0, 0, 0), Map.of(), Set.of(), ""))))).plan();
+        assertEquals(IssueCode.E_UNKNOWN_PART, expander.expand(withNest, bundle, Router.NONE).issues().get(0).code());
+    }
+
+    @Test
+    void aNodeInsideAModuleInstanceAndSlotPartsAreHandledExplicitly() {
+        SemanticPlan inside = plan(List.of(new PlanOp.AddNode(module("line-1", null, abs(0, 0, 0, 0))),
+                new PlanOp.AddNode(TestParts.at("extra", "test:motor", "line-1", 1, 0, 0))));
+        ExpandResult r = expander.expand(inside, TestParts.bundle(), Router.NONE);
+        assertEquals(IssueCode.E_ANCHOR, r.issues().get(0).code());
+
+        PlanNode slotPart = new PlanNode("m", "test:motor", null, new Anchor.InSlot("slot-a", new Rot(1, false)), Map.of(), Set.of(), "");
+        SemanticPlan slotPlan = plan(List.of(new PlanOp.AddNode(slotPart)));
+        PlanExpander withSlots = new PlanExpander(TestParts.registry(), id -> Optional.of(new LocalPos(5, 0, 5)));
+        ExpandedPlan e = withSlots.expand(slotPlan, TemplateBundle.EMPTY, Router.NONE).plan();
+        assertEquals(new Anchor.Absolute(new LocalPos(5, 0, 5), new Rot(1, false)), e.primitiveNodes().get(0).anchor(),
+                "the compiler never sees an InSlot anchor");
+        assertEquals(IssueCode.E_ANCHOR, expander.expand(slotPlan, TemplateBundle.EMPTY, Router.NONE).issues().get(0).code());
+
+        PlanNode slotChild = new PlanNode("c", "test:motor", "room", new Anchor.InSlot("slot-a", Rot.NONE), Map.of(), Set.of(), "");
+        SemanticPlan withParent = plan(List.of(new PlanOp.AddNode(TestParts.at("room", "micra:structure", null, 0, 0, 0)),
+                new PlanOp.AddNode(slotChild)));
+        assertEquals(IssueCode.E_ANCHOR, withSlots.expand(withParent, TemplateBundle.EMPTY, Router.NONE).issues().get(0).code());
+    }
+
+    @Test
     void originsResolveThroughParents() {
         List<PlanNode> nodes = new ArrayList<>(List.of(
                 TestParts.at("a", "micra:structure", null, 2, 0, 3),
@@ -5743,6 +5850,9 @@ import java.util.Map;
  * origin (or the plan origin). OnSurface nodes depend on the wall's geometry, so they are resolved by the compiler.
  */
 public final class Origins {
+    /** Twice the per-node limit: a few levels of nesting still fit, a wrapped-around int never does. */
+    private static final long SUM_LIMIT = 2L * PlanPatcher.MAX_COORD;
+
     private Origins() {
     }
 
@@ -5778,7 +5888,16 @@ public final class Origins {
         }
         LocalPos pos;
         switch (n.anchor()) {
-            case Anchor.Absolute a -> pos = base.plus(a.pos().u(), a.pos().v(), a.pos().w());
+            case Anchor.Absolute a -> {
+                long u = (long) base.u() + a.pos().u();
+                long v = (long) base.v() + a.pos().v();
+                long w = (long) base.w() + a.pos().w();
+                if (Math.abs(u) > SUM_LIMIT || Math.abs(v) > SUM_LIMIT || Math.abs(w) > SUM_LIMIT) {
+                    issues.add(Issue.of(IssueCode.E_ANCHOR, "anchor", List.of(n.id()), "位置が大きすぎます"));
+                    return null;
+                }
+                pos = new LocalPos((int) u, (int) v, (int) w);
+            }
             case Anchor.InSlot s -> {
                 LocalPos slot = slots.resolve(s.slotId()).orElse(null);
                 if (slot == null) {
@@ -5813,12 +5932,15 @@ import io.github.khayashi4337.micradrone.build.model.Rot;
 import io.github.khayashi4337.micradrone.build.model.Routing;
 import io.github.khayashi4337.micradrone.build.model.SemanticPlan;
 import io.github.khayashi4337.micradrone.build.parts.BuildingParts;
+import io.github.khayashi4337.micradrone.build.parts.ParamValidator;
 import io.github.khayashi4337.micradrone.build.parts.PartType;
 import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeSet;
 
 /**
@@ -5845,9 +5967,23 @@ public final class PlanExpander {
         List<Connection> connections = new ArrayList<>(plan.connections());
         TreeSet<String> hashes = new TreeSet<>();
 
+        Set<String> moduleIds = new HashSet<>();
+        for (PlanNode n : plan.nodes()) {
+            if (n.type().startsWith(MODULE_PREFIX)) {
+                moduleIds.add(n.id());
+            }
+        }
         for (PlanNode node : plan.nodes()) {
+            if (node.parent() != null && moduleIds.contains(node.parent())) {
+                issues.add(Issue.of(IssueCode.E_ANCHOR, "parent", List.of(node.id()),
+                        "モジュール(" + node.parent() + ")の中に部品は入れられません。テンプレートの部品として書いてください"));
+                continue;
+            }
             if (!node.type().startsWith(MODULE_PREFIX)) {
-                primitive.add(node);
+                PlanNode resolved = resolveSlot(node, issues);
+                if (resolved != null) {
+                    primitive.add(resolved);
+                }
                 continue;
             }
             ModuleTemplate template = templates.find(node.type()).orElse(null);
@@ -5876,8 +6012,30 @@ public final class PlanExpander {
         return new ExpandResult(new ExpandedPlan(plan, primitive, routed, new ArrayList<>(hashes)), issues);
     }
 
+    /** A part on a slot becomes a part at the slot's absolute position; a slot part cannot have a parent. Null on failure. */
+    private PlanNode resolveSlot(PlanNode node, List<Issue> issues) {
+        if (!(node.anchor() instanceof Anchor.InSlot s)) {
+            return node;
+        }
+        if (node.parent() != null) {
+            issues.add(Issue.of(IssueCode.E_ANCHOR, "parent", List.of(node.id()), "スロットに置く部品は、親を持てません"));
+            return null;
+        }
+        LocalPos pos = slots.resolve(s.slotId()).orElse(null);
+        if (pos == null) {
+            issues.add(Issue.of(IssueCode.E_ANCHOR, "slot", List.of(node.id()),
+                    "スロット" + s.slotId() + "を解決できません(スロットは建屋の意味解析が載るP6以降で使えます)"));
+            return null;
+        }
+        return new PlanNode(node.id(), node.type(), null, new Anchor.Absolute(pos, s.rot()), node.params(), node.tags(), node.label());
+    }
+
     private boolean instantiate(PlanNode instance, ModuleTemplate template, List<PlanNode> out, List<Connection> connections,
                                 List<Issue> issues) {
+        if (instance.parent() != null && instance.anchor() instanceof Anchor.InSlot) {
+            issues.add(Issue.of(IssueCode.E_ANCHOR, "parent", List.of(instance.id()), "スロットに置くモジュールは、親を持てません"));
+            return false;
+        }
         LocalPos instPos;
         Rot instRot;
         switch (instance.anchor()) {
@@ -5921,8 +6079,20 @@ public final class PlanExpander {
                     return false;
                 }
             }
+            PartType partType = registry.find(t.type()).orElse(null);
+            if (partType == null) {
+                issues.add(Issue.of(IssueCode.E_UNKNOWN_PART, "", List.of(prefix + t.id()), "テンプレートの部品" + t.type()
+                        + "は、登録簿にありません(テンプレートの中にテンプレートは入れられません)"));
+                return false;
+            }
+            // a template that arrives from a client is not trusted: its parts are checked like any other part
+            ParamValidator.Result checked = ParamValidator.validate(prefix + t.id(), partType, t.params());
+            if (!checked.issues().isEmpty()) {
+                issues.addAll(checked.issues());
+                return false;
+            }
             String parent = t.parent() == null ? instance.parent() : prefix + t.parent();
-            produced.add(new PlanNode(prefix + t.id(), t.type(), parent, anchor, t.params(), t.tags(), t.label()));
+            produced.add(new PlanNode(prefix + t.id(), t.type(), parent, anchor, checked.typed(), t.tags(), t.label()));
         }
         out.addAll(produced);
         for (Connection c : template.internal()) {
@@ -6029,7 +6199,7 @@ EOF
 **`GenContext`の契約(生成器が使う。以降のタスクも同じ):**
 - `Palette palette()`: `String full(String material, PlanNode node)`・`String stairs(...)`・`String slab(...)`。役割が無い・族が無い場合は、`E-PARAM-RANGE`(`key`=`material`)の`GenAbort`を投げる(族が無い場合の`FixHint(USE_MATERIAL)`に、族のある候補を入れる)
 - `void emit(PlanNode node, int du, int dv, int dw, BlockSpec block)`・`emit(..., Map<String,String> blockEntity)`: ノードの原点からのずれで置く。ノードの`Rot`(鏡像→回転)を、位置とブロック状態にかける
-- `void emitAbs(PlanNode node, LocalPos pos, BlockSpec block)`・`emitAbs(..., String mergeGroup, ...)`: 局所の絶対位置で置く(親の箱や壁の面に依存する部品。`Rot`は使わない)。同じ`mergeGroup`で同じブロックの重なりは合流する
+- `void emitAbs(PlanNode node, LocalPos pos, BlockSpec block)`・`emitAbs(..., String mergeGroup, ...)`: 局所の絶対位置で置く(親の箱や壁の面に依存する部品。`Rot`は使わない)。同じ`mergeGroup`で、`mergeVariant`(壁の向き)が違い、ブロックが同じ重なりだけが合流する(角)
 - `StructureInfo structureOf(PlanNode node)`: 親が`micra:structure`でなければ`E-ANCHOR`の`GenAbort`
 - `Optional<WallInfo> wallInfo(String wallId)`・`WallInfo wallOfAnchor(PlanNode node)`(`OnSurface`でなければ`E-ANCHOR`)
 - `void carve(PlanNode opener, WallInfo wall, List<LocalPos> cells)`: 壁のマスを掘る。壁のマスでなければ`E-OPENING-NO-WALL`、掘った位置の再掘は`E-OVERLAP`(いずれも`GenAbort`)
@@ -6463,8 +6633,9 @@ class PlanCompilerTest {
         assertEquals(List.of("E-PARAM-RANGE"), codes(compile(badLevel)));
         List<PlanNode> noParent = List.of(node("wall-n", "micra:wall", null, 0, 0, 0, params("side", "north")));
         assertEquals(List.of("E-ANCHOR"), codes(compile(noParent)));
-        List<PlanNode> wrongParent = List.of(node("p", "micra:pillar", null, 0, 0, 0, Map.of()),
-                node("wall-n", "micra:wall", "p", 0, 0, 0, params("side", "north")));
+        List<PlanNode> wrongParent = List.of(node("s", "micra:structure", null, 0, 0, 0, Map.of()),
+                node("f", "micra:floor", "s", 0, 0, 0, Map.of()),
+                node("wall-n", "micra:wall", "f", 0, 0, 0, params("side", "north")));
         assertEquals(List.of("E-ANCHOR"), codes(compile(wrongParent)));
     }
 
@@ -6480,12 +6651,23 @@ class PlanCompilerTest {
         List<PlanNode> nodes = new ArrayList<>(shell(5, 5, 1, 4));
         nodes.set(1, node("wall-n", "micra:wall", "s", 0, 0, 0, params("side", "north", "material", "minecraft:stone")));
         nodes.set(2, node("wall-e", "micra:wall", "s", 0, 0, 0, params("side", "east", "material", "minecraft:bricks")));
+        nodes.removeIf(n -> n.id().equals("wall-s") || n.id().equals("wall-w")); // only the north-east corner is in dispute
         CompileResult r = compile(nodes);
         assertNull(r.manifest());
         List<Issue> overlaps = r.issues().stream().filter(x -> x.code() == IssueCode.E_OVERLAP).toList();
         assertEquals(1, overlaps.size(), r.issues().toString());
         assertEquals(List.of("wall-e", "wall-n"), overlaps.get(0).subjects());
         assertEquals("3", overlaps.get(0).data().get("count"));
+    }
+
+    @Test
+    void twoWallsOnTheSameSideAreAnOverlapEvenIfTheyAreIdentical() {
+        List<PlanNode> nodes = new ArrayList<>(shell(5, 5, 1, 4));
+        nodes.add(node("wall-n2", "micra:wall", "s", 0, 0, 0, params("side", "north")));
+        CompileResult r = compile(nodes);
+        assertNull(r.manifest());
+        assertEquals(List.of("E-OVERLAP"), codes(r), "only walls on different sides merge at a corner");
+        assertEquals(List.of("wall-n", "wall-n2"), r.issues().get(0).subjects());
     }
 
     @Test
@@ -6957,8 +7139,9 @@ import java.util.TreeMap;
 
 /** The cells generated so far, keyed by local position; a position has at most one owner. */
 public final class Canvas {
+    /** {@code mergeGroup}/{@code mergeVariant}: two cells of one group with the same block but different variants join (wall corners). */
     public record Cell(LocalPos pos, BlockSpec block, VerifyMode verify, BuildPhase phase, Map<String, String> blockEntity,
-                       String ownerId, String mergeGroup) {
+                       String ownerId, String mergeGroup, String mergeVariant) {
     }
 
     private record Overlap(String a, String b, int count, LocalPos first, String reason) {
@@ -6993,7 +7176,8 @@ public final class Canvas {
         Cell existing = cells.get(cell.pos());
         if (existing != null) {
             boolean merge = existing.mergeGroup() != null && existing.mergeGroup().equals(cell.mergeGroup())
-                    && existing.block().equals(cell.block());
+                    && existing.block().equals(cell.block())
+                    && !java.util.Objects.equals(existing.mergeVariant(), cell.mergeVariant());
             if (!merge) {
                 recordOverlap(existing.ownerId(), cell.ownerId(), cell.pos());
             }
@@ -7103,6 +7287,9 @@ public final class Palette {
             return note(roles.get(role + "_stairs"), node);
         }
         String full = full(material, node);
+        if (full.endsWith("_stairs")) {
+            return full; // the role already names a stairs block (e.g. the default "stairs" role)
+        }
         MaterialFamilies.Family f = MaterialFamilies.family(full).orElse(null);
         if (f == null || f.stairs() == null) {
             throw noFamily(material, full, "階段", node);
@@ -7116,6 +7303,9 @@ public final class Palette {
             return note(roles.get(role + "_slab"), node);
         }
         String full = full(material, node);
+        if (full.endsWith("_slab")) {
+            return full;
+        }
         MaterialFamilies.Family f = MaterialFamilies.family(full).orElse(null);
         if (f == null) {
             throw noFamily(material, full, "スラブ", node);
@@ -7373,6 +7563,7 @@ public final class GenContext {
     private final List<Issue> issues;
     private final Map<String, PlanNode> nodes;
     private final Map<String, LocalPos> origins;
+    private final Map<String, NodeInfo> infoCache = new HashMap<>();
     private final Map<String, Optional<WallInfo>> walls = new HashMap<>();
     private final Map<LocalPos, String> carvedBy = new HashMap<>();
     private final Set<String> reportedWalls = new HashSet<>();
@@ -7404,9 +7595,11 @@ public final class GenContext {
     }
 
     public NodeInfo info(String id) {
-        PlanNode n = nodes.get(id);
-        PartType type = registry.get(n.type());
-        return new NodeInfo(n, type, Params.resolve(type, n.params()), origins.get(id));
+        return infoCache.computeIfAbsent(id, key -> {
+            PlanNode n = nodes.get(key);
+            PartType type = registry.get(n.type());
+            return new NodeInfo(n, type, Params.resolve(type, n.params()), origins.get(key));
+        });
     }
 
     public StructureInfo structureOf(PlanNode node) {
@@ -7496,7 +7689,7 @@ public final class GenContext {
         }
         Rot rot = rotOf(node);
         LocalPos off = rot.apply(new LocalPos(du, dv, dw));
-        put(node, info.origin().plus(off.u(), off.v(), off.w()), BlockRotation.transform(block, rot), blockEntity, null);
+        put(node, info.origin().plus(off.u(), off.v(), off.w()), BlockRotation.transform(block, rot), blockEntity, null, null);
     }
 
     /** Where an offset from the node's origin ends up after the node's rotation and mirror. */
@@ -7507,17 +7700,20 @@ public final class GenContext {
     }
 
     public void emitAbs(PlanNode node, LocalPos pos, BlockSpec block) {
-        emitAbs(node, pos, block, null, Map.of());
+        emitAbs(node, pos, block, null, null, Map.of());
     }
 
-    public void emitAbs(PlanNode node, LocalPos pos, BlockSpec block, String mergeGroup, Map<String, String> blockEntity) {
-        put(node, pos, block, blockEntity, mergeGroup);
+    /** {@code mergeVariant} tells walls of different sides apart: only those may share a corner cell (same group, same block). */
+    public void emitAbs(PlanNode node, LocalPos pos, BlockSpec block, String mergeGroup, String mergeVariant,
+                        Map<String, String> blockEntity) {
+        put(node, pos, block, blockEntity, mergeGroup, mergeVariant);
     }
 
-    private void put(PlanNode node, LocalPos pos, BlockSpec block, Map<String, String> blockEntity, String mergeGroup) {
+    private void put(PlanNode node, LocalPos pos, BlockSpec block, Map<String, String> blockEntity, String mergeGroup,
+                     String mergeVariant) {
         PartType type = registry.get(node.type());
-        canvas.put(new Canvas.Cell(pos, block, BlockForms.verifyFor(block),
-                type.phase(), blockEntity, node.id(), mergeGroup));
+        canvas.put(new Canvas.Cell(pos, block, BlockForms.verifyFor(block), type.phase(), blockEntity, node.id(), mergeGroup,
+                mergeVariant));
     }
 
     /** Removes the wall cells an opening replaces. Refuses (and changes nothing) if any is not the wall's or already carved. */
@@ -7533,7 +7729,9 @@ public final class GenContext {
                 continue;
             }
             Canvas.Cell c = canvas.get(pos);
-            if (c == null || !c.ownerId().equals(wall.id())) {
+            // a corner cell shared with the neighbouring wall belongs to whichever wall was generated first: both are this building's walls
+            boolean ownWall = c != null && (c.ownerId().equals(wall.id()) || ("wall:" + wall.structure().id()).equals(c.mergeGroup()));
+            if (!ownWall) {
                 notWall++;
                 if (firstBad == null) {
                     firstBad = pos;
@@ -7641,7 +7839,7 @@ final class WallGen implements PartGenerator {
         for (int i = 0; i < wall.length(); i++) {
             for (int layer = 0; layer < wall.thickness(); layer++) {
                 for (int row = 0; row < wall.height(); row++) {
-                    ctx.emitAbs(node, wall.cell(i, layer, row), block, mergeGroup, Map.of());
+                    ctx.emitAbs(node, wall.cell(i, layer, row), block, mergeGroup, wall.side().lower(), Map.of());
                 }
             }
         }
@@ -8026,14 +8224,14 @@ class FreestandingPartsTest {
     @Test
     void dockPadKeepsItsAirSpaceClear() {
         CompileResult r = compile(STYLE, List.of(node("d", "micra:dock_pad", null, 0, 0, 0, params("width", 5, "depth", 5, "clearance", 4)),
-                node("l", "micra:lamp", null, 3, 2, 3, Map.of())));
+                node("l", "micra:pillar", null, 3, 2, 3, params("height", 1))));
         assertNull(r.manifest());
         assertEquals(List.of("E-OVERLAP"), codes(r));
         assertEquals(List.of("d", "l"), r.issues().get(0).subjects());
         assertEquals("clearance", r.issues().get(0).data().get("reason"));
         // above the clearance it is fine
         assertTrue(compile(STYLE, List.of(node("d", "micra:dock_pad", null, 0, 0, 0, params("width", 5, "depth", 5, "clearance", 4)),
-                node("l", "micra:lamp", null, 3, 5, 3, Map.of()))).issues().isEmpty());
+                node("l", "micra:pillar", null, 3, 5, 3, params("height", 1)))).issues().isEmpty());
     }
 
     @Test
@@ -8315,6 +8513,14 @@ class OpeningsTest {
     }
 
     @Test
+    void theOutsideEdgeRuleHoldsOnEveryWall() {
+        Map<LocalPos, BlockSpec> north = build(on("d", "micra:door", "wall-n", Side.OUTER, 2, 0, params("kind", "double")));
+        // north wall: indoors is south and the wall grows toward +u, so the first leaf sits on the west edge and hinges right
+        assertEquals("right", north.get(new LocalPos(2, 1, 6)).get("hinge"));
+        assertEquals("left", north.get(new LocalPos(3, 1, 6)).get("hinge"));
+    }
+
+    @Test
     void aHangarDoorIsAnOpeningWithTwoRowsOfGates() {
         List<PlanNode> nodes = new ArrayList<>(shell(9, 9, 1, 7)); // walls are 6 rows high
         nodes.add(on("d", "micra:door", "wall-s", Side.OUTER, 3, 0, params("kind", "hangar", "width", 3, "height", 4)));
@@ -8481,6 +8687,9 @@ final class DoorGen implements PartGenerator {
         // doors and gates face indoors; an INNER opening faces outdoors
         Facing facing = spot.outer() ? spot.wall().outward().opposite() : spot.wall().outward();
         WallInfo wall = spot.wall();
+        // the leaves of a double door are hinged on their outer edges: the first leaf (smaller wall coordinate) is on the side
+        // of the wall's start, which is the walker's left exactly when facing turned left is against the wall's growth
+        boolean firstLeafHingeLeft = facing.rotate(-1) == wall.along().opposite();
         if (kind.equals("hangar")) {
             String gate = ctx.palette().full("gate", node);
             for (int di = 0; di < width; di++) {
@@ -8492,7 +8701,7 @@ final class DoorGen implements PartGenerator {
         }
         String door = ctx.palette().full(p.s("material"), node);
         for (int di = 0; di < width; di++) {
-            boolean hingeRight = kind.equals("double") ? di == 1 : p.s("hinge").equals("right");
+            boolean hingeRight = kind.equals("double") ? (di == 0 ? !firstLeafHingeLeft : firstLeafHingeLeft) : p.s("hinge").equals("right");
             ctx.emitAbs(node, spot.at(di, 0), BlockForms.door(door, facing, false, hingeRight));
             ctx.emitAbs(node, spot.at(di, 1), BlockForms.door(door, facing, true, hingeRight));
         }
@@ -8576,7 +8785,7 @@ EOF
 
 **Interfaces:**
 - Consumes: Task 10の`GenContext.structureOf`・`Palette.stairs`/`slab`/`full`・`BlockForms`
-- Produces: `RoofFrame(boolean ridgeAlongW, int a0, int a1, int b0, int b1)`: 勾配を横切る軸`a`と、棟に沿う軸`b`を、局所の(u,w)へ写す。`LocalPos pos(int a, int v, int b)`、`Facing towardRidgeFromLow()`(`a`が小さい側の階段の背の向き。棟がwに沿えば`EAST`、uに沿えば`NORTH`)、`Facing towardRidgeFromHigh()`、`Facing risingDirection()`(`shed`・`sawtooth`用。`a`が増える向き)
+- Produces: `RoofFrame(boolean ridgeAlongW, int a0, int a1, int b0, int b1)`: 勾配を横切る軸`a`と、棟に沿う軸`b`を、局所の(u,w)へ写す。`LocalPos pos(int a, int v, int b)`、`Facing towardRidgeFromLow()`(`a`が小さい側の階段の背の向き。棟がwに沿えば`EAST`、uに沿えば`NORTH`)、`Facing towardRidgeFromHigh()`
 
 **屋根の作り方(設計図05 1.1.1。テストの数はこの規則から手で導いた):**
 - 土台の`v`=構造の`origin.v + floors*floorHeight`。範囲は、u∈[o.u−overhang, o.u+width−1+overhang]、w も同様。`ridge`が`auto`なら、長い側に沿う(同じなら`w`に沿う)。棟が`w`に沿うとき、勾配は`u`を横切る(`a=u`、`b=w`)。棟が`u`に沿うときは`a=w`、`b=u`。
@@ -9457,7 +9666,7 @@ final class SignGen implements PartGenerator {
         Facing facing = outer ? wall.outward() : wall.outward().opposite();
         int layer = outer ? -1 : wall.thickness();
         String id = ctx.palette().full(p.s("material"), node);
-        ctx.emitAbs(node, wall.cell(a.u(), layer, a.v()), BlockForms.wallSign(id, facing), null, config);
+        ctx.emitAbs(node, wall.cell(a.u(), layer, a.v()), BlockForms.wallSign(id, facing), null, null, config);
     }
 }
 
@@ -9527,7 +9736,7 @@ EOF
 
 **Files:**
 - Create: `src/test/resources/build/golden/hut.patch.json`(手書きの`PlanPatch`)、`src/test/resources/build/golden/hut.manifest.txt`(期待する施工リスト。下の手順で作る)
-- Test: `src/test/java/io/github/khayashi4337/micradrone/build/compile/{GoldenHutTest,DeterminismTest,RotationInvarianceTest,GeneratorRegistryTest}.java`、`src/test/java/io/github/khayashi4337/micradrone/build/compile/RandomParts.java`(性質テスト用の部品の生成)
+- Test: `src/test/java/io/github/khayashi4337/micradrone/build/compile/{GoldenHutTest,DeterminismTest,RotationInvarianceTest,GeneratorRegistryTest}.java`、`src/test/java/io/github/khayashi4337/micradrone/build/compile/RandomParts.java`(性質テスト用の部品の生成)、`ShowcasePlans.java`(全部品の全種類を含む建物)
 
 **Interfaces:**
 - Consumes: Task 5〜15のすべて
@@ -9595,6 +9804,8 @@ import io.github.khayashi4337.micradrone.chat.MiniJson;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -9640,8 +9851,17 @@ class GoldenHutTest {
     @Test
     void theManifestMatchesTheGoldenFile() throws IOException {
         PlacementManifest m = CompileFixtures.compile(hut()).manifest();
-        String expected = resource("hut.manifest.txt").replace("\r\n", "\n").stripTrailing();
-        assertEquals(expected, "hash " + m.hash() + "\n" + String.join("\n", lines(m)));
+        String actual = "hash " + m.hash() + "\n" + String.join("\n", lines(m));
+        try (InputStream in = GoldenHutTest.class.getResourceAsStream("/build/golden/hut.manifest.txt")) {
+            if (in == null) {
+                Path candidate = Path.of("build/golden-candidate/hut.manifest.txt");
+                Files.createDirectories(candidate.getParent());
+                Files.writeString(candidate, actual + "\n", StandardCharsets.UTF_8);
+                org.junit.jupiter.api.Assertions.fail("there is no golden file yet; a candidate was written to " + candidate.toAbsolutePath()
+                        + " - check it against the derived numbers, then copy it to src/test/resources/build/golden/hut.manifest.txt");
+            }
+            assertEquals(new String(in.readAllBytes(), StandardCharsets.UTF_8).replace("\r\n", "\n").stripTrailing(), actual);
+        }
     }
 }
 ```
@@ -9735,6 +9955,65 @@ public final class RandomParts {
     }
 }
 ```
+`ShowcasePlans.java`(全部品の全種類を含む建物。回転の検査用。位置が重なってコンパイルが`E-OVERLAP`・`E-OPENING-NO-WALL`になったら、意図(下の一覧)を保ったまま位置を調整する):
+```java
+package io.github.khayashi4337.micradrone.build.compile;
+
+import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.node;
+import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.onWall;
+import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.params;
+
+import io.github.khayashi4337.micradrone.build.model.Facing;
+import io.github.khayashi4337.micradrone.build.model.PlanNode;
+import io.github.khayashi4337.micradrone.build.model.SemanticPlan;
+import io.github.khayashi4337.micradrone.build.model.Side;
+import io.github.khayashi4337.micradrone.build.model.StyleSpec;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * A 9x9 building (floor height 7, walls 6 rows high) that uses every kind of opening, decoration and attachment once:
+ * hangar and double doors, arch / wide-with-lattice / pane windows, a sign, a planter, a trim course, a balcony, a thick
+ * wall, a slab floor, a foundation, and inside: a ladder, a lamp post and a staircase. Outside: a chimney and a dock pad.
+ * Together with RandomParts (the freestanding parts) it covers every part of the registry.
+ */
+final class ShowcasePlans {
+    static final List<String> ROOFS = List.of("gable", "hip", "flat", "shed", "sawtooth", "monitor");
+
+    private ShowcasePlans() {
+    }
+
+    static SemanticPlan showcase(String roofKind, Facing facing) {
+        List<PlanNode> nodes = new ArrayList<>();
+        nodes.add(node("s", "micra:structure", null, 0, 0, 0, params("width", 9, "depth", 9, "floors", 1, "floor_height", 7)));
+        nodes.add(node("fd", "micra:foundation", "s", 0, 0, 0, params("margin", 1)));
+        nodes.add(node("f", "micra:floor", "s", 0, 0, 0, params("kind", "slab")));
+        for (String side : List.of("north", "east", "south")) {
+            nodes.add(node("wall-" + side.charAt(0), "micra:wall", "s", 0, 0, 0, params("side", side)));
+        }
+        nodes.add(node("wall-w", "micra:wall", "s", 0, 0, 0, params("side", "west", "thickness", 2)));
+        nodes.add(onWall("d1", "micra:door", "s", "wall-s", Side.OUTER, 1, 0, params("kind", "hangar", "width", 3, "height", 4)));
+        nodes.add(onWall("d2", "micra:door", "s", "wall-s", Side.INNER, 6, 0, params("kind", "double")));
+        nodes.add(onWall("w1", "micra:window", "s", "wall-n", Side.OUTER, 1, 1, params("kind", "arch")));
+        nodes.add(onWall("w2", "micra:window", "s", "wall-n", Side.INNER, 5, 1, params("kind", "wide", "lattice", true)));
+        nodes.add(onWall("w3", "micra:window", "s", "wall-e", Side.OUTER, 3, 1, Map.of()));
+        nodes.add(onWall("w4", "micra:window", "s", "wall-w", Side.OUTER, 4, 1, Map.of()));
+        nodes.add(onWall("sg", "micra:sign", "s", "wall-n", Side.OUTER, 4, 1, params("text", "SHOP|OPEN")));
+        nodes.add(onWall("pl", "micra:planter", "s", "wall-n", Side.OUTER, 0, 0, params("width", 1)));
+        nodes.add(onWall("tr", "micra:trim", "s", "wall-n", Side.OUTER, 0, 5, params("length", 9, "shape", "slab")));
+        nodes.add(onWall("bc", "micra:balcony", "s", "wall-e", Side.OUTER, 5, 0, params("width", 3, "depth", 2)));
+        nodes.add(node("r", "micra:roof", "s", 0, 0, 0, params("kind", roofKind, "overhang", 0)));
+        nodes.add(node("ld", "micra:ladder", "s", 2, 1, 2, params("height", 3, "facing", "north")));
+        nodes.add(node("lp", "micra:lamp", "s", 5, 1, 5, params("kind", "post", "height", 2)));
+        nodes.add(node("st", "micra:stairs", "s", 1, 1, 6, params("steps", 3, "dir", "east")));
+        nodes.add(node("ch", "micra:chimney", null, 12, 0, 0, params("height", 5)));
+        nodes.add(node("pad", "micra:dock_pad", null, 20, 0, 0, params("width", 5, "depth", 5, "clearance", 4, "cargo_u", 0, "cargo_w", 0)));
+        return CompileFixtures.plan(CompileFixtures.site(facing), StyleSpec.EMPTY, nodes);
+    }
+}
+```
+
 `RotationInvarianceTest.java`:
 ```java
 package io.github.khayashi4337.micradrone.build.compile;
@@ -9751,10 +10030,13 @@ import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.model.SemanticPlan;
 import io.github.khayashi4337.micradrone.build.model.Site;
 import io.github.khayashi4337.micradrone.build.model.StyleSpec;
+import io.github.khayashi4337.micradrone.build.compile.gen.PartGenerators;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 
 class RotationInvarianceTest {
@@ -9769,26 +10051,26 @@ class RotationInvarianceTest {
     }
 
     /** Clockwise turn of a world offset seen from above: (dx, dz) becomes (-dz, dx). */
-    private static IntPos turn(IntPos p, int q) {
-        int dx = p.x() - ORIGIN.x();
-        int dz = p.z() - ORIGIN.z();
+    private static IntPos turn(IntPos p, int q, IntPos center) {
+        int dx = p.x() - center.x();
+        int dz = p.z() - center.z();
         for (int i = 0; i < q; i++) {
             int nx = -dz;
             int nz = dx;
             dx = nx;
             dz = nz;
         }
-        return new IntPos(ORIGIN.x() + dx, p.y(), ORIGIN.z() + dz);
+        return new IntPos(center.x() + dx, p.y(), center.z() + dz);
     }
 
-    private static void assertRotationOf(PlacementManifest north, PlacementManifest turned, int q, String label) {
+    private static void assertRotationOf(PlacementManifest north, PlacementManifest turned, int q, IntPos center, String label) {
         assertEquals(north.placements().size(), turned.placements().size(), label);
         Map<IntPos, Placement> byPos = new HashMap<>();
         for (Placement p : turned.placements()) {
             byPos.put(p.pos(), p);
         }
         for (Placement p : north.placements()) {
-            Placement other = byPos.get(turn(p.pos(), q));
+            Placement other = byPos.get(turn(p.pos(), q, center));
             assertTrue(other != null, label + ": no cell at the turned position of " + p.pos());
             assertEquals(BlockRotation.rotate(p.block(), q), other.block(), label + " at " + p.pos());
             assertEquals(p.blockEntityConfig(), other.blockEntityConfig(), label);
@@ -9803,7 +10085,7 @@ class RotationInvarianceTest {
         PlacementManifest north = CompileFixtures.compile(planAt(hut, Facing.NORTH)).manifest();
         for (int q = 1; q < 4; q++) {
             Facing f = Facing.values()[q];
-            assertRotationOf(north, CompileFixtures.compile(planAt(hut, f)).manifest(), q, "hut " + f);
+            assertRotationOf(north, CompileFixtures.compile(planAt(hut, f)).manifest(), q, north.frame().origin(), "hut " + f);
         }
     }
 
@@ -9815,13 +10097,36 @@ class RotationInvarianceTest {
     }
 
     @Test
+    void everyVariantOfTheBuildingPartsTurnsCleanly() {
+        for (String roof : ShowcasePlans.ROOFS) {
+            CompileResult north = CompileFixtures.compile(ShowcasePlans.showcase(roof, Facing.NORTH));
+            assertTrue(north.issues().isEmpty(), roof + ": " + north.issues());
+            for (int q = 1; q < 4; q++) {
+                Facing f = Facing.values()[q];
+                CompileResult turned = CompileFixtures.compile(ShowcasePlans.showcase(roof, f));
+                assertTrue(turned.issues().isEmpty(), roof + " " + f + ": " + turned.issues());
+                assertRotationOf(north.manifest(), turned.manifest(), q, CompileFixtures.ORIGIN, roof + " " + f);
+            }
+        }
+    }
+
+    @Test
+    void theShowcaseAndTheRandomPartsTogetherCoverEveryBuildingPart() {
+        Set<String> covered = new TreeSet<>(RandomParts.FREESTANDING);
+        for (PlanNode n : ShowcasePlans.showcase("gable", Facing.NORTH).nodes()) {
+            covered.add(n.type());
+        }
+        assertEquals(new TreeSet<>(PartGenerators.ids()), covered);
+    }
+
+    @Test
     void everyFreestandingPartWithRandomParametersAndRotationsTurnsCleanly() {
         for (long seed = 1; seed <= 20; seed++) {
             List<PlanNode> nodes = RandomParts.nodes(seed);
             PlacementManifest north = compileFacing(nodes, Facing.NORTH, WIDE);
             assertTrue(north.placements().size() > 0);
             for (int q = 1; q < 4; q++) {
-                assertRotationOf(north, compileFacing(nodes, Facing.values()[q], WIDE), q, "seed " + seed + " facing " + Facing.values()[q]);
+                assertRotationOf(north, compileFacing(nodes, Facing.values()[q], WIDE), q, ORIGIN, "seed " + seed + " facing " + Facing.values()[q]);
             }
         }
     }
@@ -9867,7 +10172,7 @@ class GeneratorRegistryTest {
 まず、`GoldenHutTest.theHandWrittenPatchBuildsTheHutWithTheDerivedNumbers`(238個・BOM)と、`DeterminismTest`・`RotationInvarianceTest`・`GeneratorRegistryTest`を走らせる。**238個とBOMが手で導いた値と一致しなければ、実装を直す(金のファイルを先に作らない)。** 一致したら、一度だけ次の手順で`hut.manifest.txt`を作る:
 
 Run: `./gradlew test --tests "io.github.khayashi4337.micradrone.build.compile.GoldenHutTest" --console=plain -i`
-`theManifestMatchesTheGoldenFile`が、資源が無くて失敗する。失敗の出力の「actual」(`hash …`の行と、238行)を、そのまま`src/test/resources/build/golden/hut.manifest.txt`に保存する。保存した内容を、次の点検で読んで確かめてから、コミットする:
+`theManifestMatchesTheGoldenFile`は、金のファイルが無いと、候補を`build/golden-candidate/hut.manifest.txt`(`hash …`の行と、238行)に書き出して失敗する。**その候補を、次の点検で読んで確かめてから**、`src/test/resources/build/golden/hut.manifest.txt`へコピーし、コミットする(確かめる前に、実装の出力をそのまま正としない):
 - 先頭の数行が`… minecraft:cobblestone EXACT STRUCTURE`(v=63、基礎)である。
 - 扉の2行が`minecraft:oak_door[facing=north,half=lower,hinge=left]`と`[…half=upper…]`である(`facing`は室内向き)。
 - 屋根の階段が`minecraft:oak_stairs[facing=east,half=bottom]`など。
@@ -10430,7 +10735,7 @@ class SchemaGeneratorTest {
     }
 
     @Test
-    void aValidPatchPassesBothModes() {
+    void aValidPatchPassesTheTypedForm() {
         Object patch = MiniJson.parse(PATCH);
         assertEquals(List.of(), validator(SchemaGenerator.patchSchema(REGISTRY, SchemaGenerator.Mode.TYPED, null)).validate(patch));
     }
@@ -10484,7 +10789,12 @@ class SchemaGeneratorTest {
                 .replace("\"params\":{\"side\":\"north\",\"material\":\"wall\"}", "\"params\":[{\"key\":\"side\",\"value\":\"north\"},{\"key\":\"material\",\"value\":\"wall\"}]")
                 .replace("\"params\":{}", "\"params\":[]");
         assertEquals(List.of(), v.validate(MiniJson.parse(flatPatch)));
-        assertFalse(v.validate(MiniJson.parse(flatPatch.replace("\"key\":\"width\"", "\"key\":\"unknown_param\""))).isEmpty());
+        // the name is a free string in the compact form; the checker is what rejects an unknown name
+        String unknown = flatPatch.replace("\"key\":\"width\"", "\"key\":\"unknown_param\"");
+        assertEquals(List.of(), v.validate(MiniJson.parse(unknown)));
+        PatchResult rejected = new PlanPatcher(TestParts.registry(), TemplateBundle.EMPTY).apply(SemanticPlan.empty("p"), withMeta(unknown));
+        assertFalse(rejected.ok());
+        assertEquals("E-PARAM-RANGE", rejected.issues().get(0).code().label());
     }
 
     @Test
@@ -10567,9 +10877,10 @@ import java.util.TreeSet;
 
 /**
  * Builds the {@code --json-schema} for a PlanPatch from the part registry (P-16), so the AI, the checker and the
- * compiler share one vocabulary. Two forms: TYPED (per-part parameter types, ranges and enums, via oneOf) and FLAT
- * (parameters as key/value pairs; smaller, and the checker validates the types). The schema shapes the output; it
- * never replaces the checks in PlanPatcher and PlanCompiler.
+ * compiler share one vocabulary. Two forms. TYPED: per-part parameter types, ranges and enums (via oneOf), with shared
+ * pieces in $defs. FLAT: the compact form for the cmd.exe route (5,000 characters): parameters as key/value pairs, and
+ * the rarely used sub-objects (logistics, constraints) and the parameter names only loosely typed. In every form the
+ * schema shapes the output; PlanJson, PlanPatcher and PlanCompiler check everything again (E-PARAM-RANGE etc.).
  */
 public final class SchemaGenerator {
     public enum Mode { TYPED, FLAT }
@@ -10584,6 +10895,7 @@ public final class SchemaGenerator {
     public static final String MATERIAL_PATTERN = "^([a-z][a-z0-9_]*|[a-z0-9_.-]+:[a-z0-9_/.-]+)$";
     private static final String REF_PREFIX = "#/$defs/";
     private static final List<String> PARAM_VALUE_TYPES = List.of("string", "number", "boolean", "array");
+    private static final List<String> DIR4 = List.of("north", "east", "south", "west");
 
     private SchemaGenerator() {
     }
@@ -10605,6 +10917,7 @@ public final class SchemaGenerator {
     }
 
     public static Map<String, Object> patchSchema(PartTypeRegistry registry, Mode mode, Set<String> partIdsOrNull) {
+        boolean flat = mode == Mode.FLAT;
         List<PartType> parts = new ArrayList<>();
         for (PartType t : registry.userParts()) {
             if (partIdsOrNull == null || partIdsOrNull.contains(t.id())) {
@@ -10615,16 +10928,19 @@ public final class SchemaGenerator {
         defs.put("pos", array(map("type", "integer"), 3, 3));
         defs.put("rot", obj(List.of(), map("turns", map("type", "integer", "minimum", 0, "maximum", 3), "mirror", map("type", "boolean"))));
         defs.put("anchor", anchorSchema());
-        defs.put("connection", connectionSchema());
+        defs.put("connection", connectionSchema(flat));
         defs.put("site", siteSchema());
         defs.put("style", obj(List.of("palette"), map("palette", map("type", "object", "additionalProperties", map("type", "string")),
                 "moodTags", map("type", "array", "items", map("type", "string")))));
-        defs.put("logistics", logisticsSchema());
-        defs.put("anyParams", mode == Mode.FLAT ? flatParams(parts)
-                : map("type", "object", "additionalProperties", map("type", PARAM_VALUE_TYPES)));
+        defs.put("logistics", flat ? map("type", "object") : logisticsSchema());
+        defs.put("anyParams", flat ? flatParams() : map("type", "object", "additionalProperties", map("type", PARAM_VALUE_TYPES)));
+        if (!flat) {
+            defs.put("material", map("type", "string", "pattern", MATERIAL_PATTERN));
+            defs.put("dir4", map("type", "string", "enum", DIR4));
+        }
 
         List<Object> ops = new ArrayList<>();
-        ops.add(op("add_node", List.of("node"), map("node", nodeSchema(parts, mode))));
+        ops.add(op("add_node", List.of("node"), map("node", nodeSchema(parts, flat))));
         ops.add(op("update_params", List.of("id", "params"), map("id", map("type", "string"), "params", ref("anyParams"))));
         ops.add(op("move_node", List.of("id", "anchor"), map("id", map("type", "string"), "anchor", ref("anchor"))));
         ops.add(op("remove_node", List.of("id"), map("id", map("type", "string"))));
@@ -10643,24 +10959,24 @@ public final class SchemaGenerator {
         return root;
     }
 
-    private static Map<String, Object> nodeSchema(List<PartType> parts, Mode mode) {
+    private static Map<String, Object> nodeSchema(List<PartType> parts, boolean flat) {
         List<String> ids = new ArrayList<>();
         for (PartType t : parts) {
             ids.add(t.id());
         }
-        if (mode == Mode.FLAT) {
-            return nodeObject(map("type", "string", "enum", ids), ref("anyParams"));
+        if (flat) {
+            return nodeObject(map("type", "string", "enum", ids), ref("anyParams"), true);
         }
         List<Object> perPart = new ArrayList<>();
         for (PartType t : parts) {
-            perPart.add(nodeObject(map("const", t.id()), typedParams(t)));
+            perPart.add(nodeObject(map("const", t.id()), typedParams(t), false));
         }
         return map("oneOf", perPart);
     }
 
-    private static Map<String, Object> nodeObject(Object typeSchema, Object paramsSchema) {
+    private static Map<String, Object> nodeObject(Object typeSchema, Object paramsSchema, boolean flat) {
         Map<String, Object> props = new LinkedHashMap<>();
-        props.put("id", map("type", "string", "pattern", ID_PATTERN));
+        props.put("id", flat ? map("type", "string") : map("type", "string", "pattern", ID_PATTERN));
         props.put("type", typeSchema);
         props.put("parent", map("type", List.of("string", "null")));
         props.put("anchor", ref("anchor"));
@@ -10688,21 +11004,16 @@ public final class SchemaGenerator {
             case NUM -> map("type", "number", "minimum", p.min().toTree(), "maximum", p.max().toTree());
             case BOOL -> map("type", "boolean");
             case STR -> map("type", "string", "maxLength", p.max().toTree());
-            case ENUM -> map("type", "string", "enum", p.enumValues());
-            case MATERIAL -> map("type", "string", "pattern", MATERIAL_PATTERN);
+            case ENUM -> p.enumValues().equals(DIR4) ? ref("dir4") : map("type", "string", "enum", p.enumValues());
+            case MATERIAL -> ref("material");
             case INT_LIST -> map("type", "array", "items", map("type", "integer", "minimum", p.min().toTree(), "maximum", p.max().toTree()),
                     "maxItems", p.maxItems());
         };
     }
 
-    private static Map<String, Object> flatParams(List<PartType> parts) {
-        TreeSet<String> names = new TreeSet<>();
-        for (PartType t : parts) {
-            for (ParamSpec p : t.params()) {
-                names.add(p.name());
-            }
-        }
-        Map<String, Object> pair = obj(List.of("key", "value"), map("key", map("type", "string", "enum", new ArrayList<>(names)),
+    /** The compact form: the name is a free string (PlanPatcher rejects unknown names), the value is any scalar or list. */
+    private static Map<String, Object> flatParams() {
+        Map<String, Object> pair = obj(List.of("key", "value"), map("key", map("type", "string"),
                 "value", map("type", PARAM_VALUE_TYPES, "items", map("type", List.of("string", "number")))));
         return map("type", "array", "items", pair);
     }
@@ -10716,21 +11027,22 @@ public final class SchemaGenerator {
         return map("oneOf", List.of(absolute, surface, slot));
     }
 
-    private static Map<String, Object> connectionSchema() {
+    private static Map<String, Object> connectionSchema(boolean flat) {
         Map<String, Object> port = obj(List.of("node", "port"), map("node", map("type", "string"), "port", map("type", "string")));
         Map<String, Object> routing = obj(List.of("mode"), map("mode", map("type", "string", "enum", List.of("auto", "explicit")),
                 "via", map("type", "array", "items", map("type", "string"))));
-        Map<String, Object> constraints = obj(List.of(), map("maxLength", map("type", List.of("integer", "null")),
+        Object constraints = flat ? map("type", "object") : obj(List.of(), map("maxLength", map("type", List.of("integer", "null")),
                 "avoid", map("type", "array", "items", map("type", "string")), "maxTurns", map("type", List.of("integer", "null")),
                 "entryDirs", map("type", "array", "items", map("type", "string", "enum", List.of("up", "down", "north", "east", "south", "west")))));
-        return obj(List.of("id", "from", "to", "kind"), map("id", map("type", "string", "pattern", ID_PATTERN), "from", port, "to", port,
+        return obj(List.of("id", "from", "to", "kind"), map("id", flat ? map("type", "string") : map("type", "string", "pattern", ID_PATTERN),
+                "from", port, "to", port,
                 "kind", map("type", "string", "enum", List.of("rotation", "item", "fluid", "redstone", "heat", "dock")),
                 "routing", routing, "constraints", constraints));
     }
 
     private static Map<String, Object> siteSchema() {
         return obj(List.of("dimension", "origin", "facing", "bounds"), map("dimension", map("type", "string"),
-                "origin", array(map("type", "integer"), 3, 3), "facing", map("type", "string", "enum", List.of("north", "east", "south", "west")),
+                "origin", array(map("type", "integer"), 3, 3), "facing", map("type", "string", "enum", DIR4),
                 "bounds", array(map("type", "integer"), 6, 6), "terrainDigest", map("type", "string"), "claimId", map("type", "string")));
     }
 
@@ -10738,7 +11050,7 @@ public final class SchemaGenerator {
         Map<String, Object> box = array(map("type", "integer"), 6, 6);
         Map<String, Object> port = obj(List.of("node", "port"), map("node", map("type", "string"), "port", map("type", "string")));
         Map<String, Object> dock = obj(List.of("id", "pad", "clearance", "approach"), map("id", map("type", "string"), "pad", box, "clearance", box,
-                "approach", map("type", "string", "enum", List.of("north", "east", "south", "west")),
+                "approach", map("type", "string", "enum", DIR4),
                 "ports", map("type", "array", "items", port), "connectors", map("type", "array", "items", map("type", "string"))));
         Map<String, Object> route = obj(List.of("id", "from", "to"), map("id", map("type", "string"), "from", map("type", "string"),
                 "to", map("type", "string"), "waypoints", map("type", "array", "items", ref("pos")), "airship", map("type", List.of("string", "null"))));
@@ -10817,7 +11129,7 @@ public final class SchemaGenerator {
 - [ ] **Step 4: テストが通ることを確認する**
 
 Run: `./gradlew test --tests "io.github.khayashi4337.micradrone.build.*" --console=plain`
-Expected: PASS。**型つきの完全なスキーマが20,000文字に収まらない**、または**FLATが5,000文字に収まらない**ときは、実測の文字数をテストの失敗メッセージから読み、(a)説明を削る、(b)`$defs`へ寄せる、で縮める。それでも収まらなければ、私(計画の作成者)に報告して設計図の数字を見直す(テストの上限を勝手に緩めない)。
+Expected: PASS。計画書のレビューで、この生成器の文字数を見積もった: 型つき(`$defs`へ寄せる前)は約19,830字、FLAT(緩める前)は約6,683字。上のコードは、`material`と4方向の`enum`を`$defs`に寄せ、FLATは`logistics`・`constraints`・パラメータ名・IDの`pattern`を緩めて、それぞれ20,000字・5,000字に収める設計。**実測して、収まらなければ**: 型つきは、部品の説明・共通の`enum`をさらに`$defs`へ。FLATは、(1)`site`・`anchor`の`minItems/maxItems`、(2)`routing`の詳細、の順に緩める。**操作(`add_node`・`add_connection`・`set_logistics`など)を減らしてはならない**(範囲を狭める判断になる)。それでも収まらなければ、実測の文字数を添えて私(計画の作成者)に報告する。テストの上限を勝手に緩めない。
 
 - [ ] **Step 5: コミット**
 
@@ -10856,7 +11168,7 @@ EOF
 1. フィールド`planApi`・`planLimits`・`planSteps`・`planStartNanos`を足す。既存の私的コンストラクタは、`planApi=null`・`planLimits=null`で新しい私的コンストラクタへ委譲する。
 2. 公開コンストラクタ`Interpreter(PlanApi, PlanRunLimits)`: `PlanModeDroneApi.create(planApi)`を`DroneApi`として渡す。
 3. `run(List<Stmt>)`の先頭で、`planStartNanos = System.nanoTime(); planSteps = 0;`。
-4. `checkCancellation`の末尾に、`planLimits != null`のときの総ステップ・時間の検査(1024ステップごとに時間を測る)を足す。超えたら`PlanLimitException`。
+4. `checkCancellation`の、割り込みの検査の直後(既存の`statementsSinceApiCall++`より前)に、`planLimits != null`のときの総ステップ・時間の検査(1024ステップごとに時間を測る)を足し、そのまま`return`する。超えたら`PlanLimitException`。建設用は、畑の「操作なしで100万文」の暴走検出を使わない(使うと、速い実行で`PlanLimitException`より先に`MicraLangException`が出て、上限の種類を区別できず、時間の上限のテストも不安定になる)。
 5. `isBuiltinName(name)`=`ALL`に含む、または`planApi != null`かつ`PLAN`に含む。`defineFunction`と、`evalCall`の冒頭の「関数でない値」の判定の、`CommandNames.ALL.contains(...)`を、これに置き換える。
 6. `evalCall`の、利用者の関数の解決のあと・ISRの門の前に、次を足す: `planApi != null`のとき、(a)`ALL`にあり`PLAN_HELPERS`に無い名前は`MicraLangException`(建設のスクリプトでは使えない)、(b)`PLAN`にある名前は、引数を評価して`PlanCommandDispatcher.invoke(planApi, name, values, line)`を返す。
 
@@ -11018,7 +11330,7 @@ class PlanInterpreterTest {
                 + "for i in range(3):\n"
                 + "    post(i, i * 4)\n", api);
         assertEquals(3, api.calls.size());
-        assertTrue(api.calls.get(2).startsWith("part post-2.0 micra:pillar"), api.calls.get(2));
+        assertTrue(api.calls.get(2).startsWith("part post-2 micra:pillar"), api.calls.get(2)); // str(2.0) is "2" in this language
     }
 
     @Test
@@ -11064,7 +11376,9 @@ class PlanInterpreterTest {
     void theDefaultLimitsAreTheDocumentedOnes() {
         assertEquals(100_000, PlanRunLimits.DEFAULT.maxSteps());
         assertEquals(5_000, PlanRunLimits.DEFAULT.maxMillis());
-        assertFalse(new PlanLimitException(3, "x") instanceof IllegalStateException);
+        Object limit = new PlanLimitException(3, "x");
+        assertFalse(limit instanceof IllegalStateException, "a limit is not an illegal-state error");
+        assertTrue(limit instanceof MicraLangException);
     }
 
     @Test
@@ -11282,7 +11596,7 @@ final class PlanCommandDispatcher {
         switch (name) {
             case "site" -> {
                 arity(name, args, 6, 8, line);
-                api.site(str(args, 0), integer(args.get(1)), integer(args.get(2)), integer(args.get(3)), str(args, 4),
+                api.site(str(args, 0), integer(args.get(1)), integer(args.get(2)), integer(args.get(3)), facing(args, 4),
                         ints(args.get(5), 6), args.size() > 6 ? str(args, 6) : "", args.size() > 7 ? str(args, 7) : "");
             }
             case "style" -> {
@@ -11315,7 +11629,7 @@ final class PlanCommandDispatcher {
                 arity(name, args, 4, 6, line);
                 Object via = args.size() > 4 ? args.get(4) : MicraNone.INSTANCE;
                 Object constraints = args.size() > 5 ? args.get(5) : MicraNone.INSTANCE;
-                api.connect(str(args, 0), str(args, 1), str(args, 2), str(args, 3), via instanceof MicraNone ? null : strings(via),
+                api.connect(str(args, 0), nodePort(args, 1), nodePort(args, 2), str(args, 3), via instanceof MicraNone ? null : strings(via),
                         constraints instanceof MicraNone ? null : map(constraints));
             }
             case "disconnect" -> {
@@ -11358,7 +11672,7 @@ final class PlanCommandDispatcher {
     }
 
     static int integer(Object v) {
-        if (v instanceof Double d && d == Math.rint(d) && Math.abs(d) <= Integer.MAX_VALUE) {
+        if (v instanceof Double d && d == Math.rint(d) && d >= Integer.MIN_VALUE && d <= Integer.MAX_VALUE) {
             return (int) (double) d;
         }
         throw new IllegalArgumentException("整数が必要です(" + v + ")");
@@ -11419,6 +11733,31 @@ final class PlanCommandDispatcher {
         return out;
     }
 
+    private static String facing(List<Object> args, int i) {
+        String f = str(args, i);
+        if (!List.of("north", "east", "south", "west").contains(f)) {
+            throw new IllegalArgumentException("向きは \"north\" \"east\" \"south\" \"west\" のどれかです(" + f + ")");
+        }
+        return f;
+    }
+
+    private static String nodePort(List<Object> args, int i) {
+        String s = str(args, i);
+        int dot = s.indexOf('.');
+        if (dot <= 0 || dot == s.length() - 1) {
+            throw new IllegalArgumentException("\"ノードID.ポート名\" の形にしてください(" + s + ")");
+        }
+        return s;
+    }
+
+    private static int turns(Object v) {
+        int n = integer(v);
+        if (n < 0 || n > 3) {
+            throw new IllegalArgumentException("回転数は0〜3です(" + n + ")");
+        }
+        return n;
+    }
+
     private static PlanAnchorArgs anchor(Object v) {
         List<Object> a = list(v);
         if (!a.isEmpty() && a.get(0) instanceof String kind) {
@@ -11427,13 +11766,16 @@ final class PlanCommandDispatcher {
                     if (a.size() != 5 || !(a.get(1) instanceof String target) || !(a.get(2) instanceof String side)) {
                         throw new IllegalArgumentException("[\"surface\", 壁ID, \"outer\"か\"inner\", u, v] の形にしてください");
                     }
+                    if (!side.equals("outer") && !side.equals("inner")) {
+                        throw new IllegalArgumentException("面の側は \"outer\" か \"inner\" です(" + side + ")");
+                    }
                     return PlanAnchorArgs.surface(target, side, integer(a.get(3)), integer(a.get(4)));
                 }
                 case "slot" -> {
                     if (a.size() < 2 || a.size() > 4 || !(a.get(1) instanceof String slot)) {
                         throw new IllegalArgumentException("[\"slot\", スロットID, 回転数, 鏡像] の形にしてください");
                     }
-                    return PlanAnchorArgs.slot(slot, a.size() > 2 ? integer(a.get(2)) : 0, a.size() > 3 && bool(a.get(3)));
+                    return PlanAnchorArgs.slot(slot, a.size() > 2 ? turns(a.get(2)) : 0, a.size() > 3 && bool(a.get(3)));
                 }
                 default -> throw new IllegalArgumentException("位置指定の種類が不明です: " + kind);
             }
@@ -11442,7 +11784,7 @@ final class PlanCommandDispatcher {
             throw new IllegalArgumentException("[u, v, w] か [u, v, w, 回転数, 鏡像] の形にしてください");
         }
         return PlanAnchorArgs.absolute(integer(a.get(0)), integer(a.get(1)), integer(a.get(2)),
-                a.size() > 3 ? integer(a.get(3)) : 0, a.size() > 4 && bool(a.get(4)));
+                a.size() > 3 ? turns(a.get(3)) : 0, a.size() > 4 && bool(a.get(4)));
     }
 }
 ```
@@ -11515,9 +11857,10 @@ final class PlanCommandDispatcher {
         execBlock(program);
     }
 ```
-`checkCancellation`の末尾:
+`checkCancellation`の、割り込みの検査の直後:
 ```java
         if (planLimits != null) {
+            // construction scripts have their own limits, so the farm heuristic below (statements without a drone action) is skipped
             planSteps++;
             if (planSteps > planLimits.maxSteps()) {
                 throw new PlanLimitException(line, "construction script exceeded " + planLimits.maxSteps() + " steps");
@@ -11525,6 +11868,7 @@ final class PlanCommandDispatcher {
             if ((planSteps & PLAN_TIME_CHECK_MASK) == 0 && (System.nanoTime() - planStartNanos) / 1_000_000 > planLimits.maxMillis()) {
                 throw new PlanLimitException(line, "construction script exceeded " + planLimits.maxMillis() + " ms");
             }
+            return;
         }
 ```
 `defineFunction`と`evalCall`:
@@ -11650,6 +11994,12 @@ class PlanScriptProfileTest {
         List<String> v = names(source);
         assertEquals(List.of("random:NONDETERMINISTIC", "harvest:FARM_COMMAND", "get_time:FARM_COMMAND", "move:FARM_COMMAND"), v);
         assertEquals(3, PlanScriptProfile.check(parse("\n\nharvest()\n")).get(0).line());
+    }
+
+    @Test
+    void aFunctionMayNotTakeTheNameOfACommand() {
+        assertEquals(List.of("random:RESERVED_NAME"), names("def random():\n    pass\n"));
+        assertEquals(List.of("wall:RESERVED_NAME"), names("def wall():\n    pass\n"));
     }
 
     @Test
@@ -12061,7 +12411,13 @@ public final class PlanRecorder implements PlanApi {
     private static Anchor toAnchor(PlanAnchorArgs a) {
         return switch (a.kind()) {
             case ABSOLUTE -> new Anchor.Absolute(new LocalPos(a.u(), a.v(), a.w()), new Rot(a.turns(), a.mirror()));
-            case SURFACE -> new Anchor.OnSurface(a.target(), Side.parse(a.side()), a.u(), a.v());
+            case SURFACE -> {
+                Side side = Side.parse(a.side());
+                if (side != Side.OUTER && side != Side.INNER) {
+                    throw new IllegalArgumentException("面の側は \"outer\" か \"inner\" です(" + a.side() + ")");
+                }
+                yield new Anchor.OnSurface(a.target(), side, a.u(), a.v());
+            }
             case SLOT -> new Anchor.InSlot(a.slot(), new Rot(a.turns(), a.mirror()));
         };
     }
@@ -12139,7 +12495,7 @@ public final class PlanRecorder implements PlanApi {
     }
 
     private static int integer(Object o) {
-        if (o instanceof Double d && d == Math.rint(d) && Math.abs(d) <= Integer.MAX_VALUE) {
+        if (o instanceof Double d && d == Math.rint(d) && d >= Integer.MIN_VALUE && d <= Integer.MAX_VALUE) {
             return (int) (double) d;
         }
         throw new IllegalArgumentException("整数が必要です(" + o + ")");
@@ -12172,7 +12528,7 @@ import java.util.Set;
  * Being an allow list, a command added to CommandNames.ALL later is NOT usable here unless it is added on purpose.
  */
 public final class PlanScriptProfile {
-    public enum Reason { NONDETERMINISTIC, FARM_COMMAND, UNKNOWN }
+    public enum Reason { NONDETERMINISTIC, FARM_COMMAND, UNKNOWN, RESERVED_NAME }
 
     public record Violation(int line, String name, Reason reason) {
     }
@@ -12245,7 +12601,12 @@ public final class PlanScriptProfile {
                     expr(f.rangeExpr(), own, out, called);
                     walk(f.block(), own, out, called);
                 }
-                case Stmt.FunctionDef f -> walk(f.body(), own, out, called);
+                case Stmt.FunctionDef f -> {
+                    if (out != null && (CommandNames.ALL.contains(f.name()) || CommandNames.PLAN.contains(f.name()))) {
+                        out.add(new Violation(f.line(), f.name(), Reason.RESERVED_NAME));
+                    }
+                    walk(f.body(), own, out, called);
+                }
                 case Stmt.ReturnStmt r -> {
                     if (r.value() != null) {
                         expr(r.value(), own, out, called);
@@ -12384,6 +12745,8 @@ public final class PlanScriptRunner {
                 issues.add(Issue.of(IssueCode.E_SCRIPT_LIMIT, "run:" + n, List.of(), label + "が実行の上限を超えました: " + e.getMessage()));
             } catch (MicraLangException e) {
                 issues.add(Issue.of(IssueCode.E_SCHEMA, "run:" + n, List.of(), label + "の実行エラー: " + e.getMessage()));
+            } catch (RuntimeException e) {
+                issues.add(Issue.of(IssueCode.E_SCHEMA, "internal:" + n, List.of(), label + "の実行中に、想定外のエラー: " + e));
             }
         }
         if (issues.stream().anyMatch(Issue::isError)) {
@@ -12397,6 +12760,7 @@ public final class PlanScriptRunner {
             case NONDETERMINISTIC -> "実行のたびに結果が変わるため";
             case FARM_COMMAND -> "畑の命令のため。畑と建設は同じスクリプトに混ぜられません";
             case UNKNOWN -> "知らない命令です";
+            case RESERVED_NAME -> "組み込みの命令と同じ名前の関数は、定義できません";
         };
     }
 }
@@ -12452,14 +12816,22 @@ EOF
 
 - [ ] **Step 1: 失敗するテストを書く**
 
-`TestParts.java`に、`registry()`の`test:motor`の後へ足す:
+`TestParts.java`に、新しい登録簿を足す(**既存の`registry()`は変えない**。変えると登録簿の版のハッシュが変わり、施工リストのハッシュを含むTask 16の金のファイルが崩れる):
 ```java
+    /** registry() plus a part with a numeric parameter; only the script round-trip test uses it. */
+    public static PartTypeRegistry registryWithDial() {
+        PartTypeRegistry.Builder b = PartTypeRegistry.builder().defaultPalette(BuildingParts.DEFAULT_PALETTE);
+        for (PartType t : registry().all()) {
+            b.register(t);
+        }
         b.register(PartType.builder("test:dial", PartCategory.POWER).displayNameKey("t.dial")
                 .params(new io.github.khayashi4337.micradrone.build.parts.ParamSpec("speed",
                         io.github.khayashi4337.micradrone.build.parts.ParamType.NUM, "rpm",
                         new io.github.khayashi4337.micradrone.build.model.ParamValue.NumV(0),
                         new io.github.khayashi4337.micradrone.build.model.ParamValue.NumV(256),
                         new io.github.khayashi4337.micradrone.build.model.ParamValue.NumV(16), java.util.List.of(), 0)).build());
+        return b.build();
+    }
 ```
 `PlanScriptRoundTripTest.java`:
 ```java
@@ -12515,7 +12887,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class PlanScriptRoundTripTest {
-    private final PlanPatcher patcher = new PlanPatcher(TestParts.registry(), TestParts.bundle());
+    private final PlanPatcher patcher = new PlanPatcher(TestParts.registryWithDial(), TestParts.bundle());
 
     private SemanticPlan build(List<PlanOp> ops) {
         PatchResult r = patcher.apply(SemanticPlan.empty("rt-plan"), new PlanPatch("p", 0, "test", ops));
@@ -13169,25 +13541,30 @@ Expected: FAIL。
             relocate(id, anchor)        位置を変える
             remove_part(id)             消す(子や接続が残っていると消せません)
 
-            ■ 建築の部品(パラメータ。カッコ内は候補。material は素材の役割かブロックID)
-            structure: width depth floors floor_height   建物の箱。壁・床・屋根の親にする
-            foundation: margin depth material   基礎
-            floor: level kind(block/slab) holes material   床(holes は [u0,w0,u1,w1,…] の穴)
-            wall: side(north/east/south/west。必須) level height thickness from length part(full/half) material
-            pillar: height base capital material   柱
-            beam: axis(u/v/w) length material   梁
-            roof: kind(gable/hip/flat/shed/sawtooth/monitor) overhang ridge(auto/u/w) high_side gable_fill tooth
-                  monitor_width monitor_height material   屋根
-            door: kind(single/double/hangar) width height hinge(left/right) material   扉(壁の面に付ける)
-            window: kind(pane/wide/arch) lattice material   窓(壁の面に付ける)
-            stairs: steps width dir material   階段        ladder: height facing   はしご
-            catwalk: length dir width rail material   歩廊    railing: length dir height material   手すり
-            balcony: width depth rail material   バルコニー(壁の外側)    ramp: length dir width material   斜路
-            chimney: height size cap material   煙突    lamp: kind(lantern/hanging/post/torch) height   照明
-            sign: text(| で改行、4行・1行15字まで。必須) material   看板    planter: width   植栽
-            trim: length axis(horizontal/vertical) shape(block/slab) material   縁取り
-            dock_pad: width depth clearance cargo_u cargo_w marker material   飛行船の発着場
-            road: length dir width material   道
+            ■ 建築の部品(params の名前。カッコ内は候補。material は素材の役割かブロックID。どれも <部品名>(id, parent, anchor, {…}) の形)
+            structure(id, parent, anchor, {width depth floors floor_height})   建物の箱。壁・床・屋根の親にする
+            foundation(id, parent, anchor, {margin depth material})   基礎
+            floor(id, parent, anchor, {level kind(block/slab) holes material})   床(holes は [u0,w0,u1,w1,…] の穴)
+            wall(id, parent, anchor, {side(north/east/south/west。必須) level height thickness from length part(full/half) material})
+            pillar(id, parent, anchor, {height base capital material})   柱
+            beam(id, parent, anchor, {axis(u/v/w) length material})   梁
+            roof(id, parent, anchor, {kind(gable/hip/flat/shed/sawtooth/monitor) overhang ridge(auto/u/w) high_side gable_fill
+                 tooth monitor_width monitor_height material})   屋根
+            door(id, parent, anchor, {kind(single/double/hangar) width height hinge(left/right) material})   扉(壁の面に付ける)
+            window(id, parent, anchor, {kind(pane/wide/arch) lattice material})   窓(壁の面に付ける)
+            stairs(id, parent, anchor, {steps width dir material})   階段
+            ladder(id, parent, anchor, {height facing})   はしご
+            catwalk(id, parent, anchor, {length dir width rail material})   歩廊
+            railing(id, parent, anchor, {length dir height material})   手すり
+            balcony(id, parent, anchor, {width depth rail material})   バルコニー(壁の外側)
+            ramp(id, parent, anchor, {length dir width material})   斜路
+            chimney(id, parent, anchor, {height size cap material})   煙突
+            lamp(id, parent, anchor, {kind(lantern/hanging/post/torch) height})   照明
+            sign(id, parent, anchor, {text(| で改行、4行・1行15字まで。必須) material})   看板
+            planter(id, parent, anchor, {width})   植栽
+            trim(id, parent, anchor, {length axis(horizontal/vertical) shape(block/slab) material})   縁取り
+            dock_pad(id, parent, anchor, {width depth clearance cargo_u cargo_w marker material})   飛行船の発着場
+            road(id, parent, anchor, {length dir width material})   道
 
             ■ つなぐ・物流
             connect(id, from, to, kind[, via[, constraints]])
@@ -13345,7 +13722,7 @@ Expected: `BUILD SUCCESSFUL`。**失敗0件**。出力の末尾のテスト数�
 2. `./gradlew runClient --console=plain`を、出力をファイルに落として、バックグラウンドで起動する。
 3. ログに、資源の読み込みの完了を示す行(`Sound engine started`、または`Loading … mods`の後の`micradrone`)が出るまで待つ(最大6分。until-loopで)。`crash-reports`に新しいファイルが無いことを確かめる。
 4. 起動前に控えた物**以外**の(この起動で増えた)プロセスだけを終了する。終了後、同じ確認コマンドで、増えた物が0件であることを確かめる。
-5. 結果(ログの該当行、クラッシュの有無、終了の確認)を、証拠として記録する。**起動できなければ、直前の変更を疑い(`build.gradle`は変えていない。`MiniJson`の可視性・`Interpreter`・`CommandNames`・`SyntaxHighlighter`・`CommandsHelpDoc`・`en_us.json`が変更点)、systematic-debuggingで原因を調べる。**
+5. 結果(ログの該当行、クラッシュの有無、終了の確認)を、証拠として記録する。Gradleのデーモンは、終了しても残る(`./gradlew --stop`は要らない。ゲームのプロセスだけを終了する)。**起動に失敗したときも、次を起動する前に、必ず、起動したプロセスを終了する(2重起動の事故を防ぐ)。起動できなければ、直前の変更を疑い(`build.gradle`は変えていない。`MiniJson`の可視性・`Interpreter`・`CommandNames`・`SyntaxHighlighter`・`CommandsHelpDoc`・`en_us.json`が変更点)、systematic-debuggingで原因を調べる。**
 
 - [ ] **Step 4: 設計図を実装の実態に合わせて直す(コードより先に設計図を正本にする原則)**
 
@@ -13354,9 +13731,14 @@ Expected: `BUILD SUCCESSFUL`。**失敗0件**。出力の末尾のテスト数�
 2. `01` 11.1節: `ParamType`に`INT_LIST`を足し、`ParamSpec`に`int maxItems`(`INT_LIST`の長さの上限)を足す。
 3. `01` 3節: 「建築部品(`micra:*`)の`VolumeSpec`は`GENERATED`(生成器が決める。生成されたセルがそのまま占有体積)」の1文を、登録簿の箇条書きに足す。
 4. `04` F-6の`connect`の行: 「`via`は…空・省略なら`Routing.Auto`、指定すれば`Explicit`」を「`via`は経由する部品IDのリストで、省略または`None`なら`Routing.Auto`、リスト(空のリストも)なら`Explicit`(空のリスト=つなぎの部品を置かず直接つなぐ)」に。
-5. `07` P3の完了条件10: 「各部品の生成物が、宣言した占有体積(`VolumeSpec`)に収まる。」を「各部品の生成物が、規則から手で導いた値(小屋は238個)と一致する。」に。
+5. `07` P3の完了条件10: 「各部品の生成物が、宣言した占有体積(`VolumeSpec`)に収まる。」(**第3版で林さんが承認した9項目ではなく、私が第4版で足した項目**)を、「各部品の生成物が、規則から手で導いた値(小屋は238個)と一致する。」に書き換える。理由: 建築部品の占有体積は、パラメータと親の箱(建屋の大きさ・壁の面)から決まり、生成器の外に独立して書ける式が無い。宣言を書いても生成器の写しになり、検査にならない。手で導いた数の一致(と、全部品の回転不変)のほうが、実際に間違いを見つける。**この判断は、範囲を狭める判断なので、P3の終わりに、私の見解を先に書いてCodexに意見を求め、林さんに報告する(下のフェーズ末のゲート7)**。
 6. `05` 1.1.1節の末尾に、「**実機で見た目を確かめる項目(P4の実機確認)**: 二枚扉の蝶番が中央で合うか、階段の角の形(隣のブロックの更新で決まる)、壁掛け看板の向き、屋根の階段の向き、はしごの向き。純Javaのテストでは、規則どおりの状態が出ることまでしか確かめられない」を足す。
 7. `00`の変更履歴に、「**第4版・追補**(P3の実装後): ○○を直した」を1項目で足す(食い違いの一覧と、なぜ直したか)。
+8. `01` 2.1節(88行付近)「`ModuleTemplate`・`TemplateBundle`の型は`build.model`に置く」を、`build.plan`に直す(12節の表と合わせる)。
+9. `05` 1.1.1節の表: `catwalk`・`railing`・`ramp`・`road`の`dir`に、既定値`north`を足す(`stairs`と同じ。計画書の実装に合わせる)。
+10. `04` F-6: 「建物・モジュールごとの複数のスクリプトに分割」を、「計画の並びのまま、文の切れ目で、文字数(10,000字)で分割する(各スクリプトの先頭に`# 建設スクリプト i/n`の行)」に。建物ごとの分割は、計画の並びが建物ごとに固まっているときに、結果として同じになる。
+11. `06` 4節: 「FLATは、`cmd.exe`経由の5,000文字に収めるため、`logistics`・`constraints`の中身、パラメータ名、IDの`pattern`を緩める(検証は`PlanJson`・`PlanPatcher`が行う)。型つきは、`material`・4方向の`enum`を`$defs`へ寄せて、20,000文字に収める」を足す。
+12. `05` 1.1.1節の「実機で見た目を確かめる項目」(6.)に、「二枚扉の蝶番の左右の規則(壁の向きと室内向きから決めている)」を足す。
 
 Run: `git diff --stat docs/design`で、意図した5ファイルだけが変わっていることを確かめる。
 
@@ -13402,6 +13784,7 @@ EOF
 4. **`pr-review-toolkit:pr-test-analyzer`**: `git diff main...HEAD`(ローカルの差分)で、テストの穴。特に、Review Focusの5つの入力(巨大な計画・空の計画・特殊文字・同じパッチ内の矛盾・整数のあふれ)に、テストがあるか。
 5. **`/codex:adversarial-review`**: 先にコミットしてから`--base main --scope branch`。focus文に、私の仮説は書かない。
 6. **Opus 5.5のコードレビュー**(別のエージェント): 設計図の第4版と、この計画書を渡し、実装との食い違いを探させる。
+7. **範囲の判断の相談**(バグ探索の`/codex:adversarial-review`とは別に、`codex:codex-rescue`で、1回): 私の見解を先に書いて、意見を求める。論点は「完了条件10の『占有体積(`VolumeSpec`)に収まる』を、手で導いた数の一致と回転不変の検査に置き換え、建築部品の`VolumeSpec`を`GENERATED`にした」(Task 23 Step 4の5)が、妥当か。Codexと一致すればそのまま、一致しなければ再検討して、林さんに報告する。
 
 各ゲートの指摘は、(a)事実を裏取りし、(b)実害があれば直し(テストを先に)、(c)反映しない物は理由を書く。範囲を狭める判断が出たら、自分の見解を先に作り、Codexに意見を求め、林さんに報告する。
 
