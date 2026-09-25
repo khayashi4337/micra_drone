@@ -1,0 +1,169 @@
+# 自然言語→工場建設 Phase 1: Create/Aeronautics依存追加 Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** micra_droneのbuild.gradleにCreate本体とCreate: Aeronauticsをコンパイル/実行時依存として追加し、`./gradlew build`と`./gradlew runClient`が実際に(クラッシュせず)通ることを実測で確認する。この段階では新しいゲームロジックは一切書かない。
+
+**Architecture:** Create公式wiki(https://wiki.createmod.net/developers/depend-on-create/neoforge-1.21.1)が示す「slim + transitive=false」パターンに従い、Createを`implementation`（このmodにとってCreateはハード依存であり、既存のJEIのような`compileOnly`+`localRuntime`のソフト依存パターンとは意味が異なるため区別する）で追加する。Aeronauticsは別コミットとして追加し、Create単体での成功を先に確認してから追加することで、問題が起きた場合にどちらの依存が原因か切り分けられるようにする。
+
+**Tech Stack:** Gradle, NeoForge ModDevGradle 2.0.141, Create 6.0.10, Create: Aeronautics 1.3.0(bundled), Flywheel, Ponder, Registrate
+
+**Spec:** このplanは、本セッションでの引き継ぎ会話(自然言語→工場建設機能、Codexセカンドオピニオン反映済みMVP範囲)の実装順序ステップ1に対応する。上位の設計はこのファイル自体には別途保存していないが、対応表・MVP範囲・実装順序は会話履歴に記録済み。
+
+## Global Constraints
+
+- Minecraft 1.21.1 / NeoForge 21.1.238（gradle.properties既存値、変更しない）
+- Java 21（既存toolchain設定、変更しない）
+- Createは6.0.10系（プレイヤーの実機にインストール済みのバージョンと一致させる。実機jarのMANIFEST.MFで`Implementation-Version: 6.0.10`を確認済み、内部ビルド番号は実機jarからは特定不可のため、maven-metadata.xmlで確認できた同系統の最新ビルド`6.0.10-281`を使う）
+- Aeronauticsは1.3.0(bundled)（実機jar`create-aeronautics-bundled-1.21.1-1.3.0.jar`と一致させる。Modrinthプロジェクト`oWaK0Q19`のバージョンID`w7zlLnea`が同一ファイルであることをModrinth側の表示ファイル名で確認済み）
+- 既存のbuild.gradleの`repositories {}`ブロック、`dependencies {}`ブロックの既存コメント(JEIの例)は消さない（過剰除去禁止）
+
+---
+
+### Task 1: Create本体の依存追加とビルド確認
+
+**Files:**
+- Modify: `gradle.properties`（バージョン変数を追記）
+- Modify: `build.gradle`（`repositories`と`dependencies`ブロックに追記）
+
+**Interfaces:**
+- Consumes: なし（このタスクはビルド設定のみ、Javaコードの変更なし）
+- Produces: Gradleビルドスクリプトが`com.simibubi.create`、`net.createmod.ponder`、`dev.engine-room.flywheel`、`com.tterrag.registrate`のクラスをコンパイル時に解決できる状態。後続タスク(Recipe Resolver、Factory Analyzer等)はこれらのAPIをimportして使う。
+
+- [ ] **Step 1: gradle.propertiesにバージョン変数を追記**
+
+`gradle.properties`の末尾（`mod_group_id=...`の後）に追記:
+
+```properties
+
+## Create integration (自然言語→工場建設機能, Phase 1)
+create_version=6.0.10-281
+ponder_version=1.0.82
+flywheel_version=1.0.6
+registrate_version=MC1.21-1.3.0+67
+```
+
+- [ ] **Step 2: build.gradleのrepositoriesブロックにCreateのMavenリポジトリを追加**
+
+`build.gradle`の既存の空`repositories { }`ブロックを以下に置き換える:
+
+```gradle
+repositories {
+    // Add here additional repositories if required by some of the dependencies below.
+    maven { url = "https://maven.createmod.net" }
+    maven { url = "https://maven.ithundxr.dev/snapshots" }
+}
+```
+
+- [ ] **Step 3: build.gradleのdependenciesブロックにCreate関連の依存を追加**
+
+`dependencies { }`ブロック内、既存のJEIコメント例の直後・`testImplementation`群の直前に追記:
+
+```gradle
+    // Create integration (自然言語→工場建設機能, Phase 1). Createはこの機能にとってハード依存
+    // (JEIのようなソフト依存とは違いcompileOnly+localRuntimeにしない)。"slim"はCreate公式が
+    // 配布しているAPI専用の軽量jarで、transitive=falseなので依存先(Ponder/Flywheel/Registrate)は
+    // 個別に明示する必要がある(公式wiki: https://wiki.createmod.net/developers/depend-on-create/neoforge-1.21.1)。
+    implementation("com.simibubi.create:create-${minecraft_version}:${create_version}:slim") { transitive = false }
+    implementation("net.createmod.ponder:ponder-neoforge:${ponder_version}+mc${minecraft_version}")
+    compileOnly("dev.engine-room.flywheel:flywheel-neoforge-api-${minecraft_version}:${flywheel_version}")
+    runtimeOnly("dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}")
+    implementation("com.tterrag.registrate:Registrate:${registrate_version}")
+```
+
+- [ ] **Step 4: コンパイルを確認**
+
+Run: `./gradlew compileJava --console=plain`
+Expected: `BUILD SUCCESSFUL`。失敗する場合は依存解決エラー(404等)かバージョン不整合のログを確認し、該当バージョン文字列をmaven-metadata.xmlで再確認する。
+
+- [ ] **Step 5: runClientでの起動を確認(実機確認)**
+
+Run: `./gradlew runClient --console=plain`（GUIが起動するので、タイトル画面まで到達しCreateがMod一覧に出ることを目視確認してからクライアントを閉じる。起動したクライアントは確認後に必ず終了する）
+Expected: クラッシュせずタイトル画面に到達し、Mod一覧(またはログ)に`create`が読み込まれていること。ログに`Duplicate mod`等の致命的エラーが出ていないこと。
+
+- [ ] **Step 6: コミット**
+
+```bash
+git add gradle.properties build.gradle
+git commit -m "$(cat <<'EOF'
+build: Create本体をハード依存として追加(自然言語→工場建設Phase1)
+
+公式wiki(neoforge-1.21.1)のslim+transitive=falseパターンに従い、
+Ponder/Flywheel/Registrateを個別に明示。バージョンは実機インストール
+済みのCreate 6.0.10系に合わせ、maven-metadata.xmlで確認できた
+最新ビルド6.0.10-281を使用。
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+### Task 2: Create: Aeronauticsの依存追加とビルド確認
+
+**Files:**
+- Modify: `gradle.properties`
+- Modify: `build.gradle`
+
+**Interfaces:**
+- Consumes: Task 1で解決済みのCreate本体クラスパス
+- Produces: `com.create_aeronautics`(または実際のパッケージ名、依存解決後にjarを展開して確認)のクラスをコンパイル時に解決できる状態
+
+- [ ] **Step 1: gradle.propertiesにAeronauticsのバージョン変数を追記**
+
+Task 1で追加したブロックの末尾に追記:
+
+```properties
+aeronautics_version=w7zlLnea
+```
+
+- [ ] **Step 2: build.gradleのrepositoriesブロックにModrinth Mavenを追加**
+
+```gradle
+    maven { url = "https://api.modrinth.com/maven" }
+```
+
+- [ ] **Step 3: build.gradleのdependenciesブロックにAeronauticsを追加**
+
+```gradle
+    // Create: Aeronautics (自然言語→工場建設機能, 発着場/飛行ルート用。Phase1では依存解決の
+    // みを確認し、実際のAPI使用は後続フェーズで行う)。実機インストール済みのbundled版
+    // 1.3.0+mc1.21.1と同一ファイル(Modrinthプロジェクトowak0Q19)。
+    implementation("maven.modrinth:oWaK0Q19:${aeronautics_version}")
+```
+
+- [ ] **Step 4: コンパイルを確認**
+
+Run: `./gradlew compileJava --console=plain`
+Expected: `BUILD SUCCESSFUL`。Aeronauticsが「bundled」(Create本体を内包)であることに起因するクラス重複エラーが出ないか特に注意する。
+
+- [ ] **Step 5: runClientでの起動を確認(実機確認)**
+
+Run: `./gradlew runClient --console=plain`
+Expected: クラッシュせずタイトル画面に到達。**特に「Duplicate mod id」「Duplicate mod: create」のようなエラーが出ないことを確認する**(bundled版が別途Create本体を読み込もうとして衝突する可能性がCodexレビューで指摘されている既知リスク)。衝突する場合はAeronautics側を`transitive = false`にしてCreateの重複部分を除外することを検討し、その対処は別途相談する。
+
+- [ ] **Step 6: コミット**
+
+```bash
+git add gradle.properties build.gradle
+git commit -m "$(cat <<'EOF'
+build: Create: Aeronauticsを依存として追加(自然言語→工場建設Phase1)
+
+Modrinth mavenプロキシ経由、実機インストール済みのbundled版
+1.3.0+mc1.21.1と同一ファイル(project oWaK0Q19, version w7zlLnea)。
+本フェーズでは依存解決とruntClientでのロード確認のみ、実際のAPI
+使用は後続フェーズで行う。
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+## Self-Review
+
+- Spec coverage: 実装順序ステップ1(Create/Aeronautics依存追加＋runClientロード確認)を過不足なくカバー。
+- Placeholder scan: 全ステップに具体的なコマンド・コード・バージョン文字列を明記済み、TBD等なし。
+- Type consistency: 該当なし(Gradle設定変更のみ、新規クラス無し)。

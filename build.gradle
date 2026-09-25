@@ -28,6 +28,8 @@ sourceSets.main.resources {
 
 repositories {
     // Add here additional repositories if required by some of the dependencies below.
+    maven { url = "https://maven.createmod.net" }
+    maven { url = "https://maven.ithundxr.dev/snapshots" }
 }
 
 base {
@@ -139,6 +141,16 @@ dependencies {
     // For more info:
     // http://www.gradle.org/docs/current/userguide/artifact_dependencies_tutorial.html
     // http://www.gradle.org/docs/current/userguide/dependency_management.html
+
+    // Create integration (自然言語→工場建設機能, Phase 1). Createはこの機能にとってハード依存
+    // (JEIのようなソフト依存とは違いcompileOnly+localRuntimeにしない)。"slim"はCreate公式が
+    // 配布しているAPI専用の軽量jarで、transitive=falseなので依存先(Ponder/Flywheel/Registrate)は
+    // 個別に明示する必要がある(公式wiki: https://wiki.createmod.net/developers/depend-on-create/neoforge-1.21.1)。
+    implementation("com.simibubi.create:create-${minecraft_version}:${create_version}:slim") { transitive = false }
+    implementation("net.createmod.ponder:ponder-neoforge:${ponder_version}+mc${minecraft_version}")
+    compileOnly("dev.engine-room.flywheel:flywheel-neoforge-api-${minecraft_version}:${flywheel_version}")
+    runtimeOnly("dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}")
+    implementation("com.tterrag.registrate:Registrate:${registrate_version}")
 
     // Unit tests for the Minecraft-independent parts of the mod (the script language).
     testImplementation platform('org.junit:junit-bom:5.11.3')
