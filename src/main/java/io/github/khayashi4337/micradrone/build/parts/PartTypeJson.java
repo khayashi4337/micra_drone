@@ -73,7 +73,7 @@ public final class PartTypeJson {
         m.put(KEY_PARAMS, t.params().stream().map(PartTypeJson::paramTree).toList());
         m.put(KEY_PORTS, t.ports().stream().map(PartTypeJson::portTree).toList());
         m.put(KEY_VOLUME, volumeTree(t.volume()));
-        m.put(KEY_REQUIRES, Map.of(KEY_MOD_ID, t.requires().modId(), KEY_RANGE, t.requires().mavenRange()));
+        m.put(KEY_REQUIRES, requiresTree(t.requires()));
         m.put(KEY_PLACER, t.placer().name());
         m.put(KEY_VERIFY, t.verify().name());
         m.put(KEY_VOLATILE_PROPS, new ArrayList<>(t.volatileProps()));
@@ -82,6 +82,11 @@ public final class PartTypeJson {
         m.put(KEY_KINETIC_MODEL, nullable(t.kineticModel(), ModelRef::modelId));
         m.put(KEY_PHASE, t.phase().name());
         return m;
+    }
+
+    /** Shared by part types and module templates, so both hash a version requirement the same way. */
+    public static Map<String, Object> requiresTree(VersionRange r) {
+        return Map.of(KEY_MOD_ID, r.modId(), KEY_RANGE, r.mavenRange());
     }
 
     public static Map<String, Object> portTree(PortSpec p) {

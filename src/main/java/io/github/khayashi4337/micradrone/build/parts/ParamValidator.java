@@ -40,6 +40,16 @@ public final class ParamValidator {
     public record Result(Map<String, ParamValue> typed, List<Issue> issues) {
     }
 
+    /** A palette role name such as {@code roof}: lowercase letters, digits and underscores, starting with a letter. */
+    public static boolean isRoleName(String text) {
+        return ROLE.matcher(text).matches();
+    }
+
+    /** A namespaced id such as {@code minecraft:stone}; blocks and dimensions are written the same way. */
+    public static boolean isBlockId(String text) {
+        return BLOCK_ID.matcher(text).matches();
+    }
+
     /** Control characters other than newline and tab do not survive being written into a script and read back. */
     public static boolean hasForbiddenControl(String s) {
         for (int i = 0; i < s.length(); i++) {
@@ -85,7 +95,7 @@ public final class ParamValidator {
             }
             case MATERIAL -> {
                 String text = loose instanceof StrV s ? s.value() : loose instanceof MaterialV m ? m.value() : null;
-                if (text == null || !(ROLE.matcher(text).matches() || BLOCK_ID.matcher(text).matches())) {
+                if (text == null || !(isRoleName(text) || isBlockId(text))) {
                     throw new ParamException("素材は、役割の名前(例: roof)かブロックID(例: minecraft:stone)で指定してください");
                 }
                 yield new MaterialV(text);
