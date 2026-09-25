@@ -142,7 +142,7 @@
 
 | # | 問い | 方法 | 期限 | 確定する設計 |
 |---|---|---|---|---|
-| S-1 | `--json-schema`で使えるスキーマの機能(`enum`、`oneOf`/`anyOf`、`$defs`、再帰、深いネスト、`additionalProperties:false`、大きさの上限)。**`--json-schema`はインライン引数だけ(ファイル指定は失敗すると実測済み)で、npmの`claude.cmd`は`claude.exe`を呼ぶだけ**。`cmd.exe /c`経由の限界(8191文字)と、`claude.exe`直接起動の限界(約32,767文字)の実測 | 段階的に複雑なスキーマで`claude -p`を実行して通過を記録 | P3の前 | `SchemaGenerator`の方式(パラメータ配列への切替の要否) |
+| S-1 | **実測済み(2026-09-26。結果: `docs/investigations/spk_s1_json_schema_limits.md`)**。`--json-schema`で使えるスキーマの機能(`enum`、`oneOf`/`anyOf`、`$defs`、再帰、深いネスト、`additionalProperties:false`、大きさの上限)。**`--json-schema`はインライン引数だけ(ファイル指定は失敗すると実測済み)で、npmの`claude.cmd`は`claude.exe`を呼ぶだけ**。結果: 機能は全部使える(ルートは`type:object`必須)。コマンドライン全体の上限は、`cmd.exe`経由8,118文字・直接起動32,766文字。安全上限は直接起動20,000文字・`cmd.exe`経由5,000文字。`enum`は直接起動で1,000個まで実測OK。失敗の形(終了コード0で`structured_output`が無い)がある | 段階的に複雑なスキーマで`claude -p`を実行して通過を記録(実施済み) | P3の前(済) | `SchemaGenerator`の方式(**型つき(`oneOf`)を既定に、上限を超える規模でパラメータ配列へ切替**) |
 | S-2 | `--max-budget-usd`の挙動、`--max-turns`の有無、`--model`指定、複数画像(6枚)、並列呼び出し、`stream-json`の最後の`result`行の解析(`--input-format stream-json`は`--output-format stream-json`が必須と判明済み) | CLIで実測 | P7の前 | `ClaudeCliBridge`の拡張、費用の上限の実装 |
 | S-3 | `codex exec`の参考画像: 枚数(1・2・4・8・16)ごとの再現度・時間・失敗、金額への換算の可否、スクリーンショットからの描き直し(L5')、**指示した`CameraPreset`への従い具合**、`--ephemeral --ignore-user-config --ignore-rules`を付けても画像生成と認証が動くか、`.git`/`.agents`の副作用、並列 | 部品見本(絞り込みシート)を使った実測 | P8の前 | `ReferenceImageBudget`の既定値、L5'の方式、Codexの隔離フラグ |
 | S-4 | 部品見本帳の描画: オフスクリーン描画の方法、複数ブロック部品の描き方、日本語ラベルの描画 | 実機でPNGを出力して目視 | P8の前 | `PartAtlasRenderer`の方式 |

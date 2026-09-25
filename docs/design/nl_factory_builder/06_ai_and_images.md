@@ -29,9 +29,10 @@
 | 追加の指示 | `--append-system-prompt` | 各段の役割と出力の作法。既存の方針と同じ |
 
 - **起動の方法(`StageCliRunner`)**: 既存の`chat/ClaudeCliBridge`は、実行中のプロセスを**1本しか持てず**(`inFlight`・`cancelRequested`が1組)、IDE画面を閉じると`close()`で止まり、タイムアウトが定数(120秒)で、引数を`cmd.exe /c`に載せる。建設のAI段は、並列の呼び出し(Approve0の後のVision ReaderとProcess Planner、L2の評価)、長い呼び出し、画面を閉じた後の続行が要るので、**別の`StageCliRunner`で動かす**。呼び出しごとに自前のプロセス・取消・タイムアウトを持ち、`BuildOrchestrator`(プロジェクト)の寿命に結びつく。既存の`ClaudeCliBridge`(チャット)は変えず、コマンドの組み立て・引用・「CLIが無い」判定の静的ヘルパだけを共有する。
-- **`cmd.exe`を経由しない**: npmの`claude.cmd`は、中身が`...\node_modules\@anthropic-ai\claude-code\bin\claude.exe %*`を呼ぶだけ(林さんの環境で確認)。`cmd.exe /c`は引数の合計が8191文字までだが、`claude.exe`の直接起動はCreateProcessの上限(約32,767文字)まで通る。そこで、`claude.cmd`の隣の`node_modules\@anthropic-ai\claude-code\bin\claude.exe`を探して**直接起動**し、見つからなければ従来の`cmd.exe`経由に切り替える。
-- **`--json-schema`はインラインの文字列だけ**(ファイルのパスを渡すと`JSON Parse error`で失敗することを実測)。上限は、直接起動で約3万字。登録簿から作るenumつきの完全なスキーマは大きくなるので、**段ごとに関係する部品だけの部分集合**(建築段は建築部品、Module Plannerは動力・加工・物流の部品)にしぼる。パラメータの細かい検証はスキーマではなく自前の検証器(4節)に任せ、スキーマは部品IDの選択肢と骨組みだけにする。S-1で、直接起動と`cmd.exe`経由の、それぞれの実際の限界を測って確定する。
+- **`cmd.exe`を経由しない**: npmの`claude.cmd`は、中身が`...\node_modules\@anthropic-ai\claude-code\bin\claude.exe %*`を呼ぶだけ(林さんの環境で確認)。**S-1の実測(2026-09-26。`docs/investigations/spk_s1_json_schema_limits.md`)**: コマンドライン全体の上限は、`cmd.exe /c`経由で8,118文字、`claude.exe`の直接起動で32,766文字(約4倍)。しかも`cmd.exe`経由は、スキーマに空白が1つでもあると、文字列中の`&`・`|`・`<`・`>`が壊れ、`^`が黙って消え、`%VAR%`が展開される(コマンド注入の危険)。そこで、`claude.cmd`の隣の`node_modules\@anthropic-ai\claude-code\bin\claude.exe`を探して**直接起動**し、見つからなければ従来の`cmd.exe`経由に切り替える(切り替えたときは、下の安全上限を`cmd.exe`用の値に下げる)。
+- **`--json-schema`はインラインの文字列だけ**(ファイルのパスを渡すと`JSON Parse error`で失敗することを実測)。**S-1の実測**: 上限は、スキーマ単体でなくコマンドライン全体(スキーマ中の`"`は`\"`になって1文字増える)で決まる。**安全上限は、コンパクトJSONで、直接起動が20,000文字(ハード32,766)、`cmd.exe`経由が5,000文字(ハード8,118)**。`enum`は1個あたり「IDの文字数+5」で、直接起動は9文字IDで1,000個まで実測OK(`cmd.exe`経由は564個が最大。安全には「個数×(ID長+5)が4,000文字以内」)。**機能は全部使える**(`enum`・`const`・`oneOf`・`anyOf`・`$defs`+`$ref`・再帰する`$ref`・深さ10のネスト・`additionalProperties:false`・`required`・`minimum/maximum`・`minLength/maxLength`・`pattern`・`minItems/maxItems`・`type`の配列。CLIの検証器が違反を実際に拒否した)。**ルートは必ず`"type":"object"`**(`oneOf`だけ・配列だとAPIが400)。登録簿から作る型つきの完全なスキーマは大きくなるので、**段ごとに関係する部品だけの部分集合**(建築段は建築部品、Module Plannerは動力・加工・物流の部品)にしぼる。それでも上限を超える規模では、パラメータを`params: [{key, value}]`の配列にする方式に切り替える(下の4節)。パラメータの意味の検証は、どちらの方式でも自前の検証器が行う。
 - 応答から読むもの: `is_error`、`result`、`structured_output`、`session_id`、`total_cost_usd`(**実測で存在を確認**。`CostLedger`に記録)、`num_turns`、`usage`。
+- **失敗の形(S-1実測)**: モデルがスキーマに従えなかったとき、**終了コード0・`is_error:false`・`subtype:"success"`のまま、`structured_output`のキー自体が無い**(`result`に「できなかった」という自然文が入る)。呼び出し側は、「`structured_output`のキーが在り、objectである」ことを成功の条件に含める(`result`をJSONとして読まない)。ルートが`type:object`でないなど、スキーマが不正なときは、終了コード1で、ローカルで拒否される(費用0)か、API 400になる。**検証を通っても意味が正しいとは限らない**: 検証エラーの後、モデルは値を捏造したり(必須の`b`を0で埋める)、空にしたり(`parts:[]`)、丸めたりして通すことがある。意味の検証は、常に決定論の側(`PlanPatcher`・`PlanCompiler`)が行う。
 - 既存の`chat/ClaudeCliJson.java`は`result`と`session_id`しか拾わないので、`structured_output`と`total_cost_usd`を拾うよう拡張する。既存のテスト(`ClaudeCliJsonTest`)は維持する。**画像を渡す段は`stream-json`の出力になる**ので、その最後の`result`行を読む別のパーサ(`ClaudeCliStreamJson`)を、同じ`ClaudeCliResult`を返す形で新設する(既存の`json`の経路は変えない)。
 - **タイムアウト**: 既存の定数`CLI_TIMEOUT_SECONDS=120`は対話用のまま。構造化出力の段は`StageSpec.timeoutSeconds`で個別に指定する(Architect、Module Planner、視覚の段は既定300秒)。
 - **取消**: `StageCliRunner`の呼び出しごとの取消(プロセスツリーごと終了する作法は、既存の`ClaudeCliBridge.cancel()`と同じ)。取消された段は、状態を変えずに前の状態へ戻す。
@@ -96,7 +97,7 @@
 
 - `SchemaGenerator`が、`PartTypeRegistry`から`--json-schema`用のスキーマを作る(P-16)。部品の識別子は`enum`。パラメータは部品ごとの仕様から。`additionalProperties:false`を基本にする。
 - **AIの出力は信用しない**: スキーマに通っても、`PlanPatcher`・`PlanCompiler`・各アナライザが独立に検証する。スキーマは「形を整える助け」であって、検証の代わりではない。
-- スキーマが大きくなりすぎる/一部の機能(`oneOf`、再帰、`$defs`)が使えない場合の備え: 部品ごとのパラメータを`params: [{key, value}]`の配列にして、`type`ごとの検証は自前の検証器に任せる(S-1で、使える機能と限界を実測して確定する)。
+- **方式(S-1で確定)**: `oneOf`・`$defs`・`const`・再帰は使えると実測できたので、機能の不足を理由にした切り替えは要らない。既定は**型つきの方式**(`type`が部品IDの`enum`で、部品ごとに`params`の型・範囲を`oneOf`で持つ)。スキーマが安全上限(直接起動20,000文字、`cmd.exe`経由5,000文字)を超える規模では、**パラメータ配列の方式**(`params: [{key, value}]`。型ごとの検証は自前の検証器)に自動で切り替える。1分岐は約160文字(簡素な場合)で、直接起動の上限で約120部品が目安。50分岐を超えたときの、検証エラー文の長さとモデルの選択精度は**未確認**(P7の評価で測る)。
 
 ---
 
