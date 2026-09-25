@@ -134,3 +134,14 @@ EOF
 - Spec coverage: 実装順序ステップ2(サーバー権威のワールド状態読み取り経路)を過不足なくカバー。
 - Placeholder scan: TBD等なし、実コード記載済み。
 - Type consistency: `BlockSnapshotReader.read`のシグネチャを`LiveBlockSnapshotReader`と完全一致させた。
+
+## 訂正(Opus 5レビュー指摘、コミット4083f43で対応)
+
+上記Task 1 Step 1で書いたjavadoc・Global Constraints(18行目, 56行目)は「`lang/VirtualScheduler.java`の前例に倣った」と主張していたが、**そのクラスはこのブランチ(mainから分岐)には存在しない**。`feature/sync-puzzle-foundations`ブランチ(別の未マージ作業)を調査した際の記憶を、ブランチを切り替えた後に再確認せずそのまま使った誤り。虚偽の前例主張だった。
+
+また、同レビューで以下も修正した(いずれもコミット4083f43):
+- `LiveBlockSnapshotReader`との丸ごとの重複ロジックを`BlockRangeDescription`に共通化
+- メインスレッド呼び出し契約をjavadocに書くだけでなく`MainThreadGateway`経由のディスパッチで実際に保証するよう変更(リスコフ置換違反の是正)
+- `ServerLevel`を永続保持せず`Supplier<ServerLevel>`で毎回解決するよう変更
+
+このplanドキュメント自体(上記コードブロック)は「Step 1実行時点で実際に書いたコード」の記録として残し、書き換えない。
