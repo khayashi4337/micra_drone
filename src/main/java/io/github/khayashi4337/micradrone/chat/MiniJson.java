@@ -11,8 +11,9 @@ import java.util.Map;
  * external dependency. Gson ships with NeoForge but isn't on the test sourceSet's runtime
  * classpath (same constraint PlotGeometry documents for net.minecraft.*), and this class exists
  * specifically so JSON parsing stays unit-testable without a real Minecraft/NeoForge runtime.
+ * Public so the Minecraft-free build.* core can read and write JSON without a second parser.
  */
-final class MiniJson {
+public final class MiniJson {
     private final String src;
     private int pos;
 
@@ -21,7 +22,7 @@ final class MiniJson {
     }
 
     /** Serializes a value built from Map/List/String/Number/Boolean/null back to JSON text. */
-    static String write(Object value) {
+    public static String write(Object value) {
         StringBuilder sb = new StringBuilder();
         writeValue(value, sb);
         return sb.toString();
@@ -90,7 +91,7 @@ final class MiniJson {
     }
 
     /** Parses a single JSON value (object, array, string, number, boolean, or null). */
-    static Object parse(String json) {
+    public static Object parse(String json) {
         MiniJson parser = new MiniJson(json);
         parser.skipWhitespace();
         Object value = parser.parseValue();
