@@ -13,7 +13,6 @@ class HashingTest {
 
     @Test
     void utf8IsUsedForNonAscii() {
-        assertEquals(64, Hashing.sha256Hex("屋根").length());
-        assertEquals(Hashing.sha256Hex("屋根"), Hashing.sha256Hex("屋根"));
+        assertEquals("da7e0aaaa86bf0d03a1a72ccd90592f44b71129febcd7a38b081afebabe52819", Hashing.sha256Hex("屋根"));
     }
 }

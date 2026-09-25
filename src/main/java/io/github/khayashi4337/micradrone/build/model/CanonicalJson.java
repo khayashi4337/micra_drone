@@ -14,6 +14,9 @@ import java.util.TreeMap;
  * canonical form. Two structurally equal trees always produce the same bytes.
  */
 public final class CanonicalJson {
+    private static final char FIRST_PRINTABLE_CHAR = 0x20;
+    private static final String UNICODE_ESCAPE_FORMAT = "\\u%04x";
+
     private CanonicalJson() {
     }
 
@@ -108,8 +111,8 @@ public final class CanonicalJson {
                 case '\b' -> sb.append("\\b");
                 case '\f' -> sb.append("\\f");
                 default -> {
-                    if (c < 0x20) {
-                        sb.append(String.format("\\u%04x", (int) c));
+                    if (c < FIRST_PRINTABLE_CHAR) {
+                        sb.append(String.format(UNICODE_ESCAPE_FORMAT, (int) c));
                     } else {
                         sb.append(c);
                     }
