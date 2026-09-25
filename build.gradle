@@ -30,6 +30,7 @@ repositories {
     // Add here additional repositories if required by some of the dependencies below.
     maven { url = "https://maven.createmod.net" }
     maven { url = "https://maven.ithundxr.dev/snapshots" }
+    maven { url = "https://api.modrinth.com/maven" }
 }
 
 base {
@@ -151,6 +152,16 @@ dependencies {
     compileOnly("dev.engine-room.flywheel:flywheel-neoforge-api-${minecraft_version}:${flywheel_version}")
     runtimeOnly("dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}")
     implementation("com.tterrag.registrate:Registrate:${registrate_version}")
+
+    // Create: Aeronautics (自然言語→工場建設機能, 発着場/飛行ルート用。Phase1では依存解決の
+    // みを確認し、実際のAPI使用は後続フェーズで行う)。実機インストール済みのbundled版
+    // 1.3.0+mc1.21.1と同一ファイル(Modrinthプロジェクト oWaK0Q19)。
+    implementation("maven.modrinth:oWaK0Q19:${aeronautics_version}")
+    // Aeronauticsのbundled版がjarJarで内包する aeronautics/simulated/offroad の3mod全てが
+    // 要求する共有ライブラリ(sable 2.0.0以上3.0.0未満)。runClientでの実機確認で判明した
+    // 依存(公式ドキュメント上は明記なし、実機インストール済みsable-neoforge-1.21.1-2.0.3.jar
+    // と同一ファイル)。
+    implementation("maven.modrinth:T9PomCSv:${sable_version}")
 
     // Unit tests for the Minecraft-independent parts of the mod (the script language).
     testImplementation platform('org.junit:junit-bom:5.11.3')
