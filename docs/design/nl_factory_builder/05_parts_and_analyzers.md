@@ -201,7 +201,7 @@
 - 入力: `ProcessGraph`。出力: `CapacityReport`。
 - 各工程の台数 = ⌈目標毎分 ÷ 1台の毎分処理量⌉。1台の毎分処理量は、レシピの処理時間と機械の動作モデル(回転数への依存を含む)から決める。**モデルの数値は実機の測定(忠実度テストの基準表)から取る**(推測で書かない)。
 - 動力: 各機械の応力の影響(単位回転数あたり)と回転数から、ネットワークの消費の合計を出し、動力源の容量の合計が、消費に余裕(`PowerPolicy.marginRatio`、既定10%)を足した値以上になるよう、**`PowerPolicy`が許す範囲で**動力源(`PowerPlantChoice`)を選ぶ。範囲内で足りなければ`E-POWER-NONE`と`FixHint`(目標を下げる、別の動力源を許す)を返す(L3)。
-- **動力源の出力は、部品の表の値だけでは決まらない**: 応力の影響・容量(単位回転数あたり)は`StressValueSource`(実行時はCreateの`BlockStressValues`の`getImpact`/`getCapacity`、テストは固定表)から読むが、動力源の**発生する回転数と容量は状況に依存する**(実物のjarで確認: 水車は水流の当たり方=`WaterWheelBlockEntity.flowScore`、風車は組み立てた帆の数に応じた`getGeneratedSpeed()`、蒸気機関は`PoweredShaftBlockEntity.engineEfficiency`と`getCombinedCapacity()`=ボイラーの状態)。そこで**`PowerSourceModel`**が、`PowerPlantChoice.params`(水車の数と水流の配置、帆の数、ボイラーの大きさと熱源の状態など)から、回転数と`capacitySu`を計算する。モデルの数値は、忠実度テストで実機の値を測って確定する(推測で書かない)(D-9)。
+- **動力源の出力は、部品の表の値だけでは決まらない**: 応力の影響・容量(単位回転数あたり)は`StressValueSource`(実行時はCreateの`BlockStressValues`の`getImpact`/`getCapacity`、テストは固定表)から読むが、動力源の**発生する回転数と容量は状況に依存する**(実物のjarを`javap`で確認済み(2026-09-26): 水車は水流の当たり方=`WaterWheelBlockEntity`の公開フィールド`flowScore`と`getGeneratedSpeed()`、風車は組み立てた帆に応じた`WindmillBearingBlockEntity.getGeneratedSpeed()`、蒸気機関は`PoweredShaftBlockEntity`の公開フィールド`engineEfficiency`=ボイラーの状態。**`PoweredShaftBlockEntity.getCombinedCapacity()`は非公開(`private`)なので外から呼べない**ため、モデルは公開の`engineEfficiency`とブロックの容量(`BlockStressValues.getCapacity`)から計算し、忠実度テストの実測で合わせる)。そこで**`PowerSourceModel`**が、`PowerPlantChoice.params`(水車の数と水流の配置、帆の数、ボイラーの大きさと熱源の状態など)から、回転数と`capacitySu`を計算する。モデルの数値は、忠実度テストで実機の値を測って確定する(推測で書かない)(D-9)。
 - 床面積: モジュールの占有体積の合計に、通路と余白を足して、建屋の必要面積・階数を出す。
 
 ### 4.6 Router(N-18)
@@ -227,5 +227,5 @@
 
 ### 4.9 試運転(`Commissioning`)と Runtime Monitor(N-30)
 
-- **試運転**(建て終わった直後、承認済みの施工が`VERIFIED`になったあと): (1)回転ネットワークの状態を読む(回転数、過負荷の有無)。(2)`ProcessGraph`の各入力口へ、テスト用の品物を入れる(入力口のアイテム容量に挿入。`IItemHandler`のブロック機能を使う。**Createの`BlockEntity`のアクセス方法はS-5cで確認**)。**投入品はサバイバルでは所有者から実際に消費し、製品は所有者へ返す**(無料で品物を生み出さない。`04` F-24)。(3)出力口に、期待する製品が期待の時間内に出るかを観測する。(4)結果を`CommissioningReport`(通過/失敗、実測値)にし、失敗は`Issue`にする。(5)テスト品物の残りを回収して所有者へ返す(途中で落ちた場合も、記録から回収する。冪等)。**熱源の燃料の有無を試運転の前に確認**し、無ければ`W-FUEL-SUPPLY`を出す。組み立てで作られた構造物(風車・飛行船)は、`AssemblyExpectation`を満たすかも検査する。
+- **試運転**(建て終わった直後、承認済みの施工が`VERIFIED`になったあと): (1)回転ネットワークの状態を読む(回転数、過負荷の有無)。(2)`ProcessGraph`の各入力口へ、テスト用の品物を入れる(入力口のアイテム容量に挿入。`IItemHandler`のブロック機能を使う。**Createの`BlockEntity`のアクセス方法はS-5cで確認**(`KineticBlockEntity`の公開メソッド`getSpeed()`・`isOverStressed()`・`calculateStressApplied()`の存在は`javap`で確認済み))。**投入品はサバイバルでは所有者から実際に消費し、製品は所有者へ返す**(無料で品物を生み出さない。`04` F-24)。(3)出力口に、期待する製品が期待の時間内に出るかを観測する。(4)結果を`CommissioningReport`(通過/失敗、実測値)にし、失敗は`Issue`にする。(5)テスト品物の残りを回収して所有者へ返す(途中で落ちた場合も、記録から回収する。冪等)。**熱源の燃料の有無を試運転の前に確認**し、無ければ`W-FUEL-SUPPLY`を出す。組み立てで作られた構造物(風車・飛行船)は、`AssemblyExpectation`を満たすかも検査する。
 - **運転中の観測**(`RuntimeMonitor`、ユーザーが有効にした時だけ): 出力口の在庫の増分から毎分の生産量を算出。機械の停止(回転数0、過負荷)、ベルトの滞留、出力の満杯を検出。計画値との差から、ボトルネックの候補を順位づけして`RuntimeReport`を出す。観測はチャンクが読み込まれている間だけ。
