@@ -17,6 +17,7 @@ import io.github.khayashi4337.micradrone.build.model.SemanticPlan;
 import io.github.khayashi4337.micradrone.build.model.Side;
 import io.github.khayashi4337.micradrone.build.model.Site;
 import io.github.khayashi4337.micradrone.build.model.StyleSpec;
+import io.github.khayashi4337.micradrone.build.parts.BuildingParts;
 import io.github.khayashi4337.micradrone.build.parts.ParamValidator;
 import io.github.khayashi4337.micradrone.build.parts.PartType;
 import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
@@ -37,7 +38,6 @@ import java.util.regex.Pattern;
  * JSON, scripts) passes through here, so the checks here are the first line of defence.
  */
 public final class PlanPatcher {
-    public static final String WALL_TYPE = "micra:wall";
     /** Positions stay far inside int range so sums along a parent chain cannot wrap around. */
     public static final int MAX_COORD = 30_000_000;
 
@@ -68,6 +68,7 @@ public final class PlanPatcher {
     private static final String KEY_PARAMS = "params";
     private static final String KEY_PARENT = "parent";
     private static final String KEY_ANCHOR = "anchor";
+    private static final String KEY_CYCLE = "cycle";
     private static final String KEY_LABEL = "label";
     private static final String KEY_NODE = "node";
     private static final String KEY_REMOVE = "remove";
@@ -320,7 +321,32 @@ public final class PlanPatcher {
             issues.add(Issue.of(IssueCode.E_ANCHOR, KEY_ANCHOR, List.of(ownerId), problem));
             return false;
         }
+        if (surfaceChainReaches(st, ownerId, s.nodeId())) {
+            issues.add(Issue.of(IssueCode.E_ANCHOR, KEY_CYCLE, List.of(ownerId), "面に載せる関係が輪になっています"));
+            return false;
+        }
         return true;
+    }
+
+    /**
+     * Whether the node {@code ownerId} is met by following surface anchors from {@code startId}: the start's own
+     * anchor, then that target's anchor, and so on until a node that does not sit on a surface. If it is, putting
+     * the owner on the start would close a loop, and anything that walks the chain (the expander) would never end.
+     * The walk is capped at the number of nodes, so a loop that is already in the plan cannot spin this check.
+     */
+    private static boolean surfaceChainReaches(State st, String ownerId, String startId) {
+        String current = startId;
+        for (int step = 0; step <= st.nodes.size(); step++) {
+            if (current.equals(ownerId)) {
+                return true;
+            }
+            PlanNode node = st.nodes.get(current);
+            if (node == null || !(node.anchor() instanceof Anchor.OnSurface next)) {
+                return false;
+            }
+            current = next.nodeId();
+        }
+        return false;
     }
 
     /** Why the anchor cannot sit on that wall face, or null when it can. */
@@ -332,8 +358,8 @@ public final class PlanPatcher {
         if (target == null) {
             return "面の対象のノードがありません: " + s.nodeId();
         }
-        if (!target.type().equals(WALL_TYPE)) {
-            return "面の対象は壁(" + WALL_TYPE + ")でなければなりません: " + s.nodeId();
+        if (!target.type().equals(BuildingParts.WALL)) {
+            return "面の対象は壁(" + BuildingParts.WALL + ")でなければなりません: " + s.nodeId();
         }
         if (s.side() != Side.OUTER && s.side() != Side.INNER) {
             return "面の側は outer か inner です";

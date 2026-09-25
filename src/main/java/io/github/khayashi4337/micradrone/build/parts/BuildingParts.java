@@ -15,6 +15,10 @@ import java.util.TreeMap;
 public final class BuildingParts {
     public static final String ID_PREFIX = "micra:";
 
+    private static final String WALL_NAME = "wall";
+    /** The wall part. It is the only part whose surface other parts (doors, windows, ...) can be placed on. */
+    public static final String WALL = ID_PREFIX + WALL_NAME;
+
     private static final String DISPLAY_NAME_PREFIX = "micradrone.part.";
     private static final String BLOCK_NAMESPACE = "minecraft:";
 
@@ -145,7 +149,7 @@ public final class BuildingParts {
                         "A floor of blocks or slabs with optional holes for stairs.",
                         ParamSpec.integer(LEVEL, 0, MAX_LEVEL, 0), blockOrSlab(KIND),
                         ParamSpec.intList("holes", 0, MAX_INDEX, MAX_HOLE_VALUES), material(ROLE_FLOOR)),
-                part("wall", PartCategory.STRUCTURE, BuildPhase.ENVELOPE, VerifyMode.EXACT,
+                part(WALL_NAME, PartCategory.STRUCTURE, BuildPhase.ENVELOPE, VerifyMode.EXACT,
                         "A wall along one side of a building.",
                         requiredDirection("side"), ParamSpec.integer(LEVEL, 0, MAX_LEVEL, 0),
                         ParamSpec.integer(HEIGHT, 0, 16, 0), ParamSpec.integer("thickness", 1, 3, 1),
