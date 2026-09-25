@@ -28,9 +28,21 @@ sourceSets.main.resources {
 
 repositories {
     // Add here additional repositories if required by some of the dependencies below.
-    maven { url = "https://maven.createmod.net" }
-    maven { url = "https://maven.ithundxr.dev/snapshots" }
-    maven { url = "https://api.modrinth.com/maven" }
+    // content{} filters keep every OTHER dependency resolution (including JUnit) from checking
+    // these three extra hosts every time, which would otherwise cost build speed and offline
+    // resilience for nothing (code review finding).
+    maven {
+        url = "https://maven.createmod.net"
+        content { includeGroupByRegex "com\\.simibubi\\.create|net\\.createmod\\..*|dev\\.engine-room\\..*" }
+    }
+    maven {
+        url = "https://maven.ithundxr.dev/snapshots"
+        content { includeGroup "com.tterrag.registrate" }
+    }
+    maven {
+        url = "https://api.modrinth.com/maven"
+        content { includeGroup "maven.modrinth" }
+    }
 }
 
 base {

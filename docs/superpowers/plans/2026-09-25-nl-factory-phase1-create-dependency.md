@@ -143,6 +143,20 @@ Expected: `BUILD SUCCESSFUL`。Aeronauticsが「bundled」(Create本体を内包
 Run: `./gradlew runClient --console=plain`
 Expected: クラッシュせずタイトル画面に到達。**特に「Duplicate mod id」「Duplicate mod: create」のようなエラーが出ないことを確認する**(bundled版が別途Create本体を読み込もうとして衝突する可能性がCodexレビューで指摘されている既知リスク)。衝突する場合はAeronautics側を`transitive = false`にしてCreateの重複部分を除外することを検討し、その対処は別途相談する。
 
+**実測結果(追記、Opus 5レビュー指摘#9への対応)**: 1回目の`runClient`は上記の懸念(Create重複)ではなく、**別の失敗**で落ちた。実際のクラッシュ画面:
+
+```
+-- Mod loading issue for: aeronautics --
+Failure message: Mod aeronautics requires sable 2.0.0 or above, and below 3.0.0
+    Currently, sable is not installed
+-- Mod loading issue for: simulated --
+Failure message: Mod simulated requires sable 2.0.0 or above, and below 3.0.0
+-- Mod loading issue for: offroad --
+Failure message: Mod offroad requires sable 2.0.0 or above, and below 3.0.0
+```
+
+Aeronauticsのbundled版はjarJarで`aeronautics`/`simulated`/`offroad`の3modを内包しており、全てが`sable`(公式ドキュメント未記載の共有ライブラリmod)を要求していた。実機の`mods`フォルダにあった`sable-neoforge-1.21.1-2.0.3.jar`と同一ファイルをModrinth API(`https://api.modrinth.com/v2/project/sable/version`)で特定し(project T9PomCSv, version 1L6XJqnY)、追加した上で2回目の`runClient`で成功(13mod構成、クラッシュなし)。この追加分はTask 2側のコミット(`4756410`)に含まれる。
+
 - [x] **Step 6: コミット**
 
 ```bash
