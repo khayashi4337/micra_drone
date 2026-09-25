@@ -52,6 +52,7 @@
 - `create:blaze_burner`は**熱源**(`PortKind.HEAT`、接続は`ConnKind.HEAT`)。真鍮のように`heat_requirement: heated`のレシピの機械(ミキサー+鉢)は、`HEAT`ポートを持つ鉢の下にバーナーを置く。**熱が足りない構成は`E-HEAT-NONE`で検出する**。バーナーは燃料を入れ続けないと加熱にならないので、燃料の補給手段(`W-FUEL-SUPPLY`)も検査する。対応は、忠実度テストとS-5cで確かめる。
 - **`IMPLICIT`の部品**(`01` 3節): `create:belt`(ブロック。アイテムは`create:belt_connector`)、`create:powered_shaft`(**アイテムを持たない**。蒸気機関などが内部で作る)のように、JEIに部品として出ない物は、登録簿には載せても、AI・画像・見本帳・スキーマの選択肢には出さない。D-18の「JEIと同じ名前」は、`USER`の部品に対する規則で、言語ファイルに翻訳があるだけでは`USER`にしない(アイテムモデルの有無で判定し、判定結果は登録の点検表に記録)。
 - **実装の優先度(すべて作る。順序だけ)**: P10の中で、まず**確認題材(鉄板と真鍮)に要る部品**(プレス、ミキサー+鉢、ブレイズバーナー、デポ、ベルト、ファンネル、シュート、トンネル、シャフト、歯車、ギアボックス、クラッチ、ギアシフト、水車、風車、蒸気機関、アイテム保管庫)を`P10a`として、忠実度テストまで仕上げる。残りの部品(石臼、破砕ホイール、ソー、ドリル、ハーベスター、プラウ、デプロイヤー、注液口、排液口、ファン、アーム、液体系、シーケンスギアシフトなど)は`P10b`として、同じ完了条件で仕上げる。**P10の完了は、P10aとP10bの両方**。
+- **世界に作用する部品**(メカニカルドリル・ソー・ハーベスター・プラウ、ホースプーリー、`offroad:borehead_bearing`・`rockcutting_wheel`、`aeronautics:mounted_potato_cannon`など)は、`EffectSpec`(作用が届く範囲)を宣言しないと登録できない(D-24)。Factory Analyzerが、作用範囲が区画の`operatingBox`に収まることを検査する(`E-EFFECT-ESCAPES-CLAIM`)。区画外に作用する部品は、設定で許可された時だけ登録する。
 
 ### 1.3 Create: Aeronautics部品(`aeronautics:`・`simulated:`・`offroad:`。同梱jarの言語ファイルの名前。**登録・忠実度テストはP13**)
 
@@ -84,6 +85,7 @@
 4. スキーマ生成の結果に反映され、`query_part_types`に出る。
 5. 材料の対応(`BlockToItem`)に載っている。
 6. 該当するモジュールテンプレートがあれば、検証を通っている。
+7. 稼働で変わるブロック状態(`volatileProps`)と、世界への作用範囲(`EffectSpec`)が、宣言されている。
 
 ---
 
@@ -133,6 +135,7 @@
 | `mod:airship_*` | 飛行船(気球・バーナー・プロペラ・物理アセンブラ・操縦部・係留部。組み立てで1つのサブレベルになる。S-8の結果で確定) | `DOCK`(係留)、(S-8で確定) |
 
 - 各テンプレートに、向き・鏡像の変種(`allowedFacings`、`mirror`可否)。
+- **同梱する時期**: P11で同梱するのは、動力・加工・搬入出・保管・幹線・キャットウォークの各テンプレート。**Aeronauticsの部品を要する`mod:cargo_loader`・`mod:dock_pad`・`mod:airship_*`は、P13で同梱に加え**、同じ検証(静的検証・忠実度テスト・試運転)を通す。
 - 検証の記録(`Verification`): 解析器のバージョン、忠実度テストの結果ハッシュ、試運転の実測(毎分の生産量・回転数・応力)。
 
 ---
@@ -176,12 +179,18 @@
 | `E-DOCK-MISALIGN` | 係留部と発着場の位置・向きが合わない | `FactoryAnalyzer` | 位置の調整 |
 | `E-ASSEMBLY-FAILED` | 組み立ての結果が期待(`AssemblyExpectation`)と違う | 施工後の検査 | 再組み立て・部品の確認 |
 | `E-TEMPLATE-UNVERIFIED` | 検証を通っていないテンプレートが送られた | 承認時 | (拒否) |
+| `E-SITE-CHANGED` | 調査の後で、置く位置の地形が変わって置けなくなった | 施工時(`PAUSED`の原因) | 再調査・位置の見直し |
+| `E-EFFECT-ESCAPES-CLAIM` | 部品の作用範囲が区画(`operatingBox`)の外に出る | `FactoryAnalyzer` | 位置の移動・区画の拡大 |
+| `E-TERRAFORM-UNCONFIRMED` | 整地(切り・盛り)が承認画面で確認されていない | 承認時 | 確認 |
+| `W-ASSEMBLY-AWAY` | 組み立てた物(飛行船など)が定位置に無く、検査できない | L7 | 定位置へ戻す |
+| `W-NO-SETUP` | そのレシピ種別を成立させる機械の組み立てを、私たちがまだ検証していない | `RecipeSource` | 別のレシピ・後で検証 |
+| `W-DYNAMIC-PART` | 時刻・信号で状態が変わる部品を、宣言した状態でだけ評価した | `FactoryAnalyzer` | 他の状態の検証(試運転) |
 
 **受け入れ可能(`acceptable=true`)なのは、`W-*`と`E-CLOG-RISK`だけ**。それ以外の`E-*`は受け入れ不可で、残っていれば承認できない(`01` 5節、`03` 0.2節)。
 
 ### 4.2 Blueprint Analyzer(N-15)
 
-- 入力を`VoxelClassGrid`(ブロックID→意味の分類: `SOLID`/`AIR`/`OPENING(扉・窓)`/`FLUID`/`MACHINE`)にする。設計データ由来(施工リストから)と、実際のスナップショット由来の両方から作れる。
+- 入力を`VoxelClassGrid`(ブロックID→意味の分類: `SOLID`/`AIR`/`DOOR`/`WINDOW`/`GATE`/`FLUID`/`MACHINE`。**扉・窓・門を区別する**)にする。**建屋(`structure`ノード)ごとに`SemanticMap`を作り**、`structureId`で結びつける(複数建屋・L4'の`SpaceRequest`のため)。設計データ由来(施工リストから)と、実際のスナップショット由来の両方から作れる。
 - 手順: (1)階の検出(水平な床の層)、(2)壁の面の検出(垂直な連続面、向きと法線)、(3)屋根の面、(4)開口部(扉・窓)、(5)**部屋の検出**: 建屋の外接箱の内側の空気を6近傍のフラッドフィルで分け、外から入れるかを判定(開口部は閉じた物として扱い、扉は出入口として別に記録)、(6)**スロット**: 各部屋の床面で、機械を置ける空き直方体(必要な高さ・側方の余白を満たす)を、決定論的な順序(左下から)で列挙し、動力や窓、出入口への近さを付ける。
 - 出力の`SemanticMap`は、Module Plannerへの資料になる(スロットID・広さ・許す向き・近さ)。
 
@@ -193,8 +202,9 @@
 ### 4.4 Recipe Resolver(N-07)
 
 - 純Javaの`RecipeSource`: `resolve(itemId|tag) → List<RecipeOption>`、`usedBy(itemId)`。実装は`construction/ServerRecipeSource`(`RecipeManager`)。
-- Createのレシピ種別(実物のjarで確認済み): `pressing`(52件)、`mixing`、`milling`(261)、`crushing`(226)、`splashing`(65)、`haunting`(26)、`compacting`、`deploying`(168)、`cutting`(43)、`sequenced_assembly`、`mechanical_crafting`、`filling`、`emptying`、`item_application`、`sandpaper_polishing`ほか、標準の`crafting`・`smelting`・`blasting`・`smoking`・`campfire_cooking`。各種別の入出力の形を`RecipeOption`に正規化する。アイテムの入出力に加えて、**液体の入出力**(`filling`・`emptying`・液体を使う`mixing`)、**保持する道具・触媒**(`deploying`)、**手順の反復と遷移**(`sequenced_assembly`)、**形状**(`mechanical_crafting`)を持ち、その加工が成立する**機械の組み合わせ**(`MachineSetup`。例: ミキサー+鉢+ブレイズバーナー)を返す(`01` 6節)。`heat_requirement`(`heated`/`superheated`)は`Heat`へ、`processing_time`は`processingTicks`へ。
+- Createのレシピ種別(実物のjarで確認済み): `pressing`(52件)、`mixing`、`milling`(261)、`crushing`(226)、`splashing`(65)、`haunting`(26)、`compacting`、`deploying`(168)、`cutting`(43)、`sequenced_assembly`、`mechanical_crafting`、`filling`、`emptying`、`item_application`、`sandpaper_polishing`ほか、標準の`crafting`・`smelting`・`blasting`・`smoking`・`campfire_cooking`。各種別の入出力の形を`RecipeOption`に正規化する。アイテムの入出力に加えて、**液体の入出力**(`filling`・`emptying`・液体を使う`mixing`)、**保持する道具・触媒**(`deploying`)、**手順の反復と遷移**(`sequenced_assembly`)、**形状**(`mechanical_crafting`)を持ち、その加工が成立する**機械の組み立て**(`MachineSetup`。例: ミキサー+鉢+ブレイズバーナー)を、`MachineSetupRegistry`から補って返す(`01` 6節)。`heat_requirement`(`heated`/`superheated`)は`Heat`へ、`processing_time`は`processingTicks`へ。
 - タグ(例: `c:ingots/iron`)は、ゲームのタグ機構で具体的な品物に展開する。
+- **`MachineSetupRegistry`**: Createの`RecipeManager`のレシピデータは、入出力・レシピ種別・加熱条件などしか持たず、**機械の物理的な並び(プレス+デポ、ミキサー+鉢+ブレイズバーナー)を持たない**。そこで、レシピ種別(と加熱条件)から、検証済みの機械の組み立てへの対応表を、**私たちの正本のデータ**として持つ(`build.knowledge`、同梱)。例: `create:pressing` → プレス+デポ、`create:mixing`(heated) → ミキサー+鉢+ブレイズバーナー。各エントリは、静的検証と試運転を通した物だけ(作成はP10、テンプレートと同じ検証はP11)。未登録のレシピ種別は`W-NO-SETUP`(その機械構成は、私たちがまだ検証していない)として、Process Plannerに返す。
 
 ### 4.5 Capacity Calculator(N-08)
 
@@ -216,7 +226,8 @@
 - **回転ネットワーク(`KineticModel`)**: 部品を頂点、伝達可能な隣接を辺とする無向グラフを作り、動力源から幅優先で、各部品の軸・回転方向・回転数を伝える。歯車どうしの噛み合いは逆回転、大小の歯車は速度比、ギアボックス・クラッチ・ギアシフトなどは部品ごとの規則。**矛盾(同じ部品に逆の回転が伝わる等)は`E-ROT-CONFLICT`**。ネットワークごとに、消費と供給を集計して`E-STRESS-OVER`を判定。
 - **物流グラフ**: 機械・保管庫・搬入出口を頂点、ベルト・シュート・ファンネル・トンネルを辺として、(a)`ProcessGraph`の各流れ(入力→機械→出力)に経路があるか、(b)行き止まり、(c)詰まりの危険(出力先が満杯になりうる、合流の順序、ファンネルの向き)、(d)辺ごとの流量が要求を満たすか、を検査。液体も同様。
 - 出力: `Issue`の一覧と、`PredictionReport`(製品ごとの毎分の生産量、応力の使用率、各ネットワークの回転数)。
-- **未対応の部品**は`W-UNMODELED`を出し、推測しない。**解析の通過を「検証済み」と表示しない**: `W-UNMODELED`の部品を含む計画は、承認画面に「予測モデルが無い部品を含む(試運転で確認)」と表示し、**その部品を試運転の検査項目に必ず入れ**、施工後の試運転が通るまで工場を`VERIFIED`にしない(`03` L4の終了条件)。
+- **時刻や信号で状態が変わる部品**(クラッチ、ギアシフト、可変チェーンギアシフト、回転速度コントローラー、シーケンスギアシフトなど)は、静的なグラフだけでは表せない。`KineticModel`は、これらを**宣言した状態**(`PlanNode.params`の`assumedState`。例: クラッチ=接続、シーケンス=初期段階)で評価し、`W-DYNAMIC-PART`(他の状態は未検証)を出す。宣言した各状態は、試運転の検査項目になる。運用でレッドストーンなどで状態を切り替える場合は、切り替え後の状態ごとに、別の`assumedState`として検証する。
+- **未対応の部品**は`W-UNMODELED`を出し、推測しない。**解析の通過を「検証済み」と表示しない**: `W-UNMODELED`の部品を含む計画は、承認画面に「予測モデルが無い部品を含む(試運転で確認)」と表示し、**その部品を試運転の検査項目に必ず入れ**、施工後の試運転が通って`COMMISSIONED`になるまで、工場は「試運転待ち(未検証)」と表示する(`03` L4の終了条件。ジョブの`VERIFIED`=施工が施工リストどおり、とは別の状態、`01` 8節)。
 
 ### 4.8 忠実度テスト(`FidelityLab`)
 
@@ -228,4 +239,4 @@
 ### 4.9 試運転(`Commissioning`)と Runtime Monitor(N-30)
 
 - **試運転**(建て終わった直後、承認済みの施工が`VERIFIED`になったあと): (1)回転ネットワークの状態を読む(回転数、過負荷の有無)。(2)`ProcessGraph`の各入力口へ、テスト用の品物を入れる(入力口のアイテム容量に挿入。`IItemHandler`のブロック機能を使う。**Createの`BlockEntity`のアクセス方法はS-5cで確認**(`KineticBlockEntity`の公開メソッド`getSpeed()`・`isOverStressed()`・`calculateStressApplied()`の存在は`javap`で確認済み))。**投入品はサバイバルでは所有者から実際に消費し、製品は所有者へ返す**(無料で品物を生み出さない。`04` F-24)。(3)出力口に、期待する製品が期待の時間内に出るかを観測する。(4)結果を`CommissioningReport`(通過/失敗、実測値)にし、失敗は`Issue`にする。(5)テスト品物の残りを回収して所有者へ返す(途中で落ちた場合も、記録から回収する。冪等)。**熱源の燃料の有無を試運転の前に確認**し、無ければ`W-FUEL-SUPPLY`を出す。組み立てで作られた構造物(風車・飛行船)は、`AssemblyExpectation`を満たすかも検査する。
-- **運転中の観測**(`RuntimeMonitor`、ユーザーが有効にした時だけ): 出力口の在庫の増分から毎分の生産量を算出。機械の停止(回転数0、過負荷)、ベルトの滞留、出力の満杯を検出。計画値との差から、ボトルネックの候補を順位づけして`RuntimeReport`を出す。観測はチャンクが読み込まれている間だけ。
+- **運転中の観測**(`RuntimeMonitor`、ユーザーが有効にした時だけ): **出力口の在庫を1秒ごとに標本抽出し、増えた分(正の差分)だけを生産として数える**(取り出しで減った分は数えない。標本の間に出し入れが重なる場合は過小になるので、`RateEstimate`の**下限推定**として扱う)。プレイヤーが外から入れた物が過大に数えられないよう、`mod:output_dock`は**工場の側からしか入らない専用の計測用の保管庫**(プレイヤーは入れられず、取り出し口は別)を持つ設計とし、その保管庫の差分だけを数える。機械の停止(回転数0、過負荷)、ベルトの滞留、出力の満杯を検出。計画値との差から、ボトルネックの候補を順位づけして`RuntimeReport`を出す。観測はチャンクが読み込まれている間だけ。
