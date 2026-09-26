@@ -29,6 +29,7 @@ import io.github.khayashi4337.micradrone.build.model.ParamValue.MaterialV;
 import io.github.khayashi4337.micradrone.build.model.ParamValue.NumV;
 import io.github.khayashi4337.micradrone.build.model.ParamValue.StrV;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
+import io.github.khayashi4337.micradrone.build.model.PlanJson;
 import io.github.khayashi4337.micradrone.build.model.PlanOp;
 import io.github.khayashi4337.micradrone.build.model.PlanPatch;
 import io.github.khayashi4337.micradrone.build.model.PortRef;
@@ -40,6 +41,7 @@ import io.github.khayashi4337.micradrone.build.model.Side;
 import io.github.khayashi4337.micradrone.build.model.Site;
 import io.github.khayashi4337.micradrone.build.model.StyleSpec;
 import io.github.khayashi4337.micradrone.build.parts.BuildingParts;
+import io.github.khayashi4337.micradrone.chat.MiniJson;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -538,6 +540,88 @@ class PlanPatcherTest {
         PatchResult r = assertTimeoutPreemptively(Duration.ofSeconds(5),
                 () -> patcher.apply(looped, patch(1, new PlanOp.MoveNode("w3", onWall("w1")))));
         assertTrue(r.ok(), r.issues().toString());
+    }
+
+    // ------------------------------------------------------------------ normalize adds nodes in dependency order
+
+    /** A plan the patcher built with a real MoveNode: door-1 is stored BEFORE the wall-1 it then rests on. */
+    private SemanticPlan doorOnALaterWall() {
+        SemanticPlan plan = planOfNodes(chainDoor("door-1", null, abs(0, 0, 0)), chainWall("wall-1", null, abs(0, 0, 0)));
+        PatchResult r = patcher.apply(plan, patch(1,
+                new PlanOp.MoveNode("door-1", new Anchor.OnSurface("wall-1", Side.OUTER, 1, 0))));
+        assertTrue(r.ok(), r.issues().toString());
+        assertEquals(List.of("door-1", "wall-1"), nodeIds(r.plan()));
+        return r.plan();
+    }
+
+    @Test
+    void normalizeAcceptsAPlanWhoseDoorIsListedBeforeTheWallItRestsOn() {
+        SemanticPlan built = doorOnALaterWall();
+        PatchResult r = patcher.normalize(built);
+        assertTrue(r.ok(), r.issues().toString());
+        assertEquals(built.contentHash(), r.plan().contentHash());
+        assertEquals(List.of("wall-1", "door-1"), nodeIds(r.plan()), "the nodes are added in dependency order");
+        assertEquals(built.node("door-1").orElseThrow(), r.plan().node("door-1").orElseThrow());
+    }
+
+    @Test
+    void normalizeAcceptsAFiveNodeChainWhereEveryNodeRestsOnAWallListedAfterIt() {
+        SemanticPlan plan = planOfNodes(chainWall("w0", null, abs(0, 0, 0)), chainWall("w1", null, abs(0, 0, 0)),
+                chainWall("w2", null, abs(0, 0, 0)), chainWall("w3", null, abs(0, 0, 0)), chainWall("w4", null, abs(0, 0, 0)));
+        SemanticPlan chain = patcher.apply(plan, patch(1, new PlanOp.MoveNode("w0", onWall("w1")), new PlanOp.MoveNode("w1", onWall("w2")),
+                new PlanOp.MoveNode("w2", onWall("w3")), new PlanOp.MoveNode("w3", onWall("w4")))).plan();
+        assertEquals(List.of("w0", "w1", "w2", "w3", "w4"), nodeIds(chain));
+        PatchResult r = patcher.normalize(chain);
+        assertTrue(r.ok(), r.issues().toString());
+        // hand-derived: only w4 needs nothing, so it goes first, then w3, w2, w1, w0
+        assertEquals(List.of("w4", "w3", "w2", "w1", "w0"), nodeIds(r.plan()));
+        assertEquals(chain.contentHash(), r.plan().contentHash());
+    }
+
+    @Test
+    void normalizeAcceptsAChildListedBeforeItsParent() {
+        SemanticPlan loose = new SemanticPlan(1, "p", 0, null, null, StyleSpec.EMPTY,
+                List.of(wall("wall-n", abs(0, 0, 0)), node("hut", "micra:structure", null, Map.of())), List.of(), null, Provenance.NONE);
+        PatchResult r = patcher.normalize(loose);
+        assertTrue(r.ok(), r.issues().toString());
+        assertEquals(List.of("hut", "wall-n"), nodeIds(r.plan()));
+    }
+
+    @Test
+    void normalizeKeepsTheNodeOrderOfAPlanThatIsAlreadyInDependencyOrder() {
+        PlanNode door = new PlanNode("d", "micra:door", "hut", new Anchor.OnSurface("wall-n", Side.OUTER, 3, 0), Map.of(), Set.of(), "");
+        PlanNode pillar = node("pillar-1", "micra:pillar", null, Map.of());
+        SemanticPlan plan = patcher.apply(hut(patcher), patch(1, new PlanOp.AddNode(door), new PlanOp.AddNode(pillar))).plan();
+        assertEquals(List.of("hut", "wall-n", "d", "pillar-1"), nodeIds(plan));
+        PatchResult r = patcher.normalize(plan);
+        assertTrue(r.ok(), r.issues().toString());
+        assertEquals(List.of("hut", "wall-n", "d", "pillar-1"), nodeIds(r.plan()));
+        assertEquals(plan.nodes(), r.plan().nodes());
+    }
+
+    @Test
+    void normalizeRefusesALoopInALoosePlanQuicklyAndWithoutAnException() {
+        // wall-1 hangs below door-1 and door-1 rests on wall-1: neither can be added first
+        SemanticPlan loose = new SemanticPlan(1, "p", 0, null, null, StyleSpec.EMPTY,
+                List.of(chainWall("wall-1", "door-1", abs(0, 0, 0)), chainDoor("door-1", null, onWall("wall-1"))),
+                List.of(), null, Provenance.NONE);
+        PatchResult r = assertTimeoutPreemptively(Duration.ofSeconds(5), () -> patcher.normalize(loose));
+        assertFalse(r.ok());
+        // hand-derived: the nodes that cannot be placed are added in the plan's own order, so wall-1 is refused for its
+        // missing parent and door-1 for its missing wall
+        assertEquals(List.of("E-ANCHOR:wall-1#parent", "E-ANCHOR:door-1#anchor"), r.issues().stream().map(Issue::id).toList());
+    }
+
+    @Test
+    void aPlanThatWentThroughJsonComesBackThroughNormalizeWithTheSameHash() {
+        SemanticPlan built = doorOnALaterWall();
+        String json = MiniJson.write(PlanJson.toTree(built));
+        SemanticPlan loose = PlanJson.planFromTree(MiniJson.parse(json));
+        assertEquals(List.of("door-1", "wall-1"), nodeIds(loose), "the JSON keeps the stored order");
+        PatchResult r = patcher.normalize(loose);
+        assertTrue(r.ok(), r.issues().toString());
+        assertEquals(built.contentHash(), r.plan().contentHash());
+        assertEquals(List.of("wall-1", "door-1"), nodeIds(r.plan()));
     }
 
     // ------------------------------------------------------------------ rules that were only checked by their code

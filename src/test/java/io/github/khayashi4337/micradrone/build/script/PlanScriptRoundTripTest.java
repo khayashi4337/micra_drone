@@ -28,6 +28,7 @@ import io.github.khayashi4337.micradrone.build.model.ParamValue.IntV;
 import io.github.khayashi4337.micradrone.build.model.ParamValue.ListV;
 import io.github.khayashi4337.micradrone.build.model.ParamValue.NumV;
 import io.github.khayashi4337.micradrone.build.model.ParamValue.StrV;
+import io.github.khayashi4337.micradrone.build.model.PlanJson;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.model.PlanOp;
 import io.github.khayashi4337.micradrone.build.model.PlanPatch;
@@ -47,6 +48,7 @@ import io.github.khayashi4337.micradrone.build.parts.PartType;
 import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
 import io.github.khayashi4337.micradrone.build.plan.PatchResult;
 import io.github.khayashi4337.micradrone.build.plan.PlanPatcher;
+import io.github.khayashi4337.micradrone.chat.MiniJson;
 import io.github.khayashi4337.micradrone.lang.CommandNames;
 import io.github.khayashi4337.micradrone.lang.PlanRunLimits;
 import java.io.IOException;
@@ -897,6 +899,23 @@ class PlanScriptRoundTripTest {
         assertThrows(IllegalStateException.class, () -> PlanScriptWriter.write(self));
     }
 
+    /**
+     * plan -> JSON text -> plan read loosely -> normalize: a valid plan must survive it, with the same content hash.
+     * Node order is kept when the stored order already is a dependency order and otherwise put into one.
+     */
+    private void assertSurvivesJson(SemanticPlan plan, String context) {
+        SemanticPlan loose = PlanJson.planFromTree(MiniJson.parse(MiniJson.write(PlanJson.toTree(plan))));
+        PatchResult normalized = patcher.normalize(loose);
+        assertTrue(normalized.ok(), context + ": JSON -> normalize refused " + normalized.issues());
+        assertEquals(plan.contentHash(), normalized.plan().contentHash(), context + ": JSON -> normalize");
+        if (isDependencyOrder(plan.nodes())) {
+            assertEquals(plan, normalized.plan(), context + ": JSON -> normalize, node order included");
+        } else {
+            assertEquals(nodesById(plan), nodesById(normalized.plan()), context + ": JSON -> normalize");
+            assertTrue(isDependencyOrder(normalized.plan().nodes()), context + ": normalize adds nodes in a valid order");
+        }
+    }
+
     /** How many random plans are grown, and how many operations each of them tries. */
     private static final int RANDOM_SEEDS = 300;
     private static final int RANDOM_ATTEMPTS = 80;
@@ -918,6 +937,7 @@ class PlanScriptRoundTripTest {
             SemanticPlan plan = grower.build(RANDOM_ATTEMPTS);
             grower.acceptedByKind().forEach((kind, n) -> acceptedByKind.merge(kind, n, Integer::sum));
             String context = "seed " + seed;
+            assertSurvivesJson(plan, context);
             if (isDependencyOrder(plan.nodes())) {
                 Replay replayed = replay(plan, context);
                 assertEquals(plan.contentHash(), replayed.plan().contentHash(), context);

@@ -6,6 +6,7 @@ import io.github.khayashi4337.micradrone.build.model.Connection;
 import io.github.khayashi4337.micradrone.build.model.Constraints;
 import io.github.khayashi4337.micradrone.build.model.Dir6;
 import io.github.khayashi4337.micradrone.build.model.LogisticsPlan;
+import io.github.khayashi4337.micradrone.build.model.NodeOrder;
 import io.github.khayashi4337.micradrone.build.model.ParamValue;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.model.PortRef;
@@ -21,12 +22,8 @@ import io.github.khayashi4337.micradrone.lang.PlanApi;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.PriorityQueue;
-import java.util.Set;
 import java.util.TreeMap;
 
 /**
@@ -129,78 +126,25 @@ public final class PlanScriptWriter {
     }
 
     /**
-     * The nodes in a STABLE topological order: repeatedly the earliest node (in the plan's own order) whose parent and
-     * whose {@code OnSurface} wall are already written, or are not nodes of the plan. A plan stores nodes in the
-     * order they were added, and a relocation can put a node onto a wall added AFTER it, so the plan's own order is
-     * not always one a script can be replayed in (the patcher refuses a node whose wall does not exist yet). A plan
-     * that is already in dependency order comes out unchanged, statement for statement. The order does not touch the
-     * content hash, which sorts nodes by id. Kahn's algorithm with the ready nodes in a queue keyed by plan
-     * position: O(n log n), no recursion. The plan model refuses loops through parents and walls, so this always
-     * finishes; a hand-built plan that breaks that rule gets an {@link IllegalStateException} naming the nodes
-     * that could not be placed.
+     * The nodes in the stable dependency order of {@link NodeOrder}: a node comes after its parent and after the wall
+     * it rests on. A plan stores nodes in the order they were added, and a relocation can put a node onto a wall added
+     * AFTER it, so the plan's own order is not always one a script can be replayed in (the patcher refuses a node whose
+     * wall does not exist yet). A plan that is already in dependency order comes out unchanged, statement for
+     * statement. The order does not touch the content hash, which sorts nodes by id. The plan model refuses loops
+     * through parents and walls, so nothing is ever stuck; a hand-built plan that breaks that rule gets an
+     * {@link IllegalStateException} naming the nodes that could not be placed.
      */
     private static List<PlanNode> inDependencyOrder(List<PlanNode> nodes) {
-        Map<String, Integer> positionOf = new HashMap<>();
-        for (int i = 0; i < nodes.size(); i++) {
-            positionOf.put(nodes.get(i).id(), i);
-        }
-        int[] missing = new int[nodes.size()];
-        List<List<Integer>> waiting = new ArrayList<>();
-        for (int i = 0; i < nodes.size(); i++) {
-            waiting.add(new ArrayList<>());
-        }
-        for (int i = 0; i < nodes.size(); i++) {
-            PlanNode n = nodes.get(i);
-            Set<Integer> needs = new HashSet<>();
-            addNeed(needs, positionOf, n.parent());
-            if (n.anchor() instanceof Anchor.OnSurface surface) {
-                addNeed(needs, positionOf, surface.nodeId());
-            }
-            missing[i] = needs.size();
-            for (int need : needs) {
-                waiting.get(need).add(i);
-            }
-        }
-        PriorityQueue<Integer> ready = new PriorityQueue<>();
-        for (int i = 0; i < nodes.size(); i++) {
-            if (missing[i] == 0) {
-                ready.add(i);
-            }
-        }
-        List<PlanNode> ordered = new ArrayList<>(nodes.size());
-        boolean[] written = new boolean[nodes.size()];
-        while (!ready.isEmpty()) {
-            int next = ready.poll();
-            ordered.add(nodes.get(next));
-            written[next] = true;
-            for (int dependent : waiting.get(next)) {
-                missing[dependent]--;
-                if (missing[dependent] == 0) {
-                    ready.add(dependent);
-                }
-            }
-        }
-        if (ordered.size() < nodes.size()) {
-            List<String> stuck = new ArrayList<>();
-            for (int i = 0; i < nodes.size(); i++) {
-                if (!written[i]) {
-                    stuck.add(nodes.get(i).id());
-                }
-            }
+        NodeOrder.Result order = NodeOrder.of(nodes);
+        List<PlanNode> stuck = order.stuck();
+        if (!stuck.isEmpty()) {
+            List<String> stuckIds = stuck.stream().map(PlanNode::id).toList();
             throw new IllegalStateException("nodes that depend on each other in a loop cannot be written in any order a script can replay ("
-                    + stuck.size() + " of " + nodes.size() + " stuck): "
-                    + String.join(ITEM_SEPARATOR, stuck.subList(0, Math.min(STUCK_NODES_LISTED, stuck.size())))
-                    + (stuck.size() > STUCK_NODES_LISTED ? ITEM_SEPARATOR + "..." : ""));
+                    + stuckIds.size() + " of " + nodes.size() + " stuck): "
+                    + String.join(ITEM_SEPARATOR, stuckIds.subList(0, Math.min(STUCK_NODES_LISTED, stuckIds.size())))
+                    + (stuckIds.size() > STUCK_NODES_LISTED ? ITEM_SEPARATOR + "..." : ""));
         }
-        return ordered;
-    }
-
-    /** Adds the position of the node {@code id} to {@code needs} when the plan has such a node (a null id needs nothing). */
-    private static void addNeed(Set<Integer> needs, Map<String, Integer> positionOf, String id) {
-        Integer position = id == null ? null : positionOf.get(id);
-        if (position != null) {
-            needs.add(position);
-        }
+        return order.placed();
     }
 
     /** Greedy packing: statements go into the current script while they fit; an over-long one is refused. */

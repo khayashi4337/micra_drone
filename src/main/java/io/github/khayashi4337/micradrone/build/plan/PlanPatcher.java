@@ -8,6 +8,7 @@ import io.github.khayashi4337.micradrone.build.model.IntPos;
 import io.github.khayashi4337.micradrone.build.model.Issue;
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.LogisticsPlan;
+import io.github.khayashi4337.micradrone.build.model.NodeOrder;
 import io.github.khayashi4337.micradrone.build.model.ParamValue;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.model.PlanOp;
@@ -149,7 +150,14 @@ public final class PlanPatcher {
             ops.add(new PlanOp.SetSite(loose.site()));
         }
         ops.add(new PlanOp.SetStyle(loose.style()));
-        for (PlanNode n : loose.nodes()) {
+        // A node is added after its parent and after the wall it rests on, whatever order the loose plan lists them in
+        // (a relocation can put a node onto a wall listed after it). Nodes that can never be placed - a loop through
+        // parents and walls - come last in the plan's own order, so they are refused by the ordinary E_ANCHOR checks.
+        NodeOrder.Result order = NodeOrder.of(loose.nodes());
+        for (PlanNode n : order.placed()) {
+            ops.add(new PlanOp.AddNode(n));
+        }
+        for (PlanNode n : order.stuck()) {
             ops.add(new PlanOp.AddNode(n));
         }
         for (Connection c : loose.connections()) {
