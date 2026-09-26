@@ -3,12 +3,14 @@ package io.github.khayashi4337.micradrone.build.script;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.ParamValue;
 import io.github.khayashi4337.micradrone.build.model.PlanOp;
 import io.github.khayashi4337.micradrone.lang.PlanRunLimits;
+import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -214,14 +216,18 @@ class PlanScriptRunnerTest {
     }
 
     @Test
-    void aStackOverflowInsideARunIsALimitIssueNotAnError() throws InterruptedException {
-        // Java list equality on cyclic lists recurses until the stack gives out; the run happens
-        // on a small-stack thread so the overflow is deterministic whatever -Xss the JVM uses
-        PlanScriptRunner.Result r = runOnASmallStack("a = []\na.append(a)\nb = []\nb.append(b)\nprint(a == b)");
+    void aCyclicListEqualityIsADeterministicLimitIssue() {
+        // a.append(a) makes each list contain itself; comparing them with == used to
+        // recurse into a StackOverflowError (only the runner's catch turned it into an
+        // issue, and the overflow depth depended on -Xss - that is why the old version
+        // of this test ran on a small-stack thread). Plan-mode equality now refuses a
+        // cyclic value deterministically at the compare depth limit, as an ordinary
+        // execution-limit issue
+        PlanScriptRunner.Result r = run("a = []\na.append(a)\nb = []\nb.append(b)\nprint(a == b)");
         assertNull(r.patch());
         assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r));
-        assertEquals("E-SCRIPT-LIMIT:#stack:1", r.issues().get(0).id());
-        assertTrue(r.issues().get(0).message().contains("スクリプト1"), r.issues().get(0).message());
+        assertEquals("E-SCRIPT-LIMIT:#run:1", r.issues().get(0).id());
+        assertTrue(r.issues().get(0).message().contains("compare"), r.issues().get(0).message());
     }
 
     // ---- issue keys name the 1-based script number (fix round 1) ----
@@ -522,5 +528,41 @@ class PlanScriptRunnerTest {
         assertEquals("E-SCRIPT-LIMIT:#run:1", r.issues().get(0).id());
         assertTrue(r.issues().get(0).message().contains("construction script exceeded 100000 steps"),
                 r.issues().get(0).message());
+    }
+
+    // ---- bounded equality, membership and hashing (P3 H-1b) ----
+
+    @Test
+    void aCollectionUsedAsAKeyOrSetMemberIsAnOrdinaryScriptError() {
+        // the fuzz's hashing bomb: set.add / d[k] = on a 28-level shared nest used to
+        // run ~2^28 hashCode calls inside ONE statement; plan mode refuses collections
+        // as keys and set members outright, so the same scripts now die instantly as
+        // ordinary E-SCHEMA script errors
+        String nest = "a = [1]\nfor i in range(28):\n    a = [a, a]\n";
+        assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
+            PlanScriptRunner.Result viaAdd = run(nest + "s = set()\ns.add(a)\n");
+            assertNull(viaAdd.patch());
+            assertEquals(List.of("E-SCHEMA"), codes(viaAdd));
+            assertEquals("E-SCHEMA:#run:1", viaAdd.issues().get(0).id());
+            PlanScriptRunner.Result viaIndex = run(nest + "d = {}\nd[a] = 1\n");
+            assertNull(viaIndex.patch());
+            assertEquals(List.of("E-SCHEMA"), codes(viaIndex));
+            assertEquals("E-SCHEMA:#run:1", viaIndex.issues().get(0).id());
+        });
+    }
+
+    @Test
+    void listMembershipOverSharedNestsIsAnExecutionLimitIssue() {
+        // the fuzz's membership bomb: two 28-level shared nests compared by `a in [b]` -
+        // planEquals walks the nest node by node and the work charge turns the runaway
+        // walk into deterministic steps, so the ~4x10^8-visit step budget ends it as an
+        // E-SCRIPT-LIMIT issue inside the default 5-second clock
+        assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
+            PlanScriptRunner.Result r = run("a = [1]\nb = [1]\nfor i in range(28):\n    a = [a, a]\n    b = [b, b]\n"
+                    + "x = a in [b]\n");
+            assertNull(r.patch());
+            assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r));
+            assertEquals("E-SCRIPT-LIMIT:#run:1", r.issues().get(0).id());
+        });
     }
 }

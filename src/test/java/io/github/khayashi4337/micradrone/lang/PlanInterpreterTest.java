@@ -870,6 +870,201 @@ class PlanInterpreterTest {
         assertEquals("line 6: construction script exceeded 100000 steps", e.getMessage());
     }
 
+    // ---- bounded equality, membership and hashing (H-1b) ----
+
+    @Test
+    void planEqualityAnswersMatchFarmEqualityExactly() {
+        // one script printing a table of comparisons, run by BOTH a farm interpreter
+        // (Object.equals) and a plan interpreter (planEquals): the printed columns must
+        // be identical, pinning "same answers as Object.equals" for every value type
+        // the language has. The middle column is hand-derived - a NaN case is missing
+        // only because the language cannot produce one (division by zero is refused)
+        String script = "print(1 == 1.0)\n"                    // True - all numbers are doubles
+                + "print(0.5 == 0.5)\n"                        // True
+                + "print(\"a\" == \"a\")\n"                    // True
+                + "print(\"a\" == \"b\")\n"                    // False
+                + "print(True == False)\n"                     // False
+                + "print(None == None)\n"                      // True - the singleton
+                + "print(None == 0)\n"                         // False
+                + "print([1, [2, 3]] == [1, [2, 3]])\n"        // True
+                + "print([1, [2, 3]] == [1, [2, 4]])\n"        // False
+                + "print({\"a\": [1]} == {\"a\": [1]})\n"      // True - dict values recurse
+                + "print({\"a\": [1]} == {\"a\": [2]})\n"      // False
+                + "print({\"a\": 1} == {\"b\": 1})\n"          // False - keys differ
+                + "print({1, 2} == {2, 1})\n"                  // True - set order is free
+                + "print({1, 2} == {1, 3})\n"                  // False
+                + "print([1] == {1})\n"                        // False - a list is never a set
+                + "print([] == {})\n"                          // False - a list is never a dict
+                + "print(1 == \"1\")\n"                        // False - no coercion
+                + "print(-0.0 == 0.0)\n"                       // False - Double.equals tells -0.0 from 0.0
+                + "print(1 != 2)\n"                            // True
+                + "print([1] != [1])\n";                       // False - equal lists
+        List<String> expected = List.of(
+                "True", "True", "True", "False", "False", "True", "False", "True", "False", "True",
+                "False", "False", "True", "False", "False", "False", "False", "False", "True", "False");
+        FakeDroneApi farm = new FakeDroneApi(5);
+        new Interpreter(farm).run(new Parser(new Lexer(script).scan()).parseProgram());
+        assertEquals(expected, farm.printed, "farm output (the Object.equals oracle)");
+        RecordingPlanApi plan = new RecordingPlanApi();
+        run(script, plan);
+        assertEquals(farm.printed, plan.printed, "plan output must equal the farm's");
+        // functions compare through Object.equals too (a record's fields, not identity)
+        String functions = "def f():\n    pass\ndef g():\n    pass\nprint(f == f)\nprint(f == g)\n";
+        FakeDroneApi farmFns = new FakeDroneApi(5);
+        new Interpreter(farmFns).run(new Parser(new Lexer(functions).scan()).parseProgram());
+        RecordingPlanApi planFns = new RecordingPlanApi();
+        run(functions, planFns);
+        assertEquals(farmFns.printed, planFns.printed);
+        // a semaphore cannot be created in plan mode, so it has no case here
+    }
+
+    @Test
+    void aSharedNestEqualityPaysItsNodeVisitsAsSteps() {
+        // the measured bomb: two separately built shared-reference nests. k=10 is
+        // 2^11 - 1 = 2,047 node visits (zero extra steps) and answers True quickly;
+        // k=30 would need ~2^31 visits, so the 1,000-step budget's 4,096,000 charged
+        // work units run out at the == line instead - in milliseconds, not the ~18 s
+        // the uncharged Object.equals measured
+        RecordingPlanApi api = new RecordingPlanApi();
+        assertTimeoutPreemptively(Duration.ofSeconds(5),
+                () -> run("a = [1]\nb = [1]\nfor i in range(10):\n    a = [a, a]\n    b = [b, b]\n"
+                                + "print(a == b)\n",
+                        api, new PlanRunLimits(1_000, 60_000)));
+        assertEquals(List.of("True"), api.printed);
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> assertTimeoutPreemptively(Duration.ofSeconds(5),
+                        () -> run("a = [1]\nb = [1]\nfor i in range(30):\n    a = [a, a]\n    b = [b, b]\n"
+                                        + "print(a == b)\n",
+                                new RecordingPlanApi(), new PlanRunLimits(1_000, 60_000))));
+        assertEquals("line 6: construction script exceeded 1000 steps", e.getMessage());
+    }
+
+    @Test
+    void aCyclicEqualityIsRefusedByTheCompareDepthLimitNotByTheStack() {
+        // a = []; a.append(a) makes a list containing itself: Object.equals recursed
+        // until a StackOverflowError - an Error whose depth depends on -Xss, so not
+        // even deterministic. planEquals refuses at the compare depth limit instead
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run("a = []\na.append(a)\nb = []\nb.append(b)\nprint(a == b)\n",
+                        new RecordingPlanApi(), PlanRunLimits.DEFAULT));
+        assertEquals("line 5: construction script exceeded the compare depth limit of 64", e.getMessage());
+    }
+
+    @Test
+    void equalityAtExactlyTheCompareDepthLimitRunsAndDeeperIsRefused() {
+        // c = [c] repeated 200 times builds a 200-level linear nest - no sharing, so
+        // the node count stays tiny: it is the DEPTH that is refused, not the work.
+        // Exactly 64 levels still compares (the limit is "deeper than 64")
+        String prefix = "c1 = 1\nfor i in range(%d):\n    c1 = [c1]\nc2 = 1\nfor i in range(%d):\n    c2 = [c2]\n";
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(String.format(prefix, 64, 64) + "print(c1 == c2)\n", api, PlanRunLimits.DEFAULT);
+        assertEquals(List.of("True"), api.printed);
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(String.format(prefix, 200, 200) + "x = c1 == c2\n",
+                        new RecordingPlanApi(), PlanRunLimits.DEFAULT));
+        assertEquals("line 7: construction script exceeded the compare depth limit of 64", e.getMessage());
+    }
+
+    private static Stream<Arguments> unhashableUses() {
+        return Stream.of(
+                Arguments.of("a set literal element", "x = {[1]}\n", "a list"),
+                Arguments.of("a set literal element (a set)", "x = {{1}}\n", "a set"),
+                Arguments.of("a dict literal key", "x = {[1]: 2}\n", "a list"),
+                Arguments.of("a dict literal key (a dict)", "x = {{\"a\": 1}: 2}\n", "a dict"),
+                Arguments.of("set() of a list of lists", "x = set([[1]])\n", "a list"),
+                Arguments.of("set.add", "s = {1}\ns.add([1])\n", "a list"),
+                Arguments.of("set.remove", "s = {1}\ns.remove([1])\n", "a list"),
+                Arguments.of("a dict item assignment", "d = {}\nd[[1]] = 2\n", "a list"),
+                Arguments.of("a dict index read", "d = {}\nx = d[[1]]\n", "a list"),
+                Arguments.of("dict.get", "d = {}\nx = d.get([1])\n", "a list"),
+                Arguments.of("dict.remove", "d = {\"a\": 1}\nd.remove([1])\n", "a list"),
+                Arguments.of("'in' on a set", "x = [1] in {1}\n", "a list"),
+                Arguments.of("'in' on a dict", "x = [1] in {\"a\": 1}\n", "a list"));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("unhashableUses")
+    void aCollectionUsedAsASetElementOrDictKeyIsRefused(String site, String script, String typeName) {
+        MicraLangException e = assertThrows(MicraLangException.class,
+                () -> run(script, new RecordingPlanApi()));
+        assertTrue(e.getMessage().contains(typeName + " cannot be used as a dict key or set element"),
+                site + ": " + e.getMessage());
+    }
+
+    @Test
+    void scalarAndOtherHashableKeysStillWorkInPlanMode() {
+        RecordingPlanApi api = new RecordingPlanApi();
+        run("x = 1 in {1, 2}\n"                    // a number probe on a set
+                + "y = \"a\" in {\"a\": 1}\n"      // a string probe on a dict
+                + "d = {}\nd[\"k\"] = [1, 2]\n"    // a list is fine as a VALUE
+                + "d[None] = 3\nd[True] = 4\n"     // None and booleans stay legal keys
+                + "def f():\n    pass\nd[f] = 5\n" // so does a function
+                + "s = {1}\ns.add(2)\ns.remove(2)\n"
+                + "print(x)\nprint(y)\nprint(d[\"k\"])\nprint(d[None])\nprint(d[True])\nprint(d[f])\n", api);
+        assertEquals(List.of("True", "True", "[1, 2]", "3", "4", "5"), api.printed);
+    }
+
+    @Test
+    void aListMayStillBeProbedInsideAList() {
+        // a list is unhashable but NOT un-comparable: `in` on a list goes through
+        // planEquals, so nested list membership and nested list.remove keep working
+        RecordingPlanApi api = new RecordingPlanApi();
+        run("x = [1] in [[1], [2]]\ny = [1] in [[2], [3]]\nl = [[1], [2]]\nl.remove([1])\n"
+                + "print(x)\nprint(y)\nprint(l)\n", api);
+        assertEquals(List.of("True", "False", "[[2]]"), api.printed);
+    }
+
+    @Test
+    void collectionsAsKeysAndSetMembersStillWorkForFarmScripts() {
+        // farm mode keeps today's behaviour: Java collections happily hash other
+        // collections, so a farm script can still use a list as a set element or a
+        // dict key - the plan-mode ban exists for the bounded accounting, not for Java
+        FakeDroneApi api = new FakeDroneApi(5);
+        new Interpreter(api).run(new Parser(new Lexer(
+                "s = {[1]}\nd = {}\nd[[1]] = 2\nx = [1] in s\nprint(len(s))\nprint(d[[1]])\nprint(x)\n")
+                .scan()).parseProgram());
+        assertEquals(List.of("1", "2", "True"), api.printed);
+    }
+
+    @Test
+    void listMembershipChargesEachElementCompareAsWork() {
+        // a list of 1,000 strings of 4,096 characters each, probed by an equal-length
+        // string that differs from every element ONLY in its last character (so a real
+        // String.equals scan is as long as the charged one): each element compare is
+        // 1 node visit + a 4,096-character scan = 4,097 work units, and the whole `in`
+        // pays 1,000 x 4,097 = 4,097,000 units = exactly 1,000 steps
+        String script = "s = \"x\"\nfor i in range(12):\n    s = s + s\n"       // s = 4,096 'x's
+                + "c = list(s)\nc[4095] = \"y\"\np = \"\"\nfor ch in c:\n    p = p + ch\n" // p = s with a 'y' tail
+                + "l = []\nfor i in range(1000):\n    l.append(s)\n"
+                + "x = p in l\nmood(\"ok\")\n";
+        // statements cost 1 + (1 + 12x2) + 1 + 1 + 1 + (1 + 4,096x2) + 1 + (1 + 1,000x2)
+        // = 10,224 before the `in`; the `in` statement adds 1 + 1,000 = 1,001 -> 11,225,
+        // and mood() one more -> 11,226
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(script, api, new PlanRunLimits(11_226, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+        // one step less and the thousandth element compare is refused mid-statement
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(11_224, 60_000)));
+        assertEquals("line 12: construction script exceeded 11224 steps", e.getMessage());
+        // at exactly 11,225 the search finishes but the mood call needs one more
+        e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(11_225, 60_000)));
+        assertEquals("line 13: construction script exceeded 11225 steps", e.getMessage());
+    }
+
+    @Test
+    void listRemoveFindsTheFirstEqualElementAndKeepsTheOldMissMessage() {
+        // plan-mode remove(x) scans for the first index planEquals to x and removes by
+        // position; a miss keeps the old "is not in this list" text
+        RecordingPlanApi api = new RecordingPlanApi();
+        run("l = [1, 2, 1]\nl.remove(1)\nprint(l)\n", api);
+        assertEquals(List.of("[2, 1]"), api.printed);
+        MicraLangException e = assertThrows(MicraLangException.class,
+                () -> run("l = [1, 2]\nl.remove(3)\n", new RecordingPlanApi()));
+        assertEquals("line 2: 3 is not in this list", e.getMessage());
+    }
+
     /** A {@link PlanApi} whose {@code print} refuses with a {@link PlanBudgetException}, the way the recorder's budgets do. */
     private static PlanApi budgetRefusingPrintPlanApi() {
         return printRefusingPlanApi(new PlanBudgetException("printed output refused"));

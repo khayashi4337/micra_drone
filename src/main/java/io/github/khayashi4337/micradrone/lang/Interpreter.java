@@ -114,6 +114,16 @@ public final class Interpreter {
      * is about 4x10^8 units of work, on the order of a second or two of Java time.
      */
     private static final long PLAN_WORK_PER_STEP = 4_096;
+    /**
+     * How deep {@link #planEqualsAt} may walk into nested collections before refusing.
+     * Java's own {@code Object.equals} has no bound at all: on a cyclic value
+     * ({@code a = []; a.append(a)}) it recurses until a {@link StackOverflowError},
+     * whose depth depends on the JVM's -Xss and so is not even a deterministic limit.
+     * 64 is far deeper than any plan value legitimately nests (the runner already
+     * refuses recorded params past single-digit levels) while shallow enough that the
+     * refusal lands long before the interpreter's own frames could exhaust the stack.
+     */
+    private static final int PLAN_MAX_COMPARE_DEPTH = 64;
     private static final String PLAN_REFUSED_SUFFIX =
             "' cannot be used in a construction script (only construction commands and pure helpers)";
     /**
@@ -303,6 +313,7 @@ public final class Interpreter {
             return;
         }
         if (target instanceof Map<?, ?> map) {
+            checkPlanHashable(index, s.line());
             @SuppressWarnings("unchecked")
             Map<Object, Object> mutable = (Map<Object, Object>) map;
             mutable.put(index, value);
@@ -607,7 +618,26 @@ public final class Interpreter {
             }
             case "remove" -> {
                 requireMethodArgCount(call, args, 1);
-                if (!list.remove(args.get(0))) {
+                boolean removed;
+                if (planLimits != null) {
+                    // the first index whose element is planEquals to the argument, removed by
+                    // position - the same bounded walk as `x in list`, not List.remove's
+                    // unbounded Object.equals
+                    int index = -1;
+                    for (int i = 0; i < list.size(); i++) {
+                        if (planEquals(args.get(0), list.get(i), call.line())) {
+                            index = i;
+                            break;
+                        }
+                    }
+                    removed = index >= 0;
+                    if (removed) {
+                        list.remove(index);
+                    }
+                } else {
+                    removed = list.remove(args.get(0));
+                }
+                if (!removed) {
                     throw new MicraLangException(call.line(), stringifyValue(args.get(0), call.line()) + " is not in this list");
                 }
                 yield MicraNone.INSTANCE;
@@ -625,12 +655,14 @@ public final class Interpreter {
         return switch (call.name()) {
             case "add" -> {
                 requireMethodArgCount(call, args, 1);
+                checkPlanHashable(args.get(0), call.line());
                 set.add(args.get(0));
                 checkPlanCollectionSize(set.size(), call.line());
                 yield MicraNone.INSTANCE;
             }
             case "remove" -> {
                 requireMethodArgCount(call, args, 1);
+                checkPlanHashable(args.get(0), call.line());
                 if (!set.remove(args.get(0))) {
                     throw new MicraLangException(call.line(), stringifyValue(args.get(0), call.line()) + " is not in this set");
                 }
@@ -664,11 +696,13 @@ public final class Interpreter {
             // Unlike d[k], this answers None for a missing key instead of stopping the script.
             case "get" -> {
                 requireMethodArgCount(call, args, 1);
+                checkPlanHashable(args.get(0), call.line());
                 Object value = map.get(args.get(0));
                 yield value == null ? MicraNone.INSTANCE : value;
             }
             case "remove" -> {
                 requireMethodArgCount(call, args, 1);
+                checkPlanHashable(args.get(0), call.line());
                 if (!map.containsKey(args.get(0))) {
                     throw new MicraLangException(call.line(), "no key " + stringifyValue(args.get(0), call.line()) + " in this dict");
                 }
@@ -726,7 +760,9 @@ public final class Interpreter {
     private Object evalDictLit(Expr.DictLit e) {
         Map<Object, Object> map = new LinkedHashMap<>();
         for (int i = 0; i < e.keys().size(); i++) {
-            map.put(eval(e.keys().get(i)), eval(e.values().get(i)));
+            Object key = eval(e.keys().get(i));
+            checkPlanHashable(key, e.line());
+            map.put(key, eval(e.values().get(i)));
         }
         checkPlanCollectionSize(map.size(), e.line());
         chargePlanAllocation(map.size() * PLAN_HASH_ENTRY_UNITS, e.line());
@@ -736,7 +772,9 @@ public final class Interpreter {
     private Object evalSetLit(Expr.SetLit e) {
         Set<Object> set = new LinkedHashSet<>();
         for (Expr element : e.elements()) {
-            set.add(eval(element));
+            Object value = eval(element);
+            checkPlanHashable(value, e.line());
+            set.add(value);
         }
         checkPlanCollectionSize(set.size(), e.line());
         chargePlanAllocation(set.size() * PLAN_HASH_ENTRY_UNITS, e.line());
@@ -750,6 +788,7 @@ public final class Interpreter {
             return list.get(listIndex(index, list.size(), e.line()));
         }
         if (target instanceof Map<?, ?> map) {
+            checkPlanHashable(index, e.line());
             Object value = map.get(index);
             if (value == null && !map.containsKey(index)) {
                 throw new MicraLangException(e.line(), "no key " + stringifyValue(index, e.line()) + " in this dict");
@@ -790,10 +829,12 @@ public final class Interpreter {
             return joined;
         }
         if (e.op().equals("==")) {
-            return left.equals(right);
+            // plan mode pays the bounded walk - a shared-reference nest would otherwise outrun
+            // the step budget inside a single statement; farm keeps Object.equals untouched
+            return planLimits != null ? planEquals(left, right, e.line()) : left.equals(right);
         }
         if (e.op().equals("!=")) {
-            return !left.equals(right);
+            return planLimits != null ? !planEquals(left, right, e.line()) : !left.equals(right);
         }
         if (e.op().equals("in")) {
             return contains(right, left, e.line());
@@ -1064,6 +1105,14 @@ public final class Interpreter {
             case "set" -> {
                 requireArgCount(call, args.isEmpty() ? 0 : 1);
                 Collection<?> source = args.isEmpty() ? List.of() : collectionArg(call, "set");
+                if (planLimits != null) {
+                    // scanned before the set is built: collections cannot be hashed
+                    // (checkPlanHashable), so set([[1]]) refuses on the argument rather
+                    // than inside LinkedHashSet's hashing
+                    for (Object element : source) {
+                        checkPlanHashable(element, call.line());
+                    }
+                }
                 // charged on the INPUT size: new LinkedHashSet<>(source) sizes its hash table
                 // from the input, so a set built from many duplicates still retains a table as
                 // big as the input - the deduplicated result size would hide that
@@ -1412,10 +1461,26 @@ public final class Interpreter {
 
     /** {@code x in y}: a list's items, a set's members, a dict's keys, or a substring of a string. */
     private boolean contains(Object container, Object item, int line) {
-        if (container instanceof Collection<?> c) {
-            return c.contains(item);
+        if (container instanceof List<?> list) {
+            if (planLimits != null) {
+                // element-by-element planEquals (work-charged, depth-bounded), because
+                // Collection.contains would run the same unbounded Object.equals that
+                // the == case replaced
+                for (Object element : list) {
+                    if (planEquals(item, element, line)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            return list.contains(item);
+        }
+        if (container instanceof Set<?> set) {
+            checkPlanHashable(item, line);
+            return set.contains(item);
         }
         if (container instanceof Map<?, ?> m) {
+            checkPlanHashable(item, line);
             return m.containsKey(item);
         }
         if (container instanceof String s) {
@@ -1459,6 +1524,149 @@ public final class Interpreter {
             return 0;
         }
         return (long) (textLength - needleLength + 1) * needleLength;
+    }
+
+    /**
+     * Refuses the plan-mode use of a collection where Java would have to HASH it: as a
+     * set element, a dict key, or the probe of a membership test/lookup on a set or
+     * dict. Python has the same rule (lists, sets and dicts are unhashable); here it is
+     * also what keeps hashing cheap for {@link #planEqualsAt} and stops a set/dict
+     * operation from recursing over a shared nest inside hashCode the way equals used
+     * to. A no-op for farm interpreters, whose Java collections happily hash other
+     * collections.
+     */
+    private void checkPlanHashable(Object v, int line) {
+        if (planLimits != null && (v instanceof List<?> || v instanceof Set<?> || v instanceof Map<?, ?>)) {
+            throw new MicraLangException(line,
+                    "a " + typeName(v) + " cannot be used as a dict key or set element");
+        }
+    }
+
+    /**
+     * Plan-mode structural equality, used instead of {@code Object.equals} for
+     * {@code ==}/{@code !=}, {@code x in list} and {@code list.remove(x)}: it gives
+     * exactly the answers {@code Object.equals} gives for every value type the language
+     * has, but bounded two ways so a single comparison cannot outrun the limits.
+     * Java's own {@code equals} recurses over a shared-reference nest without
+     * memoising (a 30-level {@code [a, a]} nest costs about 2^31 node visits inside ONE
+     * statement), and on a cyclic value it recurses until a {@link StackOverflowError}
+     * - an Error whose depth depends on -Xss, i.e. not even deterministic. This walk
+     * refuses nesting deeper than {@link #PLAN_MAX_COMPARE_DEPTH} deterministically,
+     * and pays its node visits as deterministic steps through {@link #chargePlanWork}
+     * while it proceeds, so a comparison bigger than the remaining step budget is
+     * refused after at most one quantum of unpaid work.
+     */
+    private boolean planEquals(Object a, Object b, int line) {
+        PlanCompareBudget work = new PlanCompareBudget();
+        boolean result = planEqualsAt(a, b, 0, work, line);
+        work.flush(line);
+        return result;
+    }
+
+    /**
+     * The not-yet-paid node visits of one {@link #planEquals} walk. A {@code long}
+     * cannot be shared down the recursion by reference, so the counter lives in this
+     * little holder: each time it accumulates a whole {@link #PLAN_WORK_PER_STEP}
+     * quantum that quantum is paid to the step counter immediately (which is what
+     * bounds the unpaid work a refused comparison can have done), and {@link #flush}
+     * pays whatever is left once the walk has finished.
+     */
+    private final class PlanCompareBudget {
+        private long pending;
+
+        void spend(long units, int line) {
+            pending += units;
+            while (pending >= PLAN_WORK_PER_STEP) {
+                chargePlanWork(PLAN_WORK_PER_STEP, line);
+                pending -= PLAN_WORK_PER_STEP;
+            }
+        }
+
+        void flush(int line) {
+            if (pending > 0) {
+                chargePlanWork(pending, line);
+                pending = 0;
+            }
+        }
+    }
+
+    /**
+     * One node of the {@link #planEquals} walk. Every call counts one node visit, and
+     * {@code depth} is how many collections enclose the pair being compared: the
+     * top-level pair is 0, the elements of a collection compared at level d are d + 1.
+     * A pair deeper than {@link #PLAN_MAX_COMPARE_DEPTH} is refused, so a value nested
+     * exactly 64 levels still compares while 65 does not - and a cyclic value, which
+     * descends without end, is refused deterministically instead of overflowing.
+     */
+    private boolean planEqualsAt(Object a, Object b, int depth, PlanCompareBudget work, int line) {
+        work.spend(1, line);
+        if (depth > PLAN_MAX_COMPARE_DEPTH) {
+            throw compareDepthExceeded(line);
+        }
+        if (a instanceof Double || b instanceof Double) {
+            // Double.equals exactly: NaN equals NaN, and 0.0 differs from -0.0; a number
+            // compared across types answers false just like Object.equals does
+            return a.equals(b);
+        }
+        if (a instanceof String sa && b instanceof String sb) {
+            if (sa.length() == sb.length()) {
+                // String.equals scans the characters of two equal-length strings before it
+                // can answer - real work the step counter cannot otherwise see
+                work.spend(sa.length(), line);
+            }
+            return sa.equals(sb);
+        }
+        if (a instanceof List<?> la && b instanceof List<?> lb) {
+            if (la.size() != lb.size()) {
+                return false;
+            }
+            for (int i = 0; i < la.size(); i++) {
+                if (!planEqualsAt(la.get(i), lb.get(i), depth + 1, work, line)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (a instanceof Set<?> sa && b instanceof Set<?> sb) {
+            if (sa.size() != sb.size()) {
+                return false;
+            }
+            // set elements are scalars (checkPlanHashable), so the containsAll inside
+            // AbstractSet.equals stays constant-time per element
+            work.spend(sa.size(), line);
+            return sa.equals(sb);
+        }
+        if (a instanceof Map<?, ?> ma && b instanceof Map<?, ?> mb) {
+            if (ma.size() != mb.size()) {
+                return false;
+            }
+            // keys are scalars too, so the lookups are cheap; the VALUES can nest and go
+            // through the same bounded walk
+            work.spend(ma.size(), line);
+            for (Map.Entry<?, ?> entry : ma.entrySet()) {
+                Object other = mb.get(entry.getKey());
+                if (other == null && !mb.containsKey(entry.getKey())) {
+                    return false;
+                }
+                if (!planEqualsAt(entry.getValue(), other, depth + 1, work, line)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (a instanceof List<?> || a instanceof Set<?> || a instanceof Map<?, ?>
+                || b instanceof List<?> || b instanceof Set<?> || b instanceof Map<?, ?>) {
+            // a collection of one kind never equals one of another kind, or a scalar
+            return false;
+        }
+        // Booleans, None, functions, semaphores (and a String against a non-String):
+        // whatever Object.equals says - all scalar comparisons with nothing to bound
+        return a.equals(b);
+    }
+
+    private static PlanLimitException compareDepthExceeded(int line) {
+        return new PlanLimitException(line, "construction script exceeded the compare depth limit of "
+                + PLAN_MAX_COMPARE_DEPTH);
     }
 
     private double asDouble(Object v, int line) {
