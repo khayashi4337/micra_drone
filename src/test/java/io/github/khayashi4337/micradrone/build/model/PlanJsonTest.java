@@ -1,7 +1,9 @@
 package io.github.khayashi4337.micradrone.build.model;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -15,6 +17,9 @@ import io.github.khayashi4337.micradrone.build.model.ParamValue.StrV;
 import io.github.khayashi4337.micradrone.chat.MiniJson;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -91,6 +96,153 @@ class PlanJsonTest {
         SemanticPlan different = new SemanticPlan(1, "plan-1", 3, 2, plan.site(), plan.style(), edited, plan.connections(),
                 plan.logistics(), plan.provenance());
         assertNotEquals(base, different.contentHash());
+    }
+
+    // ------------------------------------------------------------------ the content hash: written order, pinned values, sensitivity
+
+    private static final String KEY_CONSTRAINTS = "constraints";
+    private static final String KEY_ENTRY_DIRS = "entryDirs";
+    private static final String KEY_LOGISTICS = "logistics";
+    private static final String KEY_DOCKS = "docks";
+
+    @Test
+    void entryDirectionsAreWrittenInTheDictionaryOrderOfTheirNames() {
+        // Dir6 is declared UP, DOWN, NORTH, EAST, SOUTH, WEST; the wire names sort as down, east, north, south, up, west
+        Connection all = new Connection("c", new PortRef("a", "out"), new PortRef("b", "in"), ConnKind.ITEM, Routing.AUTO,
+                new Constraints(null, Set.of(), null, EnumSet.allOf(Dir6.class)));
+        Map<?, ?> constraints = assertInstanceOf(Map.class, PlanJson.connectionToTree(all).get(KEY_CONSTRAINTS));
+        assertEquals(List.of("down", "east", "north", "south", "up", "west"), constraints.get(KEY_ENTRY_DIRS));
+        Connection two = new Connection("c", new PortRef("a", "out"), new PortRef("b", "in"), ConnKind.ITEM, Routing.AUTO,
+                new Constraints(null, Set.of(), null, Set.of(Dir6.UP, Dir6.NORTH)));
+        assertTrue(CanonicalJson.write(PlanJson.connectionToTree(two)).contains("\"entryDirs\":[\"north\",\"up\"]"));
+    }
+
+    /** loosePlan() with its logistics replaced. */
+    private static SemanticPlan withLogistics(SemanticPlan plan, LogisticsPlan logistics) {
+        return new SemanticPlan(plan.schemaVersion(), plan.planId(), plan.revision(), plan.parentRevision(), plan.site(),
+                plan.style(), plan.nodes(), plan.connections(), logistics, plan.provenance());
+    }
+
+    private static LogisticsPlan.Dock dock(String id) {
+        return new LogisticsPlan.Dock(id, new Box(0, 0, 0, 8, 0, 8), new Box(0, 1, 0, 8, 16, 8), Facing.NORTH, List.of(), List.of());
+    }
+
+    private static LogisticsPlan.Route route(String id) {
+        return new LogisticsPlan.Route(id, "dock-1", "dock-2", List.of(new LocalPos(0, 5, 0)), "mod:airship_a");
+    }
+
+    @Test
+    void theOrderOfDocksRoutesAndFlowsDoesNotChangeTheHashButIsKeptInTheJson() {
+        // Like nodes and connections, the lists are written in a fixed order for the hash: docks and routes by id, flows by
+        // (item, from, to, perMin). The five flows differ from A in exactly one of those four, so a comparator that leaves
+        // any one of them out lets the input order decide between two of them, and the reversed lists then hash differently.
+        LogisticsPlan.CargoFlow a = new LogisticsPlan.CargoFlow("minecraft:iron", 12.5, "dock-1", "dock-2");
+        LogisticsPlan.CargoFlow byRate = new LogisticsPlan.CargoFlow("minecraft:iron", 3.0, "dock-1", "dock-2");
+        LogisticsPlan.CargoFlow byTo = new LogisticsPlan.CargoFlow("minecraft:iron", 12.5, "dock-1", "dock-1");
+        LogisticsPlan.CargoFlow byFrom = new LogisticsPlan.CargoFlow("minecraft:iron", 12.5, "dock-2", "dock-2");
+        LogisticsPlan.CargoFlow byItem = new LogisticsPlan.CargoFlow("minecraft:copper", 12.5, "dock-1", "dock-2");
+        LogisticsPlan forward = new LogisticsPlan(List.of(dock("dock-1"), dock("dock-2")), List.of(route("route-1"), route("route-2")),
+                List.of(a, byRate, byTo, byFrom, byItem));
+        LogisticsPlan backward = new LogisticsPlan(List.of(dock("dock-2"), dock("dock-1")), List.of(route("route-2"), route("route-1")),
+                List.of(byItem, byFrom, byTo, byRate, a));
+        assertNotEquals(forward, backward, "the two plans differ only in list order");
+        assertEquals(withLogistics(loosePlan(), forward).contentHash(), withLogistics(loosePlan(), backward).contentHash());
+
+        // the JSON form of a plan keeps the order it was given (a round trip must give back the same lists)
+        SemanticPlan back = PlanJson.planFromTree(MiniJson.parse(MiniJson.write(PlanJson.toTree(withLogistics(loosePlan(), backward)))));
+        assertEquals(backward, back.logistics());
+        Map<?, ?> logistics = assertInstanceOf(Map.class, PlanJson.toTree(withLogistics(loosePlan(), backward)).get(KEY_LOGISTICS));
+        assertEquals("dock-2", ((Map<?, ?>) ((List<?>) logistics.get(KEY_DOCKS)).get(0)).get("id"));
+    }
+
+    /**
+     * The content hash of {@link #loosePlan()}. Not copied from this code's output: the canonical text of the plan was
+     * written out by hand from its definition (keys in dictionary order, nodes and connections by id, entry directions
+     * by wire name, no whitespace) and hashed with a separate SHA-256 implementation.
+     */
+    private static final String LOOSE_PLAN_HASH = "0fd74b89c104e64ea8ce76462120b9dc012444999b82490a60a823f3031809ff";
+
+    @Test
+    void theContentHashOfTheLoosePlanIsPinned() {
+        assertEquals(LOOSE_PLAN_HASH, loosePlan().contentHash());
+    }
+
+    /** Three node kinds of anchor, a typed number and material, a mirrored turn, and Japanese text; given in an order that is not the id order. */
+    static SemanticPlan smallPlan() {
+        PlanNode dial = new PlanNode("z-dial", "test:dial", null, new Anchor.Absolute(new LocalPos(-1, 2, 3), new Rot(3, true)),
+                Map.of("speed", new NumV(0.1), "lock", new BoolV(false)), Set.of("t"), "ダイヤル");
+        PlanNode slot = new PlanNode("a-slot", "mod:x", "z-dial", new Anchor.InSlot("s1", Rot.NONE),
+                Map.of("mat", new MaterialV("wall"), "kind", new EnumV("big")), Set.of(), "");
+        PlanNode door = new PlanNode("m-door", "micra:door", null, new Anchor.OnSurface("z-dial", Side.INNER, 1, 2), Map.of(),
+                Set.of(), "");
+        Connection connection = new Connection("c", new PortRef("z-dial", "out"), new PortRef("a-slot", "in"), ConnKind.ROTATION,
+                Routing.AUTO, Constraints.NONE);
+        return new SemanticPlan(SemanticPlan.SCHEMA_VERSION, "small-1", 7, 6,
+                new Site("minecraft:the_nether", new BuildFrame(new IntPos(-8, 70, 1000), Facing.NORTH), new Box(0, 0, 0, 9, 9, 9),
+                        "td", "claim-1"),
+                new StyleSpec(Map.of("wall", "minecraft:bricks"), Set.of("b", "a")), List.of(dial, slot, door), List.of(connection),
+                null, Provenance.NONE);
+    }
+
+    /** The canonical text of {@link #smallPlan()} as the design rules give it (section 0 of the data model), worked out by hand. */
+    private static final String SMALL_PLAN_CANONICAL = "{\"connections\":[{\"constraints\":{\"avoid\":[],\"entryDirs\":[],"
+            + "\"maxLength\":null,\"maxTurns\":null},\"from\":{\"node\":\"z-dial\",\"port\":\"out\"},\"id\":\"c\","
+            + "\"kind\":\"rotation\",\"routing\":{\"mode\":\"auto\"},\"to\":{\"node\":\"a-slot\",\"port\":\"in\"}}],"
+            + "\"logistics\":null,\"nodes\":["
+            + "{\"anchor\":{\"kind\":\"slot\",\"rot\":{\"mirror\":false,\"turns\":0},\"slot\":\"s1\"},\"id\":\"a-slot\","
+            + "\"label\":\"\",\"params\":{\"kind\":\"big\",\"mat\":\"wall\"},\"parent\":\"z-dial\",\"tags\":[],\"type\":\"mod:x\"},"
+            + "{\"anchor\":{\"kind\":\"surface\",\"node\":\"z-dial\",\"side\":\"inner\",\"u\":1,\"v\":2},\"id\":\"m-door\","
+            + "\"label\":\"\",\"params\":{},\"parent\":null,\"tags\":[],\"type\":\"micra:door\"},"
+            + "{\"anchor\":{\"kind\":\"absolute\",\"pos\":[-1,2,3],\"rot\":{\"mirror\":true,\"turns\":3}},\"id\":\"z-dial\","
+            + "\"label\":\"ダイヤル\",\"params\":{\"lock\":false,\"speed\":0.1},\"parent\":null,\"tags\":[\"t\"],\"type\":\"test:dial\"}],"
+            + "\"schemaVersion\":1,\"site\":{\"bounds\":[0,0,0,9,9,9],\"claimId\":\"claim-1\","
+            + "\"dimension\":\"minecraft:the_nether\",\"facing\":\"north\",\"origin\":[-8,70,1000],\"terrainDigest\":\"td\"},"
+            + "\"style\":{\"moodTags\":[\"a\",\"b\"],\"palette\":{\"wall\":\"minecraft:bricks\"}}}";
+    /** SHA-256 of {@link #SMALL_PLAN_CANONICAL} in UTF-8, from a separate implementation. */
+    private static final String SMALL_PLAN_HASH = "9601dddf0744ab174734f0ad239dd32d704cee9ba0e984d3f86beec049ecbf73";
+
+    @Test
+    void theCanonicalTextAndHashOfASmallPlanAreThePinnedOnes() {
+        assertEquals(SMALL_PLAN_CANONICAL, CanonicalJson.write(PlanJson.contentTree(smallPlan())));
+        assertEquals(SMALL_PLAN_HASH, smallPlan().contentHash());
+    }
+
+    @Test
+    void changingAnySectionOfAPlanChangesTheHash() {
+        SemanticPlan plan = loosePlan();
+        Map<String, SemanticPlan> changed = new LinkedHashMap<>();
+        changed.put("site", new SemanticPlan(plan.schemaVersion(), plan.planId(), plan.revision(), plan.parentRevision(),
+                new Site("minecraft:overworld", new BuildFrame(new IntPos(100, 64, 200), Facing.WEST), plan.site().localBounds(), "", ""),
+                plan.style(), plan.nodes(), plan.connections(), plan.logistics(), plan.provenance()));
+        changed.put("style", new SemanticPlan(plan.schemaVersion(), plan.planId(), plan.revision(), plan.parentRevision(), plan.site(),
+                new StyleSpec(Map.of("roof", "minecraft:bricks", "wall", "minecraft:stone_bricks"), Set.of("cozy")), plan.nodes(),
+                plan.connections(), plan.logistics(), plan.provenance()));
+        Connection first = plan.connections().get(0);
+        List<Connection> editedConnections = new ArrayList<>(plan.connections());
+        editedConnections.set(0, new Connection(first.id(), first.from(), first.to(), first.kind(), first.routing(),
+                new Constraints(21, first.constraints().avoidNodeIds(), first.constraints().maxTurns(),
+                        first.constraints().allowedEntryDirs())));
+        changed.put("connection", new SemanticPlan(plan.schemaVersion(), plan.planId(), plan.revision(), plan.parentRevision(),
+                plan.site(), plan.style(), plan.nodes(), editedConnections, plan.logistics(), plan.provenance()));
+        changed.put("logistics", withLogistics(plan, new LogisticsPlan(plan.logistics().docks(), plan.logistics().routes(),
+                List.of(new LogisticsPlan.CargoFlow("create:iron_sheet", 13.0, "dock-1", "dock-1")))));
+        changed.put("schemaVersion", new SemanticPlan(plan.schemaVersion() + 1, plan.planId(), plan.revision(), plan.parentRevision(),
+                plan.site(), plan.style(), plan.nodes(), plan.connections(), plan.logistics(), plan.provenance()));
+        TreeMap<String, ParamValue> params = new TreeMap<>(plan.nodes().get(0).params());
+        params.put("depth", new IntV(8));
+        List<PlanNode> editedNodes = new ArrayList<>(plan.nodes());
+        PlanNode structure = editedNodes.get(0);
+        editedNodes.set(0, new PlanNode(structure.id(), structure.type(), structure.parent(), structure.anchor(), params,
+                structure.tags(), structure.label()));
+        changed.put("node param", new SemanticPlan(plan.schemaVersion(), plan.planId(), plan.revision(), plan.parentRevision(),
+                plan.site(), plan.style(), editedNodes, plan.connections(), plan.logistics(), plan.provenance()));
+
+        Map<String, String> seen = new HashMap<>();
+        seen.put(plan.contentHash(), "the unchanged plan");
+        for (Map.Entry<String, SemanticPlan> e : changed.entrySet()) {
+            String clash = seen.put(e.getValue().contentHash(), e.getKey());
+            assertNull(clash, "changing the " + e.getKey() + " must give a hash of its own, but it equals that of " + clash);
+        }
     }
 
     @Test

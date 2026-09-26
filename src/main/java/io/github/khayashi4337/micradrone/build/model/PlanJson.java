@@ -128,6 +128,17 @@ public final class PlanJson {
     private static final int BOX_SIZE = 6;
     private static final String BOX_SHAPE = "six integers [minA, minB, minC, maxA, maxB, maxC]";
 
+    // The order the content hash writes logistics lists in.
+    /** Strings that may be null (a hand-built plan) sort first, so such a plan can still be hashed. */
+    private static final Comparator<String> NULLS_FIRST = Comparator.nullsFirst(Comparator.naturalOrder());
+    private static final Comparator<LogisticsPlan.Dock> DOCK_ORDER = Comparator.comparing(LogisticsPlan.Dock::id, NULLS_FIRST);
+    private static final Comparator<LogisticsPlan.Route> ROUTE_ORDER = Comparator.comparing(LogisticsPlan.Route::id, NULLS_FIRST);
+    private static final Comparator<LogisticsPlan.CargoFlow> FLOW_ORDER = Comparator
+            .comparing(LogisticsPlan.CargoFlow::itemId, NULLS_FIRST)
+            .thenComparing(LogisticsPlan.CargoFlow::fromDock, NULLS_FIRST)
+            .thenComparing(LogisticsPlan.CargoFlow::toDock, NULLS_FIRST)
+            .thenComparingDouble(LogisticsPlan.CargoFlow::perMin);
+
     private PlanJson() {
     }
 
@@ -144,7 +155,11 @@ public final class PlanJson {
         return m;
     }
 
-    /** The tree the content hash is computed from: no meta fields, nodes and connections in id order. */
+    /**
+     * The tree the content hash is computed from: no meta fields, so that the same design hashes the same however its
+     * lists were ordered: nodes, connections, docks and routes in id order, flows by (item, from, to, perMin).
+     * (The lists inside one dock or route, such as waypoints, are a path or an unordered listing kept as given.)
+     */
     public static Map<String, Object> contentTree(SemanticPlan plan) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put(KEY_SCHEMA_VERSION, plan.schemaVersion());
@@ -168,7 +183,7 @@ public final class PlanJson {
         m.put(KEY_STYLE, styleTree(plan.style()));
         m.put(KEY_NODES, trees(nodes, PlanJson::nodeToTree));
         m.put(KEY_CONNECTIONS, trees(connections, PlanJson::connectionToTree));
-        m.put(KEY_LOGISTICS, plan.logistics() == null ? null : logisticsTree(plan.logistics()));
+        m.put(KEY_LOGISTICS, plan.logistics() == null ? null : logisticsTree(plan.logistics(), canonicalOrder));
         return m;
     }
 
@@ -301,15 +316,29 @@ public final class PlanJson {
         m.put(KEY_MAX_LENGTH, c.maxLength());
         m.put(KEY_AVOID, new ArrayList<>(c.avoidNodeIds()));
         m.put(KEY_MAX_TURNS, c.maxTurns());
-        m.put(KEY_ENTRY_DIRS, trees(c.allowedEntryDirs(), Dir6::lower));
+        m.put(KEY_ENTRY_DIRS, entryDirTree(c.allowedEntryDirs()));
         return m;
     }
 
-    static Map<String, Object> logisticsTree(LogisticsPlan l) {
+    /** The wire names in dictionary order, so the written order does not depend on how {@link Dir6} happens to be declared. */
+    private static List<Object> entryDirTree(Set<Dir6> dirs) {
+        return trees(dirs.stream().map(Dir6::lower).sorted().toList(), Function.identity());
+    }
+
+    /** {@code canonicalOrder}: docks and routes by id and flows by (item, from, to, perMin) instead of the order given. */
+    static Map<String, Object> logisticsTree(LogisticsPlan l, boolean canonicalOrder) {
+        List<LogisticsPlan.Dock> docks = new ArrayList<>(l.docks());
+        List<LogisticsPlan.Route> routes = new ArrayList<>(l.routes());
+        List<LogisticsPlan.CargoFlow> flows = new ArrayList<>(l.flows());
+        if (canonicalOrder) {
+            docks.sort(DOCK_ORDER);
+            routes.sort(ROUTE_ORDER);
+            flows.sort(FLOW_ORDER);
+        }
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put(KEY_DOCKS, trees(l.docks(), PlanJson::dockTree));
-        m.put(KEY_ROUTES, trees(l.routes(), PlanJson::routeTree));
-        m.put(KEY_FLOWS, trees(l.flows(), PlanJson::flowTree));
+        m.put(KEY_DOCKS, trees(docks, PlanJson::dockTree));
+        m.put(KEY_ROUTES, trees(routes, PlanJson::routeTree));
+        m.put(KEY_FLOWS, trees(flows, PlanJson::flowTree));
         return m;
     }
 
@@ -641,7 +670,7 @@ public final class PlanJson {
             }
             case PlanOp.SetLogistics o -> {
                 m.put(KEY_OP, OP_SET_LOGISTICS);
-                m.put(KEY_LOGISTICS, o.logistics() == null ? null : logisticsTree(o.logistics()));
+                m.put(KEY_LOGISTICS, o.logistics() == null ? null : logisticsTree(o.logistics(), false));
             }
         }
         return m;
