@@ -8,7 +8,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 class PlanInterpreterTest {
     private static void run(String source, RecordingPlanApi api, PlanRunLimits limits) {
@@ -445,5 +449,73 @@ class PlanInterpreterTest {
                 "s = \"x\"\nfor i in range(19):\n    s = s + s\nfor i in range(30):\n    print(s)\n").scan()).parseProgram());
         assertEquals(30, api.printed.size());
         assertEquals(524288, api.printed.get(0).length());
+    }
+
+    // ---- every remaining charge site (fix round 2): print, "+" and list() are pinned above ----
+
+    /**
+     * Scripts that each hammer exactly one chargePlanAllocation site: a legal-sized seed value
+     * (20,000 elements or a 524,288/65,536-character string, both under the per-value caps) is
+     * copied/snapshotted/rendered in a loop until the 10,000,000-unit budget gives out. Seeding by
+     * append/index-assign/doubling is cheap in steps and the loops die in a few hundred statements,
+     * so without the site's charge the same script runs on into the step or time limit instead.
+     */
+    private static Stream<Arguments> scriptsThatHammerOneAllocationChargeSiteEach() {
+        // a legal 20,000-element list/dict: append and d[i]= are not charged, so each later
+        // copy/snapshot of the seed charges exactly 20,000 units (500 of them fill the budget)
+        String list = "l = []\nfor i in range(20000):\n    l.append(i)\n";
+        String dict = "d = {}\nfor i in range(20000):\n    d[i] = i\n";
+        return Stream.of(
+                // the doublings charge 2+4+...+524,288 = 1,048,574; each str(s) charges 524,288 more,
+                // so the 17th call fits (9,961,470) and the 18th does not
+                Arguments.of("str()",
+                        "s = \"x\"\nfor i in range(19):\n    s = s + s\nwhile True:\n    t = str(s)\n"),
+                Arguments.of("set()", list + "while True:\n    t = set(l)\n"),
+                Arguments.of("keys()", dict + "while True:\n    k = d.keys()\n"),
+                Arguments.of("values()", dict + "while True:\n    v = d.values()\n"),
+                // each for-loop snapshot of the seed charges its 20,000 elements; the body exits at once
+                Arguments.of("for over a list", list + "while True:\n    for x in l:\n        break\n"),
+                Arguments.of("for over a set", list + "s = set(l)\nwhile True:\n    for x in s:\n        break\n"),
+                Arguments.of("for over a dict", dict + "while True:\n    for k in d:\n        break\n"),
+                // 16 doublings make a 65,536-character string (charged 131,070); each loop snapshot
+                // charges its 65,536 characters, so the 151st loop tips the total past 10,000,000
+                Arguments.of("for over a string",
+                        "s = \"x\"\nfor i in range(16):\n    s = s + s\nwhile True:\n    for c in s:\n        break\n"),
+                // each min()/max() call copies all 20,000 candidates into its candidate list
+                Arguments.of("min()", list + "while True:\n    m = min(l)\n"),
+                Arguments.of("max()", list + "while True:\n    m = max(l)\n"));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("scriptsThatHammerOneAllocationChargeSiteEach")
+    void everyChargeSiteStopsWithTheAllocationMessageNotTheStepMessage(String site, String script) {
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
+        assertTrue(e.getMessage().contains("total allocation limit of 10000000"), site + ": " + e.getMessage());
+        // the step-limit message ("construction script exceeded <N> steps") must not appear: without
+        // the charge the loop only dies at the step (or time) limit, which carries a different text
+        assertFalse(e.getMessage().contains(" steps"), site + ": " + e.getMessage());
+    }
+
+    @Test
+    void exactlyTenMillionAllocatedUnitsRunAndOneMoreThrows() {
+        RecordingPlanApi api = new RecordingPlanApi();
+        // s = "x" then six lines of s = s+s+...+s (ten terms): on line k the nine "+" operations
+        // produce results of 2,3,...,10 x 10^(k-1) characters, charging (2+3+...+10) x 10^(k-1)
+        // = 54 x 10^(k-1) units, so the six lines charge 54 x 111,111 = 5,999,994 and leave s at
+        // exactly the 1,000,000-character cap.
+        // Four str(s) calls then charge 4 x 1,000,000 -> 9,999,994, and str("abcdef") adds the
+        // final 6: exactly 10,000,000 units, which is still allowed (the check is ">", not ">=").
+        String buildToCap = "s = \"x\"\n" + "s = s + s + s + s + s + s + s + s + s + s\n".repeat(6);
+        String fourRenders = "t = str(s)\n".repeat(4);
+        run(buildToCap + fourRenders + "u = str(\"abcdef\")\nmood(\"ok\")\n", api,
+                new PlanRunLimits(1_000_000, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+        // one more charged unit (a 1-character str) takes the total to 10,000,001: refused on line 13
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(buildToCap + fourRenders + "u = str(\"abcdef\")\nv = str(\"a\")\n",
+                        new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
+        assertEquals("line 13: construction script exceeded the total allocation limit of 10000000 (characters and collection elements created)",
+                e.getMessage());
     }
 }

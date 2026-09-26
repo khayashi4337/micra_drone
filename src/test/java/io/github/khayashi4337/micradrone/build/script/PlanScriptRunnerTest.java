@@ -1,6 +1,7 @@
 package io.github.khayashi4337.micradrone.build.script;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -258,5 +259,41 @@ class PlanScriptRunnerTest {
         assertTrue(message.contains("no key"), message);
         assertTrue(message.endsWith("..."), message);
         assertTrue(message.length() < 500, String.valueOf(message.length()));
+    }
+
+    // ---- issue detail cut boundary at exactly 400 characters (fix round 2) ----
+
+    @Test
+    void aFourHundredCharacterErrorDetailIsQuotedWholeAndFourHundredOneIsCut() {
+        // a missing dict key reads "line 2: no key <key> in this dict" = 15 + key + 13 characters,
+        // so 372 x's make the interpreter message exactly 400 characters and 373 make it 401
+        String whole = "line 2: no key " + "x".repeat(372) + " in this dict";
+        String over = "line 2: no key " + "x".repeat(373) + " in this dict";
+        assertEquals(400, whole.length());
+        assertEquals(401, over.length());
+        PlanScriptRunner.Result exact = run("d = {}\nprint(d[\"" + "x".repeat(372) + "\"])");
+        assertEquals(List.of("E-SCHEMA"), codes(exact));
+        assertEquals("E-SCHEMA:#run:1", exact.issues().get(0).id());
+        String exactMessage = exact.issues().get(0).message();
+        assertTrue(exactMessage.endsWith(whole), exactMessage);
+        assertFalse(exactMessage.endsWith("..."), exactMessage);
+        PlanScriptRunner.Result cut = run("d = {}\nprint(d[\"" + "x".repeat(373) + "\"])");
+        assertEquals(List.of("E-SCHEMA"), codes(cut));
+        String cutDetail = cut.issues().get(0).message().substring(cut.issues().get(0).message().indexOf("line 2:"));
+        assertEquals(over.substring(0, 400) + "...", cutDetail);
+        assertEquals(403, cutDetail.length());
+    }
+
+    @Test
+    void aSyntaxErrorDetailLongerThanFourHundredCharactersIsAlsoCut() {
+        // "print(a <500 b's>)": the parser takes "a" as the argument, then reports
+        // "expected ')' but found IDENT(bbb...)" - a 538-character interpreter message
+        PlanScriptRunner.Result r = run("print(a " + "b".repeat(500) + ")");
+        assertEquals(List.of("E-SCHEMA"), codes(r));
+        assertEquals("E-SCHEMA:#syntax:1", r.issues().get(0).id());
+        String detail = r.issues().get(0).message().substring(r.issues().get(0).message().indexOf("line 1:"));
+        assertTrue(detail.startsWith("line 1: expected ')' but found IDENT(bbb"), detail);
+        assertTrue(detail.endsWith("..."), detail);
+        assertEquals(403, detail.length());
     }
 }
