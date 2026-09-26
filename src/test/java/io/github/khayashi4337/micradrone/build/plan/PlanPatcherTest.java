@@ -160,6 +160,27 @@ class PlanPatcherTest {
         assertEquals(List.of("E-ANCHOR"), codes(patcher.apply(plan, patch(1, new PlanOp.UpdateParams("ghost", Map.of())))));
     }
 
+    private static void assertPositiveZero(ParamValue v) {
+        double d = ((NumV) v).value();
+        assertEquals(Double.doubleToRawLongBits(0.0), Double.doubleToRawLongBits(d), "the value is +0.0, not -0.0: " + d);
+    }
+
+    @Test
+    void aNegativeZeroNumberParameterIsStoredAsPositiveZero() {
+        // -0.0 cannot survive a trip through decimal text, so the plan never keeps it (a plan must equal its replay)
+        PlanPatcher dialPatcher = new PlanPatcher(TestParts.registryWithDial(), TestParts.bundle());
+        PlanNode dial = node("dial", "test:dial", null, Map.of("speed", new NumV(-0.0)));
+        PatchResult added = dialPatcher.apply(SemanticPlan.empty("p"), patch(0, new PlanOp.AddNode(dial)));
+        assertTrue(added.ok(), added.issues().toString());
+        assertPositiveZero(added.plan().node("dial").orElseThrow().params().get("speed"));
+
+        PlanNode running = node("dial", "test:dial", null, Map.of("speed", new NumV(12.5)));
+        SemanticPlan plan = dialPatcher.apply(SemanticPlan.empty("p"), patch(0, new PlanOp.AddNode(running))).plan();
+        PatchResult updated = dialPatcher.apply(plan, patch(1, new PlanOp.UpdateParams("dial", Map.of("speed", new NumV(-0.0)))));
+        assertTrue(updated.ok(), updated.issues().toString());
+        assertPositiveZero(updated.plan().node("dial").orElseThrow().params().get("speed"));
+    }
+
     @Test
     void hugePositionsAndControlCharactersAreRefused() {
         PlanNode far = new PlanNode("a", "micra:pillar", null, new Anchor.Absolute(new LocalPos(Integer.MAX_VALUE, 0, 0), Rot.NONE), Map.of(), Set.of(), "");
@@ -379,6 +400,146 @@ class PlanPatcherTest {
         assertTrue(r.ok(), r.issues().toString());
     }
 
+    // ------------------------------------------------------------------ loops through parents AND surfaces
+
+    /** How long the chains of the timing tests are: far deeper than a recursive walk could go on a test thread's stack. */
+    private static final int LONG_CHAIN = 100_000;
+
+    private static PlanNode chainWall(String id, String parent, Anchor anchor) {
+        return new PlanNode(id, "micra:wall", parent, anchor, Map.of("side", new StrV("north")), Set.of(), "");
+    }
+
+    private static PlanNode chainDoor(String id, String parent, Anchor anchor) {
+        return new PlanNode(id, "micra:door", parent, anchor, Map.of(), Set.of(), "");
+    }
+
+    /** The nodes added in the given order to an empty plan: revision 1. */
+    private SemanticPlan planOfNodes(PlanNode... nodes) {
+        List<PlanOp> ops = new ArrayList<>();
+        for (PlanNode n : nodes) {
+            ops.add(new PlanOp.AddNode(n));
+        }
+        PatchResult r = patcher.apply(SemanticPlan.empty("plan"), new PlanPatch("p-0", 0, "test", ops));
+        assertTrue(r.ok(), r.issues().toString());
+        return r.plan();
+    }
+
+    private static List<String> nodeIds(SemanticPlan plan) {
+        return plan.nodes().stream().map(PlanNode::id).toList();
+    }
+
+    @Test
+    void aNodeMovedOntoAWallThatWasAddedLaterIsNotALoop() {
+        // door-1 is stored before wall-1 and then rests on it: nothing points back, so the patcher accepts it
+        SemanticPlan plan = planOfNodes(chainDoor("door-1", null, abs(0, 0, 0)), chainWall("wall-1", null, abs(0, 0, 0)));
+        Anchor onWall1 = new Anchor.OnSurface("wall-1", Side.OUTER, 1, 0);
+        PatchResult r = patcher.apply(plan, patch(1, new PlanOp.MoveNode("door-1", onWall1)));
+        assertTrue(r.ok(), r.issues().toString());
+        assertEquals(onWall1, r.plan().node("door-1").orElseThrow().anchor());
+        assertEquals(List.of("door-1", "wall-1"), nodeIds(r.plan()), "a move never reorders the stored nodes");
+    }
+
+    @Test
+    void aChildThatAlsoRestsOnItsParentWallIsNotALoop() {
+        // the same node is both the parent and the surface target: one dependency reached twice, not a loop
+        SemanticPlan plan = planOfNodes(chainWall("wall-1", null, abs(0, 0, 0)), chainDoor("door-1", "wall-1", abs(0, 0, 0)));
+        PatchResult r = patcher.apply(plan, patch(1,
+                new PlanOp.MoveNode("door-1", new Anchor.OnSurface("wall-1", Side.OUTER, 2, 0))));
+        assertTrue(r.ok(), r.issues().toString());
+    }
+
+    @Test
+    void aWallWhoseParentIsADoorRefusesThatDoorMovedOntoIt() {
+        // wall-1 hangs below door-1 (parent), so door-1 cannot rest on wall-1 (surface): each needs the other first
+        SemanticPlan plan = planOfNodes(chainDoor("door-1", null, abs(0, 0, 0)), chainWall("wall-1", "door-1", abs(0, 0, 0)));
+        Anchor onWall1 = new Anchor.OnSurface("wall-1", Side.OUTER, 1, 0);
+        PatchResult r = patcher.apply(plan, patch(1, new PlanOp.MoveNode("door-1", onWall1)));
+        assertSingleIssue(r, IssueCode.E_ANCHOR, "E-ANCHOR:door-1#cycle", List.of("door-1"));
+        assertTrue(r.issues().get(0).message().contains("親子") && r.issues().get(0).message().contains("面"),
+                "the message names both kinds of relation: " + r.issues().get(0).message());
+        // the same inside one patch: the wall is added under the door, then the door is moved onto it
+        PatchResult sameFlow = patcher.apply(SemanticPlan.empty("plan"), patch(0,
+                new PlanOp.AddNode(chainDoor("door-1", null, abs(0, 0, 0))),
+                new PlanOp.AddNode(chainWall("wall-1", "door-1", abs(0, 0, 0))),
+                new PlanOp.MoveNode("door-1", onWall1)));
+        assertSingleIssue(sameFlow, IssueCode.E_ANCHOR, "E-ANCHOR:door-1#cycle", List.of("door-1"));
+    }
+
+    @Test
+    void aLoopOfThreeNodesMixingParentAndSurfaceRelationsIsRefused() {
+        // w2 hangs below w1 (parent); w3 rests on w2 (surface): w3 needs w2 needs w1
+        SemanticPlan plan = planOfNodes(chainWall("w1", null, abs(0, 0, 0)), chainWall("w2", "w1", abs(0, 0, 0)),
+                chainWall("w3", null, abs(0, 0, 0)));
+        PatchResult twoLinks = patcher.apply(plan, patch(1, new PlanOp.MoveNode("w3", onWall("w2"))));
+        assertTrue(twoLinks.ok(), twoLinks.issues().toString());
+        // w1 resting on w3 would close w1 -> w3 -> w2 -> w1 (surface, surface, parent)
+        assertSingleIssue(patcher.apply(twoLinks.plan(), patch(2, new PlanOp.MoveNode("w1", onWall("w3")))),
+                IssueCode.E_ANCHOR, "E-ANCHOR:w1#cycle", List.of("w1"));
+        // a chain of two parents and a surface: w3 hangs below w2 below w1, so w1 cannot rest on w3
+        SemanticPlan parents = planOfNodes(chainWall("w1", null, abs(0, 0, 0)), chainWall("w2", "w1", abs(0, 0, 0)),
+                chainWall("w3", "w2", abs(0, 0, 0)));
+        assertSingleIssue(patcher.apply(parents, patch(1, new PlanOp.MoveNode("w1", onWall("w3")))),
+                IssueCode.E_ANCHOR, "E-ANCHOR:w1#cycle", List.of("w1"));
+        // the other direction is fine: the leaf resting on the root closes nothing
+        assertTrue(patcher.apply(parents, patch(1, new PlanOp.MoveNode("w3", onWall("w1")))).ok());
+    }
+
+    @Test
+    void aLoopThroughTheParentOfThePartBeingMovedIsRefused() {
+        // the hut cannot rest on its own wall: the wall hangs below the hut
+        SemanticPlan plan = hut(patcher);
+        assertSingleIssue(patcher.apply(plan, patch(1, new PlanOp.MoveNode("hut", onWall("wall-n")))),
+                IssueCode.E_ANCHOR, "E-ANCHOR:hut#cycle", List.of("hut"));
+    }
+
+    @Test
+    void aLongParentChainIsWalkedWithoutRecursionOrDelay() {
+        List<PlanOp> ops = new ArrayList<>();
+        for (int i = 0; i < LONG_CHAIN; i++) {
+            ops.add(new PlanOp.AddNode(chainWall("w" + i, i == 0 ? null : "w" + (i - 1), abs(0, 0, 0))));
+        }
+        SemanticPlan chain = assertTimeoutPreemptively(Duration.ofSeconds(20),
+                () -> patcher.apply(SemanticPlan.empty("plan"), new PlanPatch("p-0", 0, "test", ops)).plan());
+        String last = "w" + (LONG_CHAIN - 1);
+        // the head resting on the far end of the chain would close a loop of LONG_CHAIN parents and one surface
+        PatchResult refused = assertTimeoutPreemptively(Duration.ofSeconds(20),
+                () -> patcher.apply(chain, patch(1, new PlanOp.MoveNode("w0", onWall(last)))));
+        assertSingleIssue(refused, IssueCode.E_ANCHOR, "E-ANCHOR:w0#cycle", List.of("w0"));
+        // the far end resting on the head closes nothing: the head depends on nothing
+        PatchResult accepted = assertTimeoutPreemptively(Duration.ofSeconds(20),
+                () -> patcher.apply(chain, patch(1, new PlanOp.MoveNode(last, onWall("w0")))));
+        assertTrue(accepted.ok(), accepted.issues().toString());
+    }
+
+    @Test
+    void aLongSurfaceChainIsWalkedWithoutRecursionOrDelay() {
+        List<PlanOp> ops = new ArrayList<>();
+        for (int i = 0; i < LONG_CHAIN; i++) {
+            ops.add(new PlanOp.AddNode(chainWall("w" + i, null, i == 0 ? abs(0, 0, 0) : onWall("w" + (i - 1)))));
+        }
+        SemanticPlan chain = assertTimeoutPreemptively(Duration.ofSeconds(20),
+                () -> patcher.apply(SemanticPlan.empty("plan"), new PlanPatch("p-0", 0, "test", ops)).plan());
+        String last = "w" + (LONG_CHAIN - 1);
+        PatchResult refused = assertTimeoutPreemptively(Duration.ofSeconds(20),
+                () -> patcher.apply(chain, patch(1, new PlanOp.MoveNode("w0", onWall(last)))));
+        assertSingleIssue(refused, IssueCode.E_ANCHOR, "E-ANCHOR:w0#cycle", List.of("w0"));
+        PatchResult accepted = assertTimeoutPreemptively(Duration.ofSeconds(20),
+                () -> patcher.apply(chain, patch(1, new PlanOp.MoveNode(last, onWall("w0")))));
+        assertTrue(accepted.ok(), accepted.issues().toString());
+    }
+
+    @Test
+    void aMixedLoopThatWasAlreadyThereDoesNotSpinThePatcher() {
+        // w1 hangs below w2 and rests on it; w2 hangs below w1: a loop the patcher never let in, in a hand-built plan
+        SemanticPlan looped = new SemanticPlan(1, "p", 1, 0, null, StyleSpec.EMPTY,
+                List.of(chainWall("w1", "w2", onWall("w2")), chainWall("w2", "w1", abs(0, 0, 0)),
+                        chainWall("w3", null, abs(0, 0, 0))),
+                List.of(), null, Provenance.NONE);
+        PatchResult r = assertTimeoutPreemptively(Duration.ofSeconds(5),
+                () -> patcher.apply(looped, patch(1, new PlanOp.MoveNode("w3", onWall("w1")))));
+        assertTrue(r.ok(), r.issues().toString());
+    }
+
     // ------------------------------------------------------------------ rules that were only checked by their code
 
     @Test
@@ -467,6 +628,56 @@ class PlanPatcherTest {
         SemanticPlan plan = machinePlan(new PlanOp.SetLogistics(logistics));
         assertRemovalRefused(patcher.apply(plan, patch(1, new PlanOp.RemoveNode("r"))), "r", "dock-b");
         assertTrue(patcher.apply(plan, patch(1, new PlanOp.RemoveNode("s"))).ok());
+    }
+
+    private PatchResult setLogistics(LogisticsPlan.Dock... docks) {
+        return patcher.apply(SemanticPlan.empty("p"), patch(0, new PlanOp.SetLogistics(
+                new LogisticsPlan(List.of(docks), List.of(), List.of()))));
+    }
+
+    @Test
+    void aDockPortThatTheScriptTextCannotCarryIsRefusedNamingTheDock() {
+        // "node.port" is split at the FIRST dot and both halves must be non-empty, so a node id with a dot or
+        // without characters cannot be written into a script and read back
+        List<PortRef> unwritable = List.of(new PortRef("a.b", "c"), new PortRef("", "c"), new PortRef("a", ""),
+                new PortRef("Bad_Id", "c"), new PortRef("a".repeat(49), "c"), new PortRef(".", "c"));
+        for (PortRef bad : unwritable) {
+            assertSingleIssue(setLogistics(dock("dock-a", List.of(bad), List.of())),
+                    IssueCode.E_CONN_INVALID, "E-CONN-INVALID:dock-a#port:0", List.of("dock-a"));
+        }
+    }
+
+    @Test
+    void aDockPortWithAWellFormedNodeIdIsAcceptedEvenWhenTheNameHasADot() {
+        // the split is at the first dot, so a port NAME may contain more dots; the node need not exist yet
+        List<PortRef> writable = List.of(new PortRef("m", "out"), new PortRef("m", "out.left"), new PortRef("m", "a b"),
+                new PortRef("n".repeat(48), "p"), new PortRef("a-1", "."));
+        for (PortRef ok : writable) {
+            PatchResult r = setLogistics(dock("dock-a", List.of(ok), List.of()));
+            assertTrue(r.ok(), ok + " " + r.issues());
+        }
+    }
+
+    @Test
+    void everyUnwritableDockPortIsReportedWithItsPositionInThatDock() {
+        PortRef bad = new PortRef("a.b", "c");
+        PortRef good = new PortRef("m", "out");
+        PatchResult r = setLogistics(dock("dock-a", List.of(bad, good, bad), List.of()), dock("dock-b", List.of(good), List.of()),
+                dock("dock-c", List.of(new PortRef("m", "")), List.of()));
+        assertNull(r.plan(), "the whole logistics plan is refused");
+        assertEquals(List.of("E-CONN-INVALID:dock-a#port:0", "E-CONN-INVALID:dock-a#port:2", "E-CONN-INVALID:dock-c#port:0"),
+                r.issues().stream().map(Issue::id).toList());
+    }
+
+    @Test
+    void theMessageOfAnUnwritableDockPortNamesTheDockAndNeverQuotesAHugeValue() {
+        String huge = "x".repeat(100_000);
+        PatchResult r = setLogistics(dock("dock-a", List.of(new PortRef(huge, "c")), List.of()));
+        assertEquals(1, r.issues().size(), r.issues().toString());
+        Issue issue = r.issues().get(0);
+        assertTrue(issue.message().contains("dock-a"), issue.message());
+        assertTrue(issue.message().length() < 400, "message length " + issue.message().length());
+        assertFalse(issue.message().contains("x".repeat(100)), "the value is cut, not quoted whole");
     }
 
     @Test

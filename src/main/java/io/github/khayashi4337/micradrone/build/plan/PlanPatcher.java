@@ -22,6 +22,8 @@ import io.github.khayashi4337.micradrone.build.parts.BuildingParts;
 import io.github.khayashi4337.micradrone.build.parts.ParamValidator;
 import io.github.khayashi4337.micradrone.build.parts.PartType;
 import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
+import io.github.khayashi4337.micradrone.lang.PlanValueText;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -73,8 +75,13 @@ public final class PlanPatcher {
     private static final String KEY_STYLE = "style";
     private static final String KEY_SITE = "site";
     private static final String KEY_DOCK_PREFIX = "dock:";
+    /** Followed by the position of the port in its dock's list. */
+    private static final String KEY_PORT_PREFIX = "port:";
     private static final String KEY_VIA_PREFIX = "via:";
     private static final String PORT_SEPARATOR = ".";
+
+    private static final String MESSAGE_DEPENDENCY_LOOP =
+            "親子の関係と面に載せる関係が輪になっています(載せる先が、この部品に親子か面の関係でつながっています)";
     /** The site has no id of its own, so its issues name it by this. */
     private static final String SITE_SUBJECT = "site";
 
@@ -318,30 +325,51 @@ public final class PlanPatcher {
             issues.add(Issue.of(IssueCode.E_ANCHOR, KEY_ANCHOR, List.of(ownerId), problem));
             return false;
         }
-        if (surfaceChainReaches(st, ownerId, s.nodeId())) {
-            issues.add(Issue.of(IssueCode.E_ANCHOR, KEY_CYCLE, List.of(ownerId), "面に載せる関係が輪になっています"));
+        return true;
+    }
+
+    /**
+     * Whether moving the EXISTING node {@code ownerId} to {@code anchor} keeps the dependencies free of loops. A
+     * node depends on its parent and on the wall its {@link Anchor.OnSurface} anchor rests on; a loop mixing the two
+     * kinds cannot be written by any script (its statements would have to come in an order where each one needs the
+     * other first) and would never end for anything that walks the chain. Only a move can close one: a node that is
+     * being added is not yet the parent or the wall of anything, so adding is not checked (and stays constant-time).
+     */
+    private static boolean checkNoDependencyLoop(State st, String ownerId, Anchor anchor, List<Issue> issues) {
+        if (anchor instanceof Anchor.OnSurface s && dependsOn(st, s.nodeId(), ownerId)) {
+            issues.add(Issue.of(IssueCode.E_ANCHOR, KEY_CYCLE, List.of(ownerId), MESSAGE_DEPENDENCY_LOOP));
             return false;
         }
         return true;
     }
 
     /**
-     * Whether the node {@code ownerId} is met by following surface anchors from {@code startId}: the start's own
-     * anchor, then that target's anchor, and so on until a node that does not sit on a surface. If it is, putting
-     * the owner on the start would close a loop, and anything that walks the chain (the expander) would never end.
-     * The walk is capped at the number of nodes, so a loop that is already in the plan cannot spin this check.
+     * Whether {@code targetId} is met by following, from {@code startId}, every node's parent and every node's
+     * surface target. Each node is visited once (a set of the visited ids, an explicit stack, no recursion), so the
+     * walk is bounded by the number of nodes however long the chains are and even when the plan already holds a loop.
      */
-    private static boolean surfaceChainReaches(State st, String ownerId, String startId) {
-        String current = startId;
-        for (int step = 0; step <= st.nodes.size(); step++) {
-            if (current.equals(ownerId)) {
+    private static boolean dependsOn(State st, String startId, String targetId) {
+        Set<String> visited = new HashSet<>();
+        ArrayDeque<String> pending = new ArrayDeque<>();
+        pending.push(startId);
+        while (!pending.isEmpty()) {
+            String id = pending.pop();
+            if (id.equals(targetId)) {
                 return true;
             }
-            PlanNode node = st.nodes.get(current);
-            if (node == null || !(node.anchor() instanceof Anchor.OnSurface next)) {
-                return false;
+            if (!visited.add(id)) {
+                continue;
             }
-            current = next.nodeId();
+            PlanNode node = st.nodes.get(id);
+            if (node == null) {
+                continue;
+            }
+            if (node.parent() != null) {
+                pending.push(node.parent());
+            }
+            if (node.anchor() instanceof Anchor.OnSurface surface) {
+                pending.push(surface.nodeId());
+            }
         }
         return false;
     }
@@ -388,7 +416,8 @@ public final class PlanPatcher {
 
     private void moveNode(State st, PlanOp.MoveNode op, List<Issue> issues) {
         PlanNode existing = existingNode(st, op.id(), issues);
-        if (existing != null && checkAnchor(st, op.id(), op.anchor(), issues)) {
+        if (existing != null && checkAnchor(st, op.id(), op.anchor(), issues)
+                && checkNoDependencyLoop(st, op.id(), op.anchor(), issues)) {
             st.nodes.put(op.id(), withAnchor(existing, op.anchor()));
         }
     }
@@ -528,6 +557,7 @@ public final class PlanPatcher {
         Set<String> dockIds = new HashSet<>();
         for (LogisticsPlan.Dock d : logistics.docks()) {
             ok &= recordUniqueId(dockIds, d.id(), DUPLICATE_DOCK_ID, issues);
+            ok &= linkedPortsWritable(d, issues);
         }
         Set<String> routeIds = new HashSet<>();
         for (LogisticsPlan.Route r : logistics.routes()) {
@@ -540,6 +570,29 @@ public final class PlanPatcher {
         if (ok) {
             st.logistics = logistics;
         }
+    }
+
+    /**
+     * A dock's linked ports are written into scripts as {@code node.port} and read back by splitting at the FIRST dot,
+     * with both halves required: the node id must be a plan id (so it has no dot and is not empty) and the port name
+     * must not be empty. A dot inside the port NAME is fine. The refusal names the dock and quotes the two halves cut
+     * short, since they can be arbitrarily long. The node itself need not exist (docks are set alongside the nodes).
+     */
+    private static boolean linkedPortsWritable(LogisticsPlan.Dock d, List<Issue> issues) {
+        boolean ok = true;
+        List<PortRef> ports = d.linkedPorts();
+        for (int i = 0; i < ports.size(); i++) {
+            PortRef ref = ports.get(i);
+            if (!PlanIds.isValid(ref.nodeId()) || ref.port().isEmpty()) {
+                issues.add(Issue.of(IssueCode.E_CONN_INVALID, KEY_PORT_PREFIX + i, List.of(d.id()),
+                        "発着場" + PlanValueText.describe(d.id()) + "のつなぎ口を「ノードID" + PORT_SEPARATOR
+                                + "ポート名」の形で書けません(ノードIDは" + PlanIds.MAX_LENGTH
+                                + "字以内の小文字・数字・ハイフンで、ポート名は空にしないでください): ノードID「"
+                                + PlanValueText.describe(ref.nodeId()) + "」 ポート名「" + PlanValueText.describe(ref.port()) + "」"));
+                ok = false;
+            }
+        }
+        return ok;
     }
 
     /** Reports each distinct dock among the two ends that is not in {@code dockIds}; pointing at one twice counts once. */

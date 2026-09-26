@@ -11,6 +11,7 @@ import io.github.khayashi4337.micradrone.build.model.ParamValue.ListV;
 import io.github.khayashi4337.micradrone.build.model.ParamValue.MaterialV;
 import io.github.khayashi4337.micradrone.build.model.ParamValue.NumV;
 import io.github.khayashi4337.micradrone.build.model.ParamValue.StrV;
+import io.github.khayashi4337.micradrone.build.model.Zeros;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -132,7 +133,7 @@ public final class ParamValidator {
         if (tooLow || tooHigh) {
             throw new ParamException(rangeText(spec));
         }
-        return new NumV(value);
+        return new NumV(Zeros.positive(value));
     }
 
     private static ParamValue coerceIntList(ParamSpec spec, ParamValue loose) throws ParamException {

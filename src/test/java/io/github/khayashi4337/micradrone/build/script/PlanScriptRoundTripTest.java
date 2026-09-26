@@ -72,7 +72,13 @@ class PlanScriptRoundTripTest {
         return r.plan();
     }
 
-    /** plan -> scripts -> recorder -> plan again: the content hash must not move. Returns the scripts. */
+    /** The plan with the revision fields of {@code like}: a hand-made plan starts at revision 0, a replayed one at 1. */
+    private static SemanticPlan atRevisionOf(SemanticPlan plan, SemanticPlan like) {
+        return new SemanticPlan(plan.schemaVersion(), plan.planId(), like.revision(), like.parentRevision(), plan.site(),
+                plan.style(), plan.nodes(), plan.connections(), plan.logistics(), plan.provenance());
+    }
+
+    /** plan -> scripts -> recorder -> plan again: the content hash and the plan itself must not move. Returns the scripts. */
     private List<String> assertRoundTrip(SemanticPlan plan) {
         List<String> scripts = PlanScriptWriter.write(plan);
         for (String s : scripts) {
@@ -83,6 +89,8 @@ class PlanScriptRoundTripTest {
         PatchResult applied = patcher.apply(SemanticPlan.empty("rt-plan"), r.patch());
         assertTrue(applied.ok(), applied.issues().toString());
         assertEquals(plan.contentHash(), applied.plan().contentHash(), String.join("\n---\n", scripts));
+        // the hash ignores what the plan model could still get wrong (the sign of a zero); equality does not
+        assertEquals(atRevisionOf(plan, applied.plan()), applied.plan(), String.join("\n---\n", scripts));
         assertEquals(plan.nodes().size(), applied.plan().nodes().size());
         assertEquals(plan.connections().size(), applied.plan().connections().size());
         return scripts;
@@ -382,6 +390,44 @@ class PlanScriptRoundTripTest {
                 assertEquals(plan.contentHash(), applied.plan().contentHash(), c.text());
             }
         }
+    }
+
+    @Test
+    void aNegativeZeroParameterRoundTripsAsAnEqualPlan() {
+        // the patcher stores -0.0 as +0.0, so the plan and its replay are EQUAL, not only equal in hash
+        PlanPatcher widePatcher = new PlanPatcher(wideRegistry(), TestParts.bundle());
+        PatchResult built = widePatcher.apply(SemanticPlan.empty("rt-plan"), new PlanPatch("p", 0, "test",
+                List.of(new PlanOp.AddNode(node("w", "test:wide", null, abs(0, 0, 0), Map.of("v", new NumV(-0.0)), Set.of(), "")))));
+        assertTrue(built.ok(), built.issues().toString());
+        SemanticPlan plan = built.plan();
+        List<String> scripts = PlanScriptWriter.write(plan);
+        PlanScriptRunner.Result r = PlanScriptRunner.run(scripts, "rt", 0, "t", PlanRunLimits.DEFAULT);
+        assertTrue(r.ok(), r.issues().toString());
+        PatchResult applied = widePatcher.apply(SemanticPlan.empty("rt-plan"), r.patch());
+        assertTrue(applied.ok(), applied.issues().toString());
+        assertEquals(plan, applied.plan());
+        assertEquals(plan.contentHash(), applied.plan().contentHash());
+    }
+
+    @Test
+    void aNegativeZeroFlowRateRoundTripsAsAnEqualPlan() {
+        LogisticsPlan logistics = new LogisticsPlan(
+                List.of(new LogisticsPlan.Dock("dock-1", new Box(0, 0, 0, 8, 0, 8), new Box(0, 1, 0, 8, 16, 8), Facing.WEST, List.of(), List.of())),
+                List.of(), List.of(new LogisticsPlan.CargoFlow("create:iron_sheet", -0.0, "dock-1", "dock-1")));
+        SemanticPlan plan = build(List.of(new PlanOp.SetLogistics(logistics)));
+        List<String> scripts = assertRoundTrip(plan);
+        assertTrue(scripts.get(0).contains("\"per_min\": 0,"), scripts.get(0));
+    }
+
+    @Test
+    void aDockPortNameWithADotRoundTripsBecauseTheSplitIsAtTheFirstDot() {
+        LogisticsPlan logistics = new LogisticsPlan(
+                List.of(new LogisticsPlan.Dock("dock-1", new Box(0, 0, 0, 8, 0, 8), new Box(0, 1, 0, 8, 16, 8), Facing.WEST,
+                        List.of(new PortRef("press-1", "item.out"), new PortRef("press-1", "a.b.c")), List.of())),
+                List.of(), List.of());
+        SemanticPlan plan = build(List.of(new PlanOp.SetLogistics(logistics)));
+        List<String> scripts = assertRoundTrip(plan);
+        assertTrue(scripts.get(0).contains("\"ports\": [\"press-1.item.out\", \"press-1.a.b.c\"]"), scripts.get(0));
     }
 
     @Test

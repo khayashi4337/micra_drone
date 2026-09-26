@@ -72,6 +72,17 @@ class ParamValidatorTest {
     }
 
     @Test
+    void aNegativeZeroNumberBecomesPositiveZeroAndOtherNumbersAreUntouched() throws Exception {
+        ParamSpec speed = new ParamSpec("speed", ParamType.NUM, "rpm", new NumV(-10), new NumV(256), new NumV(16), List.of(), 0);
+        long positiveZeroBits = Double.doubleToRawLongBits(0.0);
+        assertEquals(positiveZeroBits, Double.doubleToRawLongBits(((NumV) ParamValidator.coerce(speed, new NumV(-0.0))).value()));
+        assertEquals(positiveZeroBits, Double.doubleToRawLongBits(((NumV) ParamValidator.coerce(speed, new NumV(0.0))).value()));
+        assertEquals(positiveZeroBits, Double.doubleToRawLongBits(((NumV) ParamValidator.coerce(speed, new IntV(0))).value()));
+        assertEquals(new NumV(-3.5), ParamValidator.coerce(speed, new NumV(-3.5)));
+        assertEquals(new NumV(Double.MIN_VALUE), ParamValidator.coerce(speed, new NumV(Double.MIN_VALUE)));
+    }
+
+    @Test
     void aOneSidedBoundIsNamedAloneInsteadOfAsADanglingRange() {
         ParamSpec atLeast = new ParamSpec("floor", ParamType.NUM, "", new NumV(1), null, null, List.of(), 0);
         ParamSpec atMost = new ParamSpec("ceiling", ParamType.INT, "", null, new IntV(9), null, List.of(), 0);

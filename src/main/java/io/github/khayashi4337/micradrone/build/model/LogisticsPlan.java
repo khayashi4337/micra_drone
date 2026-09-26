@@ -25,6 +25,17 @@ public record LogisticsPlan(List<Dock> docks, List<Route> routes, List<CargoFlow
         }
     }
 
+    /**
+     * How much of an item moves between two docks per minute. The rate is a finite number (the content hash refuses
+     * NaN and the infinities, so a plan holding one could be built but never hashed) and never negative zero
+     * (see {@link Zeros}).
+     */
     public record CargoFlow(String itemId, double perMin, String fromDock, String toDock) {
+        public CargoFlow {
+            if (!Double.isFinite(perMin)) {
+                throw new IllegalArgumentException("perMin must be a finite number: " + perMin);
+            }
+            perMin = Zeros.positive(perMin);
+        }
     }
 }
