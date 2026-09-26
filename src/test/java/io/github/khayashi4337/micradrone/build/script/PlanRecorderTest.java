@@ -28,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 
 class PlanRecorderTest {
@@ -368,5 +369,179 @@ class PlanRecorderTest {
         assertEquals(1, r.issues().size());
         assertEquals("E-SCHEMA:#run:2", r.issues().get(0).id());
         assertTrue(r.issues().get(0).message().contains("200000"), r.issues().get(0).message());
+    }
+
+    // ---- the remaining charges of the run-wide element budget (fix round 6) ----
+
+    @Test
+    void dockConnectorsCountAgainstTheRunWideElementBudget() {
+        // a dock with an empty ports list and 19,000 connector ids costs 1 (itself) + 0 (ports)
+        // + 19,000 (connectors) = 19,001; with the 1 for the SetLogistics op itself ten docks in
+        // one call charge 1 + 10 x 19,001 = 190,011 of the 200,000-element budget, and the 11th
+        // dock of a longer call is refused while it is processed (190,011 + 19,001 = 209,012)
+        List<Object> box = List.of(0.0, 0.0, 0.0, 8.0, 0.0, 8.0);
+        List<Object> connectors = new ArrayList<>();
+        for (int i = 0; i < 19_000; i++) {
+            connectors.add("conn-1");
+        }
+        Map<String, Object> dock = params("id", "d", "pad", box, "clearance", box, "approach", "north",
+                "ports", List.of(), "connectors", connectors);
+        List<Object> tenDocks = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            tenDocks.add(dock);
+        }
+        PlanRecorder fits = new PlanRecorder();
+        fits.logistics(tenDocks, List.of(), List.of());
+        assertEquals(10, ((PlanOp.SetLogistics) fits.toPatch("p", 0, "s").ops().get(0)).logistics().docks().size());
+        PlanRecorder r = new PlanRecorder();
+        List<Object> elevenDocks = new ArrayList<>(tenDocks);
+        elevenDocks.add(dock);
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> r.logistics(elevenDocks, List.of(), List.of()));
+        assertTrue(e.getMessage().contains("200000"), e.getMessage());
+    }
+
+    @Test
+    void routeWaypointsCountAgainstTheRunWideElementBudget() {
+        // a route with 19,000 waypoints and no docks costs 1 (itself) + 19,000 = 19,001, so ten
+        // routes in one call charge 1 + 10 x 19,001 = 190,011 and the 11th is refused (209,012)
+        // - the same boundary as the docks; from/to are plain ids, the recorder does not check
+        // that the docks they name exist
+        List<Object> origin = List.of(0.0, 0.0, 0.0);
+        List<Object> waypoints = new ArrayList<>();
+        for (int i = 0; i < 19_000; i++) {
+            waypoints.add(origin);
+        }
+        Map<String, Object> route = params("id", "r", "from", "a", "to", "b", "waypoints", waypoints);
+        List<Object> tenRoutes = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            tenRoutes.add(route);
+        }
+        PlanRecorder fits = new PlanRecorder();
+        fits.logistics(List.of(), tenRoutes, List.of());
+        assertEquals(10, ((PlanOp.SetLogistics) fits.toPatch("p", 0, "s").ops().get(0)).logistics().routes().size());
+        PlanRecorder r = new PlanRecorder();
+        List<Object> elevenRoutes = new ArrayList<>(tenRoutes);
+        elevenRoutes.add(route);
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> r.logistics(List.of(), elevenRoutes, List.of()));
+        assertTrue(e.getMessage().contains("200000"), e.getMessage());
+    }
+
+    @Test
+    void constraintAvoidIdsCountAgainstTheRunWideElementBudget() {
+        // connect with constraints {"avoid": 30,000 ids} and via null costs 1 (the op) + 0 (via)
+        // + 30,000 (avoid) = 30,001, so 6 calls fit (180,006) and the 7th is refused while its
+        // constraints are read (180,006 + 1 + 30,000 = 210,007)
+        PlanRecorder r = new PlanRecorder();
+        List<String> avoid = new ArrayList<>();
+        for (int i = 0; i < 30_000; i++) {
+            avoid.add("n" + i);
+        }
+        Map<String, Object> constraints = params("avoid", avoid);
+        for (int i = 0; i < 6; i++) {
+            r.connect("c" + i, "a.out", "b.in", "item", null, constraints);
+        }
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> r.connect("c6", "a.out", "b.in", "item", null, constraints));
+        assertTrue(e.getMessage().contains("200000"), e.getMessage());
+    }
+
+    @Test
+    void constraintEntryDirsCountAgainstTheRunWideElementBudget() {
+        // the same charge applies to entry_dirs: {"entry_dirs": 30,000 copies of "north"} costs
+        // 30,000 even though the recorded set collapses to one Dir6 - the charge is on the list
+        // that was read, not on the deduplicated result - so again 6 calls fit and the 7th is
+        // refused (180,006, then 210,007)
+        PlanRecorder r = new PlanRecorder();
+        List<String> dirs = new ArrayList<>();
+        for (int i = 0; i < 30_000; i++) {
+            dirs.add("north");
+        }
+        Map<String, Object> constraints = params("entry_dirs", dirs);
+        for (int i = 0; i < 6; i++) {
+            r.connect("c" + i, "a.out", "b.in", "item", null, constraints);
+        }
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> r.connect("c6", "a.out", "b.in", "item", null, constraints));
+        assertTrue(e.getMessage().contains("200000"), e.getMessage());
+    }
+
+    @Test
+    void recordedFlowsCountAgainstTheRunWideElementBudget() {
+        // each flow costs 1 recorded element: with the 1 for the SetLogistics op a call carrying
+        // 199,999 flows charges exactly 1 + 199,999 = 200,000 (the check is ">", so exactly the
+        // budget still fits) and a call carrying 200,000 is refused at the last flow
+        Map<String, Object> flow = params("item", "i", "per_min", 1.0, "from", "a", "to", "b");
+        List<Object> maxFlows = new ArrayList<>();
+        for (int i = 0; i < 199_999; i++) {
+            maxFlows.add(flow);
+        }
+        PlanRecorder fits = new PlanRecorder();
+        fits.logistics(List.of(), List.of(), maxFlows);
+        assertEquals(199_999, ((PlanOp.SetLogistics) fits.toPatch("p", 0, "s").ops().get(0)).logistics().flows().size());
+        PlanRecorder r = new PlanRecorder();
+        List<Object> tooMany = new ArrayList<>(maxFlows);
+        tooMany.add(flow);
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> r.logistics(List.of(), List.of(), tooMany));
+        assertTrue(e.getMessage().contains("200000"), e.getMessage());
+    }
+
+    @Test
+    void theLogisticsOpItselfCountsAgainstTheRunWideElementBudget() {
+        // logistics([], [], []) records one SetLogistics op and so costs 1: 200,000 calls exactly
+        // fill the budget and the 200,001st is refused
+        PlanRecorder r = new PlanRecorder();
+        for (int i = 0; i < 200_000; i++) {
+            r.logistics(List.of(), List.of(), List.of());
+        }
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> r.logistics(List.of(), List.of(), List.of()));
+        assertTrue(e.getMessage().contains("200000"), e.getMessage());
+    }
+
+    @Test
+    void styleAndMoodCallsCountAgainstTheRunWideElementBudget() {
+        // a style call costs 1 even though it only fills the shared palette: 200,000 calls fit
+        // and the 200,001st is refused; a mood call costs the same on a fresh recorder
+        PlanRecorder r = new PlanRecorder();
+        for (int i = 0; i < 200_000; i++) {
+            r.style("r", "m");
+        }
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> r.style("r", "m"));
+        assertTrue(e.getMessage().contains("200000"), e.getMessage());
+        PlanRecorder moods = new PlanRecorder();
+        for (int i = 0; i < 200_000; i++) {
+            moods.mood("t");
+        }
+        IllegalArgumentException e2 = assertThrows(IllegalArgumentException.class, () -> moods.mood("t"));
+        assertTrue(e2.getMessage().contains("200000"), e2.getMessage());
+    }
+
+    @Test
+    void everyOtherOperationCostsExactlyOneRecordedElement() {
+        // each of these calls costs exactly 1 element (empty params walk no nodes, empty tags and
+        // a null via add nothing), so 200,000 calls exactly fill the 200,000-element budget and
+        // the 200,001st is refused - removing the chargeRecordedElements(1) of any one of them
+        // lets all 200,001 calls through and fails its case
+        Map<String, Consumer<PlanRecorder>> cases = new LinkedHashMap<>();
+        cases.put("site", r -> r.site("minecraft:overworld", 0, 0, 0, "north", new int[]{0, 0, 0, 1, 1, 1}, "", ""));
+        cases.put("part", r -> r.part("p", "micra:pillar", null, PlanAnchorArgs.absolute(0, 0, 0, 0, false),
+                params(), List.of(), ""));
+        cases.put("updateParams", r -> r.updateParams("p", params()));
+        cases.put("relocate", r -> r.relocate("p", PlanAnchorArgs.absolute(0, 0, 0, 0, false)));
+        cases.put("removePart", r -> r.removePart("p"));
+        cases.put("connect", r -> r.connect("c", "a.out", "b.in", "item", null, null));
+        cases.put("disconnect", r -> r.disconnect("c"));
+        for (Map.Entry<String, Consumer<PlanRecorder>> testCase : cases.entrySet()) {
+            PlanRecorder r = new PlanRecorder();
+            for (int i = 0; i < 200_000; i++) {
+                testCase.getValue().accept(r);
+            }
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                    () -> testCase.getValue().accept(r), testCase.getKey());
+            assertTrue(e.getMessage().contains("200000"), testCase.getKey() + ": " + e.getMessage());
+        }
     }
 }
