@@ -3,13 +3,19 @@ package io.github.khayashi4337.micradrone.build.script;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.ParamValue;
 import io.github.khayashi4337.micradrone.build.model.PlanOp;
+import io.github.khayashi4337.micradrone.lang.AstDepth;
+import io.github.khayashi4337.micradrone.lang.Lexer;
+import io.github.khayashi4337.micradrone.lang.Parser;
 import io.github.khayashi4337.micradrone.lang.PlanRunLimits;
 import java.time.Duration;
 import java.util.Collections;
@@ -846,5 +852,81 @@ class PlanScriptRunnerTest {
         assertNotNull(out[0], "the interrupted caller still got the result");
         assertEquals(List.of("E-SCRIPT-LIMIT"), codes(out[0]));
         assertTrue(flagAfter[0], "the caller's interrupt flag must be set again after run()");
+    }
+
+    // ---- the worker boundary itself: what the body throws comes back unchanged (P3 H-3) ----
+
+    @Test
+    void aRuntimeExceptionInsideTheWorkerIsRethrownAsTheSameInstance() {
+        RuntimeException boom = new RuntimeException("boom");
+        RuntimeException caught = assertThrows(RuntimeException.class,
+                () -> PlanScriptRunner.runOnWorker(() -> {
+                    throw boom;
+                }));
+        assertSame(boom, caught);
+    }
+
+    @Test
+    void anErrorInsideTheWorkerIsRethrownAsTheSameInstance() {
+        AssertionError boom = new AssertionError("boom");
+        AssertionError caught = assertThrows(AssertionError.class,
+                () -> PlanScriptRunner.runOnWorker(() -> {
+                    throw boom;
+                }));
+        assertSame(boom, caught);
+    }
+
+    @Test
+    void theWorkerHandsItsResultBackToTheCaller() {
+        assertEquals("answer", PlanScriptRunner.runOnWorker(() -> "answer"));
+    }
+
+    @Test
+    void theBodyRunsOnTheDedicatedWorkerThreadNotTheCaller() {
+        Thread ran = PlanScriptRunner.runOnWorker(Thread::currentThread);
+        assertEquals("micra-construction-script", ran.getName());
+        assertNotSame(Thread.currentThread(), ran);
+    }
+
+    // ---- block statements count against the parse nesting limit too (P3 H-3, mutant Q4) ----
+
+    /**
+     * {@code n} nested {@code if True:} blocks, each indented one space deeper than its parent -
+     * the lexer accepts ANY strictly increasing space indentation (only tabs are refused), so
+     * one level costs about six characters and ~100 levels fit easily under the script length
+     * limit. Line i carries i spaces; the last line is {@code pass} at n spaces.
+     */
+    private static String nestedIfs(int n) {
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < n; i++) {
+            out.append(" ".repeat(i)).append("if True:\n");
+        }
+        out.append(" ".repeat(n)).append("pass\n");
+        return out.toString();
+    }
+
+    @Test
+    void deeplyNestedBlocksHitTheParseNestingLimit() {
+        // the `if` at indent k is a statement inside the block of the one at indent k-1, so it
+        // parses at nesting k - and the innermost body statement sits one level deeper still.
+        // With 100 nested `if`s the `pass` lands exactly on 100 and parses; its AST measures
+        // 101 deep, under PLAN_MAX_AST_DEPTH, so the script is accepted and runs to an empty
+        // patch. With 101 nested `if`s the innermost `pass` would sit at 101 and the parser
+        // refuses it.
+        String accepted = nestedIfs(100);
+        String refused = nestedIfs(101);
+        assertTrue(accepted.length() <= PlanScriptWriter.MAX_SCRIPT_CHARS);
+        assertTrue(refused.length() <= PlanScriptWriter.MAX_SCRIPT_CHARS);
+        assertEquals(101, AstDepth.of(new Parser(new Lexer(accepted).scan()).parseProgram()));
+
+        PlanScriptRunner.Result ok = run(accepted);
+        assertTrue(ok.ok(), ok.issues().toString());
+
+        PlanScriptRunner.Result r = run(refused);
+        assertNull(r.patch());
+        assertEquals(List.of("E-SCHEMA"), codes(r));
+        assertEquals("E-SCHEMA:#syntax:1", r.issues().get(0).id());
+        assertTrue(r.issues().get(0).message().contains("nested too deeply (limit 100)"),
+                r.issues().get(0).message());
     }
 }

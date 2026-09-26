@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 /** Checks and runs construction scripts, in order, into one {@link PlanPatch}. Any problem means no patch at all. */
 public final class PlanScriptRunner {
@@ -75,22 +76,30 @@ public final class PlanScriptRunner {
 
     /**
      * Runs the whole batch - every script's parse, depth check, static profile and interpret -
-     * on ONE dedicated worker thread with the fixed stack of {@link #PLAN_RUN_STACK_BYTES}: a
-     * script's outcome must not depend on how much stack the CALLER happened to have left, and
-     * the depth limits are only meaningful if the stack they were sized against is the stack
-     * actually used. The caller waits on {@code join()} in a loop so an interrupt poked at it
-     * mid-run does not lose the result; the flag is restored on the way out. A
-     * {@link RuntimeException} or {@link Error} thrown inside the worker is rethrown unchanged
-     * on the caller thread - the run's own per-script catches turn script failures into issues
-     * before they can reach this boundary.
+     * through {@link #runOnWorker}: none of it touches the caller's own stack.
      */
     public static Result run(List<String> scripts, String patchId, int baseRevision, String stageId,
             PlanRunLimits limits) {
-        AtomicReference<Result> result = new AtomicReference<>();
+        return runOnWorker(() -> runScripts(scripts, patchId, baseRevision, stageId, limits));
+    }
+
+    /**
+     * Runs {@code body} on ONE dedicated worker thread with the fixed stack of
+     * {@link #PLAN_RUN_STACK_BYTES} and hands back what it produced: a script's outcome must not
+     * depend on how much stack the CALLER happened to have left, and the depth limits are only
+     * meaningful if the stack they were sized against is the stack actually used. The caller
+     * waits on {@code join()} in a loop so an interrupt poked at it mid-run does not lose the
+     * result; the flag is restored on the way out. A {@link RuntimeException} or {@link Error}
+     * thrown inside the worker is rethrown unchanged on the caller thread - the run's own
+     * per-script catches turn script failures into issues before they can reach this boundary.
+     * Package-private so tests can push arbitrary work across this same thread boundary.
+     */
+    static <T> T runOnWorker(Supplier<T> body) {
+        AtomicReference<T> result = new AtomicReference<>();
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread worker = new Thread(null, () -> {
             try {
-                result.set(runScripts(scripts, patchId, baseRevision, stageId, limits));
+                result.set(body.get());
             } catch (RuntimeException | Error e) {
                 failure.set(e);
             }
