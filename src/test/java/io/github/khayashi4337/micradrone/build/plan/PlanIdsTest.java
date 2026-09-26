@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.build.TestParts;
 import io.github.khayashi4337.micradrone.build.model.Anchor;
+import io.github.khayashi4337.micradrone.build.model.PlanIds;
 import io.github.khayashi4337.micradrone.build.model.LocalPos;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.model.PlanOp;

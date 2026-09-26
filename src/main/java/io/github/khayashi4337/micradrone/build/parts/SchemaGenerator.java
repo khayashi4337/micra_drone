@@ -6,7 +6,7 @@ import io.github.khayashi4337.micradrone.build.model.Dir6;
 import io.github.khayashi4337.micradrone.build.model.Facing;
 import io.github.khayashi4337.micradrone.build.model.ParamValue;
 import io.github.khayashi4337.micradrone.build.model.Side;
-import io.github.khayashi4337.micradrone.build.plan.PlanIds;
+import io.github.khayashi4337.micradrone.build.model.PlanIds;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;

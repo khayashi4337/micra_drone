@@ -32,7 +32,7 @@ import io.github.khayashi4337.micradrone.build.model.Side;
 import io.github.khayashi4337.micradrone.build.model.Site;
 import io.github.khayashi4337.micradrone.build.model.StyleSpec;
 import io.github.khayashi4337.micradrone.build.plan.PatchResult;
-import io.github.khayashi4337.micradrone.build.plan.PlanIds;
+import io.github.khayashi4337.micradrone.build.model.PlanIds;
 import io.github.khayashi4337.micradrone.build.plan.PlanPatcher;
 import io.github.khayashi4337.micradrone.build.plan.TemplateBundle;
 import io.github.khayashi4337.micradrone.chat.MiniJson;

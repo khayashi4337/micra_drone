@@ -1,5 +1,6 @@
 package io.github.khayashi4337.micradrone.build.plan;
 
+import io.github.khayashi4337.micradrone.build.model.PlanIds;
 import io.github.khayashi4337.micradrone.build.model.Anchor;
 import io.github.khayashi4337.micradrone.build.model.Connection;
 import io.github.khayashi4337.micradrone.build.model.FixHint;

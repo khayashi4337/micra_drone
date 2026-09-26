@@ -1,4 +1,4 @@
-package io.github.khayashi4337.micradrone.build.plan;
+package io.github.khayashi4337.micradrone.build.model;
 
 import java.util.regex.Pattern;
 
