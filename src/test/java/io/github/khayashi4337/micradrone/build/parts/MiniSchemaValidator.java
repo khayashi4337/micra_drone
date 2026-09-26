@@ -8,7 +8,8 @@ import java.util.regex.Pattern;
 
 /**
  * A tiny JSON Schema checker for the keywords the generated schemas use; enough to test them without a library.
- * Anything outside the supported keyword set is an error, so a typo in the generator cannot pass silently.
+ * The constructor walks the WHOLE schema tree, so an unknown keyword or an unresolved $ref in a corner no
+ * document reaches is still reported (as an IllegalArgumentException, not a silent pass or an NPE).
  */
 final class MiniSchemaValidator {
     /** The only keywords {@link SchemaGenerator} emits; any other key in a schema object is reported. */
@@ -16,11 +17,18 @@ final class MiniSchemaValidator {
             "$defs", "$ref", "type", "properties", "required", "additionalProperties", "oneOf", "const", "enum",
             "minimum", "maximum", "maxLength", "pattern", "items", "minItems", "maxItems");
     private static final String DEFS_PREFIX = "#/$defs/";
+    /** Schema-valued positions the tree walk descends into. */
+    private static final List<String> SUBSCHEMA_KEYS = List.of("items", "additionalProperties");
 
     private final Map<String, Object> root;
 
     MiniSchemaValidator(Map<String, Object> root) {
         this.root = root;
+        List<String> problems = new ArrayList<>();
+        checkSchemaTree(root, "$", problems);
+        if (!problems.isEmpty()) {
+            throw new IllegalArgumentException("bad schema: " + String.join("; ", problems));
+        }
     }
 
     List<String> validate(Object value) {
@@ -29,23 +37,62 @@ final class MiniSchemaValidator {
         return errors;
     }
 
+    /** Every schema object in the tree is checked here, not only the ones a document happens to reach. */
+    @SuppressWarnings("unchecked")
+    private void checkSchemaTree(Object schemaObj, String path, List<String> problems) {
+        if (!(schemaObj instanceof Map)) {
+            problems.add(path + ": expected a schema object");
+            return;
+        }
+        Map<String, Object> schema = (Map<String, Object>) schemaObj;
+        for (String keyword : schema.keySet()) {
+            if (!KNOWN_KEYWORDS.contains(keyword)) {
+                problems.add(path + ": unknown schema keyword " + keyword);
+            }
+        }
+        if (schema.get("$defs") instanceof Map<?, ?> defs) {
+            for (Map.Entry<?, ?> e : defs.entrySet()) {
+                checkSchemaTree(e.getValue(), path + ".$defs." + e.getKey(), problems);
+            }
+        }
+        if (schema.containsKey("$ref")) {
+            Map<String, Object> defs = root.get("$defs") instanceof Map<?, ?> d
+                    ? (Map<String, Object>) d : Map.of();
+            Object ref = schema.get("$ref");
+            if (!(ref instanceof String r) || !r.startsWith(DEFS_PREFIX)
+                    || !(defs.get(r.substring(DEFS_PREFIX.length())) instanceof Map)) {
+                problems.add(path + ": unresolved $ref " + ref);
+            }
+        }
+        if (schema.get("properties") instanceof Map<?, ?> props) {
+            for (Map.Entry<?, ?> e : props.entrySet()) {
+                checkSchemaTree(e.getValue(), path + ".properties." + e.getKey(), problems);
+            }
+        }
+        for (String key : SUBSCHEMA_KEYS) {
+            if (schema.get(key) instanceof Map<?, ?> sub) {
+                checkSchemaTree(sub, path + "." + key, problems);
+            }
+        }
+        if (schema.get("oneOf") instanceof List<?> branches) {
+            for (int i = 0; i < branches.size(); i++) {
+                checkSchemaTree(branches.get(i), path + ".oneOf[" + i + "]", problems);
+            }
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private void check(Object schemaObj, Object v, String path, List<String> errs) {
         Map<String, Object> schema = (Map<String, Object>) schemaObj;
-        boolean known = true;
-        for (String keyword : schema.keySet()) {
-            if (!KNOWN_KEYWORDS.contains(keyword)) {
-                errs.add(path + ": unknown schema keyword " + keyword);
-                known = false;
-            }
-        }
-        if (!known) {
-            return;
-        }
         if (schema.containsKey("$ref")) {
             String ref = (String) schema.get("$ref");
             Map<String, Object> defs = (Map<String, Object>) root.get("$defs");
-            check(defs.get(ref.substring(DEFS_PREFIX.length())), v, path, errs);
+            Object target = defs == null ? null : defs.get(ref.substring(DEFS_PREFIX.length()));
+            if (target == null) {
+                errs.add(path + ": unresolved $ref " + ref);
+                return;
+            }
+            check(target, v, path, errs);
             return;
         }
         if (schema.containsKey("oneOf")) {

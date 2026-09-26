@@ -2,6 +2,7 @@ package io.github.khayashi4337.micradrone.build.parts;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.chat.MiniJson;
@@ -11,13 +12,17 @@ import org.junit.jupiter.api.Test;
 
 /**
  * One accepting and one rejecting case per keyword {@link MiniSchemaValidator} supports, so a check that was
- * dropped or misnamed cannot pass silently.
+ * dropped or misnamed cannot pass silently. A malformed schema (unknown keyword, unresolved $ref) fails at
+ * construction, wherever in the tree it sits.
  */
 class MiniSchemaValidatorTest {
     @SuppressWarnings("unchecked")
+    private static Map<String, Object> schema(String schemaJson) {
+        return (Map<String, Object>) MiniJson.parse(schemaJson);
+    }
+
     private static List<String> check(String schemaJson, String valueJson) {
-        return new MiniSchemaValidator((Map<String, Object>) MiniJson.parse(schemaJson))
-                .validate(MiniJson.parse(valueJson));
+        return new MiniSchemaValidator(schema(schemaJson)).validate(MiniJson.parse(valueJson));
     }
 
     private static void accepts(String schemaJson, String valueJson) {
@@ -29,9 +34,25 @@ class MiniSchemaValidatorTest {
     }
 
     @Test
-    void anUnknownKeywordIsRejected() {
-        rejects("{\"tpye\":\"object\"}", "{}");
-        rejects("{\"type\":\"object\",\"properties\":{\"a\":{\"minimun\":0}}}", "{\"a\":-1}");
+    void anUnknownKeywordFailsTheUpFrontWalk() {
+        assertThrows(IllegalArgumentException.class, () -> new MiniSchemaValidator(schema("{\"tpye\":\"object\"}")));
+        // a typo buried in a sub-schema a document might never reach is still found
+        assertThrows(IllegalArgumentException.class, () -> new MiniSchemaValidator(schema(
+                "{\"type\":\"object\",\"properties\":{\"a\":{\"minimun\":0}}}")));
+        assertThrows(IllegalArgumentException.class, () -> new MiniSchemaValidator(schema(
+                "{\"$defs\":{\"x\":{\"tpye\":\"integer\"}},\"type\":\"object\"}")));
+    }
+
+    @Test
+    void anUnresolvedRefFailsTheUpFrontWalk() {
+        assertThrows(IllegalArgumentException.class, () -> new MiniSchemaValidator(schema(
+                "{\"type\":\"object\",\"properties\":{\"a\":{\"$ref\":\"#/$defs/missing\"}}}")));
+        // a bad ref inside an unreachable $def is still found
+        assertThrows(IllegalArgumentException.class, () -> new MiniSchemaValidator(schema(
+                "{\"$defs\":{\"x\":{\"$ref\":\"#/$defs/nowhere\"}},\"type\":\"object\"}")));
+        // a $ref that does not point into $defs at all
+        assertThrows(IllegalArgumentException.class, () -> new MiniSchemaValidator(schema(
+                "{\"$ref\":\"#/somewhere/else\"}")));
     }
 
     @Test

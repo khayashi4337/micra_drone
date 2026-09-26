@@ -6,10 +6,10 @@ import io.github.khayashi4337.micradrone.build.model.Dir6;
 import io.github.khayashi4337.micradrone.build.model.Facing;
 import io.github.khayashi4337.micradrone.build.model.ParamValue;
 import io.github.khayashi4337.micradrone.build.model.Side;
+import io.github.khayashi4337.micradrone.build.plan.PlanIds;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -41,10 +41,14 @@ public final class SchemaGenerator {
         }
     }
 
-    /** The id form shared with PlanIds: 1-48 of lowercase letters, digits and hyphens. */
-    public static final String ID_PATTERN = "^[a-z0-9-]{1,48}$";
+    private static final String ROLE_BODY = "[a-z][a-z0-9_]*";
+    private static final String BLOCK_ID_BODY = "[a-z0-9_.-]+:[a-z0-9_/.-]+";
+    /** The id form shared with PlanIds: 1 to {@link PlanIds#MAX_LENGTH} of lowercase letters, digits, hyphens. */
+    public static final String ID_PATTERN = "^[a-z0-9-]{1," + PlanIds.MAX_LENGTH + "}$";
+    /** A palette role name (the same form {@link ParamValidator#isRoleName} accepts). */
+    public static final String ROLE_PATTERN = "^" + ROLE_BODY + "$";
     /** A material is a palette role or a block id: the same union ParamValidator accepts. */
-    public static final String MATERIAL_PATTERN = "^([a-z][a-z0-9_]*|[a-z0-9_.-]+:[a-z0-9_/.-]+)$";
+    public static final String MATERIAL_PATTERN = "^(" + ROLE_BODY + "|" + BLOCK_ID_BODY + ")$";
 
     // JSON Schema keywords and the values of "type".
     private static final String K_REF = "$ref";
@@ -81,6 +85,8 @@ public final class SchemaGenerator {
     private static final String DEF_STYLE = "style";
     private static final String DEF_LOGISTICS = "logistics";
     private static final String DEF_ANY_PARAMS = "anyParams";
+    private static final String DEF_ROUTING = "routing";
+    private static final String DEF_CONSTRAINTS = "constraints";
     private static final String DEF_MATERIAL = "material";
     private static final String DEF_DIR4 = "dir4";
 
@@ -96,17 +102,14 @@ public final class SchemaGenerator {
     private static final String KEY_KIND = "kind";
     private static final String KEY_KEY = "key";
     private static final String KEY_VALUE = "value";
+    private static final String KEY_MODE = "mode";
+    private static final String KEY_VIA = "via";
 
     private static final String REF_PREFIX = "#/$defs/";
-    /** A parameter value may be a scalar or an int list. */
-    private static final List<String> PARAM_VALUE_TYPES = List.of(T_STRING, T_NUMBER, T_BOOLEAN, T_ARRAY);
-    /** The items of a parameter list are always plain ints today; string/number covers that loosely. */
-    private static final List<String> PARAM_ITEM_TYPES = List.of(T_STRING, T_NUMBER);
     private static final List<String> DIR4 = Arrays.stream(Facing.values()).map(Facing::lower).toList();
     private static final List<String> DIR6_ALL = Arrays.stream(Dir6.values()).map(Dir6::lower).toList();
     private static final List<String> CONN_KINDS = Arrays.stream(ConnKind.values()).map(ConnKind::lower).toList();
     private static final List<String> SURFACE_SIDES = List.of(Side.OUTER.lower(), Side.INNER.lower());
-    private static final List<String> ROUTING_MODES = List.of("auto", "explicit");
 
     /** A position is [u, v, w]; a site origin is [x, y, z]. */
     private static final int POS_ITEMS = 3;
@@ -148,8 +151,11 @@ public final class SchemaGenerator {
                 parts.add(t);
             }
         }
-        // The schema must be identical no matter which order the parts were registered in.
-        parts.sort(Comparator.comparing(PartType::id));
+        if (parts.isEmpty()) {
+            // A node's "type" is a oneOf over the offered parts; zero branches is not a usable schema.
+            throw new IllegalArgumentException("partIdsOrNull leaves no USER part to offer");
+        }
+        // userParts() iterates the registry's id-ordered TreeMap, so the schema needs no sort of its own.
 
         Map<String, Object> defs = new LinkedHashMap<>();
         defs.put(DEF_POS, array(map(K_TYPE, T_INTEGER), POS_ITEMS, POS_ITEMS));
@@ -163,8 +169,12 @@ public final class SchemaGenerator {
                 map(K_TYPE, T_OBJECT, K_ADDITIONAL_PROPERTIES, map(K_TYPE, T_STRING)),
                 "moodTags", map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING)))));
         defs.put(DEF_LOGISTICS, flat ? map(K_TYPE, T_OBJECT) : logisticsSchema());
-        defs.put(DEF_ANY_PARAMS, flat ? flatParams()
-                : map(K_TYPE, T_OBJECT, K_ADDITIONAL_PROPERTIES, map(K_TYPE, PARAM_VALUE_TYPES)));
+        // ajv strictTypes (checked with the real claude CLI on 2026-09-26) warns on a "type" array of several
+        // non-null members and a stricter CLI could turn that into an error, so "any value" is emitted as the
+        // unconstrained schema {}; PlanJson/ParamValidator check the actual types after parsing.
+        defs.put(DEF_ANY_PARAMS, flat ? flatParams() : map(K_TYPE, T_OBJECT, K_ADDITIONAL_PROPERTIES, Map.of()));
+        defs.put(DEF_ROUTING, routingSchema());
+        defs.put(DEF_CONSTRAINTS, flat ? map(K_TYPE, T_OBJECT) : constraintsSchema());
         if (!flat) {
             defs.put(DEF_MATERIAL, map(K_TYPE, T_STRING, K_PATTERN, MATERIAL_PATTERN));
             defs.put(DEF_DIR4, map(K_TYPE, T_STRING, K_ENUM, DIR4));
@@ -267,10 +277,11 @@ public final class SchemaGenerator {
         return s;
     }
 
-    /** The compact form: the name is a free string (PlanPatcher rejects unknown names), the value is any scalar or list. */
+    /** The compact form: the name is a free string (PlanPatcher rejects unknown names), the value is unconstrained. */
     private static Map<String, Object> flatParams() {
+        // The value {} accepts anything, for the same strictTypes reason as the typed anyParams (2026-09-26).
         Map<String, Object> pair = obj(List.of(KEY_KEY, KEY_VALUE), map(KEY_KEY, map(K_TYPE, T_STRING),
-                KEY_VALUE, map(K_TYPE, PARAM_VALUE_TYPES, K_ITEMS, map(K_TYPE, PARAM_ITEM_TYPES))));
+                KEY_VALUE, Map.of()));
         return map(K_TYPE, T_ARRAY, K_ITEMS, pair);
     }
 
@@ -289,18 +300,27 @@ public final class SchemaGenerator {
 
     private static Map<String, Object> connectionSchema(boolean flat) {
         Map<String, Object> port = portSchema();
-        Map<String, Object> routing = obj(List.of("mode"), map("mode", map(K_TYPE, T_STRING, K_ENUM, ROUTING_MODES),
-                "via", map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING))));
-        Object constraints = flat ? map(K_TYPE, T_OBJECT) : obj(List.of(),
-                map(K_MAX_LENGTH, map(K_TYPE, List.of(T_INTEGER, T_NULL)),
-                        "avoid", map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING)),
-                        "maxTurns", map(K_TYPE, List.of(T_INTEGER, T_NULL)),
-                        "entryDirs", map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING, K_ENUM, DIR6_ALL))));
         return obj(List.of(KEY_ID, KEY_FROM, KEY_TO, KEY_KIND),
                 map(KEY_ID, flat ? map(K_TYPE, T_STRING) : map(K_TYPE, T_STRING, K_PATTERN, ID_PATTERN),
                         KEY_FROM, port, KEY_TO, port,
                         KEY_KIND, map(K_TYPE, T_STRING, K_ENUM, CONN_KINDS),
-                        "routing", routing, "constraints", constraints));
+                        DEF_ROUTING, ref(DEF_ROUTING), DEF_CONSTRAINTS, ref(DEF_CONSTRAINTS)));
+    }
+
+    /** Discriminated by {@code mode}: {@code auto} takes no other member, {@code explicit} needs {@code via}. */
+    private static Map<String, Object> routingSchema() {
+        Map<String, Object> auto = obj(List.of(KEY_MODE), map(KEY_MODE, map(K_CONST, "auto")));
+        Map<String, Object> explicit = obj(List.of(KEY_MODE, KEY_VIA), map(KEY_MODE, map(K_CONST, "explicit"),
+                KEY_VIA, map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING))));
+        return map(K_ONE_OF, List.of(auto, explicit));
+    }
+
+    private static Map<String, Object> constraintsSchema() {
+        return obj(List.of(),
+                map(K_MAX_LENGTH, map(K_TYPE, List.of(T_INTEGER, T_NULL)),
+                        "avoid", map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING)),
+                        "maxTurns", map(K_TYPE, List.of(T_INTEGER, T_NULL)),
+                        "entryDirs", map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING, K_ENUM, DIR6_ALL))));
     }
 
     private static Map<String, Object> siteSchema() {
@@ -314,12 +334,12 @@ public final class SchemaGenerator {
 
     private static Map<String, Object> logisticsSchema() {
         Map<String, Object> box = array(map(K_TYPE, T_INTEGER), BOX_ITEMS, BOX_ITEMS);
-        Map<String, Object> dock = obj(List.of(KEY_ID, "pad", "clearance", "approach"),
+        Map<String, Object> dock = obj(List.of(KEY_ID, "pad", "clearance", "approach", "ports", "connectors"),
                 map(KEY_ID, map(K_TYPE, T_STRING), "pad", box, "clearance", box,
                         "approach", map(K_TYPE, T_STRING, K_ENUM, DIR4),
                         "ports", map(K_TYPE, T_ARRAY, K_ITEMS, portSchema()),
                         "connectors", map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING))));
-        Map<String, Object> route = obj(List.of(KEY_ID, KEY_FROM, KEY_TO),
+        Map<String, Object> route = obj(List.of(KEY_ID, KEY_FROM, KEY_TO, "waypoints"),
                 map(KEY_ID, map(K_TYPE, T_STRING), KEY_FROM, map(K_TYPE, T_STRING), KEY_TO, map(K_TYPE, T_STRING),
                         "waypoints", map(K_TYPE, T_ARRAY, K_ITEMS, ref(DEF_POS)),
                         "airship", map(K_TYPE, List.of(T_STRING, T_NULL))));
