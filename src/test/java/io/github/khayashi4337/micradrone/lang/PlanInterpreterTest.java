@@ -1401,6 +1401,111 @@ class PlanInterpreterTest {
         assertEquals("line 15: construction script exceeded 100000 steps", e.getMessage());
     }
 
+    // ---- the remaining probe sites pinned exactly (H-1c test supplement) ----
+    //
+    // Each of these sites calls chargeHashProbe on a 1-element container, so a
+    // 4,095-character key pays (4,095 + 1) x (1 + ceilLog2(1 + 1)) = 4,096 x 2
+    // = 8,192 work units = exactly 2 steps on top of the statement step. The
+    // script that builds the 1-element container pays its own probe into the
+    // EMPTY container: 4,096 x (1 + ceilLog2(1)) = 4,096 units = 1 step, so
+    // every script below costs 1 (k) + (1 + 1) (build) + (1 + 2) (probe under
+    // test) + 1 (mood) = 7 steps. The number-key twin pays no probe at all:
+    // 4 statements = 4 steps exactly.
+
+    @Test
+    void aSetRemovePaysForProbingTheKey() {
+        String script = "k = \"" + "x".repeat(4_095) + "\"\ns = {k}\ns.remove(k)\nmood(\"ok\")\n";
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(script, api, new PlanRunLimits(7, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+        // at 6 the probe's second step leaves nothing for mood(); at 5 the
+        // probe charge on line 3 itself overshoots the budget mid-statement
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(6, 60_000)));
+        assertEquals("line 4: construction script exceeded 6 steps", e.getMessage());
+        e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(5, 60_000)));
+        assertEquals("line 3: construction script exceeded 5 steps", e.getMessage());
+        api = new RecordingPlanApi();
+        run("k = 7\ns = {k}\ns.remove(k)\nmood(\"ok\")\n", api, new PlanRunLimits(4, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+    }
+
+    @Test
+    void aDictGetPaysForProbingTheKey() {
+        String script = "k = \"" + "x".repeat(4_095) + "\"\nd = {k: 1}\nx = d.get(k)\nmood(\"ok\")\n";
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(script, api, new PlanRunLimits(7, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(6, 60_000)));
+        assertEquals("line 4: construction script exceeded 6 steps", e.getMessage());
+        e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(5, 60_000)));
+        assertEquals("line 3: construction script exceeded 5 steps", e.getMessage());
+        api = new RecordingPlanApi();
+        run("k = 7\nd = {k: 1}\nx = d.get(k)\nmood(\"ok\")\n", api, new PlanRunLimits(4, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+    }
+
+    @Test
+    void aDictRemovePaysForProbingTheKey() {
+        String script = "k = \"" + "x".repeat(4_095) + "\"\nd = {k: 1}\nx = d.remove(k)\nmood(\"ok\")\n";
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(script, api, new PlanRunLimits(7, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(6, 60_000)));
+        assertEquals("line 4: construction script exceeded 6 steps", e.getMessage());
+        e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(5, 60_000)));
+        assertEquals("line 3: construction script exceeded 5 steps", e.getMessage());
+        api = new RecordingPlanApi();
+        run("k = 7\nd = {k: 1}\nx = d.remove(k)\nmood(\"ok\")\n", api, new PlanRunLimits(4, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+    }
+
+    @Test
+    void aDictIndexReadPaysForProbingTheKey() {
+        String script = "k = \"" + "x".repeat(4_095) + "\"\nd = {k: 1}\nx = d[k]\nmood(\"ok\")\n";
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(script, api, new PlanRunLimits(7, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(6, 60_000)));
+        assertEquals("line 4: construction script exceeded 6 steps", e.getMessage());
+        e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(5, 60_000)));
+        assertEquals("line 3: construction script exceeded 5 steps", e.getMessage());
+        api = new RecordingPlanApi();
+        run("k = 7\nd = {k: 1}\nx = d[k]\nmood(\"ok\")\n", api, new PlanRunLimits(4, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+    }
+
+    @Test
+    void aDictEqualityPaysForProbingItsKeys() {
+        // d1 == d2 runs planEquals' Map branch: spend(1) for the root visit,
+        // chargeHashProbe(key, 1) = 8,192 for the single key, spend(1) for the
+        // size, and spend(1) for the entry value's own planEqualsAt visit
+        // (1 == 1) - 8,195 units = exactly 2 steps (3 units of carry left
+        // over). Lines: 1 + (1 + 1) + (1 + 1) + (1 + 2) + 1 = 9 steps; the
+        // number-key twin pays 1 + 1 + 1 + (1 + 0) + 1 = 5 (the == itself is
+        // 3 units, under one quantum)
+        String script = "k = \"" + "x".repeat(4_095) + "\"\nd1 = {k: 1}\nd2 = {k: 1}\nx = d1 == d2\nmood(\"ok\")\n";
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(script, api, new PlanRunLimits(9, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(8, 60_000)));
+        assertEquals("line 5: construction script exceeded 8 steps", e.getMessage());
+        e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(7, 60_000)));
+        assertEquals("line 4: construction script exceeded 7 steps", e.getMessage());
+        api = new RecordingPlanApi();
+        run("k = 7\nd1 = {k: 1}\nd2 = {k: 1}\nx = d1 == d2\nmood(\"ok\")\n", api, new PlanRunLimits(5, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+    }
+
     @Test
     void stringKeyProbesAreFreeForFarmScripts() {
         // no plan limits: the probe charge lands nowhere, so a farm script
