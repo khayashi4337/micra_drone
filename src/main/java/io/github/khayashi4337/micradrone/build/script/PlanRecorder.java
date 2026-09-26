@@ -81,10 +81,11 @@ public final class PlanRecorder implements PlanApi {
      * Total characters of the strings the recorder retains across ALL ops of the run: an element
      * counts 1 whatever its text weighs, so the strings get their own budget. Every retained
      * string costs its {@code length()} (a null string costs 0): ids, names, types, labels, tags,
-     * port texts, the {@code via}/{@code avoid}/{@code entry_dirs} entries, the dock/route/flow
-     * fields of {@link #logistics}, and every params key and string scalar {@link #boundedCopy}
-     * walks. Enum-parsed texts (site facing, connect kind, dock approach, entry_dirs names) are
-     * charged on the string that was read, before the parse that may reject it.
+     * the anchor's surface target id and slot id, port texts, the {@code via}/{@code
+     * avoid}/{@code entry_dirs} entries, the dock/route/flow fields of {@link #logistics}, and
+     * every params key and string scalar {@link #boundedCopy} walks. Enum-parsed texts (site
+     * facing, anchor side, connect kind, dock approach, entry_dirs names) are charged on the
+     * string that was read, before the parse that may reject it.
      */
     private static final long MAX_RECORDED_CHARS = 1_000_000;
     /** Total characters {@link #printed} may retain across the whole run - same reason as {@link #MAX_RECORDED_ELEMENTS}. */
@@ -309,7 +310,14 @@ public final class PlanRecorder implements PlanApi {
         return s == null ? 0 : s.length();
     }
 
-    private static Anchor toAnchor(PlanAnchorArgs a) {
+    /**
+     * Builds the recorded anchor, charging its texts BEFORE the {@link Anchor} exists: the
+     * surface target id and the slot id are retained verbatim (OnSurface's nodeId, InSlot's
+     * slotId), and the side text is charged on the string that was read like the other
+     * enum-parsed texts. Fields the kind does not use are null and cost 0.
+     */
+    private Anchor toAnchor(PlanAnchorArgs a) {
+        chargeRecordedChars(textChars(a.target()) + textChars(a.side()) + textChars(a.slot()));
         return switch (a.kind()) {
             case ABSOLUTE -> new Anchor.Absolute(new LocalPos(a.u(), a.v(), a.w()), new Rot(a.turns(), a.mirror()));
             case SURFACE -> {

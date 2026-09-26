@@ -575,8 +575,8 @@ class PlanRecorderTest {
         // 1,000,000 budget (at most ~900,0xx) and the fourth is refused with the limit named.
         // Removing the charge of the probed site leaves only the small strings, the fourth
         // call goes through and the case fails. Sites that are enum-parsed before recording
-        // (site facing, connect kind, entry_dirs names, dock approach) cannot carry a long
-        // string - the parse rejects it - so they have no case here.
+        // (site facing, anchor side, connect kind, entry_dirs names, dock approach) cannot
+        // carry a long string - the parse rejects it - so they have no case here.
         Map<String, Consumer<PlanRecorder>> cases = new LinkedHashMap<>();
         cases.put("site dimension", r -> r.site(BIG_RECORDED_TEXT, 0, 0, 0, "north", new int[]{0, 0, 0, 1, 1, 1}, "", ""));
         cases.put("site terrainDigest", r -> r.site("d", 0, 0, 0, "north", new int[]{0, 0, 0, 1, 1, 1}, BIG_RECORDED_TEXT, ""));
@@ -593,6 +593,15 @@ class PlanRecorderTest {
         cases.put("part params value", r -> r.part("p", "t", null, ABSOLUTE_ANCHOR, params("k", BIG_RECORDED_TEXT), List.of(), ""));
         cases.put("part params nested value",
                 r -> r.part("p", "t", null, ABSOLUTE_ANCHOR, params("k", List.of(BIG_RECORDED_TEXT)), List.of(), ""));
+        // the anchor's retained texts: a surface target lands in OnSurface.nodeId and a slot
+        // name in InSlot.slotId (charged together with the parsed-away side text)
+        cases.put("part surface target", r -> r.part("p", "t", null,
+                PlanAnchorArgs.surface(BIG_RECORDED_TEXT, "outer", 0, 0), params(), List.of(), ""));
+        cases.put("part slot id", r -> r.part("p", "t", null,
+                PlanAnchorArgs.slot(BIG_RECORDED_TEXT, 0, false), params(), List.of(), ""));
+        cases.put("relocate surface target",
+                r -> r.relocate("p", PlanAnchorArgs.surface(BIG_RECORDED_TEXT, "outer", 0, 0)));
+        cases.put("relocate slot id", r -> r.relocate("p", PlanAnchorArgs.slot(BIG_RECORDED_TEXT, 0, false)));
         cases.put("updateParams id", r -> r.updateParams(BIG_RECORDED_TEXT, params()));
         cases.put("updateParams value", r -> r.updateParams("p", params("k", BIG_RECORDED_TEXT)));
         cases.put("relocate id", r -> r.relocate(BIG_RECORDED_TEXT, ABSOLUTE_ANCHOR));

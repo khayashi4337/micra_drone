@@ -9,6 +9,7 @@ import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.ParamValue;
 import io.github.khayashi4337.micradrone.build.model.PlanOp;
 import io.github.khayashi4337.micradrone.lang.PlanRunLimits;
+import java.util.Collections;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -477,5 +478,32 @@ class PlanScriptRunnerTest {
         assertEquals(List.of("E-SCHEMA"), codes(r));
         assertEquals("E-SCHEMA:#run:1", r.issues().get(0).id());
         assertTrue(r.issues().get(0).message().contains("bogus"), r.issues().get(0).message());
+    }
+
+    // ---- the anchor's retained ids count against the run-wide character budget (fix round 8) ----
+
+    @Test
+    void theControllersAnchorStringReproEndsAsLimitIssues() {
+        // the controller's round-8 reproduction verbatim: each script doubles "ā" into a
+        // 524,288-character string and hands 16 fresh ~524,289-character copies of it to
+        // wall() inside the anchor argument, which the recorder kept in Anchor.OnSurface's
+        // nodeId / Anchor.InSlot's slotId without charging them - an OutOfMemoryError at
+        // -Xmx256m. Now the first wall call of a script fits (524,289 recorded characters
+        // plus a few of id/type/side <= 1,000,000) and its second is refused, so all eight
+        // copies end as E-SCRIPT-LIMIT issues and no Error escapes the run
+        String preamble = "x = \"ā\"\nfor i in range(19):\n    x = x + x\n";
+        List<String> scripts = List.of(
+                preamble + "for k in range(16):\n    wall(\"w\", None, [\"surface\", x + str(k), \"outer\", 0, 0], {})\n",
+                preamble + "for k in range(16):\n    wall(\"w\", None, [\"slot\", x + str(k)], {})\n");
+        for (String script : scripts) {
+            PlanScriptRunner.Result r = PlanScriptRunner.run(
+                    Collections.nCopies(8, script), "p", 0, "t", PlanRunLimits.DEFAULT);
+            assertNull(r.patch());
+            assertEquals(8, r.issues().size(), r.issues().toString());
+            for (int i = 0; i < r.issues().size(); i++) {
+                assertEquals("E-SCRIPT-LIMIT:#run:" + (i + 1), r.issues().get(i).id());
+                assertTrue(r.issues().get(i).message().contains("1000000"), r.issues().get(i).message());
+            }
+        }
     }
 }
