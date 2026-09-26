@@ -46,6 +46,13 @@ public final class PlanScriptRunner {
      * embed a megabyte of rendered value; the issue only keeps a short prefix.
      */
     private static final int MAX_ISSUE_DETAIL_CHARS = 400;
+    /**
+     * The longest identifier name quoted inside a forbidden-identifier issue. The script
+     * length cap lets a single name be almost 10,000 characters; the issue keeps only a
+     * short prefix, while a name that fits passes {@link PlanValueText#cut}
+     * byte-identically.
+     */
+    private static final int MAX_VIOLATION_NAME_CHARS = 60;
     /** Issue-key prefix for a script that failed while it was running. */
     private static final String RUN_ISSUE_KEY = "run:";
 
@@ -68,16 +75,18 @@ public final class PlanScriptRunner {
 
     /**
      * The fixed stack of the dedicated worker thread one whole run happens on. Sized by
-     * measurement, not guesswork: the deepest program the limits allow is
-     * {@code def f(n): return f(n + 1) + 1 + ... + 1} at 196 terms - the Call node and its
-     * {@code n + 1} argument add 2 levels, so the body measures exactly
-     * {@link #PLAN_MAX_AST_DEPTH} - and at the interpreter's own call cap of 200 every
-     * Micra-level frame keeps roughly 400 Java frames of pending binary evals live. The sweep
-     * and bisection in
-     * {@code PlanScriptRunnerTest.theWorkerStackCoversTheWorstCaseWithAFourFoldMargin} (JDK 21,
-     * Windows x64) measured the first stack size where that script ends with the interpreter's
-     * "too much recursion" rather than a StackOverflowError at 17,039,360 bytes (~16.25 MiB;
-     * 16 MiB still overflowed); this constant is ~7.7x that measurement, above the required 4x.
+     * measurement, not guesswork: the deep recursive chain the limit was first measured
+     * against ({@code def f(n): return f(n + 1) + 1 + ... + 1} at 196 terms - the Call
+     * node and its {@code n + 1} argument add 2 levels, so the body measures exactly
+     * {@link #PLAN_MAX_AST_DEPTH}) is NOT the deepest program the limits allow. Wrapping
+     * the call in 98 nested {@code for} blocks - the most block nesting the parser's
+     * 100-level limit accepts - keeps about a hundred more interpreter frames live at the
+     * deepest point, and that is the larger of the two measured shapes. The sweeps in
+     * {@code PlanScriptRunnerTest.theWorkerStackCoversTheWorstCaseWithAFourFoldMargin}
+     * (JDK 21, Windows x64) measured roughly 3.5 MiB JIT / 15 MiB -Xint for the chain and
+     * ~4.25 MiB JIT / ~20.24 MiB -Xint for the nested-{@code for} shape (a 60-block nest
+     * carrying 37 nested calls landed ~19.5 MiB -Xint); this constant is ~6.3x the
+     * ~20.24 MiB worst measurement, above the required 4x.
      */
     static final long PLAN_RUN_STACK_BYTES = 128L * 1024 * 1024;
 
@@ -254,10 +263,14 @@ public final class PlanScriptRunner {
         }
         for (int k = 0; k < violations.size(); k++) {
             PlanScriptProfile.Violation v = violations.get(k);
+            // a name can be almost the whole 10,000-character script: quote only the same
+            // short prefix in the issue key, the message and the data (short names stay
+            // byte-identical, so exact issue-id lookups still work)
+            String name = PlanValueText.cut(v.name(), MAX_VIOLATION_NAME_CHARS);
             issues.add(Issue.of(IssueCode.E_SCRIPT_FORBIDDEN,
-                    "forbidden:" + number + ":" + v.line() + ":" + v.name() + ":" + k, List.of(),
-                    label + " " + v.line() + "行目: 建設のスクリプトでは" + v.name() + "は使えません(" + describe(v.reason()) + ")",
-                    Map.of("name", v.name(), "reason", v.reason().name(), "line", String.valueOf(v.line())), List.of()));
+                    "forbidden:" + number + ":" + v.line() + ":" + name + ":" + k, List.of(),
+                    label + " " + v.line() + "行目: 建設のスクリプトでは" + name + "は使えません(" + describe(v.reason()) + ")",
+                    Map.of("name", name, "reason", v.reason().name(), "line", String.valueOf(v.line())), List.of()));
         }
         if (!violations.isEmpty()) {
             return;

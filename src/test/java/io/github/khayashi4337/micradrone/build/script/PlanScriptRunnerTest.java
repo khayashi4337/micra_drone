@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.khayashi4337.micradrone.build.model.Issue;
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.ParamValue;
 import io.github.khayashi4337.micradrone.build.model.PlanOp;
@@ -291,6 +292,32 @@ class PlanScriptRunnerTest {
         PlanScriptRunner.Result reserved = run("def random():\n    pass\n");
         assertEquals("RESERVED_NAME", reserved.issues().get(0).data().get("reason"));
         assertEquals("E-SCRIPT-FORBIDDEN:#forbidden:1:1:random:0", reserved.issues().get(0).id());
+    }
+
+    @Test
+    void aForbiddenIdentifierAlmostAsLongAsTheScriptIsCutInIdMessageAndData() {
+        // a 9,990-character unknown function name fits the 10,000-character script budget
+        // whole, so the profile reports it unshortened - but the ISSUE must not carry it
+        // raw: id, message and data.name all keep only the same 60-character prefix. A
+        // name that fits stays byte-identical - the exact issue-id assertions above and
+        // the short-name data check at the end depend on it
+        String hugeName = "f".repeat(9_990);
+        PlanScriptRunner.Result r = run("x = " + hugeName + "()\n");
+        assertNull(r.patch());
+        assertEquals(List.of("E-SCRIPT-FORBIDDEN"), codes(r));
+        assertEquals(1, r.issues().size());
+        Issue issue = r.issues().get(0);
+        String reported = issue.data().get("name");
+        assertEquals("f".repeat(60) + "...", reported);
+        assertEquals("E-SCRIPT-FORBIDDEN:#forbidden:1:1:" + reported + ":0", issue.id());
+        assertTrue(issue.id().length() < 120, issue.id());
+        assertTrue(issue.message().contains(reported + "は使えません"), issue.message());
+        assertTrue(issue.message().length() < 200, issue.message());
+        // a name inside the limit is quoted whole - here the same report at 60 exactly
+        PlanScriptRunner.Result exact = run("x = " + "g".repeat(60) + "()\n");
+        assertEquals("E-SCRIPT-FORBIDDEN:#forbidden:1:1:" + "g".repeat(60) + ":0",
+                exact.issues().get(0).id());
+        assertEquals("g".repeat(60), exact.issues().get(0).data().get("name"));
     }
 
     @Test
@@ -680,14 +707,35 @@ class PlanScriptRunnerTest {
     // ---- the result must not depend on the caller's stack (P3 H-2) ----
 
     /**
-     * The deepest program the limits allow: `f(n + 1)` sits at the bottom of a 196-term
-     * left-associative chain. The Call node and its `n + 1` argument add 2 levels, so the chain
-     * measures 198 deep, the function body 200 - exactly PLAN_MAX_AST_DEPTH. Called until the
-     * interpreter's own call cap of 200, every Micra-level frame keeps ~400 Java frames of
-     * pending binary evals live - this is the shape the worker thread's stack is sized against.
+     * The recursive shape the worker stack was first sized against: `f(n + 1)` sits at the
+     * bottom of a 196-term left-associative chain. The Call node and its `n + 1` argument
+     * add 2 levels, so the chain measures 198 deep, the function body 200 - exactly
+     * PLAN_MAX_AST_DEPTH. Called until the interpreter's own call cap of 200, every
+     * Micra-level frame keeps ~400 Java frames of pending binary evals live. It is NOT the
+     * deepest program the limits allow, though - {@link #worstCaseNestedForScript} wraps
+     * the same call in almost a hundred extra interpreter frames and measured deeper
+     * still, so this is only the cheaper of the two shapes the stack is sized against.
      */
     private static String worstCaseScript() {
         return "def f(n):\n    return f(n + 1) + " + "1 + ".repeat(194) + "1\nf(0)\n";
+    }
+
+    /**
+     * The deeper of the two worst-case shapes the worker stack is sized against: 98 nested
+     * {@code for} blocks - just under the parser's 100-level nesting limit - around a call
+     * into the same recursive function. Every live {@code for} iteration keeps its own
+     * interpreter frames on top of the ~400 Java frames each Micra-level call carries, so
+     * the deepest point stacks about a hundred extra frame layers over the plain chain.
+     * One space of indent per level keeps the whole script under 7,000 characters.
+     */
+    private static String worstCaseNestedForScript() {
+        StringBuilder out = new StringBuilder(
+                "def f(n):\n    return f(n + 1) + " + "1 + ".repeat(194) + "1\n");
+        for (int i = 0; i < 98; i++) {
+            out.append(" ".repeat(i)).append("for i in range(1):\n");
+        }
+        out.append(" ".repeat(98)).append("f(0)\n");
+        return out.toString();
     }
 
     /**
@@ -830,7 +878,8 @@ class PlanScriptRunnerTest {
 
     @Test
     void theDeepestAllowedScriptEndsWithTheRecursionCapOnATinyCallerStack() throws InterruptedException {
-        // the worst case the limits allow (see worstCaseScript): 200 nested calls each
+        // the deep recursive shape the stack was first sized against (see
+        // worstCaseScript): 200 nested calls each
         // carrying a 198-deep eval - roughly 80,000 live Java frames. On an ordinary thread
         // stack that is a StackOverflowError; on the runner's sized worker stack it must end
         // in the interpreter's own "too much recursion" issue, even when the CALLER that
@@ -843,18 +892,17 @@ class PlanScriptRunnerTest {
                 r.issues().get(0).message());
     }
 
-    @Test
-    void theWorkerStackCoversTheWorstCaseWithAFourFoldMargin() throws InterruptedException {
-        // the sizing measurement behind PLAN_RUN_STACK_BYTES: sweep the stack the batch body
-        // gets and find where the worst-case outcome flips from a caught StackOverflowError
-        // (E-SCRIPT-LIMIT, stack:1) to the interpreter's own "too much recursion"
-        // (E-SCHEMA, run:1). Sweep by doubling, then bisect (thread stacks are only honoured
-        // to OS granularity anyway); every step is printed so the numbers land in the test
-        // report. The constant must be at least 4x the measured minimum
-        String worst = worstCaseScript();
+    /**
+     * The smallest dedicated stack on which {@code script} reaches its deterministic
+     * interpreter cap ("too much recursion") instead of dying in a caught
+     * StackOverflowError: sweep by doubling, then bisect (thread stacks are only honoured
+     * to OS granularity anyway); every step is printed so the numbers land in the test
+     * report.
+     */
+    private static long firstDeterministicStack(String script) throws InterruptedException {
         long firstDeterministic = -1;
         for (long size = 256L * 1024; size <= 512L * 1024 * 1024; size *= 2) {
-            String outcome = outcomeOf(runScriptsOnStack(size, worst));
+            String outcome = outcomeOf(runScriptsOnStack(size, script));
             System.out.println("stack=" + size + " -> " + outcome);
             if ("too much recursion".equals(outcome)) {
                 firstDeterministic = size;
@@ -862,13 +910,13 @@ class PlanScriptRunnerTest {
             }
         }
         assertTrue(firstDeterministic > 0,
-                "the worst case never reached the interpreter's recursion cap");
+                "the script never reached the interpreter's recursion cap");
 
         long lo = firstDeterministic / 2;
         long hi = firstDeterministic;
         while (hi - lo > 256L * 1024) {
             long mid = lo + (hi - lo) / 2;
-            String outcome = outcomeOf(runScriptsOnStack(mid, worst));
+            String outcome = outcomeOf(runScriptsOnStack(mid, script));
             System.out.println("stack=" + mid + " -> " + outcome);
             if ("too much recursion".equals(outcome)) {
                 hi = mid;
@@ -876,10 +924,23 @@ class PlanScriptRunnerTest {
                 lo = mid;
             }
         }
-        System.out.println("measured minimum=" + hi);
-        assertTrue(PlanScriptRunner.PLAN_RUN_STACK_BYTES >= 4 * hi,
+        return hi;
+    }
+
+    @Test
+    void theWorkerStackCoversTheWorstCaseWithAFourFoldMargin() throws InterruptedException {
+        // the sizing measurement behind PLAN_RUN_STACK_BYTES, taken for BOTH deep shapes:
+        // the plain recursive chain, and the deeper 98-nested-`for` wrapper around it (the
+        // chain alone is NOT the deepest permitted program - see worstCaseNestedForScript).
+        // On a loaded machine a run can land a few MiB either side of the printed value,
+        // so the assertion is only on the required 4x margin, not an exact byte count
+        long chainMin = firstDeterministicStack(worstCaseScript());
+        long nestedForMin = firstDeterministicStack(worstCaseNestedForScript());
+        long measured = Math.max(chainMin, nestedForMin);
+        System.out.println("measured minimum: chain=" + chainMin + " nested-for=" + nestedForMin);
+        assertTrue(PlanScriptRunner.PLAN_RUN_STACK_BYTES >= 4 * measured,
                 "worker stack " + PlanScriptRunner.PLAN_RUN_STACK_BYTES + " is less than 4x the"
-                        + " measured minimum " + hi);
+                        + " measured minimum " + measured);
     }
 
     @Test

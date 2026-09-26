@@ -1622,21 +1622,7 @@ public final class Interpreter {
      * refused as soon as the budget is exceeded.
      */
     private boolean planEquals(Object a, Object b, int line) {
-        PlanCompareBudget work = new PlanCompareBudget();
-        return planEqualsAt(a, b, 0, work, line);
-    }
-
-    /**
-     * The work-charge adapter one {@link #planEquals} walk pays through. The visits
-     * are passed to {@link #chargePlanWork} one at a time, whose run-wide {@link
-     * #planWorkCarry} pays a step for every whole {@link #PLAN_WORK_PER_STEP} quantum
-     * they accumulate - so a refused comparison has no unpaid work left at all, and
-     * sub-quantum visits still count toward the next operation's charge.
-     */
-    private final class PlanCompareBudget {
-        void spend(long units, int line) {
-            chargePlanWork(units, line);
-        }
+        return planEqualsAt(a, b, 0, line);
     }
 
     /**
@@ -1645,10 +1631,14 @@ public final class Interpreter {
      * top-level pair is 0, the elements of a collection compared at level d are d + 1.
      * A pair deeper than {@link #PLAN_MAX_COMPARE_DEPTH} is refused, so a value nested
      * exactly 64 levels still compares while 65 does not - and a cyclic value, which
-     * descends without end, is refused deterministically instead of overflowing.
+     * descends without end, is refused deterministically instead of overflowing. The
+     * visits are charged through {@link #chargePlanWork} one at a time, whose run-wide
+     * {@link #planWorkCarry} pays a step for every whole {@link #PLAN_WORK_PER_STEP}
+     * quantum they accumulate - so a refused comparison has no unpaid work left at all,
+     * and sub-quantum visits still count toward the next operation's charge.
      */
-    private boolean planEqualsAt(Object a, Object b, int depth, PlanCompareBudget work, int line) {
-        work.spend(1, line);
+    private boolean planEqualsAt(Object a, Object b, int depth, int line) {
+        chargePlanWork(1, line);
         if (depth > PLAN_MAX_COMPARE_DEPTH) {
             throw compareDepthExceeded(line);
         }
@@ -1661,7 +1651,7 @@ public final class Interpreter {
             if (sa.length() == sb.length()) {
                 // String.equals scans the characters of two equal-length strings before it
                 // can answer - real work the step counter cannot otherwise see
-                work.spend(sa.length(), line);
+                chargePlanWork(sa.length(), line);
             }
             return sa.equals(sb);
         }
@@ -1670,7 +1660,7 @@ public final class Interpreter {
                 return false;
             }
             for (int i = 0; i < la.size(); i++) {
-                if (!planEqualsAt(la.get(i), lb.get(i), depth + 1, work, line)) {
+                if (!planEqualsAt(la.get(i), lb.get(i), depth + 1, line)) {
                     return false;
                 }
             }
@@ -1686,7 +1676,7 @@ public final class Interpreter {
             for (Object element : sa) {
                 chargeHashProbe(element, sb.size(), line);
             }
-            work.spend(sa.size(), line);
+            chargePlanWork(sa.size(), line);
             return sa.equals(sb);
         }
         if (a instanceof Map<?, ?> ma && b instanceof Map<?, ?> mb) {
@@ -1698,13 +1688,13 @@ public final class Interpreter {
             for (Object key : ma.keySet()) {
                 chargeHashProbe(key, mb.size(), line);
             }
-            work.spend(ma.size(), line);
+            chargePlanWork(ma.size(), line);
             for (Map.Entry<?, ?> entry : ma.entrySet()) {
                 Object other = mb.get(entry.getKey());
                 if (other == null && !mb.containsKey(entry.getKey())) {
                     return false;
                 }
-                if (!planEqualsAt(entry.getValue(), other, depth + 1, work, line)) {
+                if (!planEqualsAt(entry.getValue(), other, depth + 1, line)) {
                     return false;
                 }
             }
