@@ -298,21 +298,93 @@ public final class PlanScriptRunner {
 
     /**
      * The "use half-width digits" advice a {@link Double#parseDouble} failure maps to: names the
-     * 1-based line of the first source character that {@link Character#isDigit} accepts but
-     * ASCII-only parsing does not (full-width, Arabic-Indic, Devanagari, ... digits). When the
-     * source carries none - the exception then came from somewhere else - the line is omitted.
+     * 1-based line of the first number token carrying a character that {@link Character#isDigit}
+     * accepts but ASCII-only parsing does not (full-width, Arabic-Indic, Devanagari, ...).
+     * When the scan finds no such token - the exception then came from a path it cannot see -
+     * the line is omitted rather than guessed.
      */
     private static String nonAsciiDigitMessage(String source) {
+        int line = nonAsciiDigitLine(source);
+        if (line < 0) {
+            return "に半角でない数字があります。数字は半角の0〜9で書いてください";
+        }
+        return "の" + line + "行目に半角でない数字があります。数字は半角の0〜9で書いてください";
+    }
+
+    /**
+     * The 1-based line of the number token {@link Lexer#number} failed to parse, or -1 when
+     * the source has none. Walks the source the way {@link Lexer#scanLineBody} does so legal
+     * digits cannot steal the report: {@code #} runs to the end of the line, a quote opens a
+     * string literal (skipped the way {@link Lexer#string} reads it), a letter or {@code _}
+     * starts an identifier that keeps consuming {@link Character#isLetterOrDigit} and
+     * {@code _} (so a digit inside one is part of the name, never an offender), and only a
+     * digit that STARTS a token is scanned as a number - integer run plus the optional
+     * {@code .} fraction, all on one line since it can hold no {@code \n}. Lines are counted
+     * by {@code \n} only, like the lexer.
+     */
+    private static int nonAsciiDigitLine(String source) {
         int line = 1;
-        for (int i = 0; i < source.length(); i++) {
+        int i = 0;
+        while (i < source.length()) {
             char c = source.charAt(i);
             if (c == '\n') {
                 line++;
-            } else if (Character.isDigit(c) && (c < '0' || c > '9')) {
-                return "の" + line + "行目に半角でない数字があります。数字は半角の0〜9で書いてください";
+                i++;
+            } else if (c == '#') {
+                while (i < source.length() && source.charAt(i) != '\n') {
+                    i++;
+                }
+            } else if (c == '"' || c == '\'') {
+                i = endOfStringLiteral(source, i);
+            } else if (Character.isLetter(c) || c == '_') {
+                do {
+                    i++;
+                } while (i < source.length()
+                        && (Character.isLetterOrDigit(source.charAt(i)) || source.charAt(i) == '_'));
+            } else if (Character.isDigit(c)) {
+                int start = i;
+                while (i < source.length() && Character.isDigit(source.charAt(i))) {
+                    i++;
+                }
+                if (i + 1 < source.length() && source.charAt(i) == '.'
+                        && Character.isDigit(source.charAt(i + 1))) {
+                    i++;
+                    while (i < source.length() && Character.isDigit(source.charAt(i))) {
+                        i++;
+                    }
+                }
+                for (int k = start; k < i; k++) {
+                    if (source.charAt(k) < '0' || source.charAt(k) > '9') {
+                        return line;
+                    }
+                }
+            } else {
+                i++;
             }
         }
-        return "に半角でない数字があります。数字は半角の0〜9で書いてください";
+        return -1;
+    }
+
+    /**
+     * The index just past the string literal opening at {@code quotePos}, read the way
+     * {@link Lexer#string} does: a backslash escape consumes the next character, and a
+     * newline or the end of input ends the literal (the lexer would already have thrown for
+     * that literal before a later digit could matter).
+     */
+    private static int endOfStringLiteral(String source, int quotePos) {
+        char quote = source.charAt(quotePos);
+        int i = quotePos + 1;
+        while (i < source.length()) {
+            char c = source.charAt(i);
+            if (c == quote) {
+                return i + 1;
+            }
+            if (c == '\n') {
+                return i;
+            }
+            i += c == '\\' ? 2 : 1;
+        }
+        return i;
     }
 
     /**

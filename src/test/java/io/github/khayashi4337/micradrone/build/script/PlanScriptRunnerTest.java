@@ -1292,6 +1292,47 @@ class PlanScriptRunnerTest {
     }
 
     @Test
+    void aNonAsciiDigitInACommentDoesNotStealTheReportedLine() {
+        // a full-width digit inside a # comment is text the lexer skips, so it is
+        // legal - the offender the author must fix is the one on line 2
+        PlanScriptRunner.Result r = run("# １\nx = ２\n");
+        assertNull(r.patch());
+        assertEquals("E-SCHEMA:#syntax:1", r.issues().get(0).id());
+        assertTrue(r.issues().get(0).message().contains("スクリプト1の2行目"),
+                r.issues().get(0).message());
+    }
+
+    @Test
+    void aNonAsciiDigitInAStringLiteralDoesNotStealTheReportedLine() {
+        // "１" on line 1 is legal string content; the real offender sits on line 3
+        PlanScriptRunner.Result r = run("print(\"１\")\nx = 1\ny = ２\n");
+        assertNull(r.patch());
+        assertEquals("E-SCHEMA:#syntax:1", r.issues().get(0).id());
+        assertTrue(r.issues().get(0).message().contains("3行目"),
+                r.issues().get(0).message());
+    }
+
+    @Test
+    void aNonAsciiDigitInAStringLabelDoesNotStealTheReportedLine() {
+        // a Japanese label carrying a full-width digit is legal string content on
+        // line 2; the real offender sits on line 4
+        PlanScriptRunner.Result r = run("a = 1\nname = \"部屋１\"\nb = 2\nx = ３\n");
+        assertNull(r.patch());
+        assertEquals("E-SCHEMA:#syntax:1", r.issues().get(0).id());
+        assertTrue(r.issues().get(0).message().contains("4行目"),
+                r.issues().get(0).message());
+    }
+
+    @Test
+    void aNonAsciiDigitInsideAnIdentifierIsLegal() {
+        // isLetter starts an identifier and isLetterOrDigit continues it, so the
+        // digit inside 部屋１ never begins a number token and the script just runs
+        PlanScriptRunner.Result r = run("部屋１ = 1\nprint(部屋１)\n");
+        assertTrue(r.ok(), r.issues().toString());
+        assertEquals(List.of("1"), r.printed());
+    }
+
+    @Test
     void aUnicodeHeavyFuzzOfScriptsNeverThrowsOutOfRun() {
         // a seeded corpus of 300 scripts mixed from Unicode digits, whitespace and
         // format marks, unpaired surrogates and ASCII code fragments: whatever a
