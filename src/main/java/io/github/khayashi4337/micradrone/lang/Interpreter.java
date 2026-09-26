@@ -118,14 +118,24 @@ public final class Interpreter {
     private static final int PLAN_MAX_COLLECTION_ELEMENTS = 100_000;
     /**
      * Total units one construction-script run may allocate: one unit is one character of a string
-     * the script produces or one element of a collection it creates or copies. The per-value caps
+     * the script produces or one slot of a list it builds or copies, and a dict entry or set
+     * element counts {@link #PLAN_HASH_ENTRY_UNITS} units. The per-value caps
      * ({@link #PLAN_MAX_STRING_CHARS}, {@link #PLAN_MAX_COLLECTION_ELEMENTS}) bound each single
      * value but not what a whole run retains - printing or copying a legal-sized value in a loop
-     * still exhausts the heap, so the run as a whole gets a budget too. Charged only where a new
-     * string or collection materialises; {@code append}/{@code add}/item assignment/literals are
-     * already bounded by the step limit or the script length.
+     * still exhausts the heap, so the run as a whole gets a budget too. Charged where a new string
+     * or collection materialises, including the list/dict/set literals: the step limit does not
+     * bound them (a 3,000-element literal evaluated 100,000 times is 300 million elements), only
+     * {@code append}/{@code add}/item assignment are left to it. The counter belongs to one
+     * interpreter run, which is ONE script - the runner builds one interpreter per script; what
+     * all scripts of a run leave behind is bounded separately by the recorder's budgets.
      */
     private static final long PLAN_MAX_ALLOCATED_UNITS = 10_000_000;
+    /**
+     * Charge weight of one dict entry or set element: a LinkedHashMap/LinkedHashSet entry retains
+     * about eight times what an ArrayList slot does, so 10,000,000 units of entries would be about
+     * 480 MB without the weight.
+     */
+    private static final int PLAN_HASH_ENTRY_UNITS = 8;
     private long planAllocatedUnits = 0;
 
     public Interpreter(DroneApi api) {
@@ -662,6 +672,7 @@ public final class Interpreter {
             list.add(eval(element));
         }
         checkPlanCollectionSize(list.size(), e.line());
+        chargePlanAllocation(list.size(), e.line());
         return list;
     }
 
@@ -672,6 +683,7 @@ public final class Interpreter {
             map.put(eval(e.keys().get(i)), eval(e.values().get(i)));
         }
         checkPlanCollectionSize(map.size(), e.line());
+        chargePlanAllocation(map.size() * PLAN_HASH_ENTRY_UNITS, e.line());
         return map;
     }
 
@@ -681,6 +693,7 @@ public final class Interpreter {
             set.add(eval(element));
         }
         checkPlanCollectionSize(set.size(), e.line());
+        chargePlanAllocation(set.size() * PLAN_HASH_ENTRY_UNITS, e.line());
         return set;
     }
 
@@ -993,14 +1006,12 @@ public final class Interpreter {
             case "set" -> {
                 requireArgCount(call, args.isEmpty() ? 0 : 1);
                 Set<Object> copy = args.isEmpty() ? new LinkedHashSet<>() : new LinkedHashSet<>(collectionArg(call, "set"));
-                chargePlanAllocation(copy.size(), call.line());
+                chargePlanAllocation(copy.size() * PLAN_HASH_ENTRY_UNITS, call.line());
                 yield copy;
             }
             case "dict" -> {
                 requireArgCount(call, 0);
-                Map<Object, Object> copy = new LinkedHashMap<>();
-                chargePlanAllocation(copy.size(), call.line());
-                yield copy;
+                yield new LinkedHashMap<>();
             }
             case "semaphore" -> {
                 requireArgCount(call, 0);
@@ -1434,10 +1445,11 @@ public final class Interpreter {
 
     /**
      * Counts script-built characters/elements against the run-wide allocation budget; a no-op for
-     * farm interpreters. Called only where plan-mode code materialises a new string or collection:
-     * {@code +} concatenation, {@code str()}/{@code print()}, {@code list()}/{@code set()}/
-     * {@code dict()} results, {@code keys()}/{@code values()}, the for-loop snapshot and the
-     * {@code min}/{@code max} candidate list.
+     * farm interpreters. Called where plan-mode code materialises a new string or collection:
+     * {@code +} concatenation, {@code str()}/{@code print()}, {@code list()}/{@code set()} copies,
+     * {@code keys()}/{@code values()}, the list/dict/set literals, the for-loop snapshot and the
+     * {@code min}/{@code max} candidate list. Dict entries and set elements weigh
+     * {@link #PLAN_HASH_ENTRY_UNITS} units each.
      */
     private void chargePlanAllocation(int units, int line) {
         if (planLimits == null) {

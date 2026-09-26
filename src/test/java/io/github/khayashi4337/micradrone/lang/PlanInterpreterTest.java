@@ -1,5 +1,6 @@
 package io.github.khayashi4337.micradrone.lang;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -415,9 +416,9 @@ class PlanInterpreterTest {
     void aLegitimateLoopStaysWellUnderTheAllocationBudget() {
         RecordingPlanApi api = new RecordingPlanApi();
         // 1,000 iterations x (a 100-character concatenation + a 100-element list copy) = 200,000 units
-        run("h = \"" + "x".repeat(50) + "\"\n"
+        assertDoesNotThrow(() -> run("h = \"" + "x".repeat(50) + "\"\n"
                 + "l = []\nfor i in range(100):\n    l.append(i)\n"
-                + "for i in range(1000):\n    t = h + h\n    c = list(l)\n", api, new PlanRunLimits(100_000, 60_000));
+                + "for i in range(1000):\n    t = h + h\n    c = list(l)\n", api, new PlanRunLimits(100_000, 60_000)));
     }
 
     @Test
@@ -492,9 +493,6 @@ class PlanInterpreterTest {
         PlanLimitException e = assertThrows(PlanLimitException.class,
                 () -> run(script, new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
         assertTrue(e.getMessage().contains("total allocation limit of 10000000"), site + ": " + e.getMessage());
-        // the step-limit message ("construction script exceeded <N> steps") must not appear: without
-        // the charge the loop only dies at the step (or time) limit, which carries a different text
-        assertFalse(e.getMessage().contains(" steps"), site + ": " + e.getMessage());
     }
 
     @Test
@@ -517,5 +515,106 @@ class PlanInterpreterTest {
                         new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
         assertEquals("line 13: construction script exceeded the total allocation limit of 10000000 (characters and collection elements created)",
                 e.getMessage());
+    }
+
+    // ---- literals count against the run-wide allocation budget (fix round 3) ----
+
+    @Test
+    void aListLiteralIsChargedForEveryElementOfEveryEvaluation() {
+        // each evaluation of the 2,000-element literal charges 2,000 units (one unit per list
+        // slot), so exactly 5,000 evaluations exhaust the 10,000,000-unit budget and still run;
+        // the 5,001st evaluation charges 10,002,000 and throws on the append line
+        String literal = "[0" + ",0".repeat(1_999) + "]";
+        run("acc = []\nfor i in range(5000):\n    acc.append(" + literal + ")\n", new RecordingPlanApi(),
+                new PlanRunLimits(1_000_000, 60_000));
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run("acc = []\nfor i in range(5001):\n    acc.append(" + literal + ")\n",
+                        new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
+        assertEquals("line 3: construction script exceeded the total allocation limit of 10000000 (characters and collection elements created)",
+                e.getMessage());
+    }
+
+    @Test
+    void aDictLiteralIsChargedEightUnitsPerEntryPerEvaluation() {
+        // a dict entry weighs 8 units (a LinkedHashMap entry retains about eight times an
+        // ArrayList slot), so the 500-entry literal charges 4,000 per evaluation: 2,500
+        // evaluations are exactly 10,000,000 and run, the 2,501st throws
+        StringBuilder dict = new StringBuilder("{");
+        for (int i = 0; i < 500; i++) {
+            if (i > 0) {
+                dict.append(", ");
+            }
+            dict.append("\"k").append(i).append("\": 0");
+        }
+        dict.append("}");
+        run("acc = []\nfor i in range(2500):\n    acc.append(" + dict + ")\n", new RecordingPlanApi(),
+                new PlanRunLimits(1_000_000, 60_000));
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run("acc = []\nfor i in range(2501):\n    acc.append(" + dict + ")\n",
+                        new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
+        assertEquals("line 3: construction script exceeded the total allocation limit of 10000000 (characters and collection elements created)",
+                e.getMessage());
+    }
+
+    @Test
+    void aSetLiteralIsChargedEightUnitsPerElementPerEvaluation() {
+        // a set literal weighs its elements the same 8 units each (LinkedHashSet entries), so the
+        // 500-element literal charges 4,000 per evaluation - 2,500 fit, the 2,501st throws
+        StringBuilder set = new StringBuilder("{");
+        for (int i = 0; i < 500; i++) {
+            if (i > 0) {
+                set.append(", ");
+            }
+            set.append(i);
+        }
+        set.append("}");
+        run("acc = []\nfor i in range(2500):\n    acc.append(" + set + ")\n", new RecordingPlanApi(),
+                new PlanRunLimits(1_000_000, 60_000));
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run("acc = []\nfor i in range(2501):\n    acc.append(" + set + ")\n",
+                        new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
+        assertEquals("line 3: construction script exceeded the total allocation limit of 10000000 (characters and collection elements created)",
+                e.getMessage());
+    }
+
+    @Test
+    void theSetCopyIsChargedEightUnitsPerElement() {
+        // set(l) on the 1,000-element seed copies into a LinkedHashSet: 1,000 x 8 = 8,000 units
+        // per copy, so 1,250 copies are exactly 10,000,000 and run while the 1,251st throws on
+        // the copy line. The seeding appends charge nothing; both scripts stay far under the
+        // step limit (1 + 2x1,000 + 2x1,251 = 4,503 steps)
+        String seed = "l = []\nfor i in range(1000):\n    l.append(i)\n";
+        run(seed + "for i in range(1250):\n    t = set(l)\n", new RecordingPlanApi(),
+                new PlanRunLimits(1_000_000, 60_000));
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(seed + "for i in range(1251):\n    t = set(l)\n",
+                        new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
+        assertEquals("line 5: construction script exceeded the total allocation limit of 10000000 (characters and collection elements created)",
+                e.getMessage());
+    }
+
+    @Test
+    void literalChargesDoNotApplyToFarmScripts() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        // the same 2,000-element list literal evaluated 5,001 times = 10,002,000 units, over the
+        // construction budget - but a farm interpreter has no allocation budget at all
+        String literal = "[0" + ",0".repeat(1_999) + "]";
+        new Interpreter(api).run(new Parser(new Lexer(
+                "acc = []\nfor i in range(5001):\n    acc.append(" + literal + ")\nprint(len(acc))\n")
+                .scan()).parseProgram());
+        assertEquals(List.of("5001"), api.printed);
+    }
+
+    @Test
+    void theStringSizeCheckRunsBeforeTheAllocationCharge() {
+        // the run reaches 9,999,994 units, then s + "x" produces 1,000,001 characters: BOTH the
+        // string cap (1,000,000) and the remaining budget (6 units) are exceeded, and the
+        // string-size message must win because that check runs before the allocation charge
+        String buildToCap = "s = \"x\"\n" + "s = s + s + s + s + s + s + s + s + s + s\n".repeat(6);
+        String fourRenders = "t = str(s)\n".repeat(4);
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(buildToCap + fourRenders + "u = s + \"x\"\n", new RecordingPlanApi(),
+                        new PlanRunLimits(1_000_000, 60_000)));
+        assertEquals("line 12: construction script exceeded the string size limit of 1000000 characters", e.getMessage());
     }
 }

@@ -22,6 +22,7 @@ import io.github.khayashi4337.micradrone.build.model.Side;
 import io.github.khayashi4337.micradrone.lang.MicraFunction;
 import io.github.khayashi4337.micradrone.lang.MicraNone;
 import io.github.khayashi4337.micradrone.lang.PlanAnchorArgs;
+import io.github.khayashi4337.micradrone.lang.PlanRunLimits;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -195,11 +196,12 @@ class PlanRecorderTest {
         IllegalArgumentException dock = assertThrows(IllegalArgumentException.class, () -> r.logistics(
                 List.of(params("id", "d", "pad", box, "clearance", box, "approach", "north", "port", List.of("a.b"))),
                 List.of(), List.of()));
-        assertTrue(dock.getMessage().contains("port"), dock.getMessage());
+        // the offending key is quoted (「port」), not a bare substring of the allowed "ports"
+        assertTrue(dock.getMessage().contains("「port」"), dock.getMessage());
         assertTrue(dock.getMessage().contains("ports"), dock.getMessage());
         IllegalArgumentException route = assertThrows(IllegalArgumentException.class, () -> r.logistics(List.of(),
                 List.of(params("id", "r", "from", "a", "to", "b", "waypoint", List.of())), List.of()));
-        assertTrue(route.getMessage().contains("waypoint"), route.getMessage());
+        assertTrue(route.getMessage().contains("「waypoint」"), route.getMessage());
         assertTrue(route.getMessage().contains("waypoints"), route.getMessage());
         IllegalArgumentException flow = assertThrows(IllegalArgumentException.class, () -> r.logistics(List.of(),
                 List.of(), List.of(params("item", "i", "per_min", 1.0, "from", "a", "to", "b", "rate", 2.0))));
@@ -246,5 +248,125 @@ class PlanRecorderTest {
         PlanOp.SetStyle style = (PlanOp.SetStyle) patch.ops().get(0);
         assertEquals(Set.of("cozy"), style.style().moodTags());
         assertTrue(style.style().palette().isEmpty());
+    }
+
+    // ---- run-wide budgets on what the recorder retains (fix round 3) ----
+
+    @Test
+    void recordedParamCopiesCountAgainstTheRunWideElementBudget() {
+        // one part call with a 9,000-element list under one key costs 1 (the op) + 9,001 nodes
+        // (the list itself counts one, every scalar counts one - the same walk the params copy
+        // does) + 0 tags = 9,002, so 22 calls charge 198,044 of the 200,000-element budget and
+        // the 23rd is refused
+        PlanRecorder r = new PlanRecorder();
+        List<Object> big = new ArrayList<>();
+        for (int i = 0; i < 9_000; i++) {
+            big.add((double) i);
+        }
+        Map<String, Object> params = params("x", big);
+        for (int i = 0; i < 22; i++) {
+            r.part("p" + i, "micra:pillar", null, PlanAnchorArgs.absolute(0, 0, 0, 0, false), params, List.of(), "");
+        }
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> r.part("p22",
+                "micra:pillar", null, PlanAnchorArgs.absolute(0, 0, 0, 0, false), params, List.of(), ""));
+        assertTrue(e.getMessage().contains("200000"), e.getMessage());
+    }
+
+    @Test
+    void recordedTagsCountAgainstTheRunWideElementBudget() {
+        // a part call with 30,000 distinct tags costs 1 + 0 params + 30,000 = 30,001, so 6 calls
+        // fit (180,006) and the 7th is refused
+        PlanRecorder r = new PlanRecorder();
+        List<String> tags = new ArrayList<>();
+        for (int i = 0; i < 30_000; i++) {
+            tags.add("t" + i);
+        }
+        for (int i = 0; i < 6; i++) {
+            r.part("p" + i, "micra:pillar", null, PlanAnchorArgs.absolute(0, 0, 0, 0, false), params(), tags, "");
+        }
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> r.part("p6",
+                "micra:pillar", null, PlanAnchorArgs.absolute(0, 0, 0, 0, false), params(), tags, ""));
+        assertTrue(e.getMessage().contains("200000"), e.getMessage());
+    }
+
+    @Test
+    void aRecordedViaListCountsAgainstTheRunWideElementBudget() {
+        // connect with a 30,000-entry via list costs 1 + 30,000 = 30,001 - same 6/7 boundary
+        PlanRecorder r = new PlanRecorder();
+        List<String> via = new ArrayList<>();
+        for (int i = 0; i < 30_000; i++) {
+            via.add("n" + i);
+        }
+        for (int i = 0; i < 6; i++) {
+            r.connect("c" + i, "a.out", "b.in", "item", via, null);
+        }
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> r.connect("c6", "a.out", "b.in", "item", via, null));
+        assertTrue(e.getMessage().contains("200000"), e.getMessage());
+    }
+
+    @Test
+    void aSquaredLogisticsCallIsRefusedBeforeItsListsAreBuilt() {
+        // 19,000 references to ONE dock whose ports list holds 19,000 references: reading it the
+        // old way materialised 19,000 x 19,000 = 361,000,000 PortRef objects in one call. Each
+        // dock is charged 1 (itself) + 19,000 (ports) + 0 (connectors) = 19,001 BEFORE its PortRef
+        // list is built, and the call itself costs 1 - so 10 docks fit (1 + 190,010 = 190,011)
+        // and the 11th is refused while being processed, long before any product is built
+        List<Object> box = List.of(0.0, 0.0, 0.0, 8.0, 0.0, 8.0);
+        List<Object> ports = new ArrayList<>();
+        for (int i = 0; i < 19_000; i++) {
+            ports.add("n.p");
+        }
+        Map<String, Object> dock = params("id", "d", "pad", box, "clearance", box, "approach", "north", "ports", ports);
+        List<Object> tenDocks = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            tenDocks.add(dock);
+        }
+        PlanRecorder fits = new PlanRecorder();
+        fits.logistics(tenDocks, List.of(), List.of());
+        assertEquals(10, ((PlanOp.SetLogistics) fits.toPatch("p", 0, "s").ops().get(0)).logistics().docks().size());
+        PlanRecorder r = new PlanRecorder();
+        List<Object> manyDocks = new ArrayList<>();
+        for (int i = 0; i < 19_000; i++) {
+            manyDocks.add(dock);
+        }
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> r.logistics(manyDocks, List.of(), List.of()));
+        assertTrue(e.getMessage().contains("200000"), e.getMessage());
+    }
+
+    @Test
+    void printedTextCountsAgainstTheRunWideCharacterBudget() {
+        // the printed list retains every rendered string for the whole run: two 524,288-character
+        // prints would retain 1,048,576 characters, so the second is refused before it is kept
+        PlanRecorder r = new PlanRecorder();
+        String text = "x".repeat(524_288);
+        r.print(text);
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> r.print(text));
+        assertTrue(e.getMessage().contains("1000000"), e.getMessage());
+        assertEquals(1, r.printed().size(), "a refused print is not retained");
+        // exactly 1,000,000 characters in total still fit (the check is ">", not ">="); one more is refused
+        PlanRecorder exact = new PlanRecorder();
+        exact.print("x".repeat(1_000_000));
+        assertThrows(IllegalArgumentException.class, () -> exact.print("x"));
+    }
+
+    @Test
+    void theElementBudgetIsCumulativeAcrossTheScriptsOfOneRun() {
+        // one PlanRecorder serves every script of a run: script 1 records 22 part calls of the
+        // 9,000-element params list (22 x 9,002 = 198,044) and script 2's single call of the same
+        // shape pushes the total to 207,046 - refused as an ordinary E-SCHEMA issue, with no patch
+        // at all (each script gets its own interpreter, so script 2 builds its own list)
+        StringBuilder script1 = new StringBuilder("a = []\nfor i in range(9000):\n    a.append(i)\n");
+        for (int i = 0; i < 22; i++) {
+            script1.append("wall(\"w").append(i).append("\", None, [0,0,0], {\"x\": a})\n");
+        }
+        String script2 = "b = []\nfor i in range(9000):\n    b.append(i)\nwall(\"w\", None, [0,0,0], {\"x\": b})\n";
+        PlanScriptRunner.Result r = PlanScriptRunner.run(
+                List.of(script1.toString(), script2), "p", 0, "t", PlanRunLimits.DEFAULT);
+        assertNull(r.patch());
+        assertEquals(1, r.issues().size());
+        assertEquals("E-SCHEMA:#run:2", r.issues().get(0).id());
+        assertTrue(r.issues().get(0).message().contains("200000"), r.issues().get(0).message());
     }
 }

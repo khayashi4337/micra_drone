@@ -9,6 +9,7 @@ import io.github.khayashi4337.micradrone.lang.MicraLangException;
 import io.github.khayashi4337.micradrone.lang.Parser;
 import io.github.khayashi4337.micradrone.lang.PlanLimitException;
 import io.github.khayashi4337.micradrone.lang.PlanRunLimits;
+import io.github.khayashi4337.micradrone.lang.PlanValueText;
 import io.github.khayashi4337.micradrone.lang.ast.Stmt;
 import java.util.ArrayList;
 import java.util.List;
@@ -21,7 +22,8 @@ public final class PlanScriptRunner {
      * embed a megabyte of rendered value; the issue only keeps a short prefix.
      */
     private static final int MAX_ISSUE_DETAIL_CHARS = 400;
-    private static final String ELLIPSIS = "...";
+    /** Issue-key prefix for a script that failed while it was running. */
+    private static final String RUN_ISSUE_KEY = "run:";
 
     public record Result(PlanPatch patch, List<Issue> issues, List<String> printed) {
         public Result {
@@ -43,46 +45,14 @@ public final class PlanScriptRunner {
         for (int n = 0; n < scripts.size(); n++) {
             int number = n + 1;
             String label = "スクリプト" + number;
-            String source = scripts.get(n);
-            if (source.length() > PlanScriptWriter.MAX_SCRIPT_CHARS) {
-                issues.add(Issue.of(IssueCode.E_SCRIPT_LIMIT, "length:" + number, List.of(), label + "が長すぎます(" + source.length()
-                        + "字 > " + PlanScriptWriter.MAX_SCRIPT_CHARS + "字)。複数のスクリプトに分けてください"));
-                continue;
-            }
-            List<Stmt> program;
             try {
-                program = new Parser(new Lexer(source).scan()).parseProgram();
-            } catch (MicraLangException e) {
-                issues.add(Issue.of(IssueCode.E_SCHEMA, "syntax:" + number, List.of(), label + "の構文エラー: " + detail(e.getMessage())));
-                continue;
-            }
-            List<PlanScriptProfile.Violation> violations = PlanScriptProfile.check(program);
-            for (int k = 0; k < violations.size(); k++) {
-                PlanScriptProfile.Violation v = violations.get(k);
-                issues.add(Issue.of(IssueCode.E_SCRIPT_FORBIDDEN,
-                        "forbidden:" + number + ":" + v.line() + ":" + v.name() + ":" + k, List.of(),
-                        label + " " + v.line() + "行目: 建設のスクリプトでは" + v.name() + "は使えません(" + describe(v.reason()) + ")",
-                        Map.of("name", v.name(), "reason", v.reason().name(), "line", String.valueOf(v.line())), List.of()));
-            }
-            if (!violations.isEmpty()) {
-                continue;
-            }
-            try {
-                new Interpreter(recorder, limits).run(program);
-            } catch (PlanLimitException e) {
-                issues.add(Issue.of(IssueCode.E_SCRIPT_LIMIT, "run:" + number, List.of(),
-                        label + "が実行の上限を超えました: " + detail(e.getMessage())));
-            } catch (MicraLangException e) {
-                issues.add(Issue.of(IssueCode.E_SCHEMA, "run:" + number, List.of(),
-                        label + "の実行エラー: " + detail(e.getMessage())));
+                runScript(scripts.get(n), number, label, recorder, limits, issues);
             } catch (StackOverflowError e) {
-                // a cyclic or deeply nested live value can still reach a recursive JDK walk (list
-                // equality, hashing); an Error must not kill the whole run, so it becomes a limit issue
+                // the recursive-descent parser overflows on deeply nested brackets/operators just
+                // like the interpreter does on deeply nested values; an Error must not kill the
+                // whole run, so a stack overflow anywhere in one script becomes a limit issue
                 issues.add(Issue.of(IssueCode.E_SCRIPT_LIMIT, "stack:" + number, List.of(),
-                        label + "を実行中に、深く入れ子になった値を処理できませんでした"));
-            } catch (RuntimeException e) {
-                issues.add(Issue.of(IssueCode.E_SCHEMA, "internal:" + number, List.of(),
-                        label + "の実行中に、想定外のエラー: " + detail(String.valueOf(e))));
+                        label + "は入れ子が深すぎて処理できませんでした"));
             }
         }
         if (issues.stream().anyMatch(Issue::isError)) {
@@ -91,9 +61,53 @@ public final class PlanScriptRunner {
         return new Result(recorder.toPatch(patchId, baseRevision, stageId), issues, recorder.printed());
     }
 
+    /**
+     * Checks and runs one script, appending its issues to {@code issues}. Every failure mode is a
+     * recorded issue and the method returns; only a {@link StackOverflowError} propagates, to the
+     * caller's catch (it is an Error, and it can come from the parse or the run alike).
+     */
+    private static void runScript(String source, int number, String label, PlanRecorder recorder,
+            PlanRunLimits limits, List<Issue> issues) {
+        if (source.length() > PlanScriptWriter.MAX_SCRIPT_CHARS) {
+            issues.add(Issue.of(IssueCode.E_SCRIPT_LIMIT, "length:" + number, List.of(), label + "が長すぎます(" + source.length()
+                    + "字 > " + PlanScriptWriter.MAX_SCRIPT_CHARS + "字)。複数のスクリプトに分けてください"));
+            return;
+        }
+        List<Stmt> program;
+        try {
+            program = new Parser(new Lexer(source).scan()).parseProgram();
+        } catch (MicraLangException e) {
+            issues.add(Issue.of(IssueCode.E_SCHEMA, "syntax:" + number, List.of(), label + "の構文エラー: " + detail(e.getMessage())));
+            return;
+        }
+        List<PlanScriptProfile.Violation> violations = PlanScriptProfile.check(program);
+        for (int k = 0; k < violations.size(); k++) {
+            PlanScriptProfile.Violation v = violations.get(k);
+            issues.add(Issue.of(IssueCode.E_SCRIPT_FORBIDDEN,
+                    "forbidden:" + number + ":" + v.line() + ":" + v.name() + ":" + k, List.of(),
+                    label + " " + v.line() + "行目: 建設のスクリプトでは" + v.name() + "は使えません(" + describe(v.reason()) + ")",
+                    Map.of("name", v.name(), "reason", v.reason().name(), "line", String.valueOf(v.line())), List.of()));
+        }
+        if (!violations.isEmpty()) {
+            return;
+        }
+        try {
+            new Interpreter(recorder, limits).run(program);
+        } catch (PlanLimitException e) {
+            issues.add(Issue.of(IssueCode.E_SCRIPT_LIMIT, RUN_ISSUE_KEY + number, List.of(),
+                    label + "が実行の上限を超えました: " + detail(e.getMessage())));
+        } catch (MicraLangException e) {
+            issues.add(Issue.of(IssueCode.E_SCHEMA, RUN_ISSUE_KEY + number, List.of(),
+                    label + "の実行エラー: " + detail(e.getMessage())));
+        } catch (RuntimeException e) {
+            issues.add(Issue.of(IssueCode.E_SCHEMA, "internal:" + number, List.of(),
+                    label + "の実行中に、想定外のエラー: " + detail(String.valueOf(e))));
+        }
+    }
+
     /** An interpreter/parser message quoted inside an issue, cut so a huge rendered value cannot fill it. */
     private static String detail(String text) {
-        return text.length() <= MAX_ISSUE_DETAIL_CHARS ? text : text.substring(0, MAX_ISSUE_DETAIL_CHARS) + ELLIPSIS;
+        return PlanValueText.cut(text, MAX_ISSUE_DETAIL_CHARS);
     }
 
     private static String describe(PlanScriptProfile.Reason reason) {

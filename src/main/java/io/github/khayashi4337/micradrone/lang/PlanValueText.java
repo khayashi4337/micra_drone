@@ -20,8 +20,17 @@ public final class PlanValueText {
             return Interpreter.stringify(value);
         }
         if (value instanceof String s) {
-            return s.length() <= MAX_DESCRIBED_CHARS ? s : s.substring(0, MAX_DESCRIBED_CHARS) + ELLIPSIS;
+            return cut(s, MAX_DESCRIBED_CHARS);
         }
         return Interpreter.typeName(value);
+    }
+
+    /**
+     * {@code text} unchanged when it fits in {@code maxChars}, else its first {@code maxChars}
+     * characters plus an ellipsis. Shared with {@code PlanScriptRunner}'s issue detail so a
+     * legitimately huge rendered value can never make an error message huge with it.
+     */
+    public static String cut(String text, int maxChars) {
+        return text.length() <= maxChars ? text : text.substring(0, maxChars) + ELLIPSIS;
     }
 }

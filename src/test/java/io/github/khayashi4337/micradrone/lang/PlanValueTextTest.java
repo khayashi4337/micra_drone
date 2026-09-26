@@ -33,4 +33,19 @@ class PlanValueTextTest {
         assertEquals("semaphore", PlanValueText.describe(new MicraSemaphore(0)));
         assertEquals("None", PlanValueText.describe(MicraNone.INSTANCE));
     }
+
+    @Test
+    void nullDescribesAsNone() {
+        // a Java null (never a real script value, but a caller may pass one) takes the same
+        // fall-through as MicraNone: Interpreter.typeName(null) is "None"
+        assertEquals("None", PlanValueText.describe(null));
+    }
+
+    @Test
+    void cutLeavesExactlyMaxCharsUnchangedAndCutsOneMore() {
+        String exact = "y".repeat(7);
+        assertEquals(exact, PlanValueText.cut(exact, 7));
+        assertEquals(exact + "...", PlanValueText.cut(exact + "y", 7));
+        assertEquals(exact + "...", PlanValueText.cut(exact + "yyyy", 7));
+    }
 }
