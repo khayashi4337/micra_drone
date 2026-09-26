@@ -582,7 +582,7 @@ class PlanScriptRunnerTest {
     void aSubstringSearchLoopIsAnExecutionLimitIssue() {
         // the reviewer's loop repro: each `p in t` over a 4,097-character needle in a
         // 12,288-character text is charged (12,288 - 4,097 + 1) x 4,097 = 33,562,624 work
-        // units = 8,194 steps up front, so the deterministic step limit - not the wall
+        // units = 32,776 steps up front, so the deterministic step limit - not the wall
         // clock - ends the while loop as an E-SCRIPT-LIMIT issue
         PlanScriptRunner.Result r = run("s = \"x\"\nfor i in range(12):\n    s = s + s\n"
                 + "p = s + \"b\"\nt = s + s + s\nwhile True:\n    x = p in t\n");
@@ -618,7 +618,7 @@ class PlanScriptRunnerTest {
     void listMembershipOverSharedNestsIsAnExecutionLimitIssue() {
         // the fuzz's membership bomb: two 28-level shared nests compared by `a in [b]` -
         // planEquals walks the nest node by node and the work charge turns the runaway
-        // walk into deterministic steps, so the ~4x10^8-visit step budget ends it as an
+        // walk into deterministic steps, so the ~10^8-visit step budget ends it as an
         // E-SCRIPT-LIMIT issue inside the default 5-second clock
         assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
             PlanScriptRunner.Result r = run("a = [1]\nb = [1]\nfor i in range(28):\n    a = [a, a]\n    b = [b, b]\n"
@@ -638,7 +638,7 @@ class PlanScriptRunnerTest {
         // 2,050-unit element compares used to flush sub-quantum remainders to
         // zero steps per compare - the whole statement ran ~20 s under the wall
         // clock while the step counter never moved. With the run-wide carry each
-        // `in` pays ~10,009 steps, so the deterministic step limit ends the while
+        // `in` pays ~40,039 steps, so the deterministic step limit ends the while
         // loop inside the 5-second default as an E-SCRIPT-LIMIT issue
         assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
             PlanScriptRunner.Result r = run("s = \"x\"\nfor i in range(11):\n    s = s + s\n"
@@ -650,6 +650,24 @@ class PlanScriptRunnerTest {
             assertEquals("E-SCRIPT-LIMIT:#run:1", r.issues().get(0).id());
             assertTrue(r.issues().get(0).message().contains("construction script exceeded 100000 steps"),
                     r.issues().get(0).message());
+        });
+    }
+
+    // ---- the finer work quantum keeps refusals fast (P3 H-4b) ----
+
+    @Test
+    void aRefusedSharedNestComparisonStaysWellUnderTheClockBackstop() {
+        // the finer 1,024-unit quantum makes the refusal cheap enough to pin by
+        // clock too: the 100,000-step budget is a bound of ~10^8 charged node
+        // visits - about a second of work, versus ~2.4 s for the same refusal at
+        // 4,096 units per step - so the run ends far inside the 5,000 ms
+        // backstop. The 3 s ceiling keeps a 2x margin on a loaded machine
+        assertTimeoutPreemptively(Duration.ofSeconds(3), () -> {
+            PlanScriptRunner.Result r = run("a = [1]\nb = [1]\nfor i in range(28):\n    a = [a, a]\n    b = [b, b]\n"
+                    + "x = a in [b]\n");
+            assertNull(r.patch());
+            assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r));
+            assertEquals("E-SCRIPT-LIMIT:#run:1", r.issues().get(0).id());
         });
     }
 

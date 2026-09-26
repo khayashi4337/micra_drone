@@ -118,12 +118,14 @@ public final class Interpreter {
      * statement step. Expensive single operations pay {@code work / PLAN_WORK_PER_STEP}
      * deterministic steps BEFORE they run (see {@link #chargePlanWork}), so the step budget -
      * not the wall clock, which a single statement can outrun between polls - decides whether
-     * the operation may start. At 4,096 units per step the whole default 100,000-step budget
-     * is a bound of about 4x10^8 work units - how much wall-clock time that buys depends on
-     * what a unit models (a cheap character compare costs less than a hash probe), which is
-     * exactly why the step counter, not the clock, is the limit that decides.
+     * the operation may start. At 1,024 units per step the whole default 100,000-step budget
+     * is a bound of about 10^8 work units - measured at roughly a second of charged work on
+     * the machine the bound was calibrated on, five times under the 5,000 ms clock backstop,
+     * so a refused run keeps being refused by the STEP limit even under load (at 4,096 the
+     * bound bought ~4x10^8 units, close enough to the clock that a loaded machine could
+     * refuse by the clock instead and make the issue depend on machine load).
      */
-    private static final long PLAN_WORK_PER_STEP = 4_096;
+    private static final long PLAN_WORK_PER_STEP = 1_024;
     /**
      * How deep {@link #planEqualsAt} may walk into nested collections before refusing.
      * Java's own {@code Object.equals} has no bound at all: on a cyclic value
@@ -1529,8 +1531,8 @@ public final class Interpreter {
      *
      * <p>The sub-quantum remainder is never dropped: {@link #planWorkCarry} accumulates
      * every unit charged during the run and pays a step each time it crosses a whole
-     * {@link #PLAN_WORK_PER_STEP}, so a million operations of 4,095 units each cost a
-     * million times 4,095 units - not zero. The clock is re-polled whenever a charge
+     * {@link #PLAN_WORK_PER_STEP}, so a million operations of 1,023 units each cost a
+     * million times 1,023 units - not zero. The clock is re-polled whenever a charge
      * produced at least one whole step, because such a charge may have skipped the
      * 1,024-step polling boundary {@link #checkCancellation} relies on; a charge that
      * only grows the carry polls nothing.

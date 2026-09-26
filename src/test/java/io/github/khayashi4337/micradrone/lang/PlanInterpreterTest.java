@@ -743,38 +743,39 @@ class PlanInterpreterTest {
      * Seed for the substring-search work charge: 11 doublings of "a" leave s at 2,048
      * characters, p = s + "b" is a 2,049-character needle and t = s + s a 4,096-character
      * text, so one {@code p in t} costs (4,096 - 2,049 + 1) x 2,049 = 2,048 x 2,049 =
-     * 4,196,352 work units = 1,024.5 quanta - the half-quantum remainder used to be
-     * dropped per charge; carried run-wide it makes every second search pay one step
-     * more. The five preamble lines cost 1 + (1 + 11 x 2) + 1 + 1 = 26 statement steps.
+     * 4,196,352 work units = exactly 4,098 quanta of 1,024 - an exact multiple, so no
+     * carry is left. The five preamble lines cost 1 + (1 + 11 x 2) + 1 + 1 = 26
+     * statement steps.
      */
     private static final String SUBSTRING_SEED_2049_IN_4096 =
             "s = \"a\"\nfor i in range(11):\n    s = s + s\np = s + \"b\"\nt = s + s\n";
 
     @Test
     void aSubstringSearchIsChargedItsWorstCaseWorkAsStepsBeforeItRuns() {
-        // each `x = p in t` pays 4,196,352 = 1,024.5 quanta, so the carried remainder
-        // makes the searches end at 1,051 / 2,077 / 3,102 / 4,128 (odd searches pay
-        // 1,024 steps, even ones 1,025 - the dropped half-quantum now counts). Two
-        // searches fit a 2,077-step budget exactly; at 2,076 the second is refused
-        // mid-statement, and at 3,100 the third search's charge ends at 3,102 and
-        // trips the step limit on that line before the search runs.
+        // each `x = p in t` pays 4,196,352 = exactly 4,098 steps (4,098 x 1,024,
+        // nothing left to carry), so on top of the 26-statement preamble the
+        // search lines end at 4,125 / 8,224 / 12,323 / 16,422. Two searches fit
+        // an 8,224-step budget exactly; at 8,223 the second is refused
+        // mid-statement, and at 12,322 the third search's charge ends at 12,323
+        // and trips the step limit on that line before the search runs.
         run(SUBSTRING_SEED_2049_IN_4096 + "x = p in t\n".repeat(2), new RecordingPlanApi(),
-                new PlanRunLimits(2_077, 60_000));
+                new PlanRunLimits(8_224, 60_000));
         PlanLimitException e = assertThrows(PlanLimitException.class,
                 () -> run(SUBSTRING_SEED_2049_IN_4096 + "x = p in t\n".repeat(2),
-                        new RecordingPlanApi(), new PlanRunLimits(2_076, 60_000)));
-        assertEquals("line 7: construction script exceeded 2076 steps", e.getMessage());
+                        new RecordingPlanApi(), new PlanRunLimits(8_223, 60_000)));
+        assertEquals("line 7: construction script exceeded 8223 steps", e.getMessage());
         e = assertThrows(PlanLimitException.class,
                 () -> run(SUBSTRING_SEED_2049_IN_4096 + "x = p in t\n".repeat(4),
-                        new RecordingPlanApi(), new PlanRunLimits(3_100, 60_000)));
-        assertEquals("line 8: construction script exceeded 3100 steps", e.getMessage());
+                        new RecordingPlanApi(), new PlanRunLimits(12_322, 60_000)));
+        assertEquals("line 8: construction script exceeded 12322 steps", e.getMessage());
     }
 
     @Test
     void theSubstringReproAtSmallScaleStaysCheapEnoughToComplete() {
         // the reviewer's repro shape at small scale: s = 4,096 ("x" doubled 12 times),
         // p = 4,097, t = 3 x 4,096 = 12,288: work = (12,288 - 4,097 + 1) x 4,097 =
-        // 8,192 x 4,097 = 33,562,624 = exactly 8,194 steps - well under the default
+        // 8,192 x 4,097 = 33,562,624 = exactly 32,776 steps (32,776 x 1,024) - well
+        // under the default
         // 100,000-step budget, so the statement just runs (and finds nothing: the "b"
         // is never in an all-"x" text)
         RecordingPlanApi api = new RecordingPlanApi();
@@ -786,7 +787,8 @@ class PlanInterpreterTest {
     void aHugeSubstringSearchIsRefusedUpFrontByItsWorkCharge() {
         // the reviewer's repro at full scale: s = 131,072 (17 doublings), p = 131,073,
         // t = 393,216: work = (393,216 - 131,073 + 1) x 131,073 = 262,144 x 131,073 =
-        // 34,360,000,512 = exactly 8,388,672 steps - over the default 100,000-step budget
+        // 34,360,000,512 = exactly 33,554,688 steps (33,554,688 x 1,024) - over the
+        // default 100,000-step budget
         // on its own, so the charge throws BEFORE String.contains starts (this test would
         // take ~10 s per assertion if the search actually ran)
         PlanLimitException e = assertThrows(PlanLimitException.class,
@@ -799,8 +801,9 @@ class PlanInterpreterTest {
     @Test
     void aSubstringSearchLoopHitsTheStepLimitBeforeTheTimeLimit() {
         // the reviewer's loop repro: each `p in t` over the 4,097-character needle and
-        // 12,288-character text is charged 8,194 steps, so about a dozen iterations reach
-        // the step limit long before the 5,000 ms clock could be polled at a boundary
+        // 12,288-character text is charged 32,776 steps, so the fourth iteration's
+        // charge crosses the step limit long before the 5,000 ms clock could be polled
+        // at a boundary
         PlanLimitException e = assertThrows(PlanLimitException.class,
                 () -> run(STRING_SEED_4096 + "p = s + \"b\"\nt = s + s + s\n"
                                 + "while True:\n    x = p in t\n",
@@ -811,7 +814,7 @@ class PlanInterpreterTest {
     @Test
     void aSubstringSearchBelowTheWorkQuantumAddsNoSteps() {
         // a 5-character needle in a 20-character text: work = (20 - 5 + 1) x 5 = 80 units,
-        // under the 4,096-unit step quantum, so it charges 0 steps and the 2-statement
+        // under the 1,024-unit step quantum, so it charges 0 steps and the 2-statement
         // script still fits exactly a 2-step budget (a 1-step budget still refuses it)
         String script = "x = \"abcde\" in \"" + "x".repeat(20) + "\"\nmood(\"ok\")\n";
         RecordingPlanApi api = new RecordingPlanApi();
@@ -824,7 +827,7 @@ class PlanInterpreterTest {
     @Test
     void substringSearchWorkChargesDoNotApplyToFarmScripts() {
         // farm interpreters have no step budget: the 2^15 search below (work =
-        // 65,536 x 32,769 = 2,147,549,184 units, i.e. ~524,306 steps in plan mode) plus a
+        // 65,536 x 32,769 = 2,147,549,184 units, i.e. ~2,097,216 steps in plan mode) plus a
         // 200-iteration while loop of short searches just runs, as before
         FakeDroneApi api = new FakeDroneApi(5);
         new Interpreter(api).run(new Parser(new Lexer(
@@ -839,18 +842,18 @@ class PlanInterpreterTest {
 
     @Test
     void aSearchCostingExactlyOneQuantumPaysExactlyOneStep() {
-        // the PLAN_WORK_PER_STEP = 4,096 boundary: a 64-character needle in a
-        // 127-character text costs (127 - 64 + 1) x 64 = 64 x 64 = 4,096 work units =
-        // exactly ONE extra step, while the same needle in a 126-character text costs
-        // 63 x 64 = 4,032 = ZERO extra steps - so the two two-statement scripts below
+        // the PLAN_WORK_PER_STEP = 1,024 boundary: a 32-character needle in a
+        // 63-character text costs (63 - 32 + 1) x 32 = 32 x 32 = 1,024 work units =
+        // exactly ONE extra step, while the same needle in a 62-character text costs
+        // 31 x 32 = 992 = ZERO extra steps - so the two two-statement scripts below
         // differ by exactly one step (3 vs 2)
-        String needle = "n".repeat(64);
-        String oneStep = "x = \"" + needle + "\" in \"" + "x".repeat(126) + "\"\nmood(\"ok\")\n";
-        String twoSteps = "x = \"" + needle + "\" in \"" + "x".repeat(127) + "\"\nmood(\"ok\")\n";
+        String needle = "n".repeat(32);
+        String oneStep = "x = \"" + needle + "\" in \"" + "x".repeat(62) + "\"\nmood(\"ok\")\n";
+        String twoSteps = "x = \"" + needle + "\" in \"" + "x".repeat(63) + "\"\nmood(\"ok\")\n";
         RecordingPlanApi api = new RecordingPlanApi();
         run(oneStep, api, new PlanRunLimits(2, 60_000));
         assertEquals(List.of("mood ok"), api.calls);
-        // the 127-character text needs the extra step, and the charge lands on the `in`
+        // the 63-character text needs the extra step, and the charge lands on the `in`
         // line itself: a one-step budget already refuses it there
         PlanLimitException e = assertThrows(PlanLimitException.class,
                 () -> run(twoSteps, new RecordingPlanApi(), new PlanRunLimits(1, 60_000)));
@@ -927,8 +930,9 @@ class PlanInterpreterTest {
     @Test
     void aSharedNestEqualityPaysItsNodeVisitsAsSteps() {
         // the measured bomb: two separately built shared-reference nests. k=10 is
-        // 2^11 - 1 = 2,047 node visits (zero extra steps) and answers True quickly;
-        // k=30 would need ~2^31 visits, so the 1,000-step budget's 4,096,000 charged
+        // 2^11 - 1 = 2,047 node visits (one whole extra step, carry 1,023) and answers
+        // True quickly;
+        // k=30 would need ~2^31 visits, so the 1,000-step budget's 1,024,000 charged
         // work units run out at the == line instead - in milliseconds, not the ~18 s
         // the uncharged Object.equals measured
         RecordingPlanApi api = new RecordingPlanApi();
@@ -1038,25 +1042,26 @@ class PlanInterpreterTest {
         // string that differs from every element ONLY in its last character (so a real
         // String.equals scan is as long as the charged one): each element compare is
         // 1 node visit + a 4,096-character scan = 4,097 work units, and the whole `in`
-        // pays 1,000 x 4,097 = 4,097,000 units = exactly 1,000 steps
+        // pays 1,000 x 4,097 = 4,097,000 units = 4,000 whole quanta (4,000 x 1,024 =
+        // 4,096,000, remainder 1,000 carried) = exactly 4,000 extra steps
         String script = "s = \"x\"\nfor i in range(12):\n    s = s + s\n"       // s = 4,096 'x's
                 + "c = list(s)\nc[4095] = \"y\"\np = \"\"\nfor ch in c:\n    p = p + ch\n" // p = s with a 'y' tail
                 + "l = []\nfor i in range(1000):\n    l.append(s)\n"
                 + "x = p in l\nmood(\"ok\")\n";
         // statements cost 1 + (1 + 12x2) + 1 + 1 + 1 + (1 + 4,096x2) + 1 + (1 + 1,000x2)
-        // = 10,224 before the `in`; the `in` statement adds 1 + 1,000 = 1,001 -> 11,225,
-        // and mood() one more -> 11,226
+        // = 10,224 before the `in`; the `in` statement adds 1 + 4,000 = 4,001 -> 14,225,
+        // and mood() one more -> 14,226
         RecordingPlanApi api = new RecordingPlanApi();
-        run(script, api, new PlanRunLimits(11_226, 60_000));
+        run(script, api, new PlanRunLimits(14_226, 60_000));
         assertEquals(List.of("mood ok"), api.calls);
         // one step less and the thousandth element compare is refused mid-statement
         PlanLimitException e = assertThrows(PlanLimitException.class,
-                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(11_224, 60_000)));
-        assertEquals("line 12: construction script exceeded 11224 steps", e.getMessage());
-        // at exactly 11,225 the search finishes but the mood call needs one more
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(14_224, 60_000)));
+        assertEquals("line 12: construction script exceeded 14224 steps", e.getMessage());
+        // at exactly 14,225 the search finishes but the mood call needs one more
         e = assertThrows(PlanLimitException.class,
-                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(11_225, 60_000)));
-        assertEquals("line 13: construction script exceeded 11225 steps", e.getMessage());
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(14_225, 60_000)));
+        assertEquals("line 13: construction script exceeded 14225 steps", e.getMessage());
     }
 
     @Test
@@ -1078,7 +1083,7 @@ class PlanInterpreterTest {
     void aSharedNestInequalityPaysItsNodeVisitsAsSteps() {
         // the measured bomb through `!=` (the == case is pinned above): k=10 is
         // 2^11 - 1 = 2,047 node visits and answers False quickly (equal nests);
-        // k=30 would need ~2^31 visits, so the 1,000-step budget's 4,096,000
+        // k=30 would need ~2^31 visits, so the 1,000-step budget's 1,024,000
         // charged work units run out at the != line instead
         RecordingPlanApi api = new RecordingPlanApi();
         assertTimeoutPreemptively(Duration.ofSeconds(5),
@@ -1110,46 +1115,47 @@ class PlanInterpreterTest {
     @Test
     void aSetComparisonPaysItsSizeAsWorkSteps() {
         // s1 == s2 over two equal 20,000-element sets spends 1 node visit + the
-        // 20,000-element size = 20,001 work units = 4 whole quanta (4 x 4,096 =
-        // 16,384, remainder 3,617) = exactly 4 extra steps - so a removed size
-        // charge would leave the script 4 steps cheaper. Statements before the
-        // compare: 1 + 1 + (1 + 20,000x2) x 2 = 80,004; the compare line ends at
-        // 80,009 and print lands at 80,010
+        // 20,000-element size = 20,001 work units = 19 whole quanta (19 x 1,024 =
+        // 19,456, remainder 545 carried) = exactly 19 extra steps - so a removed
+        // size charge would leave the script 19 steps cheaper. Statements before
+        // the compare: 1 + 1 + (1 + 20,000x2) x 2 = 80,004; the compare line ends
+        // at 80,024 and print lands at 80,025
         String seed = "s1 = set()\ns2 = set()\nfor i in range(20000):\n    s1.add(i)\n"
                 + "for i in range(20000):\n    s2.add(i)\n";
         String script = seed + "x = s1 == s2\nprint(x)\n";
         RecordingPlanApi api = new RecordingPlanApi();
-        run(script, api, new PlanRunLimits(80_010, 60_000));
+        run(script, api, new PlanRunLimits(80_025, 60_000));
         assertEquals(List.of("True"), api.printed);
-        // one step less and the compare's fourth quantum leaves nothing for print
+        // one step less and the compare's nineteenth quantum leaves nothing for print
         PlanLimitException e = assertThrows(PlanLimitException.class,
-                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(80_009, 60_000)));
-        assertEquals("line 8: construction script exceeded 80009 steps", e.getMessage());
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(80_024, 60_000)));
+        assertEquals("line 8: construction script exceeded 80024 steps", e.getMessage());
         // two less and the compare itself is refused mid-statement
         e = assertThrows(PlanLimitException.class,
-                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(80_008, 60_000)));
-        assertEquals("line 7: construction script exceeded 80008 steps", e.getMessage());
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(80_023, 60_000)));
+        assertEquals("line 7: construction script exceeded 80023 steps", e.getMessage());
     }
 
     @Test
     void aDictComparisonPaysItsSizeAndValueVisitsAsWorkSteps() {
         // d1 == d2 over two equal 20,000-entry dicts spends 1 node visit + the
         // 20,000-entry size + one node visit per value pair = 40,001 work units
-        // = 9 whole quanta (9 x 4,096 = 36,864, remainder 3,137) = exactly 9
-        // extra steps. Same statement accounting as the set case: 80,004 before
-        // the compare, the compare line ends at 80,014, print lands at 80,015
+        // = 39 whole quanta (39 x 1,024 = 39,936, remainder 65 carried) = exactly
+        // 39 extra steps. Same statement accounting as the set case: 80,004
+        // before the compare, the compare line ends at 80,044, print lands at
+        // 80,045
         String seed = "d1 = {}\nd2 = {}\nfor i in range(20000):\n    d1[i] = i\n"
                 + "for i in range(20000):\n    d2[i] = i\n";
         String script = seed + "x = d1 == d2\nprint(x)\n";
         RecordingPlanApi api = new RecordingPlanApi();
-        run(script, api, new PlanRunLimits(80_015, 60_000));
+        run(script, api, new PlanRunLimits(80_045, 60_000));
         assertEquals(List.of("True"), api.printed);
         PlanLimitException e = assertThrows(PlanLimitException.class,
-                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(80_014, 60_000)));
-        assertEquals("line 8: construction script exceeded 80014 steps", e.getMessage());
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(80_044, 60_000)));
+        assertEquals("line 8: construction script exceeded 80044 steps", e.getMessage());
         e = assertThrows(PlanLimitException.class,
-                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(80_013, 60_000)));
-        assertEquals("line 7: construction script exceeded 80013 steps", e.getMessage());
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(80_043, 60_000)));
+        assertEquals("line 7: construction script exceeded 80043 steps", e.getMessage());
     }
 
     @Test
@@ -1205,14 +1211,14 @@ class PlanInterpreterTest {
 
     @Test
     void twoSubQuantumChargesAddUpToOneStepThroughTheCarry() {
-        // a 63-character needle in a 127-character text costs (127 - 63 + 1) x 63 =
-        // 65 x 63 = 4,095 work units - one unit under the 4,096 quantum, so ONE
-        // search charges zero steps. But the second search's 4,095 units combine
-        // with the first's leftover in the run-wide carry: 8,190 units pay 1 step
-        // (remainder 4,094), so the two-search script needs one step MORE than its
-        // three statements - the dropped-remainder hole this commit closes
-        String needle = "n".repeat(63);
-        String search = "\"" + needle + "\" in \"" + "x".repeat(127) + "\"";
+        // a 31-character needle in a 63-character text costs (63 - 31 + 1) x 31 =
+        // 33 x 31 = 1,023 work units - one unit under the 1,024 quantum, so ONE
+        // search charges zero steps. But the second search's 1,023 units combine
+        // with the first's leftover in the run-wide carry: 2,046 units pay 1 step
+        // (remainder 1,022), so the two-search script needs one step MORE than its
+        // three statements - the dropped-remainder hole the carry closes
+        String needle = "n".repeat(31);
+        String search = "\"" + needle + "\" in \"" + "x".repeat(63) + "\"";
         RecordingPlanApi api = new RecordingPlanApi();
         // one search alone: 1 statement + 0 work steps = 1 step, mood() a second
         run("x = " + search + "\nmood(\"ok\")\n", api, new PlanRunLimits(2, 60_000));
@@ -1242,12 +1248,11 @@ class PlanInterpreterTest {
         // Under the dropped-remainder design each compare flushed 2,050 / 4,096 =
         // 0 steps and the scan charged nothing at all (measured: ~20 s before
         // the wall clock noticed). Now one `p in l` pays 20,000 x 2,050 =
-        // 41,000,000 units ~= 10,009 steps, and the carry keeps the remainders:
-        // six `in` probes of the 41-term or-chain land the statement at
-        // 40,031 + (10,009 + 10,010 + 10,010 + 10,010 + 10,009 + 10,010) =
-        // 100,089 - the sixth probe crosses the 100,000-step budget
-        // mid-statement, so the STEP limit, not the 5,000 ms clock, ends the
-        // run at line 10
+        // 41,000,000 units = 40,039 steps (40,039 x 1,024 = 40,999,936, the
+        // 64-unit remainder carried), so the SECOND probe of the 41-term or-chain
+        // already lands the statement at 40,031 + 2 x 40,039 = 120,109 - past
+        // the 100,000-step budget mid-statement, and the STEP limit, not the
+        // 5,000 ms clock, ends the run at line 10
         String script = "s = \"x\"\nfor i in range(11):\n    s = s + s\n"
                 + "base = s + \"c\"\np = s + \"b\"\nl = []\n"
                 + "for i in range(20000):\n    l.append(base)\n"
@@ -1262,12 +1267,12 @@ class PlanInterpreterTest {
 
     @Test
     void aStringSetProbePaysForScanningTheKey() {
-        // `k in s` on a 1-element set probes the hash bucket: a 4,095-character
-        // key is charged (4,095 + 1) x (1 + ceilLog2(1 + 1)) = 4,096 x 2 = 8,192
+        // `k in s` on a 1-element set probes the hash bucket: a 1,023-character
+        // key is charged (1,023 + 1) x (1 + ceilLog2(1 + 1)) = 1,024 x 2 = 2,048
         // work units = exactly 2 steps on top of the statement step - the
         // equals scan of the key plus the colliding-bucket depth. A number key
         // hashes without scanning anything: zero extra steps
-        String script = "k = \"" + "x".repeat(4_095) + "\"\ns = {1}\nx = k in s\nmood(\"ok\")\n";
+        String script = "k = \"" + "x".repeat(1_023) + "\"\ns = {1}\nx = k in s\nmood(\"ok\")\n";
         RecordingPlanApi api = new RecordingPlanApi();
         run(script, api, new PlanRunLimits(6, 60_000));
         assertEquals(List.of("mood ok"), api.calls);
@@ -1327,9 +1332,9 @@ class PlanInterpreterTest {
     @Test
     void aDictInsertAndASetAddPayExactlyOneStepIntoAnEmptyContainer() {
         // probing an EMPTY container costs (key.length() + 1) x (1 + ceilLog2(1))
-        // = 4,096 x 1 = 4,096 units = exactly ONE step for the 4,095-character
+        // = 1,024 x 1 = 1,024 units = exactly ONE step for the 1,023-character
         // key: the tree depth factor is 1, only the equals scan is paid
-        String key = "x".repeat(4_095);
+        String key = "x".repeat(1_023);
         // k = ... (1), d = {} (1), d[k] = 1 (1 + 1 work step) = 4, mood() = 5
         String script = "k = \"" + key + "\"\nd = {}\nd[k] = 1\nmood(\"ok\")\n";
         RecordingPlanApi api = new RecordingPlanApi();
@@ -1362,36 +1367,36 @@ class PlanInterpreterTest {
         // single-block swap leaves the hashCode unchanged; 10 positions give
         // 2^10 colliding keys and the hash bucket degenerates to a tree).
         // Building the sets probes each add: 2 x 4,117 x sum_{i=0..1023}(1 +
-        // ceilLog2(i + 1)) = 2 x 4,117 x 10,241 = 84,324,394 units = 20,587 steps
-        // plus a 42-unit carry, on top of 6,187 statement steps = 26,774.
+        // ceilLog2(i + 1)) = 2 x 4,117 x 10,241 = 84,324,394 units = 82,348 steps
+        // plus a 42-unit carry, on top of 6,187 statement steps = 88,535.
         // Then ONE `a == b` pays 1 + 1,024 probes of (4,116 + 1) x (1 +
         // ceilLog2(1,025)) = 4,117 x 12 = 49,404 units each plus the
-        // 1,024-element size: 50,590,721 units + the 42-unit carry = 12,351
-        // more steps - more than 10,000 steps for a single comparison
+        // 1,024-element size: 50,590,721 units + the 42-unit carry = 49,405
+        // more steps - almost half the default budget for a single comparison
         String seed = "p = \"" + "x".repeat(4_096) + "\"\nkeys = [\"\"]\n"
                 + "for i in range(10):\n    nxt = []\n    for k in keys:\n"
                 + "        nxt.append(k + \"Aa\")\n        nxt.append(k + \"BB\")\n"
                 + "    keys = nxt\n"
                 + "a = set()\nb = set()\nfor k in keys:\n    a.add(p + k)\n    b.add(p + k)\n";
-        // a budget just 10,000 steps above the 26,774-step preamble refuses the
+        // a budget just 10,000 steps above the 88,535-step preamble refuses the
         // one comparison on its own line - so it costs more than 10,000 steps
         PlanLimitException e = assertThrows(PlanLimitException.class,
                 () -> run(seed + "x = a == b\nmood(\"ok\")\n", new RecordingPlanApi(),
-                        new PlanRunLimits(36_774, 60_000)));
-        assertEquals("line 14: construction script exceeded 36774 steps", e.getMessage());
-        // exactly: the comparison ends line 14 at 39,126, so 39,125 refuses it
-        // mid-statement, 39,126 leaves nothing for mood(), and 39,127 runs
+                        new PlanRunLimits(98_535, 60_000)));
+        assertEquals("line 14: construction script exceeded 98535 steps", e.getMessage());
+        // exactly: the comparison ends line 14 at 137,941, so 137,940 refuses it
+        // mid-statement, 137,941 leaves nothing for mood(), and 137,942 runs
         RecordingPlanApi api = new RecordingPlanApi();
-        run(seed + "x = a == b\nmood(\"ok\")\n", api, new PlanRunLimits(39_127, 60_000));
+        run(seed + "x = a == b\nmood(\"ok\")\n", api, new PlanRunLimits(137_942, 60_000));
         assertEquals(List.of("mood ok"), api.calls);
         e = assertThrows(PlanLimitException.class,
                 () -> run(seed + "x = a == b\nmood(\"ok\")\n", new RecordingPlanApi(),
-                        new PlanRunLimits(39_126, 60_000)));
-        assertEquals("line 15: construction script exceeded 39126 steps", e.getMessage());
+                        new PlanRunLimits(137_941, 60_000)));
+        assertEquals("line 15: construction script exceeded 137941 steps", e.getMessage());
         e = assertThrows(PlanLimitException.class,
                 () -> run(seed + "x = a == b\nmood(\"ok\")\n", new RecordingPlanApi(),
-                        new PlanRunLimits(39_125, 60_000)));
-        assertEquals("line 14: construction script exceeded 39125 steps", e.getMessage());
+                        new PlanRunLimits(137_940, 60_000)));
+        assertEquals("line 14: construction script exceeded 137940 steps", e.getMessage());
         // the reviewer's loop bomb: under the default limits the STEP counter
         // ends it - in the old code a chain of these ran 62.6 s on the clock
         e = assertThrows(PlanLimitException.class,
@@ -1404,17 +1409,17 @@ class PlanInterpreterTest {
     // ---- the remaining probe sites pinned exactly (H-1c test supplement) ----
     //
     // Each of these sites calls chargeHashProbe on a 1-element container, so a
-    // 4,095-character key pays (4,095 + 1) x (1 + ceilLog2(1 + 1)) = 4,096 x 2
-    // = 8,192 work units = exactly 2 steps on top of the statement step. The
+    // 1,023-character key pays (1,023 + 1) x (1 + ceilLog2(1 + 1)) = 1,024 x 2
+    // = 2,048 work units = exactly 2 steps on top of the statement step. The
     // script that builds the 1-element container pays its own probe into the
-    // EMPTY container: 4,096 x (1 + ceilLog2(1)) = 4,096 units = 1 step, so
+    // EMPTY container: 1,024 x (1 + ceilLog2(1)) = 1,024 units = 1 step, so
     // every script below costs 1 (k) + (1 + 1) (build) + (1 + 2) (probe under
     // test) + 1 (mood) = 7 steps. The number-key twin pays no probe at all:
     // 4 statements = 4 steps exactly.
 
     @Test
     void aSetRemovePaysForProbingTheKey() {
-        String script = "k = \"" + "x".repeat(4_095) + "\"\ns = {k}\ns.remove(k)\nmood(\"ok\")\n";
+        String script = "k = \"" + "x".repeat(1_023) + "\"\ns = {k}\ns.remove(k)\nmood(\"ok\")\n";
         RecordingPlanApi api = new RecordingPlanApi();
         run(script, api, new PlanRunLimits(7, 60_000));
         assertEquals(List.of("mood ok"), api.calls);
@@ -1433,7 +1438,7 @@ class PlanInterpreterTest {
 
     @Test
     void aDictGetPaysForProbingTheKey() {
-        String script = "k = \"" + "x".repeat(4_095) + "\"\nd = {k: 1}\nx = d.get(k)\nmood(\"ok\")\n";
+        String script = "k = \"" + "x".repeat(1_023) + "\"\nd = {k: 1}\nx = d.get(k)\nmood(\"ok\")\n";
         RecordingPlanApi api = new RecordingPlanApi();
         run(script, api, new PlanRunLimits(7, 60_000));
         assertEquals(List.of("mood ok"), api.calls);
@@ -1450,7 +1455,7 @@ class PlanInterpreterTest {
 
     @Test
     void aDictRemovePaysForProbingTheKey() {
-        String script = "k = \"" + "x".repeat(4_095) + "\"\nd = {k: 1}\nx = d.remove(k)\nmood(\"ok\")\n";
+        String script = "k = \"" + "x".repeat(1_023) + "\"\nd = {k: 1}\nx = d.remove(k)\nmood(\"ok\")\n";
         RecordingPlanApi api = new RecordingPlanApi();
         run(script, api, new PlanRunLimits(7, 60_000));
         assertEquals(List.of("mood ok"), api.calls);
@@ -1467,7 +1472,7 @@ class PlanInterpreterTest {
 
     @Test
     void aDictIndexReadPaysForProbingTheKey() {
-        String script = "k = \"" + "x".repeat(4_095) + "\"\nd = {k: 1}\nx = d[k]\nmood(\"ok\")\n";
+        String script = "k = \"" + "x".repeat(1_023) + "\"\nd = {k: 1}\nx = d[k]\nmood(\"ok\")\n";
         RecordingPlanApi api = new RecordingPlanApi();
         run(script, api, new PlanRunLimits(7, 60_000));
         assertEquals(List.of("mood ok"), api.calls);
@@ -1485,13 +1490,13 @@ class PlanInterpreterTest {
     @Test
     void aDictEqualityPaysForProbingItsKeys() {
         // d1 == d2 runs planEquals' Map branch: spend(1) for the root visit,
-        // chargeHashProbe(key, 1) = 8,192 for the single key, spend(1) for the
+        // chargeHashProbe(key, 1) = 2,048 for the single key, spend(1) for the
         // size, and spend(1) for the entry value's own planEqualsAt visit
-        // (1 == 1) - 8,195 units = exactly 2 steps (3 units of carry left
+        // (1 == 1) - 2,051 units = exactly 2 steps (3 units of carry left
         // over). Lines: 1 + (1 + 1) + (1 + 1) + (1 + 2) + 1 = 9 steps; the
         // number-key twin pays 1 + 1 + 1 + (1 + 0) + 1 = 5 (the == itself is
         // 3 units, under one quantum)
-        String script = "k = \"" + "x".repeat(4_095) + "\"\nd1 = {k: 1}\nd2 = {k: 1}\nx = d1 == d2\nmood(\"ok\")\n";
+        String script = "k = \"" + "x".repeat(1_023) + "\"\nd1 = {k: 1}\nd2 = {k: 1}\nx = d1 == d2\nmood(\"ok\")\n";
         RecordingPlanApi api = new RecordingPlanApi();
         run(script, api, new PlanRunLimits(9, 60_000));
         assertEquals(List.of("mood ok"), api.calls);
