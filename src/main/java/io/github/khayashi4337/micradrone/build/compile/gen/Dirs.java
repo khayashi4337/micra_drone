@@ -18,4 +18,17 @@ final class Dirs {
     static Facing right(Facing heading) {
         return heading.rotate(CLOCKWISE_QUARTER_TURN);
     }
+
+    /**
+     * The u offset of the cell that lies {@code ahead} cells along {@code heading} and {@code toTheRight} cells to the
+     * right-hand side of it: how a run (a road, a staircase, a ramp, a walkway) lays out its length and its width.
+     */
+    static int du(Facing heading, int ahead, int toTheRight) {
+        return ahead * heading.du() + toTheRight * right(heading).du();
+    }
+
+    /** The w offset of the same cell as {@link #du}. */
+    static int dw(Facing heading, int ahead, int toTheRight) {
+        return ahead * heading.dw() + toTheRight * right(heading).dw();
+    }
 }

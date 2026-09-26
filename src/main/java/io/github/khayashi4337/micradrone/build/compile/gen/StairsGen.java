@@ -5,9 +5,12 @@ import io.github.khayashi4337.micradrone.build.model.Facing;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.parts.Params;
 
-/** A flat strip: its length runs along the direction, its width to the right-hand side of that direction. */
-final class RoadGen implements PartGenerator {
-    private static final String P_LENGTH = "length";
+/**
+ * A staircase that climbs one block per step in its direction, its width to the right-hand side of that direction. The
+ * stairs have their tall backs towards the direction, so a walker heading that way climbs them.
+ */
+final class StairsGen implements PartGenerator {
+    private static final String P_STEPS = "steps";
     private static final String P_WIDTH = "width";
     private static final String P_DIR = "dir";
     private static final String P_MATERIAL = "material";
@@ -15,12 +18,12 @@ final class RoadGen implements PartGenerator {
     @Override
     public void generate(GenContext ctx, PlanNode node, Params p) {
         Facing dir = Dirs.of(p.s(P_DIR));
-        int length = p.i(P_LENGTH);
+        int steps = p.i(P_STEPS);
         int width = p.i(P_WIDTH);
-        BlockSpec block = ctx.plainBlock(p.s(P_MATERIAL), node);
-        for (int i = 0; i < length; i++) {
+        BlockSpec step = BlockForms.stairs(ctx.palette().stairs(p.s(P_MATERIAL), node), dir, false);
+        for (int s = 0; s < steps; s++) {
             for (int j = 0; j < width; j++) {
-                ctx.emit(node, Dirs.du(dir, i, j), 0, Dirs.dw(dir, i, j), block);
+                ctx.emit(node, Dirs.du(dir, s, j), s, Dirs.dw(dir, s, j), step);
             }
         }
     }
