@@ -120,8 +120,9 @@ public final class Interpreter {
      * Total units one construction-script run may allocate: one unit is about eight bytes of
      * retained heap - one ArrayList slot, or one character of a string the script produces - so
      * 10,000,000 units of the heaviest weight are about 80 MB, which fits comfortably under a
-     * small heap. A list literal's element counts {@link #PLAN_LIST_LITERAL_ELEMENT_UNITS} units
-     * and a dict entry or set element counts {@link #PLAN_HASH_ENTRY_UNITS} units. The per-value
+     * small heap. A list literal's element counts {@link #PLAN_LIST_LITERAL_ELEMENT_UNITS} units,
+     * a dict entry or set element counts {@link #PLAN_HASH_ENTRY_UNITS} units, and a character of
+     * a split string counts {@link #PLAN_CHAR_ELEMENT_UNITS} units. The per-value
      * caps ({@link #PLAN_MAX_STRING_CHARS}, {@link #PLAN_MAX_COLLECTION_ELEMENTS}) bound each
      * single value but not what a whole run retains - printing or copying a legal-sized value in
      * a loop still exhausts the heap, so the run as a whole gets a budget too. Charged where a
@@ -138,12 +139,24 @@ public final class Interpreter {
      * bytes) plus, for the usual number literal, a freshly boxed Double (about 16 bytes) - about
      * 24 bytes in all, i.e. 3 units. Only the literal pays this: {@code list()}/{@code keys()}/
      * {@code values()}/the for-loop snapshot/{@code min}/{@code max} copy existing references, so
-     * they stay at 1 unit per slot.
+     * they stay at 1 unit per slot - except when the value being listed is a string, whose
+     * "elements" are fresh one-character Strings weighing {@link #PLAN_CHAR_ELEMENT_UNITS} each.
      */
     private static final int PLAN_LIST_LITERAL_ELEMENT_UNITS = 3;
     /**
+     * Charge weight of one element of a list built by splitting a string into one-character
+     * strings ({@code list(s)}/{@code set(s)}/the {@code for c in s} snapshot): every element is
+     * a FRESH one-character String object, about 40-48 bytes = 6 units of 8 bytes, not a copied
+     * reference like the 1-unit sites.
+     */
+    private static final int PLAN_CHAR_ELEMENT_UNITS = 6;
+    /**
      * Charge weight of one dict entry or set element: a LinkedHashMap/LinkedHashSet entry plus
-     * its table slot plus two boxed values retains about 80 bytes = 10 units.
+     * its table slot plus two boxed values retains about 80 bytes = 10 units. {@code set(x)}
+     * multiplies this by the INPUT size, not the deduplicated result size, because
+     * {@code new LinkedHashSet<>(source)} sizes its hash table from the input: a set built from
+     * a 65,536-character string of few distinct characters returns one element but still
+     * retains a table of about 131,000 slots.
      */
     private static final int PLAN_HASH_ENTRY_UNITS = 10;
     private long planAllocatedUnits = 0;
@@ -423,7 +436,8 @@ public final class Interpreter {
             for (int i = 0; i < s.length(); i++) {
                 chars.add(String.valueOf(s.charAt(i)));
             }
-            chargePlanAllocation(chars.size(), line);
+            // fresh one-character Strings, not copied references: the full per-character weight
+            chargePlanAllocation(chars.size() * PLAN_CHAR_ELEMENT_UNITS, line);
             return chars;
         }
         throw new MicraLangException(line, "cannot loop over " + typeName(value)
@@ -1026,8 +1040,12 @@ public final class Interpreter {
             }
             case "set" -> {
                 requireArgCount(call, args.isEmpty() ? 0 : 1);
-                Set<Object> copy = args.isEmpty() ? new LinkedHashSet<>() : new LinkedHashSet<>(collectionArg(call, "set"));
-                chargePlanAllocation(copy.size() * PLAN_HASH_ENTRY_UNITS, call.line());
+                Collection<?> source = args.isEmpty() ? List.of() : collectionArg(call, "set");
+                // charged on the INPUT size: new LinkedHashSet<>(source) sizes its hash table
+                // from the input, so a set built from many duplicates still retains a table as
+                // big as the input - the deduplicated result size would hide that
+                Set<Object> copy = new LinkedHashSet<>(source);
+                chargePlanAllocation(source.size() * PLAN_HASH_ENTRY_UNITS, call.line());
                 yield copy;
             }
             case "dict" -> {
@@ -1335,6 +1353,11 @@ public final class Interpreter {
             for (int i = 0; i < s.length(); i++) {
                 chars.add(String.valueOf(s.charAt(i)));
             }
+            // every element is a fresh one-character String (PLAN_CHAR_ELEMENT_UNITS); the
+            // calling site still adds its own per-element charge for the collection it builds
+            // (1 unit per slot for list(), PLAN_HASH_ENTRY_UNITS for set()), so this branch
+            // covers the split's weight minus the one slot-unit a plain list copy would pay
+            chargePlanAllocation(chars.size() * (PLAN_CHAR_ELEMENT_UNITS - 1), call.line());
             return chars;
         }
         throw new MicraLangException(call.line(),
@@ -1471,8 +1494,10 @@ public final class Interpreter {
      * {@code keys()}/{@code values()}, the list/dict/set literals, the for-loop snapshot and the
      * {@code min}/{@code max} candidate list. List literal elements weigh {@link
      * #PLAN_LIST_LITERAL_ELEMENT_UNITS} units each; dict entries and set elements weigh
-     * {@link #PLAN_HASH_ENTRY_UNITS} units each; every other list-producing site copies existing
-     * references and stays at one unit per slot.
+     * {@link #PLAN_HASH_ENTRY_UNITS} units each (a {@code set(x)} copy counts its input, whose
+     * size determines the hash table); the one-character strings a string split produces weigh
+     * {@link #PLAN_CHAR_ELEMENT_UNITS} units each; every other list-producing site copies
+     * existing references and stays at one unit per slot.
      */
     private void chargePlanAllocation(int units, int line) {
         if (planLimits == null) {

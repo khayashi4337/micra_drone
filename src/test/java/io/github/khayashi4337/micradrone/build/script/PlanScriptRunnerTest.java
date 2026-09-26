@@ -401,4 +401,45 @@ class PlanScriptRunnerTest {
         assertTrue(message.contains("line 22"), message);
         assertFalse(message.contains("想定外"), message);
     }
+
+    // ---- the fuzz's split-string escapes are allocation issues, never Errors (fix round 5) ----
+
+    @Test
+    void splittingALongStringIntoCharsInALoopIsAnAllocationLimitIssue() {
+        // the controller's repro: 16 doublings make a 65,536-character string (charged
+        // 2+4+...+65,536 = 131,070); each list(s) materialises 65,536 fresh one-character
+        // Strings = 6 x 65,536 = 393,216 units, so the 26th evaluation - 131,070 + 25 x 393,216
+        // = 9,961,470 still fits - is refused by the run-wide counter long before the retained
+        // lists can exhaust the heap (the fuzz measured an OutOfMemoryError in under a second
+        // at -Xmx256m on the old weights). The while loop needs only ~80 statements, so the
+        // step limit cannot fire first.
+        PlanScriptRunner.Result r = run("s = \"x\"\nfor i in range(16):\n    s = s + s\n"
+                + "acc = []\nwhile True:\n    acc.append(list(s))\n");
+        assertNull(r.patch());
+        assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r));
+        assertTrue(r.issues().get(0).message().contains("total allocation limit of 10000000"),
+                r.issues().get(0).message());
+    }
+
+    @Test
+    void aSetCopyOfAFewDistinctCharacterStringIsAnAllocationLimitIssue() {
+        // the controller's second repro: set(s) deduplicates the string to a 1-element set,
+        // but new LinkedHashSet<>(input) sizes its hash table from the 65,536-element input,
+        // so each call weighs the split's 5 x 65,536 plus the table's 10 x 65,536 = 983,040
+        // units; the 11th call is refused (131,070 + 10 x 983,040 = 9,961,470 fits)
+        PlanScriptRunner.Result r = run("s = \"x\"\nfor i in range(16):\n    s = s + s\n"
+                + "acc = []\nwhile True:\n    acc.append(set(s))\n");
+        assertNull(r.patch());
+        assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r));
+        assertTrue(r.issues().get(0).message().contains("total allocation limit of 10000000"),
+                r.issues().get(0).message());
+        // the same shape seeded from "ab" doubled 15 times (two distinct characters instead of
+        // one) - 15 doublings charge 4+8+...+65,536 = 131,068, each set(s) the same 983,040
+        PlanScriptRunner.Result r2 = run("s = \"ab\"\nfor i in range(15):\n    s = s + s\n"
+                + "acc = []\nwhile True:\n    acc.append(set(s))\n");
+        assertNull(r2.patch());
+        assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r2));
+        assertTrue(r2.issues().get(0).message().contains("total allocation limit of 10000000"),
+                r2.issues().get(0).message());
+    }
 }

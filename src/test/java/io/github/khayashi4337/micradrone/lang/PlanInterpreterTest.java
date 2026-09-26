@@ -481,7 +481,8 @@ class PlanInterpreterTest {
                 Arguments.of("for over a set", list + "s = set(l)\nwhile True:\n    for x in s:\n        break\n"),
                 Arguments.of("for over a dict", dict + "while True:\n    for k in d:\n        break\n"),
                 // 16 doublings make a 65,536-character string (charged 131,070); each loop snapshot
-                // charges its 65,536 characters, so the 151st loop tips the total past 10,000,000
+                // charges 6 x 65,536 fresh one-character Strings, so the 26th loop tips the total
+                // past 10,000,000
                 Arguments.of("for over a string",
                         "s = \"x\"\nfor i in range(16):\n    s = s + s\nwhile True:\n    for c in s:\n        break\n"),
                 // each min()/max() call copies all 20,000 candidates into its candidate list
@@ -642,6 +643,85 @@ class PlanInterpreterTest {
                 () -> new Interpreter(refusingPrintDroneApi()).run(
                         new Parser(new Lexer("print(\"hi\")\n").scan()).parseProgram()));
         assertEquals("printed output refused", e.getMessage());
+    }
+
+    // ---- a split string weighs its fresh characters, and set() counts its input (fix round 5) ----
+
+    /**
+     * {@code s = "x"} doubled 12 times is a 4,096-character string; the concatenations charge
+     * 2+4+...+4,096 = 8,190 units, leaving 9,991,810 of the 10,000,000-unit budget.
+     */
+    private static final String STRING_SEED_4096 = "s = \"x\"\nfor i in range(12):\n    s = s + s\n";
+
+    @Test
+    void listOfAStringWeighsSixUnitsPerCharacter() {
+        // list(s) splits the string into 4,096 fresh one-character Strings = 6 x 4,096 = 24,576
+        // units per call: 406 calls reach 8,190 + 406 x 24,576 = 9,986,046 and run; the 407th
+        // reaches 10,010,622 and throws on the append line. Steps stay trivial (~840 of
+        // 1,000,000).
+        run(STRING_SEED_4096 + "acc = []\nfor i in range(406):\n    acc.append(list(s))\n",
+                new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000));
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(STRING_SEED_4096 + "acc = []\nfor i in range(407):\n    acc.append(list(s))\n",
+                        new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
+        assertEquals("line 6: construction script exceeded the total allocation limit of 10000000 (characters and collection elements created)",
+                e.getMessage());
+    }
+
+    @Test
+    void setOfAStringWeighsTheCharsPlusTheInputSizedHashTable() {
+        // set(s) materialises the 4,096-character list (6 units per character minus the slot
+        // unit the copy charge covers) and then a LinkedHashSet whose table is sized from the
+        // 4,096-element INPUT at 10 units each, not from the 1-element result: 15 x 4,096 =
+        // 61,440 per call, so 162 calls reach 9,961,470 and run while the 163rd reaches
+        // 10,022,910 and throws
+        run(STRING_SEED_4096 + "acc = []\nfor i in range(162):\n    acc.append(set(s))\n",
+                new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000));
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(STRING_SEED_4096 + "acc = []\nfor i in range(163):\n    acc.append(set(s))\n",
+                        new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
+        assertEquals("line 6: construction script exceeded the total allocation limit of 10000000 (characters and collection elements created)",
+                e.getMessage());
+    }
+
+    @Test
+    void aForLoopSnapshotOfAStringWeighsSixUnitsPerCharacter() {
+        // every for c in s snapshots the string into 4,096 fresh one-character Strings = 24,576
+        // units; 406 snapshots reach 9,986,046 and run, the 407th throws on the inner for's line
+        run(STRING_SEED_4096 + "for i in range(406):\n    for c in s:\n        break\n",
+                new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000));
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(STRING_SEED_4096 + "for i in range(407):\n    for c in s:\n        break\n",
+                        new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
+        assertEquals("line 5: construction script exceeded the total allocation limit of 10000000 (characters and collection elements created)",
+                e.getMessage());
+    }
+
+    @Test
+    void setOfAListWithDuplicatesCountsTheInputSizeNotTheResult() {
+        // l holds 5,000 copies of the number 7: set(l) returns a 1-element set, but the
+        // LinkedHashSet's table is sized from the 5,000-element INPUT, so each copy costs
+        // 5,000 x 10 = 50,000 - 200 copies are exactly 10,000,000 and run, the 201st throws.
+        // This test fails if the charge goes back to the result size (10 units per copy).
+        String seed = "l = []\nfor i in range(5000):\n    l.append(7)\n";
+        run(seed + "for i in range(200):\n    t = set(l)\n", new RecordingPlanApi(),
+                new PlanRunLimits(1_000_000, 60_000));
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(seed + "for i in range(201):\n    t = set(l)\n",
+                        new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
+        assertEquals("line 5: construction script exceeded the total allocation limit of 10000000 (characters and collection elements created)",
+                e.getMessage());
+    }
+
+    @Test
+    void charSplitChargesDoNotApplyToFarmScripts() {
+        // a farm interpreter has no allocation budget: list(s), set(s) and the for-loop
+        // snapshot of the same 4,096-character string, 500 times each, just run
+        FakeDroneApi api = new FakeDroneApi(5);
+        new Interpreter(api).run(new Parser(new Lexer(STRING_SEED_4096
+                + "for i in range(500):\n    a = list(s)\n    b = set(s)\n    for c in s:\n        break\n"
+                + "print(len(s))\n").scan()).parseProgram());
+        assertEquals(List.of("4096"), api.printed);
     }
 
     /** A {@link PlanApi} whose {@code print} refuses the way the recorder's output budget does. */
