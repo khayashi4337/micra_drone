@@ -61,6 +61,21 @@ public final class TestParts {
         return new PlanNode(id, type, parent, new Anchor.Absolute(new LocalPos(u, v, w), Rot.NONE), Map.of(), Set.of(), "");
     }
 
+    /** registry() plus a part with a numeric parameter; only the script round-trip test uses it. */
+    public static PartTypeRegistry registryWithDial() {
+        PartTypeRegistry.Builder b = PartTypeRegistry.builder().defaultPalette(BuildingParts.DEFAULT_PALETTE);
+        for (PartType t : registry().all()) {
+            b.register(t);
+        }
+        b.register(PartType.builder("test:dial", PartCategory.POWER).displayNameKey("t.dial")
+                .params(new io.github.khayashi4337.micradrone.build.parts.ParamSpec("speed",
+                        io.github.khayashi4337.micradrone.build.parts.ParamType.NUM, "rpm",
+                        new io.github.khayashi4337.micradrone.build.model.ParamValue.NumV(0),
+                        new io.github.khayashi4337.micradrone.build.model.ParamValue.NumV(256),
+                        new io.github.khayashi4337.micradrone.build.model.ParamValue.NumV(16), java.util.List.of(), 0)).build());
+        return b.build();
+    }
+
     /** A module made of a motor and a shaft child of it; exposes the shaft's output. */
     public static ModuleTemplate lineTemplate() {
         return new ModuleTemplate(LINE_SCHEMA_VERSION, LINE_TEMPLATE_ID, "t.line", PartCategory.MODULE, VersionRange.ALWAYS,
