@@ -78,15 +78,17 @@ public final class PlanScriptRunner {
      * measurement, not guesswork: the deep recursive chain the limit was first measured
      * against ({@code def f(n): return f(n + 1) + 1 + ... + 1} at 196 terms - the Call
      * node and its {@code n + 1} argument add 2 levels, so the body measures exactly
-     * {@link #PLAN_MAX_AST_DEPTH}) is NOT the deepest program the limits allow. Wrapping
-     * the call in 98 nested {@code for} blocks - the most block nesting the parser's
-     * 100-level limit accepts - keeps about a hundred more interpreter frames live at the
-     * deepest point, and that is the larger of the two measured shapes. The sweeps in
+     * {@link #PLAN_MAX_AST_DEPTH}) is NOT the deepest program the limits allow. Putting
+     * the {@code for} nest INSIDE {@code f} instead - 96 nested {@code for i in
+     * range(1):} blocks over a 100-term {@code return} chain, the deepest shape the
+     * limits accept - makes every one of the 200 call levels carry ~96 more live
+     * interpreter frames, and that is the larger of the two measured shapes (the same
+     * 98 blocks wrapped around the top-level {@code f(0)} call are entered once and
+     * measure no deeper than the plain chain). The sweeps in
      * {@code PlanScriptRunnerTest.theWorkerStackCoversTheWorstCaseWithAFourFoldMargin}
-     * (JDK 21, Windows x64) measured roughly 3.5 MiB JIT / 15 MiB -Xint for the chain and
-     * ~4.25 MiB JIT / ~20.24 MiB -Xint for the nested-{@code for} shape (a 60-block nest
-     * carrying 37 nested calls landed ~19.5 MiB -Xint); this constant is ~6.3x the
-     * ~20.24 MiB worst measurement, above the required 4x.
+     * (JDK 21, Windows x64) measured roughly 3.5 MiB JIT / 15.00 MiB -Xint for the
+     * chain and 16.25 MiB JIT / 20.00 MiB -Xint for the for-inside-{@code f} shape;
+     * this constant is 6.4x the 20.00 MiB worst measurement, above the required 4x.
      */
     static final long PLAN_RUN_STACK_BYTES = 128L * 1024 * 1024;
 

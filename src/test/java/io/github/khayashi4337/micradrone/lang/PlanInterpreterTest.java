@@ -1242,25 +1242,26 @@ class PlanInterpreterTest {
 
     @Test
     void aListMembershipScanPaysItsElementComparesThroughTheCarry() {
-        // the reviewer's second repro: 20,000 references to one 2,049-character
-        // string, probed by an equal-length string differing in the last
-        // character, so every element compare is 1 + 2,049 = 2,050 work units.
-        // Under the dropped-remainder design each compare flushed 2,050 / 4,096 =
-        // 0 steps and the scan charged nothing at all (measured: ~20 s before
-        // the wall clock noticed). Now one `p in l` pays 20,000 x 2,050 =
-        // 41,000,000 units = 40,039 steps (40,039 x 1,024 = 40,999,936, the
-        // 64-unit remainder carried), so the SECOND probe of the 41-term or-chain
-        // already lands the statement at 40,031 + 2 x 40,039 = 120,109 - past
-        // the 100,000-step budget mid-statement, and the STEP limit, not the
-        // 5,000 ms clock, ends the run at line 10
-        String script = "s = \"x\"\nfor i in range(11):\n    s = s + s\n"
+        // the reviewer's second repro, re-sized so only the CARRY can produce the
+        // refusal: a list of 20,000 references to one 1,022-character string,
+        // probed by an equal-length string differing in the last character, so
+        // every element compare is 1 + 1,022 = 1,023 work units - ONE unit under
+        // the 1,024 quantum. Dropping the remainder would charge zero steps for
+        // every element forever and only the wall clock could end the loop; with
+        // the run-wide carry one `p in l` pays 20,000 x 1,023 = 20,460,000 units
+        // = 19,980 steps (480 units carried), so the fourth probe of the 41-term
+        // or-chain lands the statement past the 100,000-step budget
+        // mid-statement - and the STEP limit, not the 5,000 ms clock, ends the
+        // run at line 8. (twoSubQuantumChargesAddUpToOneStepThroughTheCarry pins
+        // the same carry at the exact quantum boundary.)
+        String script = "s = \"" + "x".repeat(1_021) + "\"\n"
                 + "base = s + \"c\"\np = s + \"b\"\nl = []\n"
                 + "for i in range(20000):\n    l.append(base)\n"
                 + "while True:\n    x = " + "(p in l) or ".repeat(40) + "(p in l)\n";
         PlanLimitException e = assertThrows(PlanLimitException.class,
                 () -> assertTimeoutPreemptively(Duration.ofSeconds(5),
                         () -> run(script, new RecordingPlanApi(), PlanRunLimits.DEFAULT)));
-        assertEquals("line 10: construction script exceeded 100000 steps", e.getMessage());
+        assertEquals("line 8: construction script exceeded 100000 steps", e.getMessage());
     }
 
     // ---- string keys pay for their hash probes (H-1c-2) ----
@@ -1489,11 +1490,11 @@ class PlanInterpreterTest {
 
     @Test
     void aDictEqualityPaysForProbingItsKeys() {
-        // d1 == d2 runs planEquals' Map branch: spend(1) for the root visit,
-        // chargeHashProbe(key, 1) = 2,048 for the single key, spend(1) for the
-        // size, and spend(1) for the entry value's own planEqualsAt visit
-        // (1 == 1) - 2,051 units = exactly 2 steps (3 units of carry left
-        // over). Lines: 1 + (1 + 1) + (1 + 1) + (1 + 2) + 1 = 9 steps; the
+        // d1 == d2 runs planEquals' Map branch: chargePlanWork(1) for the root
+        // visit, chargeHashProbe(key, 1) = 2,048 for the single key,
+        // chargePlanWork(1) for the size, and chargePlanWork(1) for the entry
+        // value's own planEqualsAt visit (1 == 1) - 2,051 units = exactly 2 steps
+        // (3 units of carry left over). Lines: 1 + (1 + 1) + (1 + 1) + (1 + 2) + 1 = 9 steps; the
         // number-key twin pays 1 + 1 + 1 + (1 + 0) + 1 = 5 (the == itself is
         // 3 units, under one quantum)
         String script = "k = \"" + "x".repeat(1_023) + "\"\nd1 = {k: 1}\nd2 = {k: 1}\nx = d1 == d2\nmood(\"ok\")\n";

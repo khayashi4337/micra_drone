@@ -701,6 +701,10 @@ class PlanScriptRunnerTest {
             assertNull(r.patch());
             assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r));
             assertEquals("E-SCRIPT-LIMIT:#run:1", r.issues().get(0).id());
+            // pin the REASON, not only the speed: the deterministic step limit
+            // decided, not the 5,000 ms clock backstop
+            assertTrue(r.issues().get(0).message().contains("steps"),
+                    r.issues().get(0).message());
         });
     }
 
@@ -712,29 +716,36 @@ class PlanScriptRunnerTest {
      * add 2 levels, so the chain measures 198 deep, the function body 200 - exactly
      * PLAN_MAX_AST_DEPTH. Called until the interpreter's own call cap of 200, every
      * Micra-level frame keeps ~400 Java frames of pending binary evals live. It is NOT the
-     * deepest program the limits allow, though - {@link #worstCaseNestedForScript} wraps
-     * the same call in almost a hundred extra interpreter frames and measured deeper
-     * still, so this is only the cheaper of the two shapes the stack is sized against.
+     * deepest program the limits allow, though - {@link #worstCaseNestedForScript} puts
+     * the {@code for} nest INSIDE {@code f}, so every one of the 200 call levels carries
+     * ~96 live {@code for} frames on top of those evals. This plain chain is only the
+     * cheaper of the two shapes the stack is sized against.
      */
     private static String worstCaseScript() {
         return "def f(n):\n    return f(n + 1) + " + "1 + ".repeat(194) + "1\nf(0)\n";
     }
 
     /**
-     * The deeper of the two worst-case shapes the worker stack is sized against: 98 nested
-     * {@code for} blocks - just under the parser's 100-level nesting limit - around a call
-     * into the same recursive function. Every live {@code for} iteration keeps its own
-     * interpreter frames on top of the ~400 Java frames each Micra-level call carries, so
-     * the deepest point stacks about a hundred extra frame layers over the plain chain.
-     * One space of indent per level keeps the whole script under 7,000 characters.
+     * The deeper of the two worst-case shapes the worker stack is sized against: 96
+     * nested {@code for} blocks INSIDE {@code f}'s body, each iterating once before
+     * the innermost one reaches the {@code return} - so every one of the up-to-200
+     * nested calls keeps ~96 live {@code for} frames on the worker stack on top of
+     * the ~400 Java frames of pending evals {@link #worstCaseScript} already
+     * carries. (Wrapping the same blocks around the top-level {@code f(0)} call
+     * instead - the shape this helper used to build - enters them once, so they add
+     * nothing over the plain chain.) The {@code return} chain has 100 terms: chain
+     * depth 102 + {@code return} 1 + 96 {@code for} levels + {@code def} 1 keeps the
+     * function at exactly PLAN_MAX_AST_DEPTH. One space of indent per level keeps
+     * the whole script near 7,000 characters, well under MAX_SCRIPT_CHARS.
      */
     private static String worstCaseNestedForScript() {
-        StringBuilder out = new StringBuilder(
-                "def f(n):\n    return f(n + 1) + " + "1 + ".repeat(194) + "1\n");
-        for (int i = 0; i < 98; i++) {
+        StringBuilder out = new StringBuilder("def f(n):\n");
+        for (int i = 1; i <= 96; i++) {
             out.append(" ".repeat(i)).append("for i in range(1):\n");
         }
-        out.append(" ".repeat(98)).append("f(0)\n");
+        out.append(" ".repeat(97)).append("return f(n + 1) + ")
+                .append("1 + ".repeat(98)).append("1\n");
+        out.append("f(0)\n");
         return out.toString();
     }
 
@@ -930,10 +941,14 @@ class PlanScriptRunnerTest {
     @Test
     void theWorkerStackCoversTheWorstCaseWithAFourFoldMargin() throws InterruptedException {
         // the sizing measurement behind PLAN_RUN_STACK_BYTES, taken for BOTH deep shapes:
-        // the plain recursive chain, and the deeper 98-nested-`for` wrapper around it (the
-        // chain alone is NOT the deepest permitted program - see worstCaseNestedForScript).
+        // the plain recursive chain, and the deeper 96-nested-`for` nest INSIDE the
+        // recursive function, so every call level carries its own ~96 live `for`
+        // frames (the chain alone is NOT the deepest permitted program - see
+        // worstCaseNestedForScript).
         // On a loaded machine a run can land a few MiB either side of the printed value,
         // so the assertion is only on the required 4x margin, not an exact byte count
+        assertTrue(worstCaseNestedForScript().length() <= PlanScriptWriter.MAX_SCRIPT_CHARS,
+                "the worst-shape script must fit MAX_SCRIPT_CHARS to be a realistic attack");
         long chainMin = firstDeterministicStack(worstCaseScript());
         long nestedForMin = firstDeterministicStack(worstCaseNestedForScript());
         long measured = Math.max(chainMin, nestedForMin);
