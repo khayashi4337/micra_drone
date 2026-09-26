@@ -7,6 +7,8 @@ import java.util.Map;
  * The bridge between a construction script and the plan being built. Separate from {@link DroneApi} on purpose: the
  * farm commands and their pacing stay untouched, and a script is either a farm script or a construction script.
  * Values arrive as the interpreter holds them (numbers as Double, dicts as Map, lists as List).
+ * Those collections are the script's live objects, valid only for the duration of the call; an
+ * implementation that keeps a value must copy what it keeps (the script can mutate it afterwards).
  */
 public interface PlanApi {
     void site(String dimension, int x, int y, int z, String facing, int[] bounds, String terrainDigest, String claimId);

@@ -291,4 +291,85 @@ class PlanInterpreterTest {
         assertFalse(e instanceof PlanLimitException);
         assertTrue(e.getMessage().endsWith("script ran too long without any drone action (possible infinite loop) - stopped"), e.getMessage());
     }
+
+    // ---- memory limits (construction scripts only; farm scripts are unchanged) ----
+
+    @Test
+    void aDoublingStringHitsTheStringSizeLimitLongBeforeTheHeapIsExhausted() {
+        long start = System.nanoTime();
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run("s = \"x\"\nwhile True:\n    s = s + s\n", new RecordingPlanApi(),
+                        new PlanRunLimits(Long.MAX_VALUE, 60_000)));
+        assertTrue((System.nanoTime() - start) / 1_000_000 < 5_000, "it stopped well before an OutOfMemoryError");
+        assertEquals("line 3: construction script exceeded the string size limit of 1000000 characters", e.getMessage());
+    }
+
+    @Test
+    void aGrowingListHitsTheCollectionSizeLimitLongBeforeTheStepLimit() {
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run("items = []\nwhile True:\n    items.append(1)\n", new RecordingPlanApi(),
+                        new PlanRunLimits(Long.MAX_VALUE, 60_000)));
+        assertEquals("line 3: construction script exceeded the collection size limit of 100000 elements", e.getMessage());
+    }
+
+    @Test
+    void dictInsertsAndSetAddsCountAgainstTheCollectionSizeLimit() {
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run("d = {}\ni = 0\nwhile True:\n    d[i] = i\n    i = i + 1\n", new RecordingPlanApi(),
+                        new PlanRunLimits(Long.MAX_VALUE, 60_000)));
+        assertTrue(e.getMessage().contains("collection size"), e.getMessage());
+        e = assertThrows(PlanLimitException.class,
+                () -> run("s = set()\ni = 0\nwhile True:\n    s.add(i)\n    i = i + 1\n", new RecordingPlanApi(),
+                        new PlanRunLimits(Long.MAX_VALUE, 60_000)));
+        assertTrue(e.getMessage().contains("collection size"), e.getMessage());
+    }
+
+    @Test
+    void copyingAStringIntoACollectionHitsTheCollectionSizeLimit() {
+        // 2^19 = 524,288 characters: a legal string, but list() would split it into 524,288 > 100,000 elements
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run("s = \"x\"\nfor i in range(19):\n    s = s + s\nitems = list(s)\n", new RecordingPlanApi(),
+                        new PlanRunLimits(1_000_000, 60_000)));
+        assertEquals("line 4: construction script exceeded the collection size limit of 100000 elements", e.getMessage());
+    }
+
+    @Test
+    void loopingOverAStringHitsTheCollectionSizeLimit() {
+        // the interpreter snapshots an iterated string into a list of characters - same cap applies
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run("s = \"x\"\nfor i in range(19):\n    s = s + s\nfor c in s:\n    pass\n", new RecordingPlanApi(),
+                        new PlanRunLimits(1_000_000, 60_000)));
+        assertTrue(e.getMessage().contains("collection size"), e.getMessage());
+    }
+
+    @Test
+    void strAndPrintAreBoundedByTheStringSizeLimit() {
+        // two 524,288-character strings render as a list into more than 1,000,000 characters
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run("s = \"x\"\nfor i in range(19):\n    s = s + s\nitems = [s, s]\nprint(str(items))\n",
+                        new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
+        assertTrue(e.getMessage().contains("string size"), e.getMessage());
+        e = assertThrows(PlanLimitException.class,
+                () -> run("s = \"x\"\nfor i in range(19):\n    s = s + s\nitems = [s, s]\nprint(items)\n",
+                        new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
+        assertTrue(e.getMessage().contains("string size"), e.getMessage());
+    }
+
+    @Test
+    void stringsAndCollectionsJustUnderTheCapsStillRun() {
+        RecordingPlanApi api = new RecordingPlanApi();
+        run("s = \"x\"\nfor i in range(19):\n    s = s + s\n"                    // 524,288 characters, under 1,000,000
+                + "items = []\nfor i in range(100000):\n    items.append(i)\n" // exactly 100,000 elements
+                + "print(len(s))\nprint(len(items))\n", api, new PlanRunLimits(1_000_000, 60_000));
+        assertEquals(List.of("524288", "100000"), api.printed);
+    }
+
+    @Test
+    void theStringSizeCapDoesNotApplyToFarmScripts() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        // one concatenation of two 1,048,576-character strings = 2,097,152 characters: fine for a farm script
+        new Interpreter(api).run(new Parser(new Lexer(
+                "s = \"x\"\nfor i in range(20):\n    s = s + s\nt = s + s\nprint(len(t))\n").scan()).parseProgram());
+        assertEquals(List.of("2097152"), api.printed);
+    }
 }

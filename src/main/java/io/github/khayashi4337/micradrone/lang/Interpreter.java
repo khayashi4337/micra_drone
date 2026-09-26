@@ -11,7 +11,6 @@ import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Collectors;
 
 import io.github.khayashi4337.micradrone.lang.ast.Expr;
 import io.github.khayashi4337.micradrone.lang.ast.Stmt;
@@ -48,7 +47,7 @@ public final class Interpreter {
      */
     private static final Set<String> ISR_SAFE_BUILTINS =
             Set.of("len", "abs", "min", "max", "random", "str", "list", "set", "dict", "semaphore");
-    /** How deep {@link #stringify(Object, int)} descends into nested collections before giving up. */
+    /** How deep the {@code stringify} walk descends into nested collections before giving up. */
     private static final int MAX_STRINGIFY_DEPTH = 8;
 
     /** Function call frames deep before a script is assumed to be runaway recursion, not real work. */
@@ -108,6 +107,15 @@ public final class Interpreter {
     private static final long PLAN_TIME_CHECK_MASK = 0x3FF;
     private static final String PLAN_REFUSED_SUFFIX =
             "' cannot be used in a construction script (only construction commands and pure helpers)";
+    /**
+     * The largest string one construction-script value may hold. Needed because the step/time limits alone are
+     * not enough: {@code s = "x"} then {@code while True: s = s + s} doubles to about a gigabyte - an
+     * OutOfMemoryError - in roughly sixty steps. Farm mode (planLimits == null) is deliberately not capped:
+     * published farm scripts may legitimately build longer strings.
+     */
+    private static final int PLAN_MAX_STRING_CHARS = 1_000_000;
+    /** The largest element count one construction-script collection may hold - same reason as {@link #PLAN_MAX_STRING_CHARS}. */
+    private static final int PLAN_MAX_COLLECTION_ELEMENTS = 100_000;
 
     public Interpreter(DroneApi api) {
         this(api, null);
@@ -242,6 +250,7 @@ public final class Interpreter {
             @SuppressWarnings("unchecked")
             Map<Object, Object> mutable = (Map<Object, Object>) map;
             mutable.put(index, value);
+            checkPlanCollectionSize(mutable.size(), s.line());
             return;
         }
         throw new MicraLangException(s.line(), "cannot assign into " + typeName(target));
@@ -251,7 +260,7 @@ public final class Interpreter {
     private int listIndex(Object index, int size, int line) {
         double raw = asDouble(index, line);
         if (raw != Math.floor(raw)) {
-            throw new MicraLangException(line, "list index must be a whole number but was " + stringify(index));
+            throw new MicraLangException(line, "list index must be a whole number but was " + stringifyValue(index, line));
         }
         int i = (int) raw;
         if (i < 0 || i >= size) {
@@ -359,15 +368,19 @@ public final class Interpreter {
      */
     private Iterable<Object> iterableOf(Object value, int line) {
         if (value instanceof List<?> list) {
+            checkPlanCollectionSize(list.size(), line);
             return new ArrayList<>(list);
         }
         if (value instanceof Set<?> set) {
+            checkPlanCollectionSize(set.size(), line);
             return new ArrayList<>(set);
         }
         if (value instanceof Map<?, ?> map) {
+            checkPlanCollectionSize(map.size(), line);
             return new ArrayList<>(map.keySet());
         }
         if (value instanceof String s) {
+            checkPlanCollectionSize(s.length(), line);
             List<Object> chars = new ArrayList<>(s.length());
             for (int i = 0; i < s.length(); i++) {
                 chars.add(String.valueOf(s.charAt(i)));
@@ -507,6 +520,7 @@ public final class Interpreter {
             case "append" -> {
                 requireMethodArgCount(call, args, 1);
                 list.add(args.get(0));
+                checkPlanCollectionSize(list.size(), call.line());
                 yield MicraNone.INSTANCE;
             }
             case "pop" -> {
@@ -519,7 +533,7 @@ public final class Interpreter {
             case "remove" -> {
                 requireMethodArgCount(call, args, 1);
                 if (!list.remove(args.get(0))) {
-                    throw new MicraLangException(call.line(), stringify(args.get(0)) + " is not in this list");
+                    throw new MicraLangException(call.line(), stringifyValue(args.get(0), call.line()) + " is not in this list");
                 }
                 yield MicraNone.INSTANCE;
             }
@@ -537,12 +551,13 @@ public final class Interpreter {
             case "add" -> {
                 requireMethodArgCount(call, args, 1);
                 set.add(args.get(0));
+                checkPlanCollectionSize(set.size(), call.line());
                 yield MicraNone.INSTANCE;
             }
             case "remove" -> {
                 requireMethodArgCount(call, args, 1);
                 if (!set.remove(args.get(0))) {
-                    throw new MicraLangException(call.line(), stringify(args.get(0)) + " is not in this set");
+                    throw new MicraLangException(call.line(), stringifyValue(args.get(0), call.line()) + " is not in this set");
                 }
                 yield MicraNone.INSTANCE;
             }
@@ -559,11 +574,15 @@ public final class Interpreter {
         return switch (call.name()) {
             case "keys" -> {
                 requireMethodArgCount(call, args, 0);
-                yield new ArrayList<>(map.keySet());
+                List<Object> keys = new ArrayList<>(map.keySet());
+                checkPlanCollectionSize(keys.size(), call.line());
+                yield keys;
             }
             case "values" -> {
                 requireMethodArgCount(call, args, 0);
-                yield new ArrayList<>(map.values());
+                List<Object> values = new ArrayList<>(map.values());
+                checkPlanCollectionSize(values.size(), call.line());
+                yield values;
             }
             // Unlike d[k], this answers None for a missing key instead of stopping the script.
             case "get" -> {
@@ -574,7 +593,7 @@ public final class Interpreter {
             case "remove" -> {
                 requireMethodArgCount(call, args, 1);
                 if (!map.containsKey(args.get(0))) {
-                    throw new MicraLangException(call.line(), "no key " + stringify(args.get(0)) + " in this dict");
+                    throw new MicraLangException(call.line(), "no key " + stringifyValue(args.get(0), call.line()) + " in this dict");
                 }
                 yield map.remove(args.get(0));
             }
@@ -621,6 +640,7 @@ public final class Interpreter {
         for (Expr element : e.elements()) {
             list.add(eval(element));
         }
+        checkPlanCollectionSize(list.size(), e.line());
         return list;
     }
 
@@ -630,6 +650,7 @@ public final class Interpreter {
         for (int i = 0; i < e.keys().size(); i++) {
             map.put(eval(e.keys().get(i)), eval(e.values().get(i)));
         }
+        checkPlanCollectionSize(map.size(), e.line());
         return map;
     }
 
@@ -638,6 +659,7 @@ public final class Interpreter {
         for (Expr element : e.elements()) {
             set.add(eval(element));
         }
+        checkPlanCollectionSize(set.size(), e.line());
         return set;
     }
 
@@ -650,7 +672,7 @@ public final class Interpreter {
         if (target instanceof Map<?, ?> map) {
             Object value = map.get(index);
             if (value == null && !map.containsKey(index)) {
-                throw new MicraLangException(e.line(), "no key " + stringify(index) + " in this dict");
+                throw new MicraLangException(e.line(), "no key " + stringifyValue(index, e.line()) + " in this dict");
             }
             return value;
         }
@@ -682,7 +704,9 @@ public final class Interpreter {
         Object right = eval(e.right());
 
         if (e.op().equals("+") && left instanceof String ls && right instanceof String rs) {
-            return ls + rs;
+            String joined = ls + rs;
+            checkPlanStringSize(joined, e.line());
+            return joined;
         }
         if (e.op().equals("==")) {
             return left.equals(right);
@@ -911,7 +935,7 @@ public final class Interpreter {
             }
             case "print" -> {
                 requireArgCount(call, 1);
-                api.print(stringify(eval(args.get(0))));
+                api.print(stringifyValue(eval(args.get(0)), call.line()));
                 yield MicraNone.INSTANCE;
             }
             // ---- general-purpose builtins (no drone involved) ----
@@ -931,7 +955,7 @@ public final class Interpreter {
             }
             case "str" -> {
                 requireArgCount(call, 1);
-                yield stringify(eval(args.get(0)));
+                yield stringifyValue(eval(args.get(0)), call.line());
             }
             case "list" -> {
                 requireArgCount(call, args.isEmpty() ? 0 : 1);
@@ -1212,6 +1236,7 @@ public final class Interpreter {
                 candidates.add(eval(arg));
             }
         }
+        checkPlanCollectionSize(candidates.size(), call.line());
         if (candidates.isEmpty()) {
             throw new MicraLangException(call.line(), call.name() + "() got an empty collection");
         }
@@ -1231,12 +1256,15 @@ public final class Interpreter {
     private Collection<?> collectionArg(Expr.Call call, String name) {
         Object value = eval(call.args().get(0));
         if (value instanceof Collection<?> c) {
+            checkPlanCollectionSize(c.size(), call.line());
             return c;
         }
         if (value instanceof Map<?, ?> m) {
+            checkPlanCollectionSize(m.size(), call.line());
             return m.keySet();
         }
         if (value instanceof String s) {
+            checkPlanCollectionSize(s.length(), call.line());
             List<Object> chars = new ArrayList<>(s.length());
             for (int i = 0; i < s.length(); i++) {
                 chars.add(String.valueOf(s.charAt(i)));
@@ -1313,7 +1341,71 @@ public final class Interpreter {
     }
 
     static String stringify(Object v) {
-        return stringify(v, 0);
+        StringBuilder out = new StringBuilder();
+        appendStringified(v, 0, out, null, 0);
+        return out.toString();
+    }
+
+    /**
+     * {@link #stringify(Object)} under the construction string cap: the same rendering, but a plan-mode
+     * script stops with {@link PlanLimitException} the moment the output would pass
+     * {@link #PLAN_MAX_STRING_CHARS} instead of materialising a heap-filling string first (a list of
+     * references to one big string is cheap to build but expensive to print). Farm mode delegates to
+     * {@link #stringify(Object)} unchanged.
+     */
+    private String stringifyValue(Object v, int line) {
+        if (planLimits == null) {
+            return stringify(v);
+        }
+        StringBuilder out = new StringBuilder();
+        appendStringified(v, 0, out, new StringBudget(), line);
+        return out.toString();
+    }
+
+    /**
+     * Remaining characters a construction script may still append to a string being built. Shared down
+     * the stringify recursion so the cap is enforced while building, not after: checking the finished
+     * result would still mean constructing (and maybe overflowing the heap on) the whole string first.
+     */
+    private static final class StringBudget {
+        private long remaining = PLAN_MAX_STRING_CHARS;
+
+        void spend(int chars, int line) {
+            remaining -= chars;
+            if (remaining < 0) {
+                throw stringSizeExceeded(line);
+            }
+        }
+    }
+
+    /** Rejects a string that grew past the construction cap; a no-op for farm interpreters. */
+    private void checkPlanStringSize(String s, int line) {
+        if (planLimits != null && s.length() > PLAN_MAX_STRING_CHARS) {
+            throw stringSizeExceeded(line);
+        }
+    }
+
+    /**
+     * Rejects a collection that grew (or was built) past the construction cap; a no-op for farm
+     * interpreters. Called at every place plan-mode code can create or enlarge a collection:
+     * {@code append}/{@code add}/dict insertion, the literals, {@code list(...)}/{@code set(...)}
+     * copies, and the for-loop snapshot - a 1,000,000-character string is legal, but splitting it
+     * into characters must not become a 1,000,000-element list.
+     */
+    private void checkPlanCollectionSize(int size, int line) {
+        if (planLimits != null && size > PLAN_MAX_COLLECTION_ELEMENTS) {
+            throw collectionSizeExceeded(line);
+        }
+    }
+
+    private static PlanLimitException stringSizeExceeded(int line) {
+        return new PlanLimitException(line, "construction script exceeded the string size limit of "
+                + PLAN_MAX_STRING_CHARS + " characters");
+    }
+
+    private static PlanLimitException collectionSizeExceeded(int line) {
+        return new PlanLimitException(line, "construction script exceeded the collection size limit of "
+                + PLAN_MAX_COLLECTION_ELEMENTS + " elements");
     }
 
     /**
@@ -1324,36 +1416,78 @@ public final class Interpreter {
      * and kill the script thread with no message at all. Beyond the cap the nested value is shown
      * as an ellipsis instead, the way Python renders the same cycle.
      */
-    private static String stringify(Object v, int depth) {
+    private static void appendStringified(Object v, int depth, StringBuilder out, StringBudget budget, int line) {
         if (v instanceof Double d) {
-            return (d == Math.floor(d) && !Double.isInfinite(d)) ? String.valueOf((long) (double) d) : String.valueOf(d);
+            appendPiece(out, (d == Math.floor(d) && !Double.isInfinite(d)) ? String.valueOf((long) (double) d) : String.valueOf(d),
+                    budget, line);
+            return;
         }
-        if (v instanceof Boolean b) return b ? "True" : "False";
-        if (v instanceof String s) return s;
+        if (v instanceof Boolean b) {
+            appendPiece(out, b ? "True" : "False", budget, line);
+            return;
+        }
+        if (v instanceof String s) {
+            appendPiece(out, s, budget, line);
+            return;
+        }
         if (v instanceof List<?> || v instanceof Set<?> || v instanceof Map<?, ?>) {
             if (depth >= MAX_STRINGIFY_DEPTH) {
-                return "...";
+                appendPiece(out, "...", budget, line);
+                return;
             }
             if (v instanceof Map<?, ?> map) {
-                return map.entrySet().stream()
-                        .map(entry -> quoted(entry.getKey(), depth + 1) + ": " + quoted(entry.getValue(), depth + 1))
-                        .collect(Collectors.joining(", ", "{", "}"));
+                appendPiece(out, "{", budget, line);
+                String separator = "";
+                for (Map.Entry<?, ?> entry : map.entrySet()) {
+                    appendPiece(out, separator, budget, line);
+                    separator = ", ";
+                    appendQuoted(entry.getKey(), depth + 1, out, budget, line);
+                    appendPiece(out, ": ", budget, line);
+                    appendQuoted(entry.getValue(), depth + 1, out, budget, line);
+                }
+                appendPiece(out, "}", budget, line);
+                return;
             }
             Collection<?> items = (Collection<?>) v;
-            String open = v instanceof Set<?> ? "{" : "[";
-            String close = v instanceof Set<?> ? "}" : "]";
-            return items.stream().map(item -> quoted(item, depth + 1)).collect(Collectors.joining(", ", open, close));
+            appendPiece(out, v instanceof Set<?> ? "{" : "[", budget, line);
+            String separator = "";
+            for (Object item : items) {
+                appendPiece(out, separator, budget, line);
+                separator = ", ";
+                appendQuoted(item, depth + 1, out, budget, line);
+            }
+            appendPiece(out, v instanceof Set<?> ? "}" : "]", budget, line);
+            return;
         }
-        if (v instanceof MicraFunction fn) return "<function " + fn.name() + ">";
-        if (v instanceof MicraSemaphore) return "<semaphore>";
-        return "None";
+        if (v instanceof MicraFunction fn) {
+            appendPiece(out, "<function " + fn.name() + ">", budget, line);
+            return;
+        }
+        if (v instanceof MicraSemaphore) {
+            appendPiece(out, "<semaphore>", budget, line);
+            return;
+        }
+        appendPiece(out, "None", budget, line);
     }
 
     /**
      * How a value looks *inside* a collection: strings get quotes there (so an empty string and a
      * missing one are told apart) even though a bare {@code print("hi")} prints them without.
      */
-    private static String quoted(Object v, int depth) {
-        return v instanceof String s ? "\"" + s + "\"" : stringify(v, depth);
+    private static void appendQuoted(Object v, int depth, StringBuilder out, StringBudget budget, int line) {
+        if (v instanceof String s) {
+            appendPiece(out, "\"", budget, line);
+            appendPiece(out, s, budget, line);
+            appendPiece(out, "\"", budget, line);
+            return;
+        }
+        appendStringified(v, depth, out, budget, line);
+    }
+
+    private static void appendPiece(StringBuilder out, String piece, StringBudget budget, int line) {
+        if (budget != null) {
+            budget.spend(piece.length(), line);
+        }
+        out.append(piece);
     }
 }
