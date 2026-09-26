@@ -117,25 +117,35 @@ public final class Interpreter {
     /** The largest element count one construction-script collection may hold - same reason as {@link #PLAN_MAX_STRING_CHARS}. */
     private static final int PLAN_MAX_COLLECTION_ELEMENTS = 100_000;
     /**
-     * Total units one construction-script run may allocate: one unit is one character of a string
-     * the script produces or one slot of a list it builds or copies, and a dict entry or set
-     * element counts {@link #PLAN_HASH_ENTRY_UNITS} units. The per-value caps
-     * ({@link #PLAN_MAX_STRING_CHARS}, {@link #PLAN_MAX_COLLECTION_ELEMENTS}) bound each single
-     * value but not what a whole run retains - printing or copying a legal-sized value in a loop
-     * still exhausts the heap, so the run as a whole gets a budget too. Charged where a new string
-     * or collection materialises, including the list/dict/set literals: the step limit does not
-     * bound them (a 3,000-element literal evaluated 100,000 times is 300 million elements), only
-     * {@code append}/{@code add}/item assignment are left to it. The counter belongs to one
-     * interpreter run, which is ONE script - the runner builds one interpreter per script; what
-     * all scripts of a run leave behind is bounded separately by the recorder's budgets.
+     * Total units one construction-script run may allocate: one unit is about eight bytes of
+     * retained heap - one ArrayList slot, or one character of a string the script produces - so
+     * 10,000,000 units of the heaviest weight are about 80 MB, which fits comfortably under a
+     * small heap. A list literal's element counts {@link #PLAN_LIST_LITERAL_ELEMENT_UNITS} units
+     * and a dict entry or set element counts {@link #PLAN_HASH_ENTRY_UNITS} units. The per-value
+     * caps ({@link #PLAN_MAX_STRING_CHARS}, {@link #PLAN_MAX_COLLECTION_ELEMENTS}) bound each
+     * single value but not what a whole run retains - printing or copying a legal-sized value in
+     * a loop still exhausts the heap, so the run as a whole gets a budget too. Charged where a
+     * new string or collection materialises, including the list/dict/set literals: the step limit
+     * does not bound them (a 3,000-element literal evaluated 100,000 times is 300 million
+     * elements), only {@code append}/{@code add}/item assignment are left to it. The counter
+     * belongs to one interpreter run, which is ONE script - the runner builds one interpreter per
+     * script; what all scripts of a run leave behind is bounded separately by the recorder's
+     * budgets.
      */
     private static final long PLAN_MAX_ALLOCATED_UNITS = 10_000_000;
     /**
-     * Charge weight of one dict entry or set element: a LinkedHashMap/LinkedHashSet entry retains
-     * about eight times what an ArrayList slot does, so 10,000,000 units of entries would be about
-     * 480 MB without the weight.
+     * Charge weight of one LIST LITERAL element: each element retains its ArrayList slot (about 8
+     * bytes) plus, for the usual number literal, a freshly boxed Double (about 16 bytes) - about
+     * 24 bytes in all, i.e. 3 units. Only the literal pays this: {@code list()}/{@code keys()}/
+     * {@code values()}/the for-loop snapshot/{@code min}/{@code max} copy existing references, so
+     * they stay at 1 unit per slot.
      */
-    private static final int PLAN_HASH_ENTRY_UNITS = 8;
+    private static final int PLAN_LIST_LITERAL_ELEMENT_UNITS = 3;
+    /**
+     * Charge weight of one dict entry or set element: a LinkedHashMap/LinkedHashSet entry plus
+     * its table slot plus two boxed values retains about 80 bytes = 10 units.
+     */
+    private static final int PLAN_HASH_ENTRY_UNITS = 10;
     private long planAllocatedUnits = 0;
 
     public Interpreter(DroneApi api) {
@@ -672,7 +682,7 @@ public final class Interpreter {
             list.add(eval(element));
         }
         checkPlanCollectionSize(list.size(), e.line());
-        chargePlanAllocation(list.size(), e.line());
+        chargePlanAllocation(list.size() * PLAN_LIST_LITERAL_ELEMENT_UNITS, e.line());
         return list;
     }
 
@@ -973,7 +983,18 @@ public final class Interpreter {
                 String rendered = stringifyValue(eval(args.get(0)), call.line());
                 // charged before the api sees the text: a print that blows the budget is not recorded
                 chargePlanAllocation(rendered.length(), call.line());
-                api.print(rendered);
+                if (planLimits != null) {
+                    try {
+                        api.print(rendered);
+                    } catch (IllegalArgumentException e) {
+                        // the recorder's printed-output budget is an expected limit, not an
+                        // internal error - rethrown with the line so the runner reports
+                        // E-SCRIPT-LIMIT instead of an unexpected failure
+                        throw new PlanLimitException(call.line(), e.getMessage());
+                    }
+                } else {
+                    api.print(rendered);
+                }
                 yield MicraNone.INSTANCE;
             }
             // ---- general-purpose builtins (no drone involved) ----
@@ -1448,8 +1469,10 @@ public final class Interpreter {
      * farm interpreters. Called where plan-mode code materialises a new string or collection:
      * {@code +} concatenation, {@code str()}/{@code print()}, {@code list()}/{@code set()} copies,
      * {@code keys()}/{@code values()}, the list/dict/set literals, the for-loop snapshot and the
-     * {@code min}/{@code max} candidate list. Dict entries and set elements weigh
-     * {@link #PLAN_HASH_ENTRY_UNITS} units each.
+     * {@code min}/{@code max} candidate list. List literal elements weigh {@link
+     * #PLAN_LIST_LITERAL_ELEMENT_UNITS} units each; dict entries and set elements weigh
+     * {@link #PLAN_HASH_ENTRY_UNITS} units each; every other list-producing site copies existing
+     * references and stays at one unit per slot.
      */
     private void chargePlanAllocation(int units, int line) {
         if (planLimits == null) {

@@ -368,4 +368,37 @@ class PlanScriptRunnerTest {
         assertEquals("E-SCRIPT-LIMIT:#stack:2", r.issues().get(0).id());
         assertTrue(r.issues().get(0).message().contains("スクリプト2"), r.issues().get(0).message());
     }
+
+    // ---- the fuzz's repeated big list literal is a limit issue, and so is a refused print (fix round 4) ----
+
+    @Test
+    void aRepeatedBigListLiteralIsAnAllocationLimitIssueNotAnError() {
+        // the controller's fuzz finding: a 9,840-character script that re-evaluates a
+        // 4,900-element list literal in a while loop. Each evaluation is charged 4,900 x 3 =
+        // 14,700 units (a literal element retains its slot plus a freshly boxed Double, about 24
+        // bytes), so the 681st evaluation - 680 x 14,700 = 9,996,000 fits the 10,000,000 budget -
+        // is refused by the run-wide counter before the retained lists can exhaust the heap
+        PlanScriptRunner.Result r = run("acc = []\nwhile True:\n    acc.append(["
+                + "0,".repeat(4_899) + "0])\n");
+        assertNull(r.patch());
+        assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r));
+        assertTrue(r.issues().get(0).message().contains("total allocation limit of 10000000"),
+                r.issues().get(0).message());
+    }
+
+    @Test
+    void aPrintPastTheRecordersOutputBudgetIsALimitIssueNotAnInternalError() {
+        // s doubles to 524,288 characters; the second print takes the recorder's retained output
+        // to 1,048,576 > 1,000,000 characters - an expected limit, so the interpreter wraps the
+        // recorder's refusal in a PlanLimitException and the runner reports E-SCRIPT-LIMIT naming
+        // the limit and the line, never "想定外"
+        PlanScriptRunner.Result r = run("s = \"x\"\n" + "s = s + s\n".repeat(19) + "print(s)\nprint(s)\n");
+        assertNull(r.patch());
+        assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r));
+        assertEquals("E-SCRIPT-LIMIT:#run:1", r.issues().get(0).id());
+        String message = r.issues().get(0).message();
+        assertTrue(message.contains("1000000"), message);
+        assertTrue(message.contains("line 22"), message);
+        assertFalse(message.contains("想定外"), message);
+    }
 }

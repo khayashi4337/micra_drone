@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.reflect.Proxy;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -463,7 +464,8 @@ class PlanInterpreterTest {
      */
     private static Stream<Arguments> scriptsThatHammerOneAllocationChargeSiteEach() {
         // a legal 20,000-element list/dict: append and d[i]= are not charged, so each later
-        // copy/snapshot of the seed charges exactly 20,000 units (500 of them fill the budget)
+        // copy/snapshot of the seed charges exactly 20,000 units (500 of them fill the budget) -
+        // except the set() copy, which weighs 10 units per element (200,000 per copy, 50 fill it)
         String list = "l = []\nfor i in range(20000):\n    l.append(i)\n";
         String dict = "d = {}\nfor i in range(20000):\n    d[i] = i\n";
         return Stream.of(
@@ -521,24 +523,25 @@ class PlanInterpreterTest {
 
     @Test
     void aListLiteralIsChargedForEveryElementOfEveryEvaluation() {
-        // each evaluation of the 2,000-element literal charges 2,000 units (one unit per list
-        // slot), so exactly 5,000 evaluations exhaust the 10,000,000-unit budget and still run;
-        // the 5,001st evaluation charges 10,002,000 and throws on the append line
+        // each evaluation of the 2,000-element literal charges 2,000 x 3 = 6,000 units (a list
+        // literal element retains its ArrayList slot plus a freshly boxed value, about 24 bytes
+        // = 3 units), so 1,666 evaluations charge 9,996,000 and run; the 1,667th tips the total
+        // to 10,002,000 and throws on the append line
         String literal = "[0" + ",0".repeat(1_999) + "]";
-        run("acc = []\nfor i in range(5000):\n    acc.append(" + literal + ")\n", new RecordingPlanApi(),
+        run("acc = []\nfor i in range(1666):\n    acc.append(" + literal + ")\n", new RecordingPlanApi(),
                 new PlanRunLimits(1_000_000, 60_000));
         PlanLimitException e = assertThrows(PlanLimitException.class,
-                () -> run("acc = []\nfor i in range(5001):\n    acc.append(" + literal + ")\n",
+                () -> run("acc = []\nfor i in range(1667):\n    acc.append(" + literal + ")\n",
                         new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
         assertEquals("line 3: construction script exceeded the total allocation limit of 10000000 (characters and collection elements created)",
                 e.getMessage());
     }
 
     @Test
-    void aDictLiteralIsChargedEightUnitsPerEntryPerEvaluation() {
-        // a dict entry weighs 8 units (a LinkedHashMap entry retains about eight times an
-        // ArrayList slot), so the 500-entry literal charges 4,000 per evaluation: 2,500
-        // evaluations are exactly 10,000,000 and run, the 2,501st throws
+    void aDictLiteralIsChargedTenUnitsPerEntryPerEvaluation() {
+        // a dict entry weighs 10 units (a LinkedHashMap entry plus its table slot plus two boxed
+        // values is about 80 bytes), so the 500-entry literal charges 5,000 per evaluation:
+        // 2,000 evaluations are exactly 10,000,000 and run, the 2,001st throws
         StringBuilder dict = new StringBuilder("{");
         for (int i = 0; i < 500; i++) {
             if (i > 0) {
@@ -547,19 +550,19 @@ class PlanInterpreterTest {
             dict.append("\"k").append(i).append("\": 0");
         }
         dict.append("}");
-        run("acc = []\nfor i in range(2500):\n    acc.append(" + dict + ")\n", new RecordingPlanApi(),
+        run("acc = []\nfor i in range(2000):\n    acc.append(" + dict + ")\n", new RecordingPlanApi(),
                 new PlanRunLimits(1_000_000, 60_000));
         PlanLimitException e = assertThrows(PlanLimitException.class,
-                () -> run("acc = []\nfor i in range(2501):\n    acc.append(" + dict + ")\n",
+                () -> run("acc = []\nfor i in range(2001):\n    acc.append(" + dict + ")\n",
                         new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
         assertEquals("line 3: construction script exceeded the total allocation limit of 10000000 (characters and collection elements created)",
                 e.getMessage());
     }
 
     @Test
-    void aSetLiteralIsChargedEightUnitsPerElementPerEvaluation() {
-        // a set literal weighs its elements the same 8 units each (LinkedHashSet entries), so the
-        // 500-element literal charges 4,000 per evaluation - 2,500 fit, the 2,501st throws
+    void aSetLiteralIsChargedTenUnitsPerElementPerEvaluation() {
+        // a set literal weighs its elements the same 10 units each (LinkedHashSet entries), so
+        // the 500-element literal charges 5,000 per evaluation - 2,000 fit, the 2,001st throws
         StringBuilder set = new StringBuilder("{");
         for (int i = 0; i < 500; i++) {
             if (i > 0) {
@@ -568,26 +571,26 @@ class PlanInterpreterTest {
             set.append(i);
         }
         set.append("}");
-        run("acc = []\nfor i in range(2500):\n    acc.append(" + set + ")\n", new RecordingPlanApi(),
+        run("acc = []\nfor i in range(2000):\n    acc.append(" + set + ")\n", new RecordingPlanApi(),
                 new PlanRunLimits(1_000_000, 60_000));
         PlanLimitException e = assertThrows(PlanLimitException.class,
-                () -> run("acc = []\nfor i in range(2501):\n    acc.append(" + set + ")\n",
+                () -> run("acc = []\nfor i in range(2001):\n    acc.append(" + set + ")\n",
                         new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
         assertEquals("line 3: construction script exceeded the total allocation limit of 10000000 (characters and collection elements created)",
                 e.getMessage());
     }
 
     @Test
-    void theSetCopyIsChargedEightUnitsPerElement() {
-        // set(l) on the 1,000-element seed copies into a LinkedHashSet: 1,000 x 8 = 8,000 units
-        // per copy, so 1,250 copies are exactly 10,000,000 and run while the 1,251st throws on
+    void theSetCopyIsChargedTenUnitsPerElement() {
+        // set(l) on the 1,000-element seed copies into a LinkedHashSet: 1,000 x 10 = 10,000 units
+        // per copy, so 1,000 copies are exactly 10,000,000 and run while the 1,001st throws on
         // the copy line. The seeding appends charge nothing; both scripts stay far under the
-        // step limit (1 + 2x1,000 + 2x1,251 = 4,503 steps)
+        // step limit (1 + 2x1,000 + 2x1,001 = 4,003 steps)
         String seed = "l = []\nfor i in range(1000):\n    l.append(i)\n";
-        run(seed + "for i in range(1250):\n    t = set(l)\n", new RecordingPlanApi(),
+        run(seed + "for i in range(1000):\n    t = set(l)\n", new RecordingPlanApi(),
                 new PlanRunLimits(1_000_000, 60_000));
         PlanLimitException e = assertThrows(PlanLimitException.class,
-                () -> run(seed + "for i in range(1251):\n    t = set(l)\n",
+                () -> run(seed + "for i in range(1001):\n    t = set(l)\n",
                         new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
         assertEquals("line 5: construction script exceeded the total allocation limit of 10000000 (characters and collection elements created)",
                 e.getMessage());
@@ -596,13 +599,13 @@ class PlanInterpreterTest {
     @Test
     void literalChargesDoNotApplyToFarmScripts() {
         FakeDroneApi api = new FakeDroneApi(5);
-        // the same 2,000-element list literal evaluated 5,001 times = 10,002,000 units, over the
+        // the same 2,000-element list literal evaluated 1,667 times = 10,002,000 units, over the
         // construction budget - but a farm interpreter has no allocation budget at all
         String literal = "[0" + ",0".repeat(1_999) + "]";
         new Interpreter(api).run(new Parser(new Lexer(
-                "acc = []\nfor i in range(5001):\n    acc.append(" + literal + ")\nprint(len(acc))\n")
+                "acc = []\nfor i in range(1667):\n    acc.append(" + literal + ")\nprint(len(acc))\n")
                 .scan()).parseProgram());
-        assertEquals(List.of("5001"), api.printed);
+        assertEquals(List.of("1667"), api.printed);
     }
 
     @Test
@@ -616,5 +619,50 @@ class PlanInterpreterTest {
                 () -> run(buildToCap + fourRenders + "u = s + \"x\"\n", new RecordingPlanApi(),
                         new PlanRunLimits(1_000_000, 60_000)));
         assertEquals("line 12: construction script exceeded the string size limit of 1000000 characters", e.getMessage());
+    }
+
+    // ---- a refused print is an expected limit, not an internal error (fix round 4) ----
+
+    @Test
+    void aPrintRefusalFromTheApiIsAPlanLimitExceptionWithTheLine() {
+        // the recorder's printed-output budget refuses with an IllegalArgumentException; in plan
+        // mode that is an expected limit, so the interpreter rethrows it as a PlanLimitException
+        // carrying the call's line - otherwise the runner reports it as an internal error
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> new Interpreter(refusingPrintPlanApi(), PlanRunLimits.DEFAULT).run(
+                        new Parser(new Lexer("x = 1\nprint(\"hi\")\n").scan()).parseProgram()));
+        assertEquals("line 2: printed output refused", e.getMessage());
+    }
+
+    @Test
+    void aPrintRefusalPropagatesUnchangedForAFarmInterpreter() {
+        // farm mode has no plan budgets: a DroneApi's IllegalArgumentException from print is not
+        // wrapped - it propagates exactly as it did before
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> new Interpreter(refusingPrintDroneApi()).run(
+                        new Parser(new Lexer("print(\"hi\")\n").scan()).parseProgram()));
+        assertEquals("printed output refused", e.getMessage());
+    }
+
+    /** A {@link PlanApi} whose {@code print} refuses the way the recorder's output budget does. */
+    private static PlanApi refusingPrintPlanApi() {
+        return (PlanApi) Proxy.newProxyInstance(PlanApi.class.getClassLoader(), new Class<?>[]{PlanApi.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("print")) {
+                        throw new IllegalArgumentException("printed output refused");
+                    }
+                    return null;
+                });
+    }
+
+    /** A {@link DroneApi} whose {@code print} refuses the way the recorder's output budget does. */
+    private static DroneApi refusingPrintDroneApi() {
+        return (DroneApi) Proxy.newProxyInstance(DroneApi.class.getClassLoader(), new Class<?>[]{DroneApi.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("print")) {
+                        throw new IllegalArgumentException("printed output refused");
+                    }
+                    return null;
+                });
     }
 }
