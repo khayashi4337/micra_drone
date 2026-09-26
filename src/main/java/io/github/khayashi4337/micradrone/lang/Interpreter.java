@@ -6,8 +6,10 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
@@ -93,6 +95,20 @@ public final class Interpreter {
      */
     private final long generation;
 
+    /**
+     * Non-null only for a construction-script interpreter (see {@link #Interpreter(PlanApi, PlanRunLimits)}): it
+     * enables {@link CommandNames#PLAN} and refuses the farm commands. Farm, task and ISR interpreters leave it null.
+     */
+    private final PlanApi planApi;
+    /** The construction script's step/time limits; non-null exactly when {@link #planApi} is. */
+    private final PlanRunLimits planLimits;
+    private long planSteps = 0;
+    private long planStartNanos = 0;
+    /** Checking the clock on every statement would cost more than the statements; every 1024th is enough. */
+    private static final long PLAN_TIME_CHECK_MASK = 0x3FF;
+    private static final String PLAN_REFUSED_SUFFIX =
+            "' cannot be used in a construction script (only construction commands and pure helpers)";
+
     public Interpreter(DroneApi api) {
         this(api, null);
     }
@@ -111,8 +127,24 @@ public final class Interpreter {
         this(api, debug, new Environment(), false, taskRegistry, interruptTable, taskRegistry.currentGeneration());
     }
 
+    /** A construction-script interpreter: only PlanApi commands and pure helpers, under {@code limits}. */
+    public Interpreter(PlanApi planApi, PlanRunLimits limits) {
+        this(Objects.requireNonNull(planApi, "planApi"), Objects.requireNonNull(limits, "limits"), new TaskRegistry());
+    }
+
+    private Interpreter(PlanApi planApi, PlanRunLimits limits, TaskRegistry registry) {
+        this(PlanModeDroneApi.create(planApi), null, new Environment(), false, registry, new InterruptTable(),
+                registry.currentGeneration(), planApi, limits);
+    }
+
     private Interpreter(DroneApi api, DebugController debug, Environment globalEnv, boolean isrContext,
             TaskRegistry taskRegistry, InterruptTable interruptTable, long generation) {
+        this(api, debug, globalEnv, isrContext, taskRegistry, interruptTable, generation, null, null);
+    }
+
+    private Interpreter(DroneApi api, DebugController debug, Environment globalEnv, boolean isrContext,
+            TaskRegistry taskRegistry, InterruptTable interruptTable, long generation, PlanApi planApi,
+            PlanRunLimits planLimits) {
         this.api = api;
         this.debug = debug;
         this.globalEnv = globalEnv;
@@ -121,9 +153,13 @@ public final class Interpreter {
         this.taskRegistry = taskRegistry;
         this.interruptTable = interruptTable;
         this.generation = generation;
+        this.planApi = planApi;
+        this.planLimits = planLimits;
     }
 
     public void run(List<Stmt> program) {
+        planStartNanos = System.nanoTime();
+        planSteps = 0;
         execBlock(program);
     }
 
@@ -180,10 +216,15 @@ public final class Interpreter {
 
     /** Rejects a name clash with a built-in command (the parser already rejects nested def). */
     private void defineFunction(Stmt.FunctionDef s) {
-        if (CommandNames.ALL.contains(s.name())) {
+        if (isBuiltinName(s.name())) {
             throw new MicraLangException(s.line(), "'" + s.name() + "' is a built-in command and cannot be redefined");
         }
         env.set(s.name(), new MicraFunction(s.name(), s.params(), s.body()));
+    }
+
+    /** The farm commands always; the construction commands only in a construction interpreter. */
+    private boolean isBuiltinName(String name) {
+        return CommandNames.ALL.contains(name) || planApi != null && CommandNames.PLAN.contains(name);
     }
 
     /** {@code a[i] = v} on a list (existing position only) or {@code d[k] = v} on a dict (adds or replaces). */
@@ -367,6 +408,19 @@ public final class Interpreter {
     private void checkCancellation(int line) {
         if (Thread.currentThread().isInterrupted()) {
             throw new ScriptStoppedException();
+        }
+        if (planLimits != null) {
+            // Construction scripts have their own limits, so the farm heuristic below (statements without a drone
+            // action) is skipped: it would fire first on a fast run and hide which limit was actually exceeded.
+            planSteps++;
+            if (planSteps > planLimits.maxSteps()) {
+                throw new PlanLimitException(line, "construction script exceeded " + planLimits.maxSteps() + " steps");
+            }
+            if ((planSteps & PLAN_TIME_CHECK_MASK) == 0
+                    && TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - planStartNanos) > planLimits.maxMillis()) {
+                throw new PlanLimitException(line, "construction script exceeded " + planLimits.maxMillis() + " ms");
+            }
+            return;
         }
         statementsSinceApiCall++;
         if (statementsSinceApiCall > RUNAWAY_STATEMENT_THRESHOLD) {
@@ -685,9 +739,24 @@ public final class Interpreter {
         if (maybeFn instanceof MicraFunction fn) {
             return callFunction(fn, call);
         }
-        if (maybeFn != null && !CommandNames.ALL.contains(call.name())) {
+        if (maybeFn != null && !isBuiltinName(call.name())) {
             throw new MicraLangException(call.line(),
                     "'" + call.name() + "' is not a function (it is a " + typeName(maybeFn) + ")");
+        }
+        // Construction interpreters only: farm commands (every ALL name except the pure helpers) are refused, and
+        // construction commands go to the PlanApi. Placed after the user-function resolution for the same reason as
+        // the ISR gate below: a helper function the script defined is still callable.
+        if (planApi != null) {
+            if (CommandNames.ALL.contains(call.name()) && !CommandNames.PLAN_HELPERS.contains(call.name())) {
+                throw new MicraLangException(call.line(), "'" + call.name() + PLAN_REFUSED_SUFFIX);
+            }
+            if (CommandNames.PLAN.contains(call.name())) {
+                List<Object> values = new ArrayList<>(call.args().size());
+                for (Expr arg : call.args()) {
+                    values.add(eval(arg));
+                }
+                return PlanCommandDispatcher.invoke(planApi, call.name(), values, call.line());
+            }
         }
         // Placed after the user-function resolution above (not before it): a pure-computation
         // helper function must still be callable from inside an ISR handler, and only actually

@@ -1,6 +1,7 @@
 package io.github.khayashi4337.micradrone.lang;
 
 import java.util.List;
+import java.util.stream.Stream;
 
 /**
  * Every script-visible command name (snake_case, as scripts call them) the interpreter recognizes -
@@ -26,6 +27,41 @@ public final class CommandNames {
             // General-purpose, nothing to do with the drone - see Interpreter's "general-purpose builtins".
             "len", "abs", "min", "max", "random", "str", "list", "dict", "set", "semaphore", "create_task",
             "attach_isr", "raise_interrupt");
+
+    // ---- construction commands (see docs/design/nl_factory_builder/04_foundations.md, F-6) ----
+
+    public static final String SITE = "site";
+    public static final String STYLE = "style";
+    public static final String MOOD = "mood";
+    public static final String PART = "part";
+    public static final String UPDATE_PARAMS = "update_params";
+    public static final String RELOCATE = "relocate";
+    public static final String REMOVE_PART = "remove_part";
+    public static final String CONNECT = "connect";
+    public static final String DISCONNECT = "disconnect";
+    public static final String LOGISTICS = "logistics";
+
+    /** General construction commands. */
+    public static final List<String> PLAN_GENERAL = List.of(SITE, STYLE, MOOD, PART, UPDATE_PARAMS, RELOCATE,
+            REMOVE_PART, CONNECT, DISCONNECT, LOGISTICS);
+
+    /** One command per building part (micra:*), named by the part id without the prefix; a test keeps it equal to the registry. */
+    public static final List<String> PLAN_PART_COMMANDS = List.of("balcony", "beam", "catwalk", "chimney", "dock_pad", "door",
+            "floor", "foundation", "ladder", "lamp", "pillar", "planter", "railing", "ramp", "road", "roof", "sign", "stairs",
+            "structure", "trim", "wall", "window");
+
+    /**
+     * Every construction command. Deliberately NOT part of {@link #ALL}: {@code ALL} makes the interpreter refuse a farm
+     * script's own function with the same name (and feeds the farm editor), so generic names like wall or door would break
+     * scripts players already wrote. The interpreter only accepts these when it was built with a PlanApi.
+     */
+    public static final List<String> PLAN = Stream.concat(PLAN_GENERAL.stream(), PLAN_PART_COMMANDS.stream()).toList();
+
+    /** Farm builtins that are pure and deterministic, so they stay usable in a construction script. */
+    public static final List<String> PLAN_HELPERS = List.of("print", "len", "abs", "min", "max", "str", "list", "dict", "set", "range");
+
+    /** What the construction editor highlights and completes. */
+    public static final List<String> PLAN_VISIBLE = Stream.concat(PLAN.stream(), PLAN_HELPERS.stream()).toList();
 
     private CommandNames() {
     }

@@ -1,6 +1,7 @@
 package io.github.khayashi4337.micradrone.lang;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 
@@ -30,7 +31,7 @@ public final class SyntaxHighlighter {
         NUMBER,
         STRING,
         COMMENT,
-        /** A call to one of the drone's own commands - see {@link CommandNames#ALL}. */
+        /** A call to a known command - {@link CommandNames#ALL} unless the caller passes another list. */
         BUILTIN,
         /** A call to anything else (an unknown/misspelled command). */
         CALL,
@@ -49,6 +50,14 @@ public final class SyntaxHighlighter {
 
     /** Scans {@code source} into contiguous spans covering {@code [0, source.length())}. Never throws. */
     public static List<Span> highlight(String source) {
+        return highlight(source, CommandNames.ALL);
+    }
+
+    /**
+     * Same as {@link #highlight(String)}, but a call is {@link Kind#BUILTIN} when its name is in {@code commandNames}
+     * (e.g. {@link CommandNames#PLAN_VISIBLE} for a construction script) instead of the farm list.
+     */
+    public static List<Span> highlight(String source, Collection<String> commandNames) {
         List<Span> spans = new ArrayList<>();
         int i = 0;
         while (i < source.length()) {
@@ -70,7 +79,7 @@ public final class SyntaxHighlighter {
                 while (i < source.length() && isWordChar(source.charAt(i))) {
                     i++;
                 }
-                kind = classifyWord(source, source.substring(start, i), i);
+                kind = classifyWord(source, source.substring(start, i), i, commandNames);
             } else if (isSpace(c)) {
                 while (i < source.length() && isSpace(source.charAt(i))) {
                     i++;
@@ -127,10 +136,10 @@ public final class SyntaxHighlighter {
 
     /**
      * A word is a keyword, a constant, a call (if the next non-blank character opens a paren -
-     * {@link Kind#BUILTIN} when it names one of the drone's commands, {@link Kind#CALL} otherwise),
+     * {@link Kind#BUILTIN} when it names one of {@code commandNames}, {@link Kind#CALL} otherwise),
      * or else a plain variable name.
      */
-    private static Kind classifyWord(String source, String word, int wordEnd) {
+    private static Kind classifyWord(String source, String word, int wordEnd, Collection<String> commandNames) {
         if (CONSTANTS.contains(word)) {
             return Kind.CONSTANT;
         }
@@ -142,7 +151,7 @@ public final class SyntaxHighlighter {
             i++;
         }
         if (i < source.length() && source.charAt(i) == '(') {
-            return CommandNames.ALL.contains(word) ? Kind.BUILTIN : Kind.CALL;
+            return commandNames.contains(word) ? Kind.BUILTIN : Kind.CALL;
         }
         return Kind.DEFAULT;
     }
