@@ -24,6 +24,15 @@ public final class RandomParts {
     public static final int SPACING = 400;
     /** Random int params stay within this many of their minimum so footprints stay small and inside the bounds. */
     private static final int INT_PARAM_SPAN = 12;
+    /**
+     * Seeds 1..20 fed straight into {@code new Random(seed)} correlate the first draws: every pillar rolled
+     * turns=2 and the stairs dir only ever came out north or west. Node rots and enum params are therefore
+     * enumerated deterministically from {@code seed + partIndex} so every value occurs across the seeds;
+     * int and bool params still draw from a {@link Random} on a scrambled seed.
+     */
+    private static final long SEED_SCRAMBLE = 7919L;
+    private static final int QUARTER_TURNS = 4;
+    private static final int MIRROR_SIDES = 2;
     private static final String CARGO_U = "cargo_u";
     private static final String CARGO_W = "cargo_w";
     /** The pad corner: a cargo position that always lies on the pad, whatever the random size is. */
@@ -32,7 +41,7 @@ public final class RandomParts {
     private RandomParts() {
     }
 
-    static Map<String, ParamValue> randomParams(PartType type, Random rnd) {
+    static Map<String, ParamValue> randomParams(PartType type, Random rnd, long pick) {
         Map<String, ParamValue> out = new TreeMap<>();
         for (ParamSpec p : type.params()) {
             switch (p.type()) {
@@ -42,7 +51,8 @@ public final class RandomParts {
                     out.put(p.name(), new ParamValue.IntV(min + rnd.nextInt(max - min + 1)));
                 }
                 case BOOL -> out.put(p.name(), new ParamValue.BoolV(rnd.nextBoolean()));
-                case ENUM -> out.put(p.name(), new ParamValue.StrV(p.enumValues().get(rnd.nextInt(p.enumValues().size()))));
+                case ENUM -> out.put(p.name(), new ParamValue.StrV(
+                        p.enumValues().get((int) Math.floorMod(pick, p.enumValues().size()))));
                 default -> {
                     // materials keep their default role; texts and lists are not used by the freestanding parts
                 }
@@ -57,14 +67,15 @@ public final class RandomParts {
     }
 
     public static List<PlanNode> nodes(long seed) {
-        Random rnd = new Random(seed);
+        Random rnd = new Random(seed * SEED_SCRAMBLE);
         List<PlanNode> nodes = new ArrayList<>();
         int k = 0;
         for (String id : FREESTANDING) {
             PartType type = CompileFixtures.REGISTRY.get(id);
-            Rot rot = new Rot(rnd.nextInt(4), rnd.nextBoolean());
+            long pick = seed + k;
+            Rot rot = new Rot((int) (pick % QUARTER_TURNS), pick % MIRROR_SIDES == 0);
             nodes.add(new PlanNode("p-" + k, id, null, new Anchor.Absolute(new LocalPos(k * SPACING, 0, 0), rot),
-                    randomParams(type, rnd), Set.of(), ""));
+                    randomParams(type, rnd, pick), Set.of(), ""));
             k++;
         }
         return nodes;

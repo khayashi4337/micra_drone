@@ -24,13 +24,15 @@ import org.junit.jupiter.api.Test;
 class GoldenHutTest {
     private static final String GOLDEN_DIR = "/build/golden/";
     private static final String HUT_PATCH = "hut.patch.json";
-    private static final String HUT_MANIFEST = "hut.manifest.txt";
+    static final String HUT_MANIFEST = "hut.manifest.txt";
+    /** The manifest line that carries the hash, both in the golden file and in a fresh manifest text. */
+    static final String HASH_PREFIX = "hash ";
     /** Where the candidate manifest is written for review when the golden file is still missing. */
     private static final Path CANDIDATE = Path.of("build/golden-candidate/" + HUT_MANIFEST);
 
     // Hand-derived from the design rules (7x7 footprint, 1 floor, floor height 4):
     // foundation 49 + floor 49 + walls 72 - door hole 2 - window holes 4 + door blocks 2 + glass 4
-    // + roof 67 (42 stairs + 18 gable fill + 7 ridge slabs) + lantern 1 = 238.
+    // + roof 67 (42 stairs + 18 gable fill + 7 ridge oak_planks blocks) + lantern 1 = 238.
     private static final int EXPECTED_PLACEMENTS = 238;
     private static final Map<String, Integer> EXPECTED_BOM = Map.of(
             "minecraft:cobblestone", 49,
@@ -80,18 +82,24 @@ class GoldenHutTest {
     @Test
     void theManifestMatchesTheGoldenFile() throws IOException {
         PlacementManifest m = CompileFixtures.compile(hut()).manifest();
-        String actual = "hash " + m.hash() + "\n" + String.join("\n", lines(m));
+        List<String> actual = new ArrayList<>();
+        actual.add(HASH_PREFIX + m.hash());
+        actual.addAll(lines(m));
         try (InputStream in = GoldenHutTest.class.getResourceAsStream(GOLDEN_DIR + HUT_MANIFEST)) {
             if (in == null) {
                 Files.createDirectories(CANDIDATE.getParent());
-                Files.writeString(CANDIDATE, actual + "\n", StandardCharsets.UTF_8);
+                Files.writeString(CANDIDATE, String.join("\n", actual) + "\n", StandardCharsets.UTF_8);
                 org.junit.jupiter.api.Assertions.fail("there is no golden file yet; a candidate was written to "
                         + CANDIDATE.toAbsolutePath()
-                        + " - check it against the derived numbers, then copy it to src/test/resources/build/golden/"
+                        + " - check it against the derived numbers, then copy it to src/test/resources" + GOLDEN_DIR
                         + HUT_MANIFEST);
             }
-            assertEquals(new String(in.readAllBytes(), StandardCharsets.UTF_8).replace("\r\n", "\n").stripTrailing(),
-                    actual);
+            List<String> golden = new String(in.readAllBytes(), StandardCharsets.UTF_8)
+                    .replace("\r\n", "\n").stripTrailing().lines().toList();
+            assertEquals(golden, actual, "the manifest drifted from the golden file. To regenerate it: delete "
+                    + "src/test/resources" + GOLDEN_DIR + HUT_MANIFEST + " and run this test, which writes a candidate "
+                    + "to " + CANDIDATE.toAbsolutePath() + " - CHECK the candidate against the derived numbers before "
+                    + "copying it to the golden directory (the test never overwrites an existing golden)");
         }
     }
 }

@@ -25,7 +25,7 @@ final class ShowcasePlans {
     /** One side of the square footprint; the trim course uses it as its length so it spans the whole wall. */
     private static final int FOOTPRINT = 9;
     private static final int FLOOR_HEIGHT = 7;
-    /** Row of the horizontal trim course, below the wall top (walls are FLOOR_HEIGHT - 1 rows). */
+    /** Row of the horizontal trim course: the top wall row (walls are FLOOR_HEIGHT - 1 rows). */
     private static final int TRIM_ROW = 5;
     /** Surface position of the hangar door on the south wall. */
     private static final int HANGAR_U = 1;
