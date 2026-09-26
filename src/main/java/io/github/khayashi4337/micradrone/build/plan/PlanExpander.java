@@ -16,6 +16,7 @@ import io.github.khayashi4337.micradrone.build.parts.BuildingParts;
 import io.github.khayashi4337.micradrone.build.parts.ParamValidator;
 import io.github.khayashi4337.micradrone.build.parts.PartType;
 import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
+import io.github.khayashi4337.micradrone.lang.PlanApi;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -36,7 +37,6 @@ public final class PlanExpander {
     /** Separates an instance id from a template-internal id; not allowed in user ids, so it cannot collide. */
     public static final String ID_SEPARATOR = "/";
 
-    private static final String PORT_SEPARATOR = ".";
     // Keys that tell apart several issues of one code on one subject (see also Origins).
     private static final String KEY_ROT = "rot";
     private static final String KEY_TEMPLATE = "template";
@@ -317,7 +317,7 @@ public final class PlanExpander {
         boolean ok = true;
         for (PortRef ref : List.of(c.from(), c.to())) {
             if (!portExists(ref, targets)) {
-                String where = ref.nodeId() + PORT_SEPARATOR + ref.port();
+                String where = ref.nodeId() + PlanApi.NODE_PORT_SEPARATOR + ref.port();
                 issues.add(Issue.of(IssueCode.E_CONN_INVALID, where, List.of(c.id()), "つなぎ口がありません: " + where));
                 ok = false;
             }
