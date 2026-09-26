@@ -32,7 +32,9 @@ final class DoorGen implements PartGenerator {
         int width = switch (kind) {
             case KIND_SINGLE -> SINGLE_WIDTH;
             case KIND_DOUBLE -> DOUBLE_WIDTH;
-            default -> p.i(P_WIDTH);
+            case KIND_HANGAR -> p.i(P_WIDTH);
+            // PlanCompiler has checked the kind against the part's values; a kind that is none of them is not guessed at
+            default -> throw new IllegalStateException("unknown door kind: " + kind);
         };
         int height = hangar ? p.i(P_HEIGHT) : LEAF_HEIGHT;
         OpeningSpot spot = OpeningSpot.carved(ctx, node, width, height);
@@ -45,11 +47,14 @@ final class DoorGen implements PartGenerator {
         }
     }
 
-    /** The block is asked of the palette before the first gate goes down, so a refused role leaves no gate behind. */
+    /**
+     * The block is asked of the palette before the first gate goes down, so a refused role leaves no gate behind. The
+     * hangar's height is at least 3 (its range is 3 to 6), so the opening always has the {@link #GATE_ROWS} rows of gates.
+     */
     private static void placeGates(GenContext ctx, PlanNode node, OpeningSpot spot, Facing facing) {
         String gate = ctx.palette().full(ROLE_GATE, node);
         for (int di = 0; di < spot.width(); di++) {
-            for (int dr = 0; dr < Math.min(GATE_ROWS, spot.height()); dr++) {
+            for (int dr = 0; dr < GATE_ROWS; dr++) {
                 ctx.emitAbs(node, spot.at(di, dr), BlockForms.gate(gate, facing));
             }
         }

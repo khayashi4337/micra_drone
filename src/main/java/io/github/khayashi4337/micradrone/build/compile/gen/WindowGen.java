@@ -38,17 +38,19 @@ final class WindowGen implements PartGenerator {
         // Every block that will be placed is asked of the palette before the first one goes down (a refused material
         // leaves no cell behind), and only those that will be placed: the trim is asked for by a lattice or an arch only.
         BlockSpec glass = BlockForms.plain(ctx.palette().full(p.s(OpeningSpot.P_MATERIAL), node));
-        BlockSpec middleColumn = lattice ? BlockForms.plain(ctx.palette().full(ROLE_TRIM, node)) : glass;
+        // the block of every cell of the middle column: the trim with a lattice, else the glass like the rest
+        BlockSpec middleColumnBlock = lattice ? BlockForms.plain(ctx.palette().full(ROLE_TRIM, node)) : glass;
         String stairs = arch ? ctx.palette().stairs(ROLE_TRIM, node) : null;
         int fullRows = arch ? ARCH_FULL_ROWS : height;
         for (int di = 0; di < width; di++) {
             for (int dr = 0; dr < fullRows; dr++) {
-                ctx.emitAbs(node, spot.at(di, dr), di == MIDDLE_COLUMN ? middleColumn : glass);
+                ctx.emitAbs(node, spot.at(di, dr), di == MIDDLE_COLUMN ? middleColumnBlock : glass);
             }
         }
         if (arch) {
             int top = ARCH_FULL_ROWS;
-            ctx.emitAbs(node, spot.at(MIDDLE_COLUMN, top), glass);
+            // the middle column runs up through the top row too, to the crown of the arch
+            ctx.emitAbs(node, spot.at(MIDDLE_COLUMN, top), middleColumnBlock);
             // the corner stairs are upside down with their backs to the outer ends of the arch
             ctx.emitAbs(node, spot.at(FIRST_COLUMN, top), BlockForms.stairs(stairs, spot.wall().along().opposite(), true));
             ctx.emitAbs(node, spot.at(LAST_COLUMN, top), BlockForms.stairs(stairs, spot.wall().along(), true));

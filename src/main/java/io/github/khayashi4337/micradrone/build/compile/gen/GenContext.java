@@ -234,7 +234,11 @@ public final class GenContext {
                 mergeVariant));
     }
 
-    /** Removes the wall cells an opening replaces. Refuses (and changes nothing) if any is not the wall's or already carved. */
+    /**
+     * Removes the cells an opening replaces. Refuses (and changes nothing) if any is not a wall cell of this building or
+     * was already carved. Every wall of a building shares one merge group, so a cell of another wall segment or storey of
+     * the same building passes too: an opening that must stay on its own wall checks its extent first (OpeningSpot.carved).
+     */
     public void carve(PlanNode opener, WallInfo wall, List<LocalPos> cells) {
         int notWall = 0;
         LocalPos firstBad = null;

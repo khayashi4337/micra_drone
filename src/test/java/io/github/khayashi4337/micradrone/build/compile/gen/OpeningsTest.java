@@ -48,6 +48,9 @@ class OpeningsTest {
     private static final String WALL_W = "wall-w";
     /** The south wall of the second storey. */
     private static final String WALL_S_UPPER = "wall-s1";
+    /** The two segments of a south wall that is built in pieces. */
+    private static final String WALL_SEGMENT_A = "wall-a";
+    private static final String WALL_SEGMENT_B = "wall-b";
     private static final String DOOR_ID = "d";
     private static final String WINDOW_ID = "w";
 
@@ -56,11 +59,15 @@ class OpeningsTest {
     private static final String OAK_FENCE_GATE = "minecraft:oak_fence_gate";
     private static final String STONE_BRICKS = "minecraft:stone_bricks";
     private static final String STONE_BRICK_STAIRS = "minecraft:stone_brick_stairs";
+    private static final String BRICKS = "minecraft:bricks";
+    private static final String BRICK_STAIRS = "minecraft:brick_stairs";
     private static final String GLASS_PANE = "minecraft:glass_pane";
     private static final String GLASS = "minecraft:glass";
     private static final String BEDROCK = "minecraft:bedrock";
     /** A role name (no namespace) that the palette does not have. */
     private static final String UNKNOWN_ROLE = "no_such_role";
+    /** A door kind that the part does not have. */
+    private static final String UNKNOWN_KIND = "gangway";
 
     // Palette roles the tests override.
     private static final String ROLE_DOOR = "door";
@@ -78,6 +85,8 @@ class OpeningsTest {
     private static final String P_SIDE = "side";
     private static final String P_THICKNESS = "thickness";
     private static final String P_LEVEL = "level";
+    private static final String P_FROM = "from";
+    private static final String P_LENGTH = "length";
     private static final String KIND_DOUBLE = "double";
     private static final String KIND_HANGAR = "hangar";
     private static final String KIND_WIDE = "wide";
@@ -105,8 +114,14 @@ class OpeningsTest {
     private static final int FLOORS = 1;
     private static final int TWO_FLOORS = 2;
     private static final int UPPER_STOREY = 1;
+    /** Where the south wall of the split hall changes segment: segment A is u=0..2, segment B is u=3..6. */
+    private static final int SPLIT_AT = 3;
+    /** The first u of the south wall of the partial hall (its wall does not start at the corner). */
+    private static final int PARTIAL_FROM = 2;
     private static final int HALL_FLOOR_HEIGHT = 4;
     private static final int HALL_WALL_ROWS = HALL_FLOOR_HEIGHT - 1;
+    /** A ground-storey wall one row taller than usual: its top row touches the upper storey's wall. */
+    private static final int TALL_WALL_ROWS = HALL_FLOOR_HEIGHT;
     /** The four walls share their corner columns: 4 x 7 - 4 columns stand around the hall. */
     private static final int HALL_PERIMETER_COLUMNS = 4 * HALL_SIDE - 4;
     private static final int HALL_WALL_CELLS = HALL_PERIMETER_COLUMNS * HALL_WALL_ROWS;
@@ -142,6 +157,33 @@ class OpeningsTest {
         List<PlanNode> nodes = new ArrayList<>(shell(HALL_SIDE, HALL_SIDE, FLOORS, HALL_FLOOR_HEIGHT));
         nodes.replaceAll(n -> n.id().equals(WALL_S)
                 ? node(WALL_S, WALL, STRUCTURE_ID, 0, 0, 0, params(P_SIDE, SOUTH, P_THICKNESS, thickness)) : n);
+        return nodes;
+    }
+
+    private static List<PlanNode> hallWithoutSouthWall() {
+        List<PlanNode> nodes = new ArrayList<>(shell(HALL_SIDE, HALL_SIDE, FLOORS, HALL_FLOOR_HEIGHT));
+        nodes.removeIf(n -> n.id().equals(WALL_S));
+        return nodes;
+    }
+
+    private static PlanNode southSegment(String id, int from, int length) {
+        return node(id, WALL, STRUCTURE_ID, 0, 0, 0, params(P_SIDE, SOUTH, P_FROM, from, P_LENGTH, length));
+    }
+
+    /** The hall whose south wall is built in two segments, u=0..2 and u=3..6. */
+    private static List<PlanNode> hallWithSplitSouthWall() {
+        List<PlanNode> nodes = hallWithoutSouthWall();
+        nodes.add(southSegment(WALL_SEGMENT_A, 0, SPLIT_AT));
+        nodes.add(southSegment(WALL_SEGMENT_B, SPLIT_AT, HALL_SIDE - SPLIT_AT));
+        return nodes;
+    }
+
+    /** Two storeys, the ground wall on the south side one row taller than usual, and the upper storey's south wall above it. */
+    private static List<PlanNode> hallWithTallGroundWall() {
+        List<PlanNode> nodes = new ArrayList<>(shell(HALL_SIDE, HALL_SIDE, TWO_FLOORS, HALL_FLOOR_HEIGHT));
+        nodes.replaceAll(n -> n.id().equals(WALL_S)
+                ? node(WALL_S, WALL, STRUCTURE_ID, 0, 0, 0, params(P_SIDE, SOUTH, P_HEIGHT, TALL_WALL_ROWS)) : n);
+        nodes.add(node(WALL_S_UPPER, WALL, STRUCTURE_ID, 0, 0, 0, params(P_SIDE, SOUTH, P_LEVEL, UPPER_STOREY)));
         return nodes;
     }
 
@@ -182,9 +224,17 @@ class OpeningsTest {
         return BlockSpec.of(OAK_FENCE_GATE, PROP_FACING, facing);
     }
 
-    /** An upside-down stone-brick stair: the arch's corner. */
+    /** An upside-down stair with its back to {@code back}: the arch's corner. */
+    private static BlockSpec archStair(String stairsId, String back) {
+        return BlockSpec.of(stairsId, PROP_FACING, back, PROP_HALF, TOP);
+    }
+
     private static BlockSpec archStair(String back) {
-        return BlockSpec.of(STONE_BRICK_STAIRS, PROP_FACING, back, PROP_HALF, TOP);
+        return archStair(STONE_BRICK_STAIRS, back);
+    }
+
+    private static BlockSpec bricks() {
+        return BlockSpec.of(BRICKS);
     }
 
     private static BlockSpec stoneBricks() {
@@ -364,17 +414,146 @@ class OpeningsTest {
         assertEquals(stoneBricks(), c.get(new LocalPos(3, 2, 6)), "the mullion is the trim material");
         assertEquals(stoneBricks(), c.get(new LocalPos(3, 3, 6)));
         CompileResult onPane = compile(withOpening(on(WINDOW_ID, WINDOW, WALL_N, Side.OUTER, 2, 1, params(P_LATTICE, true))));
-        assertEquals(List.of("E-PARAM-RANGE"), codes(onPane));
+        assertEquals(List.of("E-PARAM-RANGE:" + WINDOW_ID + "#lattice"), ids(onPane), "a one-wide pane has no middle column");
+    }
+
+    private static Map<LocalPos, BlockSpec> buildWithTrim(PlanNode opening) {
+        CompileResult r = compileWith(roleIs(ROLE_TRIM, BRICKS), opening);
+        assertTrue(r.issues().isEmpty(), r.issues().toString());
+        return cells(r.manifest());
+    }
+
+    @Test
+    void aLatticeMakesTheWholeMiddleColumnTrimOnEveryWindowKind() {
+        // the trim is bricks here, so a mullion can be told from the stone-brick wall around it
+        Map<LocalPos, BlockSpec> arch = buildWithTrim(
+                on(WINDOW_ID, WINDOW, WALL_N, Side.OUTER, 1, 0, params(P_KIND, KIND_ARCH, P_LATTICE, true)));
+        // the arch is u=1..3 and v=1..3 on the north wall (w=6): its middle column is u=2, in all three rows
+        for (int v = V_FIRST; v < V_FIRST + HALL_WALL_ROWS; v++) {
+            assertEquals(bricks(), arch.get(new LocalPos(2, v, 6)), "the middle column at v=" + v);
+        }
+        assertEquals(HALL_WALL_ROWS, countOf(arch, BRICKS));
+        assertEquals(4, countOf(arch, GLASS_PANE), "the two side columns, two rows each");
+        assertEquals(archStair(BRICK_STAIRS, WEST), arch.get(new LocalPos(1, 3, 6)));
+        assertEquals(archStair(BRICK_STAIRS, EAST), arch.get(new LocalPos(3, 3, 6)));
+        assertEquals(2, countOf(arch, BRICK_STAIRS));
+        assertEquals(HALL_WALL_CELLS, arch.size());
+
+        Map<LocalPos, BlockSpec> plainArch = buildWithTrim(
+                on(WINDOW_ID, WINDOW, WALL_N, Side.OUTER, 1, 0, params(P_KIND, KIND_ARCH)));
+        assertEquals(7, countOf(plainArch, GLASS_PANE), "without a lattice the middle of the top row is glass");
+        assertEquals(glassPane(), plainArch.get(new LocalPos(2, 3, 6)));
+        assertEquals(0, countOf(plainArch, BRICKS));
+        assertEquals(2, countOf(plainArch, BRICK_STAIRS));
+        assertEquals(HALL_WALL_CELLS, plainArch.size());
+
+        // the wide window is u=2..4 and v=2..3: its middle column is u=3, in both rows
+        Map<LocalPos, BlockSpec> wide = buildWithTrim(
+                on(WINDOW_ID, WINDOW, WALL_N, Side.OUTER, 2, 1, params(P_KIND, KIND_WIDE, P_LATTICE, true)));
+        assertEquals(bricks(), wide.get(new LocalPos(3, 2, 6)));
+        assertEquals(bricks(), wide.get(new LocalPos(3, 3, 6)));
+        assertEquals(2, countOf(wide, BRICKS));
+        assertEquals(4, countOf(wide, GLASS_PANE));
+        assertEquals(HALL_WALL_CELLS, wide.size());
+
+        Map<LocalPos, BlockSpec> plainWide = buildWithTrim(
+                on(WINDOW_ID, WINDOW, WALL_N, Side.OUTER, 2, 1, params(P_KIND, KIND_WIDE)));
+        assertEquals(6, countOf(plainWide, GLASS_PANE));
+        assertEquals(0, countOf(plainWide, BRICKS));
     }
 
     @Test
     void openingsThatReachOutsideTheWallAreRefused() {
-        assertEquals(List.of("E-OPENING-NO-WALL"), codes(compile(withOpening(
+        assertEquals(List.of("E-OPENING-NO-WALL:" + DOOR_ID), ids(compile(withOpening(
                 on(DOOR_ID, DOOR, WALL_S, Side.OUTER, 6, 0, params(P_KIND, KIND_DOUBLE))))), "the second leaf would be past the end");
-        assertEquals(List.of("E-OPENING-NO-WALL"), codes(compile(withOpening(
+        assertEquals(List.of("E-OPENING-NO-WALL:" + WINDOW_ID), ids(compile(withOpening(
                 on(WINDOW_ID, WINDOW, WALL_S, Side.OUTER, 2, 2, params(P_KIND, KIND_ARCH))))), "the top row is above the wall");
-        assertEquals(List.of("E-OPENING-NO-WALL"), codes(compile(withOpening(
-                on(DOOR_ID, DOOR, WALL_S, Side.OUTER, 9, 0, Map.of())))));
+        assertEquals(List.of("E-OPENING-NO-WALL:" + DOOR_ID + "#anchor"), ids(compile(withOpening(
+                on(DOOR_ID, DOOR, WALL_S, Side.OUTER, 9, 0, Map.of())))), "the anchor itself is off the wall");
+    }
+
+    /** Runs the opening's generator, expects the refusal {@code expectedId}, and checks that nothing was carved or placed. */
+    private static void assertRefusedUntouched(GenContext ctx, PlanNode opening, String expectedId) {
+        int before = ctx.canvas().size();
+        GenAbort refusal = assertThrows(GenAbort.class, () -> generatorOf(opening.type()).generate(ctx, opening, resolved(opening)));
+        assertEquals(expectedId, refusal.issue().id());
+        assertEquals(before, ctx.canvas().size(), "nothing was carved out of the wall or placed");
+        assertTrue(ctx.canvas().all().stream().noneMatch(cell -> cell.ownerId().equals(opening.id())),
+                "no block of the refused opening was placed");
+    }
+
+    @Test
+    void anOpeningCannotReachIntoTheNextWallSegmentOfTheSameBuilding() {
+        // The south wall is two segments. A double door at u=2 of segment A has its second leaf at u=3, which is a cell of
+        // segment B: a wall cell of this very building, but not of the wall the door is on.
+        PlanNode straddling = on(DOOR_ID, DOOR, WALL_SEGMENT_A, Side.OUTER, SPLIT_AT - 1, 0, params(P_KIND, KIND_DOUBLE));
+        List<PlanNode> nodes = hallWithSplitSouthWall();
+        nodes.add(straddling);
+        assertEquals(List.of("E-OPENING-NO-WALL:" + DOOR_ID), ids(compile(nodes)));
+        assertRefusedUntouched(generatedIn(hallWithSplitSouthWall(), Map.of()), straddling, "E-OPENING-NO-WALL:" + DOOR_ID);
+
+        // each segment on its own takes an opening, and a position counts from the start of the segment it is on
+        Map<LocalPos, BlockSpec> c = buildIn(hallWithSplitSouthWall(),
+                on(DOOR_ID, DOOR, WALL_SEGMENT_A, Side.OUTER, SPLIT_AT - 2, 0, params(P_KIND, KIND_DOUBLE)),
+                on(WINDOW_ID, WINDOW, WALL_SEGMENT_B, Side.OUTER, 0, 1, params(P_KIND, KIND_WIDE)));
+        assertEquals(LOWER, c.get(new LocalPos(1, 1, 0)).get(PROP_HALF));
+        assertEquals(LOWER, c.get(new LocalPos(2, 1, 0)).get(PROP_HALF));
+        assertEquals(glassPane(), c.get(new LocalPos(3, 2, 0)), "u=0 of segment B is u=3 of the building");
+        assertEquals(glassPane(), c.get(new LocalPos(5, 3, 0)));
+        assertEquals(6, countOf(c, GLASS_PANE));
+        assertEquals(HALL_WALL_CELLS, c.size());
+    }
+
+    @Test
+    void anOpeningCannotReachIntoTheWallOfTheStoreyAbove() {
+        // The ground wall is 4 rows (v=1..4) and the upper storey's wall starts at v=5. A hangar door of 5 rows from the
+        // bottom has its top row in the wall above: one row too many.
+        int width = 3;
+        PlanNode tooTall = on(DOOR_ID, DOOR, WALL_S, Side.OUTER, 2, 0,
+                params(P_KIND, KIND_HANGAR, P_WIDTH, width, P_HEIGHT, TALL_WALL_ROWS + 1));
+        List<PlanNode> nodes = hallWithTallGroundWall();
+        nodes.add(tooTall);
+        assertEquals(List.of("E-OPENING-NO-WALL:" + DOOR_ID), ids(compile(nodes)));
+        assertRefusedUntouched(generatedIn(hallWithTallGroundWall(), Map.of()), tooTall, "E-OPENING-NO-WALL:" + DOOR_ID);
+
+        // as tall as the wall itself is fine, and the wall above is left alone
+        Map<LocalPos, BlockSpec> c = buildIn(hallWithTallGroundWall(),
+                on(DOOR_ID, DOOR, WALL_S, Side.OUTER, 2, 0, params(P_KIND, KIND_HANGAR, P_WIDTH, width, P_HEIGHT, TALL_WALL_ROWS)));
+        assertEquals(gate(NORTH), c.get(new LocalPos(2, 1, 0)));
+        assertNull(c.get(new LocalPos(2, 4, 0)), "the opening's top row, above the gates, is empty");
+        assertEquals(stoneBricks(), c.get(new LocalPos(2, 5, 0)), "the upper storey's wall is untouched");
+    }
+
+    @Test
+    void aPositionOnAPartialWallCountsFromItsStart() {
+        // the south wall starts at u=2, so its position 0 is the cell u=2 of the building and its last position is u=6
+        List<PlanNode> nodes = hallWithoutSouthWall();
+        nodes.add(southSegment(WALL_S, PARTIAL_FROM, HALL_SIDE - PARTIAL_FROM));
+        Map<LocalPos, BlockSpec> c = buildIn(nodes,
+                on(DOOR_ID, DOOR, WALL_S, Side.OUTER, 0, 0, Map.of()),
+                on(WINDOW_ID, WINDOW, WALL_S, Side.OUTER, HALL_SIDE - PARTIAL_FROM - 1, 1, Map.of()));
+        assertEquals(doorBlock(NORTH, LOWER, LEFT), c.get(new LocalPos(2, 1, 0)));
+        assertEquals(doorBlock(NORTH, UPPER, LEFT), c.get(new LocalPos(2, 2, 0)));
+        assertEquals(stoneBricks(), c.get(new LocalPos(3, 1, 0)));
+        assertNull(c.get(new LocalPos(1, 1, 0)), "the wall does not reach back before its start");
+        assertEquals(glassPane(), c.get(new LocalPos(6, 2, 0)), "the last position of the wall is the last cell");
+        assertEquals(glassPane(), c.get(new LocalPos(6, 3, 0)));
+    }
+
+    @Test
+    void anOpeningThatEndsExactlyAtTheWallsEndIsAccepted() {
+        Map<LocalPos, BlockSpec> c = build(
+                // u=5 and u=6: the last two cells of the south wall
+                on(DOOR_ID, DOOR, WALL_S, Side.OUTER, HALL_SIDE - 2, 0, params(P_KIND, KIND_DOUBLE)),
+                // u=4..6 and all three rows of the north wall
+                on(WINDOW_ID, WINDOW, WALL_N, Side.OUTER, HALL_SIDE - 3, 0, params(P_KIND, KIND_ARCH)));
+        assertEquals(4, countOf(c, OAK_DOOR));
+        assertEquals(doorBlock(NORTH, LOWER, LEFT), c.get(new LocalPos(5, 1, 0)));
+        assertEquals(doorBlock(NORTH, LOWER, RIGHT), c.get(new LocalPos(6, 1, 0)));
+        assertEquals(7, countOf(c, GLASS_PANE));
+        assertEquals(archStair(WEST), c.get(new LocalPos(4, 3, 6)));
+        assertEquals(archStair(EAST), c.get(new LocalPos(6, 3, 6)));
+        assertEquals(HALL_WALL_CELLS, c.size());
     }
 
     @Test
@@ -484,7 +663,11 @@ class OpeningsTest {
 
     /** A hall's four walls generated into a context whose palette is the default plus {@code palette}. */
     private static GenContext wallsIn(Map<String, String> palette) {
-        List<PlanNode> nodes = hallWith(List.of());
+        return generatedIn(hallWith(List.of()), palette);
+    }
+
+    /** The given nodes (structure and walls) generated into a context whose palette is the default plus {@code palette}. */
+    private static GenContext generatedIn(List<PlanNode> nodes, Map<String, String> palette) {
         List<Issue> issues = new ArrayList<>();
         Map<String, PlanNode> byId = new HashMap<>();
         for (PlanNode n : nodes) {
@@ -527,6 +710,19 @@ class OpeningsTest {
                 on(DOOR_ID, DOOR, WALL_S, Side.OUTER, 3, 0, params(P_MATERIAL, UNKNOWN_ROLE))))));
         assertEquals(List.of("E-PARAM-RANGE:" + WINDOW_ID + "#material"), ids(compile(withOpening(
                 on(WINDOW_ID, WINDOW, WALL_N, Side.OUTER, 2, 1, params(P_MATERIAL, UNKNOWN_ROLE))))));
+    }
+
+    @Test
+    void anUnknownDoorKindIsNotTakenForAHangar() {
+        // PlanCompiler checks the kind against the part's values before generating, so a compile never gets here; the
+        // generator still must not guess a width for a kind it does not know.
+        GenContext ctx = wallsIn(Map.of());
+        PlanNode odd = on(DOOR_ID, DOOR, WALL_S, Side.OUTER, 3, 0, params(P_KIND, UNKNOWN_KIND));
+        int before = ctx.canvas().size();
+        IllegalStateException refusal = assertThrows(IllegalStateException.class,
+                () -> generatorOf(DOOR).generate(ctx, odd, resolved(odd)));
+        assertTrue(refusal.getMessage().contains(UNKNOWN_KIND), refusal.getMessage());
+        assertEquals(before, ctx.canvas().size(), "nothing was carved out of the wall or placed");
     }
 
     @Test

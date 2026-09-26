@@ -1,6 +1,7 @@
 package io.github.khayashi4337.micradrone.build.compile.gen;
 
 import io.github.khayashi4337.micradrone.build.model.Anchor;
+import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.LocalPos;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.model.Side;
@@ -18,6 +19,8 @@ record OpeningSpot(WallInfo wall, int i, int row, boolean outer, int layer, int 
     static final String P_MATERIAL = "material";
 
     private static final int OUTERMOST_LAYER = 0;
+    /** The Issue key of an opening that leaves the wall: none, like the carve's own E-OPENING-NO-WALL. */
+    private static final String NO_KEY = "";
 
     /** Reads the spot off the node's OnSurface anchor; an anchor that is not on a valid wall face ends the part with an issue. */
     static OpeningSpot of(GenContext ctx, PlanNode node, int width, int height) {
@@ -28,14 +31,26 @@ record OpeningSpot(WallInfo wall, int i, int row, boolean outer, int layer, int 
     }
 
     /**
-     * The spot of an opening, with its cells already taken out of the wall. The cells may reach past the wall's end or
-     * top: {@link WallInfo#cell} then gives the geometry's own position, which is not a wall cell, and the carve refuses
-     * it (E-OPENING-NO-WALL) before anything is changed.
+     * The spot of an opening, with its cells already taken out of the wall. The anchor only shows that the opening's
+     * first cell is on the wall, so the whole extent is checked against the wall's own length and height first
+     * (E-OPENING-NO-WALL, nothing changed): {@link GenContext#carve} only tells this building's walls from other cells,
+     * so it would accept a cell of the next wall segment on the same side, or of the storey above. What is left for the
+     * carve to refuse is a cell inside the wall's extent that is no longer a wall cell, and a cell that another opening took.
      */
     static OpeningSpot carved(GenContext ctx, PlanNode node, int width, int height) {
         OpeningSpot spot = of(ctx, node, width, height);
+        spot.requireInsideWall(ctx, node);
         ctx.carve(node, spot.wall(), spot.cells());
         return spot;
+    }
+
+    /** Refuses an opening that would leave the wall's own extent, with the same issue (no key) as the carve's. */
+    private void requireInsideWall(GenContext ctx, PlanNode node) {
+        if (i + width > wall.length() || row + height > wall.height()) {
+            throw ctx.fail(node, IssueCode.E_OPENING_NO_WALL, NO_KEY, node.id() + "の開口部(u=" + i + "から幅" + width + "、v=" + row
+                    + "から高さ" + height + ")が、壁(" + wall.id() + ")の外にはみ出しています(壁は長さ" + wall.length() + "、高さ"
+                    + wall.height() + ")");
+        }
     }
 
     /** Every cell the opening replaces: all layers of the wall over the opening's width and height. */
