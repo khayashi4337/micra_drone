@@ -1119,11 +1119,15 @@ class PlanScriptRunnerTest {
     }
 
     @Test
-    void waitingCallersGetThePermitInArrivalOrder() throws InterruptedException {
-        // the permit is fair: with A parked inside its body and B then C queued behind it,
-        // the bodies run in the callers' arrival order. Each waiter is only started after
-        // the previous one is OBSERVED parked on the permit, so the queue order B-then-C
-        // is real rather than hoped for
+    void thePermitIsFairSoWaitersRunInArrivalOrder() throws InterruptedException {
+        // the flag is what pins fairness: the FIFO demonstration below would also pass on
+        // a non-fair semaphore, where already-queued threads are still served in order
+        // (only a NEW caller could barge ahead) - so the assertion on the flag itself is
+        // what a regression to `new Semaphore(1, false)` would trip. For the order check:
+        // with A parked inside its body and B then C queued behind it, each waiter started
+        // only after the previous one is OBSERVED parked on the permit, the queue order
+        // B-then-C is real rather than hoped for
+        assertTrue(PlanScriptRunner.RUN_PERMIT.isFair(), "RUN_PERMIT must be a fair semaphore");
         CountDownLatch aInside = new CountDownLatch(1);
         CountDownLatch gate = new CountDownLatch(1);
         List<String> order = Collections.synchronizedList(new ArrayList<>());

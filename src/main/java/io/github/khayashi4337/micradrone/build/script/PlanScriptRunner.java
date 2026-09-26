@@ -31,14 +31,19 @@ import java.util.function.Supplier;
  * the number of scripts and the total wall-clock time itself.
  *
  * <p>Runs are serialized process-wide through {@link #RUN_PERMIT}, so at most one run's heap
- * is ever live at a time. One run's heap peak is about 130-160 MB in the worst case the
- * budgets allow (the recorder's recorded values plus the interpreter's values in flight on
- * the 128 MiB worker stack): a single permitted run can never be multiplied by the number of
- * callers asking for one. The price is queueing - a caller waiting for the permit may wait
- * for every run ahead of it, each up to N x {@code maxMillis} - so {@link #run} should be
- * invoked off the server thread. Calling {@code run} or {@link #runOnWorker} from inside a
- * running body is NOT supported: the permit is not reentrant and the nested caller would
- * wait on itself forever.
+ * is ever live IN FLIGHT. One run's heap peak is about 130-160 MB in the worst case the
+ * budgets allow (the recorder's recorded values plus the interpreter's values on the
+ * 128 MiB worker stack): the in-flight work of a permitted run can never be multiplied by
+ * the number of callers asking for one. A RETURNED {@link Result} is a different matter -
+ * a 30,000-op result retains about 17 MiB and up to tens of MiB at the recorder caps, so
+ * callers that keep many results multiply that retained heap themselves (measured:
+ * OutOfMemoryError with 16-32 result-keeping callers at -Xmx256m). The future submit
+ * command must therefore apply or drop each patch promptly instead of collecting results.
+ * The price of the permit is queueing - a caller waiting for the permit may wait for every
+ * run ahead of it, each up to N x {@code maxMillis} - so {@link #run} should be invoked off
+ * the server thread. Calling {@code run} or {@link #runOnWorker} from inside a running body
+ * is NOT supported: the permit is not reentrant and the nested caller would wait on itself
+ * forever.
  */
 public final class PlanScriptRunner {
     /**
@@ -55,6 +60,15 @@ public final class PlanScriptRunner {
     private static final int MAX_VIOLATION_NAME_CHARS = 60;
     /** Issue-key prefix for a script that failed while it was running. */
     private static final String RUN_ISSUE_KEY = "run:";
+    /** Issue-key prefix for a script refused while it was being checked (parse, depth, profile). */
+    private static final String SYNTAX_ISSUE_KEY = "syntax:";
+    /** Issue-key prefix for an unexpected RuntimeException on our side of the script boundary. */
+    private static final String INTERNAL_ISSUE_KEY = "internal:";
+    /**
+     * The advice a {@link Double#parseDouble} failure maps to: the source holds a digit that
+     * {@link Character#isDigit} accepts but ASCII-only parsing does not.
+     */
+    private static final String DIGIT_ADVICE = "半角でない数字があります。数字は半角の0〜9で書いてください";
 
     /**
      * Deepest parser nesting a construction script may use (see {@link Parser#Parser(List, int)}):
@@ -99,7 +113,7 @@ public final class PlanScriptRunner {
      * permit is never held by the caller after the call returns - but it is also not
      * reentrant, which is why a body must never call back into {@code run}/{@code runOnWorker}.
      */
-    private static final Semaphore RUN_PERMIT = new Semaphore(1, true);
+    static final Semaphore RUN_PERMIT = new Semaphore(1, true);
 
     public record Result(PlanPatch patch, List<Issue> issues, List<String> printed) {
         public Result {
@@ -232,18 +246,18 @@ public final class PlanScriptRunner {
         try {
             program = new Parser(new Lexer(source).scan(), PLAN_MAX_PARSE_NESTING).parseProgram();
         } catch (MicraLangException e) {
-            issues.add(Issue.of(IssueCode.E_SCHEMA, "syntax:" + number, List.of(), label + "の構文エラー: " + detail(e.getMessage())));
+            issues.add(Issue.of(IssueCode.E_SCHEMA, SYNTAX_ISSUE_KEY + number, List.of(), label + "の構文エラー: " + detail(e.getMessage())));
             return;
         } catch (NumberFormatException e) {
             // Lexer.number() scans on Character.isDigit - which accepts every Unicode digit -
             // while Double.parseDouble only understands ASCII 0-9, so a full-width or other
             // script's digit in a number literal lands here. Report it like a syntax error,
             // pointing at the line of the first non-ASCII digit in the source.
-            issues.add(Issue.of(IssueCode.E_SCHEMA, "syntax:" + number, List.of(),
+            issues.add(Issue.of(IssueCode.E_SCHEMA, SYNTAX_ISSUE_KEY + number, List.of(),
                     label + nonAsciiDigitMessage(source)));
             return;
         } catch (RuntimeException e) {
-            issues.add(internalIssue(number, label, e));
+            issues.add(internalIssue(number, label, "解析", e));
             return;
         }
         // a left-associative chain parses without nesting, so the parse limit cannot see it;
@@ -255,11 +269,11 @@ public final class PlanScriptRunner {
             astDepth = AstDepth.of(program);
             violations = PlanScriptProfile.check(program);
         } catch (RuntimeException e) {
-            issues.add(internalIssue(number, label, e));
+            issues.add(internalIssue(number, label, "解析", e));
             return;
         }
         if (astDepth > PLAN_MAX_AST_DEPTH) {
-            issues.add(Issue.of(IssueCode.E_SCHEMA, "syntax:" + number, List.of(),
+            issues.add(Issue.of(IssueCode.E_SCHEMA, SYNTAX_ISSUE_KEY + number, List.of(),
                     label + "の構文木が深すぎます(深さ " + astDepth + " > 上限 " + PLAN_MAX_AST_DEPTH + ")"));
             return;
         }
@@ -286,8 +300,7 @@ public final class PlanScriptRunner {
             issues.add(Issue.of(IssueCode.E_SCHEMA, RUN_ISSUE_KEY + number, List.of(),
                     label + "の実行エラー: " + detail(e.getMessage())));
         } catch (RuntimeException e) {
-            issues.add(Issue.of(IssueCode.E_SCHEMA, "internal:" + number, List.of(),
-                    label + "の実行中に、想定外のエラー: " + detail(String.valueOf(e))));
+            issues.add(internalIssue(number, label, "実行", e));
         }
     }
 
@@ -306,9 +319,9 @@ public final class PlanScriptRunner {
     private static String nonAsciiDigitMessage(String source) {
         int line = nonAsciiDigitLine(source);
         if (line < 0) {
-            return "に半角でない数字があります。数字は半角の0〜9で書いてください";
+            return "に" + DIGIT_ADVICE;
         }
-        return "の" + line + "行目に半角でない数字があります。数字は半角の0〜9で書いてください";
+        return "の" + line + "行目に" + DIGIT_ADVICE;
     }
 
     /**
@@ -388,13 +401,14 @@ public final class PlanScriptRunner {
     }
 
     /**
-     * An unexpected failure inside the checking phase (parse, AST-depth measurement or the static
-     * profile), reported like one from the interpreter run below: a bug on our side must still
-     * surface as an ordinary issue, not a RuntimeException escaping the run.
+     * An unexpected failure reported like an interpreter-run error: a bug on our side must still
+     * surface as an ordinary issue, not a RuntimeException escaping the run. {@code phase} names
+     * what the script was doing - {@code "解析"} while it was being checked (parse, AST-depth
+     * measurement, static profile), {@code "実行"} while it was running.
      */
-    private static Issue internalIssue(int number, String label, RuntimeException e) {
-        return Issue.of(IssueCode.E_SCHEMA, "internal:" + number, List.of(),
-                label + "の解析中に、想定外のエラー: " + detail(String.valueOf(e)));
+    private static Issue internalIssue(int number, String label, String phase, RuntimeException e) {
+        return Issue.of(IssueCode.E_SCHEMA, INTERNAL_ISSUE_KEY + number, List.of(),
+                label + "の" + phase + "中に、想定外のエラー: " + detail(String.valueOf(e)));
     }
 
     private static String describe(PlanScriptProfile.Reason reason) {
