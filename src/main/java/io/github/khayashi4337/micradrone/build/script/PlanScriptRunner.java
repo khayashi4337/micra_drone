@@ -3,6 +3,7 @@ package io.github.khayashi4337.micradrone.build.script;
 import io.github.khayashi4337.micradrone.build.model.Issue;
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.PlanPatch;
+import io.github.khayashi4337.micradrone.lang.AstDepth;
 import io.github.khayashi4337.micradrone.lang.Interpreter;
 import io.github.khayashi4337.micradrone.lang.Lexer;
 import io.github.khayashi4337.micradrone.lang.MicraLangException;
@@ -14,6 +15,7 @@ import io.github.khayashi4337.micradrone.lang.ast.Stmt;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** Checks and runs construction scripts, in order, into one {@link PlanPatch}. Any problem means no patch at all. */
 public final class PlanScriptRunner {
@@ -24,6 +26,38 @@ public final class PlanScriptRunner {
     private static final int MAX_ISSUE_DETAIL_CHARS = 400;
     /** Issue-key prefix for a script that failed while it was running. */
     private static final String RUN_ISSUE_KEY = "run:";
+
+    /**
+     * Deepest parser nesting a construction script may use (see {@link Parser#Parser(List, int)}):
+     * below this the recursive-descent parse stays shallow enough that the parser can never be
+     * what overflows a stack. Left-associative operator chains do not nest while parsing;
+     * {@link #PLAN_MAX_AST_DEPTH} is what bounds them.
+     */
+    public static final int PLAN_MAX_PARSE_NESTING = 100;
+
+    /**
+     * Deepest AST a construction script's program may have. The interpreter and
+     * {@link PlanScriptProfile} recurse over the tree, so this bound is what keeps them inside
+     * the worker thread's stack. A {@code 1+1+...+1} chain of n terms under {@code x = ...}
+     * measures n + 1 deep (the AssignStmt counts one level) and parses without ever nesting,
+     * so it can only be refused by measuring the finished tree, not by the parse limit.
+     */
+    public static final int PLAN_MAX_AST_DEPTH = 200;
+
+    /**
+     * The fixed stack of the dedicated worker thread one whole run happens on. Sized by
+     * measurement, not guesswork: the deepest program the limits allow is
+     * {@code def f(n): return f(n + 1) + 1 + ... + 1} at 196 terms - the Call node and its
+     * {@code n + 1} argument add 2 levels, so the body measures exactly
+     * {@link #PLAN_MAX_AST_DEPTH} - and at the interpreter's own call cap of 200 every
+     * Micra-level frame keeps roughly 400 Java frames of pending binary evals live. The sweep
+     * and bisection in
+     * {@code PlanScriptRunnerTest.theWorkerStackCoversTheWorstCaseWithAFourFoldMargin} (JDK 21,
+     * Windows x64) measured the first stack size where that script ends with the interpreter's
+     * "too much recursion" rather than a StackOverflowError at 17,039,360 bytes (~16.25 MiB;
+     * 16 MiB still overflowed); this constant is ~7.7x that measurement, above the required 4x.
+     */
+    static final long PLAN_RUN_STACK_BYTES = 128L * 1024 * 1024;
 
     public record Result(PlanPatch patch, List<Issue> issues, List<String> printed) {
         public Result {
@@ -39,7 +73,59 @@ public final class PlanScriptRunner {
     private PlanScriptRunner() {
     }
 
-    public static Result run(List<String> scripts, String patchId, int baseRevision, String stageId, PlanRunLimits limits) {
+    /**
+     * Runs the whole batch - every script's parse, depth check, static profile and interpret -
+     * on ONE dedicated worker thread with the fixed stack of {@link #PLAN_RUN_STACK_BYTES}: a
+     * script's outcome must not depend on how much stack the CALLER happened to have left, and
+     * the depth limits are only meaningful if the stack they were sized against is the stack
+     * actually used. The caller waits on {@code join()} in a loop so an interrupt poked at it
+     * mid-run does not lose the result; the flag is restored on the way out. A
+     * {@link RuntimeException} or {@link Error} thrown inside the worker is rethrown unchanged
+     * on the caller thread - the run's own per-script catches turn script failures into issues
+     * before they can reach this boundary.
+     */
+    public static Result run(List<String> scripts, String patchId, int baseRevision, String stageId,
+            PlanRunLimits limits) {
+        AtomicReference<Result> result = new AtomicReference<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread worker = new Thread(null, () -> {
+            try {
+                result.set(runScripts(scripts, patchId, baseRevision, stageId, limits));
+            } catch (RuntimeException | Error e) {
+                failure.set(e);
+            }
+        }, "micra-construction-script", PLAN_RUN_STACK_BYTES);
+        worker.start();
+        boolean interrupted = false;
+        while (true) {
+            try {
+                worker.join();
+                break;
+            } catch (InterruptedException e) {
+                // keep waiting - the result still matters; the flag is restored below
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+        Throwable thrown = failure.get();
+        if (thrown instanceof RuntimeException e) {
+            throw e;
+        }
+        if (thrown != null) {
+            throw (Error) thrown;
+        }
+        return result.get();
+    }
+
+    /**
+     * The batch body that {@link #run} executes on its worker thread: parse, depth-check,
+     * profile and run every script against one shared recorder. Package-private so tests can
+     * measure the same work on stacks of a chosen size.
+     */
+    static Result runScripts(List<String> scripts, String patchId, int baseRevision, String stageId,
+            PlanRunLimits limits) {
         List<Issue> issues = new ArrayList<>();
         PlanRecorder recorder = new PlanRecorder();
         for (int n = 0; n < scripts.size(); n++) {
@@ -48,9 +134,10 @@ public final class PlanScriptRunner {
             try {
                 runScript(scripts.get(n), number, label, recorder, limits, issues);
             } catch (StackOverflowError e) {
-                // the recursive-descent parser overflows on deeply nested brackets/operators just
-                // like the interpreter does on deeply nested values; an Error must not kill the
-                // whole run, so a stack overflow anywhere in one script becomes a limit issue
+                // last-resort backstop: the parse-nesting limit, the AST-depth limit and the
+                // worker stack are sized so a script's own work never gets this far - but a
+                // stack overflow anywhere in one script still becomes a limit issue rather
+                // than an Error killing the whole run
                 issues.add(Issue.of(IssueCode.E_SCRIPT_LIMIT, "stack:" + number, List.of(),
                         label + "は入れ子が深すぎて処理できませんでした"));
             }
@@ -75,9 +162,18 @@ public final class PlanScriptRunner {
         }
         List<Stmt> program;
         try {
-            program = new Parser(new Lexer(source).scan()).parseProgram();
+            program = new Parser(new Lexer(source).scan(), PLAN_MAX_PARSE_NESTING).parseProgram();
         } catch (MicraLangException e) {
             issues.add(Issue.of(IssueCode.E_SCHEMA, "syntax:" + number, List.of(), label + "の構文エラー: " + detail(e.getMessage())));
+            return;
+        }
+        // a left-associative chain parses without nesting, so the parse limit cannot see it;
+        // measure the finished tree instead. This is iterative (see AstDepth) and runs before
+        // the profile's and the interpreter's own recursion
+        int astDepth = AstDepth.of(program);
+        if (astDepth > PLAN_MAX_AST_DEPTH) {
+            issues.add(Issue.of(IssueCode.E_SCHEMA, "syntax:" + number, List.of(),
+                    label + "の構文木が深すぎます(深さ " + astDepth + " > 上限 " + PLAN_MAX_AST_DEPTH + ")"));
             return;
         }
         List<PlanScriptProfile.Violation> violations = PlanScriptProfile.check(program);

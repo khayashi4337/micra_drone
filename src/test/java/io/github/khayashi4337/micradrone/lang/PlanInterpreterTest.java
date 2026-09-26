@@ -1539,6 +1539,25 @@ class PlanInterpreterTest {
                 });
     }
 
+    // ---- the farm path keeps its unlimited parser (P3 H-2) ----
+
+    @Test
+    void theUnlimitedParserStillParsesA5000TermChainForFarmScripts() {
+        // construction scripts are parsed by Parser(tokens, PLAN_MAX_PARSE_NESTING) and then
+        // refused if the tree is deeper than PLAN_MAX_AST_DEPTH; the farm path deliberately
+        // keeps the plain Parser(tokens) with no limit, so a 5,000-term chain that no
+        // construction script could ever run still parses byte-identically for farm use
+        java.util.List<io.github.khayashi4337.micradrone.lang.ast.Stmt> program =
+                new Parser(new Lexer("x = " + "1 + ".repeat(4_999) + "1\n").scan()).parseProgram();
+        assertEquals(1, program.size());
+        // the chain is real - 5,000 terms measure 5,001 deep - so this is not a shrunken tree
+        assertEquals(5_001, AstDepth.of(program));
+        // and deep PAREN nesting is still legal for the unlimited parser (a chain alone never
+        // nests, so it could not catch a wrongly-limited default constructor)
+        assertDoesNotThrow(() -> new Parser(new Lexer(
+                "x = " + "(".repeat(200) + "1" + ")".repeat(200)).scan()).parseProgram());
+    }
+
     /** A {@link DroneApi} whose {@code print} refuses the way the recorder's output budget does. */
     private static DroneApi refusingPrintDroneApi() {
         return (DroneApi) Proxy.newProxyInstance(DroneApi.class.getClassLoader(), new Class<?>[]{DroneApi.class},

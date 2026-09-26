@@ -2,6 +2,7 @@ package io.github.khayashi4337.micradrone.build.script;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -24,19 +25,41 @@ class PlanScriptRunnerTest {
         return r.issues().stream().map(i -> i.code().label()).toList();
     }
 
-    /** The stack the overflow tests run under, so they do not depend on the test JVM's -Xss. */
-    private static final long OVERFLOW_TEST_STACK_BYTES = 256L * 1024;
+    /** A deliberately tiny CALLER stack: whatever happens inside run() cannot be a stack accident. */
+    private static final long TINY_CALLER_STACK_BYTES = 256L * 1024;
+
+    /** A generously large CALLER stack: the other end of the determinism sweep. */
+    private static final long HUGE_CALLER_STACK_BYTES = 64L * 1024 * 1024;
 
     /**
-     * Runs the scripts on a thread with a deliberately small stack: a deeply nested or cyclic
-     * script overflows the parser/interpreter deterministically whatever stack size the test
-     * JVM itself was started with.
+     * Runs the batch through {@link PlanScriptRunner#run} from a CALLER thread with the given
+     * stack size. All the run's own work happens on the runner's dedicated worker thread, so
+     * the caller's stack must not influence the outcome - that independence is what H-2 pins.
      */
-    private static PlanScriptRunner.Result runOnASmallStack(String... scripts) throws InterruptedException {
+    private static PlanScriptRunner.Result runOnCallerStack(long stackBytes, String... scripts)
+            throws InterruptedException {
         PlanScriptRunner.Result[] out = new PlanScriptRunner.Result[1];
-        Thread worker = new Thread(null, () -> out[0] = run(scripts), "small-stack", OVERFLOW_TEST_STACK_BYTES);
-        worker.start();
-        worker.join();
+        Thread caller = new Thread(null, () -> out[0] = run(scripts), "caller-stack-" + stackBytes,
+                stackBytes);
+        caller.start();
+        caller.join();
+        return out[0];
+    }
+
+    /**
+     * Runs the runner's batch body directly (no dedicated worker) on a thread with the given
+     * stack size. The stack-size measurement sweeps this: it must know which outcome a given
+     * worker stack would produce, not which stack the production runner picked.
+     */
+    private static PlanScriptRunner.Result runScriptsOnStack(long stackBytes, String... scripts)
+            throws InterruptedException {
+        PlanScriptRunner.Result[] out = new PlanScriptRunner.Result[1];
+        Thread t = new Thread(null,
+                () -> out[0] = PlanScriptRunner.runScripts(List.of(scripts), "patch", 0, "test",
+                        PlanRunLimits.DEFAULT),
+                "measure-" + stackBytes, stackBytes);
+        t.start();
+        t.join();
         return out[0];
     }
 
@@ -365,36 +388,36 @@ class PlanScriptRunnerTest {
     }
 
     @Test
-    void aScriptThatNestsTooDeeplyIsALimitIssueNotAnError() throws InterruptedException {
+    void aScriptThatNestsTooDeeplyIsRefusedDeterministically() throws InterruptedException {
         // T/U/V (the controller's measurements): 4,000 nested parentheses, 4,000 nested brackets
-        // and a 9,900-strong unary-minus chain all overflow the recursive-descent parser's stack
-        // during parse - before the interpreter ever runs. Each is under 10,000 characters, and
-        // each must become an E-SCRIPT-LIMIT issue keyed stack:1, not an escaping Error. The run
-        // happens on a small-stack thread so the overflow does not depend on the JVM's -Xss
+        // and a 9,900-strong unary-minus chain used to overflow the recursive-descent parser's
+        // stack during parse - an outcome that depended on -Xss. The parser's nesting limit now
+        // refuses all three as ordinary syntax issues, identically on any caller stack (this
+        // runs the whole run() from a 256 KiB caller to prove it)
         List<String> scripts = List.of(
                 "x = " + "(".repeat(4_000) + "1" + ")".repeat(4_000),
                 "x = " + "[".repeat(4_000) + "]".repeat(4_000),
                 "x = " + "-".repeat(9_900) + "1");
         for (String script : scripts) {
             assertTrue(script.length() <= PlanScriptWriter.MAX_SCRIPT_CHARS);
-            PlanScriptRunner.Result r = runOnASmallStack(script);
+            PlanScriptRunner.Result r = runOnCallerStack(TINY_CALLER_STACK_BYTES, script);
             assertNull(r.patch());
-            assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r));
-            assertEquals("E-SCRIPT-LIMIT:#stack:1", r.issues().get(0).id());
-            assertTrue(r.issues().get(0).message().contains("スクリプト1"), r.issues().get(0).message());
+            assertEquals(List.of("E-SCHEMA"), codes(r));
+            assertEquals("E-SCHEMA:#syntax:1", r.issues().get(0).id());
+            assertTrue(r.issues().get(0).message().contains("nested too deeply (limit 100)"),
+                    r.issues().get(0).message());
         }
     }
 
     @Test
-    void aStackOverflowInASecondScriptStillLeavesNoPatch() throws InterruptedException {
-        // script 1 is fine, script 2 overflows during parse: script 1's recorded work is
-        // discarded (patch null) and the issue names script 2. Same small-stack thread as its
-        // sibling overflow tests
-        PlanScriptRunner.Result r = runOnASmallStack("mood(\"ok\")",
+    void aTooDeeplyNestedSecondScriptStillLeavesNoPatch() throws InterruptedException {
+        // script 1 is fine, script 2 is refused by the parser's nesting limit: script 1's
+        // recorded work is discarded (patch null) and the issue names script 2
+        PlanScriptRunner.Result r = runOnCallerStack(TINY_CALLER_STACK_BYTES, "mood(\"ok\")",
                 "x = " + "(".repeat(4_000) + "1" + ")".repeat(4_000));
         assertNull(r.patch());
-        assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r));
-        assertEquals("E-SCRIPT-LIMIT:#stack:2", r.issues().get(0).id());
+        assertEquals(List.of("E-SCHEMA"), codes(r));
+        assertEquals("E-SCHEMA:#syntax:2", r.issues().get(0).id());
         assertTrue(r.issues().get(0).message().contains("スクリプト2"), r.issues().get(0).message());
     }
 
@@ -588,5 +611,240 @@ class PlanScriptRunnerTest {
             assertTrue(r.issues().get(0).message().contains("construction script exceeded 100000 steps"),
                     r.issues().get(0).message());
         });
+    }
+
+    // ---- the result must not depend on the caller's stack (P3 H-2) ----
+
+    /**
+     * The deepest program the limits allow: `f(n + 1)` sits at the bottom of a 196-term
+     * left-associative chain. The Call node and its `n + 1` argument add 2 levels, so the chain
+     * measures 198 deep, the function body 200 - exactly PLAN_MAX_AST_DEPTH. Called until the
+     * interpreter's own call cap of 200, every Micra-level frame keeps ~400 Java frames of
+     * pending binary evals live - this is the shape the worker thread's stack is sized against.
+     */
+    private static String worstCaseScript() {
+        return "def f(n):\n    return f(n + 1) + " + "1 + ".repeat(194) + "1\nf(0)\n";
+    }
+
+    /**
+     * A short description of a run's decisive outcome, for the stack-sweep log.
+     */
+    private static String outcomeOf(PlanScriptRunner.Result r) {
+        if (r.ok()) {
+            return "ok";
+        }
+        if (r.issues().isEmpty()) {
+            return "no issue?";
+        }
+        io.github.khayashi4337.micradrone.build.model.Issue issue = r.issues().get(0);
+        if (issue.message().contains("too much recursion")) {
+            return "too much recursion";
+        }
+        if (issue.message().contains("構文木が深すぎます")) {
+            return "ast depth refused";
+        }
+        if (issue.message().contains("nested too deeply")) {
+            return "parse nesting refused";
+        }
+        return issue.id();
+    }
+
+    /**
+     * The hostile shapes the controller measured, each pinned to its exact expected outcome:
+     * a left-associative chain never nests while PARSING, so the parser limit cannot see it
+     * and the finished-AST depth limit is what refuses it; parenthesis/bracket/unary/`not`
+     * nesting is refused while parsing; a legitimately nested recursion bomb runs and ends at
+     * the interpreter's own call cap. Expected ids and message details are asserted exactly,
+     * not just compared across stacks.
+     */
+    private static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> stackIndependentOutcomes() {
+        return java.util.stream.Stream.of(
+                // 4,900 terms (compact - spaced it would exceed MAX_SCRIPT_CHARS) -> AssignStmt
+                // + 4,900 = AST depth 4,901 > 200; parses without nesting, so the AST bound is
+                // what refuses it
+                org.junit.jupiter.params.provider.Arguments.of("a 4,900-term sum",
+                        "x=" + "1+".repeat(4_899) + "1\n",
+                        "E-SCHEMA:#syntax:1", "構文木が深すぎます"),
+                // 1,600 `and` terms -> AST depth 1,601 > 200
+                org.junit.jupiter.params.provider.Arguments.of("a 1,600-term and chain",
+                        "x = " + "1 and ".repeat(1_599) + "1\n",
+                        "E-SCHEMA:#syntax:1", "構文木が深すぎます"),
+                org.junit.jupiter.params.provider.Arguments.of("2,000 nested parentheses",
+                        "x = " + "(".repeat(2_000) + "1" + ")".repeat(2_000),
+                        "E-SCHEMA:#syntax:1", "nested too deeply (limit 100)"),
+                org.junit.jupiter.params.provider.Arguments.of("4,900 unary minuses",
+                        "x = " + "-".repeat(4_900) + "1",
+                        "E-SCHEMA:#syntax:1", "nested too deeply (limit 100)"),
+                org.junit.jupiter.params.provider.Arguments.of("150 nested 'not'",
+                        "x = " + "not ".repeat(150) + "True",
+                        "E-SCHEMA:#syntax:1", "nested too deeply (limit 100)"),
+                // 30 levels of list literal around the recursive call: parses (nesting ~32),
+                // shallow AST (~36), runs, and dies at the interpreter's call cap
+                org.junit.jupiter.params.provider.Arguments.of(
+                        "a recursive function returning a 30-deep list nest",
+                        "def f(n):\n    return " + "[".repeat(30) + "f(n + 1)" + "]".repeat(30)
+                                + "\nf(0)\n",
+                        "E-SCHEMA:#run:1", "too much recursion"),
+                // an unexpected throw inside the worker (the recorder refuses a non-string
+                // dict key) must surface as the same ordinary issue, not leak a worker Error
+                org.junit.jupiter.params.provider.Arguments.of("a recorder refusal",
+                        "logistics([{1: 2}], [], [])",
+                        "E-SCHEMA:#run:1", "logistics()"));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.MethodSource("stackIndependentOutcomes")
+    void theSameScriptGivesTheSameOutcomeOnAnyCallerStack(String shape, String script,
+            String expectedId, String expectedDetail) throws InterruptedException {
+        assertTrue(script.length() <= PlanScriptWriter.MAX_SCRIPT_CHARS,
+                shape + " must fit MAX_SCRIPT_CHARS to be a realistic attack");
+
+        PlanScriptRunner.Result tiny = runOnCallerStack(TINY_CALLER_STACK_BYTES, script);
+        PlanScriptRunner.Result huge = runOnCallerStack(HUGE_CALLER_STACK_BYTES, script);
+
+        assertNull(tiny.patch(), shape);
+        assertNull(huge.patch(), shape);
+        assertEquals(tiny.issues(), huge.issues(),
+                shape + " - identical issues (ids AND messages) on a 256 KiB vs a 64 MiB caller");
+        assertEquals(1, tiny.issues().size(), shape);
+        assertEquals(expectedId, tiny.issues().get(0).id(), shape);
+        assertTrue(tiny.issues().get(0).message().contains(expectedDetail),
+                shape + " - got " + tiny.issues().get(0).message());
+    }
+
+    @Test
+    void anAstOfDepthExactly200RunsAnd201IsRefused() throws InterruptedException {
+        // AstDepth counts the AssignStmt itself, so an n-term `1+1+...+1` chain under `x =`
+        // measures n + 1: 199 terms is exactly the 200 limit, 200 terms is one over. Both
+        // shapes parse without ever nesting - this is the boundary the parser limit CANNOT
+        // see, so the refusal must come from measuring the finished tree
+        PlanScriptRunner.Result ok = runOnCallerStack(TINY_CALLER_STACK_BYTES,
+                "x = " + "1 + ".repeat(198) + "1\n");
+        assertTrue(ok.ok(), ok.issues().toString());
+
+        PlanScriptRunner.Result refused = runOnCallerStack(TINY_CALLER_STACK_BYTES,
+                "x = " + "1 + ".repeat(199) + "1\n");
+        assertNull(refused.patch());
+        assertEquals(List.of("E-SCHEMA"), codes(refused));
+        assertEquals("E-SCHEMA:#syntax:1", refused.issues().get(0).id());
+        assertTrue(refused.issues().get(0).message().contains("深さ 201 > 上限 200"),
+                refused.issues().get(0).message());
+    }
+
+    @Test
+    void aHundredNestedParenthesesParseAndAHundredAndOneAreRefused() {
+        // the parser counts one level per `(`: 100 is the boundary, 101 throws while parsing
+        PlanScriptRunner.Result ok = run("x = " + "(".repeat(100) + "1" + ")".repeat(100));
+        assertTrue(ok.ok(), ok.issues().toString());
+
+        PlanScriptRunner.Result refused = run("x = " + "(".repeat(101) + "1" + ")".repeat(101));
+        assertNull(refused.patch());
+        assertEquals(List.of("E-SCHEMA"), codes(refused));
+        assertEquals("E-SCHEMA:#syntax:1", refused.issues().get(0).id());
+        assertTrue(refused.issues().get(0).message().contains("nested too deeply (limit 100)"),
+                refused.issues().get(0).message());
+    }
+
+    @Test
+    void legitimateDeepScriptsStillRun() {
+        // a 150-term chain measures AST depth 151 and a 50-level list nest parses at nesting
+        // depth ~51 - comfortably inside both limits, and neither touched by them
+        PlanScriptRunner.Result chain = run("x = " + "1 + ".repeat(149) + "1\nmood(\"ok\")\n");
+        assertTrue(chain.ok(), chain.issues().toString());
+
+        PlanScriptRunner.Result nest = run("x = " + "[".repeat(50) + "1" + "]".repeat(50)
+                + "\nmood(\"ok\")\n");
+        assertTrue(nest.ok(), nest.issues().toString());
+
+        // a params argument at the recorder's own 8-level depth limit is still recorded:
+        // MAX_PARAM_DEPTH, not the new AST bound, is what governs recorded values
+        PlanScriptRunner.Result params = run("wall(\"w\", None, [0,0,0], {\"x\": "
+                + "[".repeat(8) + "1" + "]".repeat(8) + "})");
+        assertTrue(params.ok(), params.issues().toString());
+        assertEquals(1, params.patch().ops().size());
+    }
+
+    @Test
+    void theDeepestAllowedScriptEndsWithTheRecursionCapOnATinyCallerStack() throws InterruptedException {
+        // the worst case the limits allow (see worstCaseScript): 200 nested calls each
+        // carrying a 198-deep eval - roughly 80,000 live Java frames. On an ordinary thread
+        // stack that is a StackOverflowError; on the runner's sized worker stack it must end
+        // in the interpreter's own "too much recursion" issue, even when the CALLER that
+        // asked for the run only had 256 KiB of stack itself
+        PlanScriptRunner.Result r = runOnCallerStack(TINY_CALLER_STACK_BYTES, worstCaseScript());
+        assertNull(r.patch());
+        assertEquals(List.of("E-SCHEMA"), codes(r));
+        assertEquals("E-SCHEMA:#run:1", r.issues().get(0).id());
+        assertTrue(r.issues().get(0).message().contains("too much recursion"),
+                r.issues().get(0).message());
+    }
+
+    @Test
+    void theWorkerStackCoversTheWorstCaseWithAFourFoldMargin() throws InterruptedException {
+        // the sizing measurement behind PLAN_RUN_STACK_BYTES: sweep the stack the batch body
+        // gets and find where the worst-case outcome flips from a caught StackOverflowError
+        // (E-SCRIPT-LIMIT, stack:1) to the interpreter's own "too much recursion"
+        // (E-SCHEMA, run:1). Sweep by doubling, then bisect (thread stacks are only honoured
+        // to OS granularity anyway); every step is printed so the numbers land in the test
+        // report. The constant must be at least 4x the measured minimum
+        String worst = worstCaseScript();
+        long firstDeterministic = -1;
+        for (long size = 256L * 1024; size <= 512L * 1024 * 1024; size *= 2) {
+            String outcome = outcomeOf(runScriptsOnStack(size, worst));
+            System.out.println("stack=" + size + " -> " + outcome);
+            if ("too much recursion".equals(outcome)) {
+                firstDeterministic = size;
+                break;
+            }
+        }
+        assertTrue(firstDeterministic > 0,
+                "the worst case never reached the interpreter's recursion cap");
+
+        long lo = firstDeterministic / 2;
+        long hi = firstDeterministic;
+        while (hi - lo > 256L * 1024) {
+            long mid = lo + (hi - lo) / 2;
+            String outcome = outcomeOf(runScriptsOnStack(mid, worst));
+            System.out.println("stack=" + mid + " -> " + outcome);
+            if ("too much recursion".equals(outcome)) {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        System.out.println("measured minimum=" + hi);
+        assertTrue(PlanScriptRunner.PLAN_RUN_STACK_BYTES >= 4 * hi,
+                "worker stack " + PlanScriptRunner.PLAN_RUN_STACK_BYTES + " is less than 4x the"
+                        + " measured minimum " + hi);
+    }
+
+    @Test
+    void anInterruptOfTheCallerStillReturnsTheResultAndRestoresTheFlag() throws InterruptedException {
+        // the caller is interrupted while the worker is still running: join() must keep
+        // waiting, hand the result back, and leave the caller's interrupt flag set - the
+        // result of a construction run is never thrown away just because somebody poked us.
+        // 200,001 loop trips pass the 100,000-step budget, so this ends as E-SCRIPT-LIMIT
+        String busy = "x = 0\nwhile x < 200000:\n    x = x + 1\n";
+        PlanScriptRunner.Result[] out = new PlanScriptRunner.Result[1];
+        boolean[] flagAfter = new boolean[1];
+        Thread caller = new Thread(null, () -> {
+            // the flag is already set when run() starts, so the FIRST join() is guaranteed to
+            // throw InterruptedException while the worker runs - no timing dependence
+            Thread.currentThread().interrupt();
+            out[0] = run(busy);
+            flagAfter[0] = Thread.currentThread().isInterrupted();
+        }, "interrupted-caller");
+        caller.start();
+        // also keep poking mid-run: the run only needs a few ms, and extra interrupts arriving
+        // while join() is blocked exercise the same wait-again path
+        while (caller.isAlive()) {
+            caller.interrupt();
+            Thread.sleep(1);
+        }
+        caller.join();
+
+        assertNotNull(out[0], "the interrupted caller still got the result");
+        assertEquals(List.of("E-SCRIPT-LIMIT"), codes(out[0]));
+        assertTrue(flagAfter[0], "the caller's interrupt flag must be set again after run()");
     }
 }
