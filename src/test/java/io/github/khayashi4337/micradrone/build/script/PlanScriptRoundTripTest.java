@@ -78,7 +78,11 @@ class PlanScriptRoundTripTest {
     private final PlanPatcher patcher = new PlanPatcher(TestParts.registryWithDial(), TestParts.bundle());
 
     private SemanticPlan build(List<PlanOp> ops) {
-        PatchResult r = patcher.apply(SemanticPlan.empty("rt-plan"), new PlanPatch("p", 0, "test", ops));
+        return buildAs("rt-plan", ops);
+    }
+
+    private SemanticPlan buildAs(String planId, List<PlanOp> ops) {
+        PatchResult r = patcher.apply(SemanticPlan.empty(planId), new PlanPatch("p", 0, "test", ops));
         assertTrue(r.ok(), r.issues().toString());
         return r.plan();
     }
@@ -275,6 +279,8 @@ class PlanScriptRoundTripTest {
 
     /** The most characters of the plan id the header line shows. */
     private static final int HEADER_ID_CHARS = 40;
+    /** A plan id of exactly {@link #HEADER_ID_CHARS} characters: the longest header the writer can make. */
+    private static final String LONGEST_PLAN_ID = "0123456789".repeat(HEADER_ID_CHARS / 10);
     private static final int SMALL_SCRIPT_LIMIT = 700;
 
     @Test
@@ -308,6 +314,71 @@ class PlanScriptRoundTripTest {
         }
         // one character more than the reserve is a limit: an empty plan is only its header
         assertEquals(1, PlanScriptWriter.write(plan, PlanScriptWriter.HEADER_RESERVE + 1).size());
+    }
+
+    /** How many characters of body each script of {@link #fullScriptsPlan} is filled with: the whole budget, whatever the reserve is. */
+    private static final int FULL_BODY_CHARS = 80;
+    /** How many scripts that plan makes: enough for two-digit counters (10/14 ... 14/14). */
+    private static final int FULL_SCRIPTS = 14;
+    /** The characters of {@code pillar("n00", None, [0, 0, 0], {}, [], "<label>")} besides the label. */
+    private static final int FULL_STATEMENT_FIXED_CHARS = 42;
+    /**
+     * The characters of the header line that do not depend on the counters, for the longest plan id: {@code # } and
+     * the seven characters of the title and a space (10), the slash (1), {@code (計画 } (4), the plan id (40), the
+     * closing bracket (1) and the newline (1) = 57. The counters i and n add one character per digit.
+     */
+    private static final int HEADER_FIXED_CHARS = 10 + 1 + 4 + HEADER_ID_CHARS + 1 + 1;
+
+    /**
+     * A plan with the longest plan id whose FULL_SCRIPTS statements each fill a script to its budget exactly.
+     * Hand-derived: {@code pillar("n00", None, [0, 0, 0], {}, [], "<label>")} is 42 + label characters, and the packer
+     * counts one newline per statement, so with a label of 80 - 1 - 42 = 37 characters a statement takes 80 of the
+     * budget (maxChars - HEADER_RESERVE = 80 when the limit is HEADER_RESERVE + 80). Two statements never fit
+     * together, so every script holds one statement and is FULL, and 14 statements make 14 scripts.
+     */
+    private SemanticPlan fullScriptsPlan() {
+        assertEquals(FULL_STATEMENT_FIXED_CHARS, "pillar(\"n00\", None, [0, 0, 0], {}, [], \"".length() + "\")".length(),
+                "the hand-counted characters of the statement besides its label");
+        String label = "x".repeat(FULL_BODY_CHARS - 1 - FULL_STATEMENT_FIXED_CHARS);
+        List<PlanOp> ops = new ArrayList<>();
+        for (int i = 0; i < FULL_SCRIPTS; i++) {
+            // the same position for every node: a longer coordinate would make a statement longer
+            ops.add(new PlanOp.AddNode(node(String.format("n%02d", i), "micra:pillar", null, abs(0, 0, 0), Map.of(), Set.of(), label)));
+        }
+        return buildAs(LONGEST_PLAN_ID, ops);
+    }
+
+    @Test
+    void everyScriptStaysWithinItsLimitWhenEachOneIsFilledToItsBudget() {
+        // The limit is the reserve plus 80, so the budget is 80 and each of the 14 scripts is exactly full. A header is
+        // 57 + the digits of i and n: 59 for 1/14 to 9/14 and 61 for 10/14 to 14/14. So a script is at most
+        // 61 + 80 = 141 characters, inside the limit of 120 + 80 = 200. A reserve smaller than the header (say 50:
+        // limit 130, script 61 + 80 = 141) would let the scripts run over their limit, and this test would fail.
+        int maxChars = PlanScriptWriter.HEADER_RESERVE + FULL_BODY_CHARS;
+        List<String> scripts = PlanScriptWriter.write(fullScriptsPlan(), maxChars);
+        assertEquals(FULL_SCRIPTS, scripts.size());
+        for (int i = 0; i < scripts.size(); i++) {
+            String script = scripts.get(i);
+            int headerChars = script.indexOf('\n') + 1;
+            assertEquals(FULL_BODY_CHARS, script.length() - headerChars, "script " + (i + 1) + " is filled to its whole budget");
+            assertTrue(script.length() <= maxChars, "script " + (i + 1) + " of " + scripts.size() + " has " + script.length()
+                    + " characters, over its limit of " + maxChars);
+        }
+    }
+
+    @Test
+    void theLongestHeaderTheWriterMakesFitsInTheReserve() {
+        // The header is "# 建設スクリプト i/n(計画 <id>)" and a newline: 57 characters for a 40-character id plus one
+        // per digit of i and n. So the reserve of 120 tolerates 120 - 57 = 63 digits of counters together, that is
+        // counters of up to 31 digits each. With 14 scripts the last header has two digits each: 57 + 4 = 61.
+        List<String> scripts = PlanScriptWriter.write(fullScriptsPlan(), PlanScriptWriter.HEADER_RESERVE + FULL_BODY_CHARS);
+        assertEquals(FULL_SCRIPTS, scripts.size());
+        String lastScript = scripts.get(FULL_SCRIPTS - 1);
+        String header = lastScript.substring(0, lastScript.indexOf('\n') + 1);
+        assertEquals("# 建設スクリプト 14/14(計画 " + LONGEST_PLAN_ID + ")\n", header);
+        assertEquals(HEADER_FIXED_CHARS + 2 + 2, header.length(), "57 + the digits of 14 and of 14");
+        assertTrue(header.length() <= PlanScriptWriter.HEADER_RESERVE,
+                "a header of " + header.length() + " characters does not fit in the reserve of " + PlanScriptWriter.HEADER_RESERVE);
     }
 
     private static String headerOnly(String shownPlanId) {
@@ -605,11 +676,16 @@ class PlanScriptRoundTripTest {
         assertEquals(41, fixedChars, "the hand-counted characters a statement takes besides its label");
         int budget = PlanScriptWriter.MAX_SCRIPT_CHARS - PlanScriptWriter.HEADER_RESERVE;
         int labelChars = budget - fixedChars;
-        SemanticPlan fits = build(List.of(new PlanOp.AddNode(node("a", "micra:pillar", null, abs(0, 0, 0),
+        SemanticPlan fits = buildAs(LONGEST_PLAN_ID, List.of(new PlanOp.AddNode(node("a", "micra:pillar", null, abs(0, 0, 0),
                 Map.of(), Set.of(), "x".repeat(labelChars)))));
         List<String> scripts = PlanScriptWriter.write(fits);
         assertEquals(1, scripts.size());
-        SemanticPlan tooLong = build(List.of(new PlanOp.AddNode(node("a", "micra:pillar", null, abs(0, 0, 0),
+        // the script is FULL (its body is the whole budget) and still inside the limit, with the longest header
+        String script = scripts.get(0);
+        assertEquals(budget, script.length() - (script.indexOf('\n') + 1));
+        assertTrue(script.length() <= PlanScriptWriter.MAX_SCRIPT_CHARS,
+                "the script has " + script.length() + " characters, over its limit of " + PlanScriptWriter.MAX_SCRIPT_CHARS);
+        SemanticPlan tooLong = buildAs(LONGEST_PLAN_ID, List.of(new PlanOp.AddNode(node("a", "micra:pillar", null, abs(0, 0, 0),
                 Map.of(), Set.of(), "x".repeat(labelChars + 1)))));
         assertThrows(IllegalStateException.class, () -> PlanScriptWriter.write(tooLong));
         // the boundary statement still runs and reproduces the plan
@@ -626,16 +702,25 @@ class PlanScriptRoundTripTest {
         // with one newline each the body is 2 x 33 = 66 characters.
         int statementChars = "pillar(\"a\", None, [0, 0, 0], {})".length();
         assertEquals(32, statementChars, "the hand-counted length of the statement");
-        SemanticPlan plan = build(List.of(
+        SemanticPlan plan = buildAs(LONGEST_PLAN_ID, List.of(
                 new PlanOp.AddNode(node("a", "micra:pillar", null, abs(0, 0, 0), Map.of(), Set.of(), "")),
                 new PlanOp.AddNode(node("b", "micra:pillar", null, abs(1, 0, 0), Map.of(), Set.of(), ""))));
         int body = 2 * (statementChars + 1);
-        List<String> one = PlanScriptWriter.write(plan, PlanScriptWriter.HEADER_RESERVE + body);
+        int oneLimit = PlanScriptWriter.HEADER_RESERVE + body;
+        List<String> one = PlanScriptWriter.write(plan, oneLimit);
         assertEquals(1, one.size());
-        List<String> two = PlanScriptWriter.write(plan, PlanScriptWriter.HEADER_RESERVE + body - 1);
+        int twoLimit = PlanScriptWriter.HEADER_RESERVE + body - 1;
+        List<String> two = PlanScriptWriter.write(plan, twoLimit);
         assertEquals(2, two.size());
-        assertTrue(two.get(0).startsWith("# 建設スクリプト 1/2(計画 rt-plan)"));
-        assertTrue(two.get(1).startsWith("# 建設スクリプト 2/2(計画 rt-plan)"));
+        assertTrue(two.get(0).startsWith("# 建設スクリプト 1/2(計画 " + LONGEST_PLAN_ID + ")"));
+        assertTrue(two.get(1).startsWith("# 建設スクリプト 2/2(計画 " + LONGEST_PLAN_ID + ")"));
+        // every script is inside its limit, with the longest header (57 + 2 digits = 59 characters)
+        for (String script : one) {
+            assertTrue(script.length() <= oneLimit, "a script of " + script.length() + " characters is over its limit of " + oneLimit);
+        }
+        for (String script : two) {
+            assertTrue(script.length() <= twoLimit, "a script of " + script.length() + " characters is over its limit of " + twoLimit);
+        }
         for (List<String> scripts : List.of(one, two)) {
             PlanScriptRunner.Result r = PlanScriptRunner.run(scripts, "rt", 0, "t", PlanRunLimits.DEFAULT);
             assertTrue(r.ok(), r.issues().toString());
