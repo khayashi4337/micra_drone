@@ -11,6 +11,12 @@ import java.util.Map;
  * implementation that keeps a value must copy what it keeps (the script can mutate it afterwards).
  */
 public interface PlanApi {
+    /**
+     * A port is written in a script as {@code "node.port"}: the node id and the port name joined by this character
+     * and told apart at the FIRST one, so a port NAME may hold more of them but a node id may not.
+     */
+    char NODE_PORT_SEPARATOR = '.';
+
     void site(String dimension, int x, int y, int z, String facing, int[] bounds, String terrainDigest, String claimId);
 
     void style(String role, String material);

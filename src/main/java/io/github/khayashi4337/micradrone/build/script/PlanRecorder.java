@@ -92,9 +92,8 @@ public final class PlanRecorder implements PlanApi {
     private static final long MAX_RECORDED_CHARS = 1_000_000;
     /** Total characters {@link #printed} may retain across the whole run - same reason as {@link #MAX_RECORDED_ELEMENTS}. */
     private static final long MAX_PRINTED_CHARS = 1_000_000;
-    private static final List<String> DOCK_KEYS = List.of("id", "pad", "clearance", "approach", "ports", "connectors");
-    private static final List<String> ROUTE_KEYS = List.of("id", "from", "to", "waypoints", "airship");
-    private static final List<String> FLOW_KEYS = List.of("item", "per_min", "from", "to");
+    /** Between the names a refusal lists (the allowed keys, the allowed enum values). */
+    private static final String KEY_LIST_SEPARATOR = "・";
     /** The only {@link Side} values a surface anchor accepts - the field's real allowed set. */
     private static final Side[] SURFACE_SIDES = {Side.OUTER, Side.INNER};
 
@@ -209,58 +208,60 @@ public final class PlanRecorder implements PlanApi {
         List<LogisticsPlan.Dock> dockList = new ArrayList<>();
         for (Object o : docks) {
             Map<String, Object> d = dict(o, "ドック");
-            checkKeys(d, "ドック", DOCK_KEYS);
-            List<Object> portSpecs = list(d.getOrDefault("ports", List.of()), "ports");
-            List<Object> connectorSpecs = list(d.getOrDefault("connectors", List.of()), "connectors");
+            checkKeys(d, "ドック", PlanScriptKeys.DOCK_KEYS);
+            List<Object> portSpecs = list(d.getOrDefault(PlanScriptKeys.DOCK_PORTS, List.of()), PlanScriptKeys.DOCK_PORTS);
+            List<Object> connectorSpecs = list(d.getOrDefault(PlanScriptKeys.DOCK_CONNECTORS, List.of()), PlanScriptKeys.DOCK_CONNECTORS);
             // charged BEFORE the PortRef list is built: a dock whose ports list is huge must be
             // refused here, not after a PortRef per entry has been materialised
             chargeRecordedElements(1 + portSpecs.size() + connectorSpecs.size());
-            String dockId = text(d.get("id"), "id");
-            String approach = text(d.get("approach"), "approach");
+            String dockId = text(d.get(PlanScriptKeys.DOCK_ID), PlanScriptKeys.DOCK_ID);
+            String approach = text(d.get(PlanScriptKeys.DOCK_APPROACH), PlanScriptKeys.DOCK_APPROACH);
             chargeRecordedChars(textChars(dockId) + textChars(approach));
             List<PortRef> ports = new ArrayList<>();
             for (Object p : portSpecs) {
-                String portSpec = text(p, "ports");
+                String portSpec = text(p, PlanScriptKeys.DOCK_PORTS);
                 chargeRecordedChars(portSpec.length());
                 ports.add(port(portSpec));
             }
-            List<String> connectorIds = strings(connectorSpecs, "connectors");
+            List<String> connectorIds = strings(connectorSpecs, PlanScriptKeys.DOCK_CONNECTORS);
             chargeRecordedCharsOf(connectorIds);
-            dockList.add(new LogisticsPlan.Dock(dockId, box(d.get("pad"), "pad"), box(d.get("clearance"), "clearance"),
-                    parseEnum("approach", approach, Facing.values(), Facing::parse), ports, connectorIds));
+            dockList.add(new LogisticsPlan.Dock(dockId, box(d.get(PlanScriptKeys.DOCK_PAD), PlanScriptKeys.DOCK_PAD),
+                    box(d.get(PlanScriptKeys.DOCK_CLEARANCE), PlanScriptKeys.DOCK_CLEARANCE),
+                    parseEnum(PlanScriptKeys.DOCK_APPROACH, approach, Facing.values(), Facing::parse), ports, connectorIds));
         }
         List<LogisticsPlan.Route> routeList = new ArrayList<>();
         for (Object o : routes) {
             Map<String, Object> r = dict(o, "航路");
-            checkKeys(r, "航路", ROUTE_KEYS);
-            List<Object> waypointSpecs = list(r.getOrDefault("waypoints", List.of()), "waypoints");
+            checkKeys(r, "航路", PlanScriptKeys.ROUTE_KEYS);
+            List<Object> waypointSpecs = list(r.getOrDefault(PlanScriptKeys.ROUTE_WAYPOINTS, List.of()), PlanScriptKeys.ROUTE_WAYPOINTS);
             chargeRecordedElements(1 + waypointSpecs.size());
             List<LocalPos> pts = new ArrayList<>();
             for (Object p : waypointSpecs) {
-                List<Object> c = list(p, "waypoints");
+                List<Object> c = list(p, PlanScriptKeys.ROUTE_WAYPOINTS);
                 if (c.size() != LOCAL_POS_SIZE) {
                     throw new IllegalArgumentException("経由点は [u, v, w] です");
                 }
                 pts.add(new LocalPos(integer(c.get(0)), integer(c.get(1)), integer(c.get(2))));
             }
-            String routeId = text(r.get("id"), "id");
-            String from = text(r.get("from"), "from");
-            String to = text(r.get("to"), "to");
-            String airship = r.get("airship") == null || r.get("airship") instanceof MicraNone ? null : text(r.get("airship"), "airship");
+            String routeId = text(r.get(PlanScriptKeys.ROUTE_ID), PlanScriptKeys.ROUTE_ID);
+            String from = text(r.get(PlanScriptKeys.ROUTE_FROM), PlanScriptKeys.ROUTE_FROM);
+            String to = text(r.get(PlanScriptKeys.ROUTE_TO), PlanScriptKeys.ROUTE_TO);
+            Object airshipSpec = r.get(PlanScriptKeys.ROUTE_AIRSHIP);
+            String airship = airshipSpec == null || airshipSpec instanceof MicraNone ? null : text(airshipSpec, PlanScriptKeys.ROUTE_AIRSHIP);
             chargeRecordedChars(textChars(routeId) + textChars(from) + textChars(to) + textChars(airship));
             routeList.add(new LogisticsPlan.Route(routeId, from, to, pts, airship));
         }
         List<LogisticsPlan.CargoFlow> flowList = new ArrayList<>();
         for (Object o : flows) {
             Map<String, Object> f = dict(o, "流れ");
-            checkKeys(f, "流れ", FLOW_KEYS);
-            if (!(f.get("per_min") instanceof Double perMin) || !Double.isFinite(perMin)) {
-                throw new IllegalArgumentException("流れの per_min は数が必要です");
+            checkKeys(f, "流れ", PlanScriptKeys.FLOW_KEYS);
+            if (!(f.get(PlanScriptKeys.FLOW_PER_MIN) instanceof Double perMin) || !Double.isFinite(perMin)) {
+                throw new IllegalArgumentException("流れの " + PlanScriptKeys.FLOW_PER_MIN + " は数が必要です");
             }
             chargeRecordedElements(1);
-            String item = text(f.get("item"), "item");
-            String from = text(f.get("from"), "from");
-            String to = text(f.get("to"), "to");
+            String item = text(f.get(PlanScriptKeys.FLOW_ITEM), PlanScriptKeys.FLOW_ITEM);
+            String from = text(f.get(PlanScriptKeys.FLOW_FROM), PlanScriptKeys.FLOW_FROM);
+            String to = text(f.get(PlanScriptKeys.FLOW_TO), PlanScriptKeys.FLOW_TO);
             chargeRecordedChars(textChars(item) + textChars(from) + textChars(to));
             flowList.add(new LogisticsPlan.CargoFlow(item, perMin, from, to));
         }
@@ -421,12 +422,12 @@ public final class PlanRecorder implements PlanApi {
             for (E value : allowed) {
                 names.add("\"" + value.name().toLowerCase(Locale.ROOT) + "\"");
             }
-            throw new IllegalArgumentException(field + "は " + String.join("・", names) + " のどれかです");
+            throw new IllegalArgumentException(field + "は " + String.join(KEY_LIST_SEPARATOR, names) + " のどれかです");
         }
     }
 
     private static PortRef port(String text) {
-        int dot = text.indexOf('.');
+        int dot = text.indexOf(NODE_PORT_SEPARATOR);
         if (dot <= 0 || dot == text.length() - 1) {
             throw new IllegalArgumentException("\"ノードID.ポート名\" の形にしてください: " + PlanValueText.describe(text));
         }
@@ -443,24 +444,24 @@ public final class PlanRecorder implements PlanApi {
         Set<Dir6> dirs = new TreeSet<>();
         for (Map.Entry<String, Object> e : c.entrySet()) {
             switch (e.getKey()) {
-                case "max_length" -> maxLength = integer(e.getValue());
-                case "max_turns" -> maxTurns = integer(e.getValue());
-                case "avoid" -> {
-                    List<String> names = strings(e.getValue(), "avoid");
+                case PlanScriptKeys.CONSTRAINT_MAX_LENGTH -> maxLength = integer(e.getValue());
+                case PlanScriptKeys.CONSTRAINT_MAX_TURNS -> maxTurns = integer(e.getValue());
+                case PlanScriptKeys.CONSTRAINT_AVOID -> {
+                    List<String> names = strings(e.getValue(), PlanScriptKeys.CONSTRAINT_AVOID);
                     chargeRecordedElements(names.size());
                     chargeRecordedCharsOf(names);
                     avoid.addAll(names);
                 }
-                case "entry_dirs" -> {
-                    List<String> names = strings(e.getValue(), "entry_dirs");
+                case PlanScriptKeys.CONSTRAINT_ENTRY_DIRS -> {
+                    List<String> names = strings(e.getValue(), PlanScriptKeys.CONSTRAINT_ENTRY_DIRS);
                     chargeRecordedElements(names.size());
                     chargeRecordedCharsOf(names);
                     for (String d : names) {
-                        dirs.add(parseEnum("entry_dirs", d, Dir6.values(), Dir6::parse));
+                        dirs.add(parseEnum(PlanScriptKeys.CONSTRAINT_ENTRY_DIRS, d, Dir6.values(), Dir6::parse));
                     }
                 }
                 default -> throw new IllegalArgumentException("constraints に「" + PlanValueText.describe(e.getKey())
-                        + "」はありません(max_length・avoid・max_turns・entry_dirs)");
+                        + "」はありません(" + String.join(KEY_LIST_SEPARATOR, PlanScriptKeys.CONSTRAINT_KEYS) + ")");
             }
         }
         return new Constraints(maxLength, avoid, maxTurns, dirs);
@@ -471,7 +472,7 @@ public final class PlanRecorder implements PlanApi {
         for (Object key : dict.keySet()) {
             if (!(key instanceof String) || !allowedKeys.contains(key)) {
                 throw new IllegalArgumentException(what + "に「" + PlanValueText.describe(key)
-                        + "」はありません(" + String.join("・", allowedKeys) + ")");
+                        + "」はありません(" + String.join(KEY_LIST_SEPARATOR, allowedKeys) + ")");
             }
         }
     }

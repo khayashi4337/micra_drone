@@ -18,6 +18,8 @@ import io.github.khayashi4337.micradrone.build.model.Constraints;
 import io.github.khayashi4337.micradrone.build.model.Dir6;
 import io.github.khayashi4337.micradrone.build.model.Facing;
 import io.github.khayashi4337.micradrone.build.model.IntPos;
+import io.github.khayashi4337.micradrone.build.model.Issue;
+import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.LocalPos;
 import io.github.khayashi4337.micradrone.build.model.LogisticsPlan;
 import io.github.khayashi4337.micradrone.build.model.ParamValue;
@@ -269,14 +271,97 @@ class PlanScriptRoundTripTest {
         assertTrue(scripts.get(0).contains("site("), "the site comes first");
     }
 
+    /** The most characters of the plan id the header line shows. */
+    private static final int HEADER_ID_CHARS = 40;
+    private static final int SMALL_SCRIPT_LIMIT = 700;
+
     @Test
     void aSmallLimitSplitsEverythingButKeepsTheOrder() {
-        SemanticPlan plan = build(richOps());
-        List<String> scripts = PlanScriptWriter.write(plan, 700);
-        assertTrue(scripts.size() > 3);
+        // a plan id of the full 40 characters makes the longest header, so the space kept for the header is really tested
+        String planId = "p".repeat(HEADER_ID_CHARS);
+        PatchResult built = patcher.apply(SemanticPlan.empty(planId), new PlanPatch("p", 0, "test", richOps()));
+        assertTrue(built.ok(), built.issues().toString());
+        SemanticPlan plan = built.plan();
+        List<String> scripts = PlanScriptWriter.write(plan, SMALL_SCRIPT_LIMIT);
+        assertTrue(scripts.size() > 3, "expected several scripts but got " + scripts.size());
+        for (String s : scripts) {
+            assertTrue(s.length() <= SMALL_SCRIPT_LIMIT, "a script of " + s.length() + " characters is over the limit of " + SMALL_SCRIPT_LIMIT);
+        }
+        // across the scripts the nodes come in the plan's own order (the rich plan is already in dependency order)
+        assertEquals(nodeIds(plan), nodeIdsInScripts(scripts));
         PlanScriptRunner.Result r = PlanScriptRunner.run(scripts, "rt", 0, "t", PlanRunLimits.DEFAULT);
         assertTrue(r.ok(), r.issues().toString());
-        assertEquals(plan.contentHash(), patcher.apply(SemanticPlan.empty("rt-plan"), r.patch()).plan().contentHash());
+        PatchResult applied = patcher.apply(SemanticPlan.empty(planId), r.patch());
+        assertTrue(applied.ok(), applied.issues().toString());
+        assertEquals(plan.contentHash(), applied.plan().contentHash());
+        assertEquals(atRevisionOf(plan, applied.plan()), applied.plan());
+    }
+
+    @Test
+    void aLimitThatCannotHoldTheHeaderIsRefused() {
+        SemanticPlan plan = SemanticPlan.empty("rt-plan");
+        for (int limit : new int[] {Integer.MIN_VALUE, -1, 0, 1, PlanScriptWriter.HEADER_RESERVE - 1, PlanScriptWriter.HEADER_RESERVE}) {
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> PlanScriptWriter.write(plan, limit), "limit " + limit);
+            assertTrue(e.getMessage().contains(String.valueOf(limit)), "the message names the limit: " + e.getMessage());
+        }
+        // one character more than the reserve is a limit: an empty plan is only its header
+        assertEquals(1, PlanScriptWriter.write(plan, PlanScriptWriter.HEADER_RESERVE + 1).size());
+    }
+
+    private static String headerOnly(String shownPlanId) {
+        return "# 建設スクリプト 1/1(計画 " + shownPlanId + ")\n";
+    }
+
+    @Test
+    void aPlanIdOfExactlyFortyCharactersIsKeptWholeAndALongerOneIsCutToFortyCharacters() {
+        String forty = "0123456789".repeat(HEADER_ID_CHARS / 10);
+        assertEquals(HEADER_ID_CHARS, forty.length());
+        assertEquals(List.of(headerOnly(forty)), PlanScriptWriter.write(SemanticPlan.empty(forty)));
+        assertEquals(List.of(headerOnly(forty)), PlanScriptWriter.write(SemanticPlan.empty(forty + "X")));
+        assertEquals(List.of(headerOnly(forty)), PlanScriptWriter.write(SemanticPlan.empty(forty + "X".repeat(1000))));
+        String thirtyNine = forty.substring(0, HEADER_ID_CHARS - 1);
+        assertEquals(List.of(headerOnly(thirtyNine)), PlanScriptWriter.write(SemanticPlan.empty(thirtyNine)));
+    }
+
+    @Test
+    void lineBreaksInThePlanIdBecomeSpacesSoTheHeaderStaysOneLine() {
+        // LF, CR and CRLF (two characters, so two spaces)
+        SemanticPlan plan = SemanticPlan.empty("a\nb\rc\r\nd");
+        List<String> scripts = PlanScriptWriter.write(plan);
+        assertEquals(List.of(headerOnly("a b c  d")), scripts);
+        assertEquals(1, scripts.get(0).chars().filter(c -> c == '\n').count(), "only the newline that ends the header");
+        assertEquals(-1, scripts.get(0).indexOf('\r'));
+    }
+
+    @Test
+    void aPlanIdIsNeverCutInTheMiddleOfASurrogatePair() {
+        String house = "🏠";
+        // 39 characters and then the two-character emoji: the pair would straddle the cut, so it goes whole
+        assertEquals(List.of(headerOnly("a".repeat(HEADER_ID_CHARS - 1))),
+                PlanScriptWriter.write(SemanticPlan.empty("a".repeat(HEADER_ID_CHARS - 1) + house)));
+        // 38 characters and the emoji make exactly 40: kept whole, pair included
+        String whole = "a".repeat(HEADER_ID_CHARS - 2) + house;
+        assertEquals(HEADER_ID_CHARS, whole.length());
+        assertEquals(List.of(headerOnly(whole)), PlanScriptWriter.write(SemanticPlan.empty(whole)));
+        // 40 characters and then the emoji: the cut falls between characters, so nothing of the emoji is left
+        assertEquals(List.of(headerOnly("a".repeat(HEADER_ID_CHARS))),
+                PlanScriptWriter.write(SemanticPlan.empty("a".repeat(HEADER_ID_CHARS) + house)));
+    }
+
+    @Test
+    void aNodeWithTagsButNoLabelHasNoTrailingEmptyLabelArgument() {
+        SemanticPlan plan = build(List.of(
+                new PlanOp.AddNode(node("n1", "micra:pillar", null, abs(0, 0, 0), Map.of(), Set.of("a"), "")),
+                new PlanOp.AddNode(node("n2", "micra:pillar", null, abs(0, 0, 0), Map.of(), Set.of(), "L")),
+                new PlanOp.AddNode(node("n3", "micra:pillar", null, abs(0, 0, 0), Map.of(), Set.of("a", "b"), "L")),
+                new PlanOp.AddNode(node("n4", "micra:pillar", null, abs(0, 0, 0), Map.of(), Set.of(), ""))));
+        // hand-derived from the form: tags come out when tags or a label exist, the label only when it is not empty
+        assertEquals(List.of("# 建設スクリプト 1/1(計画 rt-plan)\n"
+                + "pillar(\"n1\", None, [0, 0, 0], {}, [\"a\"])\n"
+                + "pillar(\"n2\", None, [0, 0, 0], {}, [], \"L\")\n"
+                + "pillar(\"n3\", None, [0, 0, 0], {}, [\"a\", \"b\"], \"L\")\n"
+                + "pillar(\"n4\", None, [0, 0, 0], {})\n"), PlanScriptWriter.write(plan));
+        assertRoundTrip(plan);
     }
 
     @Test
@@ -446,17 +531,17 @@ class PlanScriptRoundTripTest {
                 new NumCase(123456789012.0, "123456789012", 123456789012.0),
                 new NumCase(-3.5, "-3.5", -3.5),
                 // "-0.0" is written as "0": the minus sign of zero cannot live in the decimal text the
-                // language reads, so the model's own rules flatten it to +0.0 (kept explicit, not hidden)
+                // language reads, so the plan model flattens it to +0.0 when it takes the value in (the
+                // stored plan already holds 0.0, and the round trip below is exact for it too)
                 new NumCase(-0.0, "0", 0.0));
         PlanPatcher widePatcher = new PlanPatcher(wideRegistry(), TestParts.bundle());
         for (NumCase c : cases) {
-            SemanticPlan plan;
-            {
-                PatchResult built = widePatcher.apply(SemanticPlan.empty("rt-plan"), new PlanPatch("p", 0, "test",
-                        List.of(new PlanOp.AddNode(node("w", "test:wide", null, abs(0, 0, 0), Map.of("v", new NumV(c.in())), Set.of(), "")))));
-                assertTrue(built.ok(), built.issues().toString());
-                plan = built.plan();
-            }
+            PatchResult built = widePatcher.apply(SemanticPlan.empty("rt-plan"), new PlanPatch("p", 0, "test",
+                    List.of(new PlanOp.AddNode(node("w", "test:wide", null, abs(0, 0, 0), Map.of("v", new NumV(c.in())), Set.of(), "")))));
+            assertTrue(built.ok(), built.issues().toString());
+            SemanticPlan plan = built.plan();
+            assertEquals(0, Double.compare(c.back(), ((NumV) plan.node("w").orElseThrow().params().get("v")).value()),
+                    "the plan stores " + c.back() + " for " + c.in());
             List<String> scripts = PlanScriptWriter.write(plan);
             assertEquals(1, scripts.size());
             assertTrue(scripts.get(0).contains("\"v\": " + c.text() + "}"), scripts.get(0));
@@ -466,9 +551,9 @@ class PlanScriptRoundTripTest {
             assertTrue(applied.ok(), applied.issues().toString());
             ParamValue v = applied.plan().node("w").orElseThrow().params().get("v");
             assertEquals(0, Double.compare(c.back(), ((NumV) v).value()), c.text());
-            if (Double.compare(c.in(), c.back()) == 0) {
-                assertEquals(plan.contentHash(), applied.plan().contentHash(), c.text());
-            }
+            // the hash for every case, -0.0 included, and the plan itself (both are at revision 1)
+            assertEquals(plan.contentHash(), applied.plan().contentHash(), c.text());
+            assertEquals(plan, applied.plan(), c.text());
         }
     }
 
@@ -512,9 +597,10 @@ class PlanScriptRoundTripTest {
 
     @Test
     void aStatementExactlyAtTheBudgetIsAcceptedAndOneCharMoreIsRefused() {
-        // Hand-derived: pillar("a", None, [0, 0, 0], {}, [], "<label>") is 41 + label characters, and
-        // the packer counts one newline per statement, so a statement takes 42 + label of the budget.
+        // Hand-derived: pillar("a", None, [0, 0, 0], {}, [], "<label>") is 40 + label characters, and
+        // the packer counts one newline per statement, so a statement takes 41 + label of the budget.
         int fixedChars = "pillar(\"a\", None, [0, 0, 0], {}, [], \"".length() + "\")".length() + 1;
+        assertEquals(41, fixedChars, "the hand-counted characters a statement takes besides its label");
         int budget = PlanScriptWriter.MAX_SCRIPT_CHARS - PlanScriptWriter.HEADER_RESERVE;
         int labelChars = budget - fixedChars;
         SemanticPlan fits = build(List.of(new PlanOp.AddNode(node("a", "micra:pillar", null, abs(0, 0, 0),
@@ -534,9 +620,10 @@ class PlanScriptRoundTripTest {
 
     @Test
     void thePackingBoundarySplitsOnTheExactCharacter() {
-        // Hand-derived: pillar("a", None, [0, 0, 0], {}) and pillar("b", ...) are 33 characters each;
-        // with one newline each the body is 2 * 34 = 68 characters.
+        // Hand-derived: pillar("a", None, [0, 0, 0], {}) and pillar("b", ...) are 32 characters each;
+        // with one newline each the body is 2 x 33 = 66 characters.
         int statementChars = "pillar(\"a\", None, [0, 0, 0], {})".length();
+        assertEquals(32, statementChars, "the hand-counted length of the statement");
         SemanticPlan plan = build(List.of(
                 new PlanOp.AddNode(node("a", "micra:pillar", null, abs(0, 0, 0), Map.of(), Set.of(), "")),
                 new PlanOp.AddNode(node("b", "micra:pillar", null, abs(1, 0, 0), Map.of(), Set.of(), ""))));
@@ -565,16 +652,66 @@ class PlanScriptRoundTripTest {
             assertTrue(scripts.get(i).startsWith("# 建設スクリプト " + (i + 1) + "/" + scripts.size() + "(計画 "),
                     "header numbers must be i/n in order: " + scripts.get(i));
         }
-        // reversed, the last chunk runs first: connect and child nodes land before the nodes they use
-        List<String> reversed = new ArrayList<>(scripts);
-        Collections.reverse(reversed);
-        PlanScriptRunner.Result r = PlanScriptRunner.run(reversed, "rt", 0, "t", PlanRunLimits.DEFAULT);
-        boolean reproduced = false;
-        if (r.ok()) {
-            PatchResult applied = patcher.apply(SemanticPlan.empty("rt-plan"), r.patch());
-            reproduced = applied.ok() && applied.plan().contentHash().equals(plan.contentHash());
+        // reversed, the last chunk runs first: every statement is fine on its own, but connections and child
+        // nodes land before the nodes they use, so the patcher refuses the recorded patch - and only for that
+        PlanScriptRunner.Result r = PlanScriptRunner.run(reversed(scripts), "rt", 0, "t", PlanRunLimits.DEFAULT);
+        assertTrue(r.ok(), r.issues().toString());
+        PatchResult applied = patcher.apply(SemanticPlan.empty("rt-plan"), r.patch());
+        assertFalse(applied.ok(), "out-of-order scripts must not reproduce the plan");
+        assertFalse(applied.issues().isEmpty());
+        assertTrue(applied.issues().stream().allMatch(i -> i.code() == IssueCode.E_ANCHOR || i.code() == IssueCode.E_CONN_INVALID),
+                "only forward references are refused: " + applied.issues());
+    }
+
+    private static List<String> reversed(List<String> scripts) {
+        List<String> copy = new ArrayList<>(scripts);
+        Collections.reverse(copy);
+        return copy;
+    }
+
+    /** The plan written with every statement in a script of its own: a limit that holds the longest statement and no two. */
+    private static List<String> oneStatementPerScript(SemanticPlan plan) {
+        String[] lines = PlanScriptWriter.write(plan).get(0).split("\n");
+        int longest = 0;
+        for (int i = 1; i < lines.length; i++) { // line 0 is the header
+            longest = Math.max(longest, lines[i].length());
         }
-        assertFalse(reproduced, "out-of-order scripts must not reproduce the plan");
+        List<String> scripts = PlanScriptWriter.write(plan, PlanScriptWriter.HEADER_RESERVE + longest + 1);
+        assertEquals(lines.length - 1, scripts.size(), "one script per statement");
+        return scripts;
+    }
+
+    /** Runs the scripts in the order given and applies the recorded patch to an empty plan: the ids of the issues that gives. */
+    private List<String> issueIdsOfReplaying(List<String> scripts) {
+        PlanScriptRunner.Result r = PlanScriptRunner.run(scripts, "rt", 0, "t", PlanRunLimits.DEFAULT);
+        assertTrue(r.ok(), "each statement is fine on its own: " + r.issues());
+        return patcher.apply(SemanticPlan.empty("rt-plan"), r.patch()).issues().stream().map(Issue::id).toList();
+    }
+
+    @Test
+    void scriptsRunOutOfOrderAreRefusedForExactlyTheThingsThatAreNotThereYet() {
+        // statements in the order m, s1, c-1 (the connection between them), each in a script of its own
+        Connection link = new Connection("c-1", new PortRef("m", "out"), new PortRef("s1", "in"), ConnKind.ROTATION,
+                Routing.AUTO, Constraints.NONE);
+        SemanticPlan machine = build(List.of(new PlanOp.AddNode(plain("m", "test:motor", null)),
+                new PlanOp.AddNode(plain("s1", "test:shaft", null)), new PlanOp.AddConnection(link)));
+        List<String> parts = oneStatementPerScript(machine);
+        for (int i = 0; i < parts.size(); i++) {
+            assertTrue(parts.get(i).startsWith("# 建設スクリプト " + (i + 1) + "/" + parts.size() + "(計画 "),
+                    "header numbers must be i/n in order: " + parts.get(i));
+        }
+        assertEquals(List.of(), issueIdsOfReplaying(parts), "in order: nothing is refused");
+        // connection first: neither end exists yet (from-end, then to-end)
+        assertEquals(List.of("E-CONN-INVALID:c-1#m.out", "E-CONN-INVALID:c-1#s1.in"), issueIdsOfReplaying(reversed(parts)));
+        // shaft, connection, motor: only the motor is missing when the connection arrives
+        assertEquals(List.of("E-CONN-INVALID:c-1#m.out"), issueIdsOfReplaying(List.of(parts.get(1), parts.get(2), parts.get(0))));
+
+        // a child before its parent: the wall is refused because the hut is not there yet
+        SemanticPlan house = build(List.of(new PlanOp.AddNode(plain("hut", "micra:structure", null)),
+                new PlanOp.AddNode(node("wall-n", "micra:wall", "hut", abs(0, 0, 0), Map.of("side", new StrV("north")), Set.of(), ""))));
+        List<String> hutAndWall = oneStatementPerScript(house);
+        assertEquals(List.of(), issueIdsOfReplaying(hutAndWall));
+        assertEquals(List.of("E-ANCHOR:wall-n#parent"), issueIdsOfReplaying(reversed(hutAndWall)));
     }
 
     @Test

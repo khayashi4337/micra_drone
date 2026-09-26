@@ -22,6 +22,7 @@ import io.github.khayashi4337.micradrone.build.parts.BuildingParts;
 import io.github.khayashi4337.micradrone.build.parts.ParamValidator;
 import io.github.khayashi4337.micradrone.build.parts.PartType;
 import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
+import io.github.khayashi4337.micradrone.lang.PlanApi;
 import io.github.khayashi4337.micradrone.lang.PlanValueText;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -78,7 +79,6 @@ public final class PlanPatcher {
     /** Followed by the position of the port in its dock's list. */
     private static final String KEY_PORT_PREFIX = "port:";
     private static final String KEY_VIA_PREFIX = "via:";
-    private static final String PORT_SEPARATOR = ".";
 
     private static final String MESSAGE_DEPENDENCY_LOOP =
             "親子の関係と面に載せる関係が輪になっています(載せる先が、この部品に親子か面の関係でつながっています)";
@@ -492,7 +492,7 @@ public final class PlanPatcher {
         boolean ok = true;
         for (PortRef ref : List.of(c.from(), c.to())) {
             if (!portExists(st, ref)) {
-                String where = ref.nodeId() + PORT_SEPARATOR + ref.port();
+                String where = ref.nodeId() + PlanApi.NODE_PORT_SEPARATOR + ref.port();
                 issues.add(Issue.of(IssueCode.E_CONN_INVALID, where, List.of(c.id()), "つなぎ口がありません: " + where));
                 ok = false;
             }
@@ -585,7 +585,7 @@ public final class PlanPatcher {
             PortRef ref = ports.get(i);
             if (!PlanIds.isValid(ref.nodeId()) || ref.port().isEmpty()) {
                 issues.add(Issue.of(IssueCode.E_CONN_INVALID, KEY_PORT_PREFIX + i, List.of(d.id()),
-                        "発着場" + PlanValueText.describe(d.id()) + "のつなぎ口を「ノードID" + PORT_SEPARATOR
+                        "発着場" + PlanValueText.describe(d.id()) + "のつなぎ口を「ノードID" + PlanApi.NODE_PORT_SEPARATOR
                                 + "ポート名」の形で書けません(ノードIDは" + PlanIds.MAX_LENGTH
                                 + "字以内の小文字・数字・ハイフンで、ポート名は空にしないでください): ノードID「"
                                 + PlanValueText.describe(ref.nodeId()) + "」 ポート名「" + PlanValueText.describe(ref.port()) + "」"));

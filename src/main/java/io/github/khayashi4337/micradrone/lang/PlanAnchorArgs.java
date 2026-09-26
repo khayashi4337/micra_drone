@@ -7,6 +7,11 @@ package io.github.khayashi4337.micradrone.lang;
 public record PlanAnchorArgs(Kind kind, int u, int v, int w, int turns, boolean mirror, String target, String side, String slot) {
     public enum Kind { ABSOLUTE, SURFACE, SLOT }
 
+    /** The first element of a script's anchor list that names the kind: {@code ["surface", wall, side, u, v]}. */
+    public static final String SURFACE_TEXT = "surface";
+    /** The first element of a script's anchor list that names the kind: {@code ["slot", slot, turns, mirror]}. */
+    public static final String SLOT_TEXT = "slot";
+
     public static PlanAnchorArgs absolute(int u, int v, int w, int turns, boolean mirror) {
         return new PlanAnchorArgs(Kind.ABSOLUTE, u, v, w, turns, mirror, null, null, null);
     }

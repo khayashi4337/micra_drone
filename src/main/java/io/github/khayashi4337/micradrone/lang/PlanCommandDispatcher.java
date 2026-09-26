@@ -41,8 +41,8 @@ final class PlanCommandDispatcher {
     /** What an omitted {@code terrain_digest}, {@code claim_id} or {@code label} becomes. */
     private static final String ABSENT_TEXT = "";
 
-    private static final String ANCHOR_SURFACE = "surface";
-    private static final String ANCHOR_SLOT = "slot";
+    private static final String ANCHOR_SURFACE = PlanAnchorArgs.SURFACE_TEXT;
+    private static final String ANCHOR_SLOT = PlanAnchorArgs.SLOT_TEXT;
     private static final String SIDE_OUTER = "outer";
     private static final String SIDE_INNER = "inner";
     /** {@code ["surface", target, side, u, v]}. */
@@ -58,7 +58,6 @@ final class PlanCommandDispatcher {
 
     private static final List<String> FACINGS = Arrays.stream(Facing.values()).map(Facing::lower).toList();
     private static final String FACINGS_QUOTED = FACINGS.stream().map(f -> "\"" + f + "\"").collect(Collectors.joining(" "));
-    private static final char NODE_PORT_SEPARATOR = '.';
 
     private PlanCommandDispatcher() {
     }
@@ -268,7 +267,7 @@ final class PlanCommandDispatcher {
 
     /** {@code "node.port"}: both halves non-empty. */
     private static String nodePort(String s) {
-        int dot = s.indexOf(NODE_PORT_SEPARATOR);
+        int dot = s.indexOf(PlanApi.NODE_PORT_SEPARATOR);
         if (dot <= 0 || dot == s.length() - 1) {
             throw new IllegalArgumentException("\"ノードID.ポート名\" の形にしてください(" + PlanValueText.describe(s) + ")");
         }
