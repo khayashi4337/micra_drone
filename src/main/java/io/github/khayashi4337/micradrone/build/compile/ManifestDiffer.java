@@ -5,9 +5,11 @@ import io.github.khayashi4337.micradrone.build.model.IntPos;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -18,6 +20,13 @@ public final class ManifestDiffer {
     private ManifestDiffer() {
     }
 
+    /**
+     * Diffs two manifests of the same dimension. Removals come out top-down (y descending, then z, then x) so
+     * nothing falls onto work still in progress; additions and changes follow the new manifest's index order
+     * (the order of {@code to.placements()}). {@code restoreLookup} is asked only about removed positions, and
+     * a {@code null} answer means {@link BlockSpec#AIR}. Throws {@link IllegalArgumentException} when the two
+     * manifests name different dimensions.
+     */
     public static ManifestDiff diff(PlacementManifest from, PlacementManifest to, Function<IntPos, BlockSpec> restoreLookup) {
         Objects.requireNonNull(from, "from");
         Objects.requireNonNull(to, "to");
@@ -29,19 +38,19 @@ public final class ManifestDiffer {
         for (Placement p : from.placements()) {
             oldByPos.put(p.pos(), p);
         }
-        Map<IntPos, Placement> newByPos = new HashMap<>();
+        Set<IntPos> newPositions = new HashSet<>();
         for (Placement p : to.placements()) {
-            newByPos.put(p.pos(), p);
+            newPositions.add(p.pos());
         }
         List<RemovalEntry> removals = new ArrayList<>();
         for (Placement old : from.placements()) {
-            if (!newByPos.containsKey(old.pos())) {
+            if (!newPositions.contains(old.pos())) {
                 BlockSpec restore = restoreLookup.apply(old.pos());
                 removals.add(new RemovalEntry(old, old.block(), restore == null ? BlockSpec.AIR : restore));
             }
         }
         // removal order: highest y first so nothing falls onto work still in progress, then z, then x
-        removals.sort(Comparator.<RemovalEntry>comparingInt(r -> -r.old().pos().y())
+        removals.sort(Comparator.<RemovalEntry>comparingInt(r -> r.old().pos().y()).reversed()
                 .thenComparingInt(r -> r.old().pos().z()).thenComparingInt(r -> r.old().pos().x()));
         List<Placement> additions = new ArrayList<>();
         List<PlacementChange> changes = new ArrayList<>();

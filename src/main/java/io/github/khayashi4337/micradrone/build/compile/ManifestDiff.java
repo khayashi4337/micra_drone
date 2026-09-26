@@ -15,5 +15,8 @@ public record ManifestDiff(String fromHash, String toHash, List<RemovalEntry> re
         removals = List.copyOf(Objects.requireNonNull(removals, "removals"));
         additions = List.copyOf(Objects.requireNonNull(additions, "additions"));
         changes = List.copyOf(Objects.requireNonNull(changes, "changes"));
+        if (unchanged < 0) {
+            throw new IllegalArgumentException("unchanged must not be negative: " + unchanged);
+        }
     }
 }
