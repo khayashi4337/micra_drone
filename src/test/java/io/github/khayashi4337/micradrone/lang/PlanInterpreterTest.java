@@ -626,13 +626,24 @@ class PlanInterpreterTest {
 
     @Test
     void aPrintRefusalFromTheApiIsAPlanLimitExceptionWithTheLine() {
-        // the recorder's printed-output budget refuses with an IllegalArgumentException; in plan
-        // mode that is an expected limit, so the interpreter rethrows it as a PlanLimitException
-        // carrying the call's line - otherwise the runner reports it as an internal error
+        // the recorder's budgets refuse with a PlanBudgetException; in plan mode that is an
+        // expected limit, so the interpreter rethrows it as a PlanLimitException carrying the
+        // call's line - otherwise the runner reports it as an internal error
         PlanLimitException e = assertThrows(PlanLimitException.class,
-                () -> new Interpreter(refusingPrintPlanApi(), PlanRunLimits.DEFAULT).run(
+                () -> new Interpreter(budgetRefusingPrintPlanApi(), PlanRunLimits.DEFAULT).run(
                         new Parser(new Lexer("x = 1\nprint(\"hi\")\n").scan()).parseProgram()));
         assertEquals("line 2: printed output refused", e.getMessage());
+    }
+
+    @Test
+    void aNonBudgetPrintRefusalFromTheApiPropagatesUnchangedInPlanMode() {
+        // a plain IllegalArgumentException from api.print is not a budget refusal - it is a
+        // recorder bug and must propagate unchanged, not be rethrown as a limit
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> new Interpreter(refusingPrintPlanApi(), PlanRunLimits.DEFAULT).run(
+                        new Parser(new Lexer("print(\"hi\")\n").scan()).parseProgram()));
+        assertEquals(IllegalArgumentException.class, e.getClass(), "a bug must not be wrapped as a limit");
+        assertEquals("printed output refused", e.getMessage());
     }
 
     @Test
@@ -724,12 +735,21 @@ class PlanInterpreterTest {
         assertEquals(List.of("4096"), api.printed);
     }
 
-    /** A {@link PlanApi} whose {@code print} refuses the way the recorder's output budget does. */
+    /** A {@link PlanApi} whose {@code print} refuses with a {@link PlanBudgetException}, the way the recorder's budgets do. */
+    private static PlanApi budgetRefusingPrintPlanApi() {
+        return printRefusingPlanApi(new PlanBudgetException("printed output refused"));
+    }
+
+    /** A {@link PlanApi} whose {@code print} throws an ordinary IllegalArgumentException - a bug, not a budget. */
     private static PlanApi refusingPrintPlanApi() {
+        return printRefusingPlanApi(new IllegalArgumentException("printed output refused"));
+    }
+
+    private static PlanApi printRefusingPlanApi(RuntimeException refusal) {
         return (PlanApi) Proxy.newProxyInstance(PlanApi.class.getClassLoader(), new Class<?>[]{PlanApi.class},
                 (proxy, method, args) -> {
                     if (method.getName().equals("print")) {
-                        throw new IllegalArgumentException("printed output refused");
+                        throw refusal;
                     }
                     return null;
                 });

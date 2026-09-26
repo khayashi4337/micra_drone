@@ -24,6 +24,7 @@ import io.github.khayashi4337.micradrone.build.model.StyleSpec;
 import io.github.khayashi4337.micradrone.lang.MicraNone;
 import io.github.khayashi4337.micradrone.lang.PlanAnchorArgs;
 import io.github.khayashi4337.micradrone.lang.PlanApi;
+import io.github.khayashi4337.micradrone.lang.PlanBudgetException;
 import io.github.khayashi4337.micradrone.lang.PlanValueText;
 import java.util.ArrayList;
 import java.util.List;
@@ -42,11 +43,13 @@ import java.util.TreeSet;
  * that are not data (functions, None inside params/logistics, sets) are IllegalArgumentExceptions too; the message
  * names the offending argument.
  *
- * <p>Two cumulative budgets bound what ONE recorder retains across every script of a run - the interpreter's
+ * <p>Three cumulative budgets bound what ONE recorder retains across every script of a run - the interpreter's
  * allocation counter is per script and cannot see what earlier scripts already recorded: {@link
- * #MAX_RECORDED_ELEMENTS} counts recorded elements (see {@link #chargeRecordedElements}) and {@link
- * #MAX_PRINTED_CHARS} counts the characters kept in {@link #printed}. Every charge is taken before the
- * elements it covers are built, so a refused operation is never partially recorded.
+ * #MAX_RECORDED_ELEMENTS} counts recorded elements (see {@link #chargeRecordedElements}), {@link
+ * #MAX_RECORDED_CHARS} counts the characters of every string an operation keeps (see {@link #chargeRecordedChars})
+ * and {@link #MAX_PRINTED_CHARS} counts the characters kept in {@link #printed}. Every charge is taken before the
+ * elements it covers are built, so a refused operation is never partially recorded. Budget refusals are
+ * {@link PlanBudgetException}s so the dispatcher can tell a limit from a malformed value.
  */
 public final class PlanRecorder implements PlanApi {
     private static final int SITE_BOUNDS_SIZE = 6;
@@ -74,6 +77,16 @@ public final class PlanRecorder implements PlanApi {
      * with recorded copies.
      */
     private static final long MAX_RECORDED_ELEMENTS = 200_000;
+    /**
+     * Total characters of the strings the recorder retains across ALL ops of the run: an element
+     * counts 1 whatever its text weighs, so the strings get their own budget. Every retained
+     * string costs its {@code length()} (a null string costs 0): ids, names, types, labels, tags,
+     * port texts, the {@code via}/{@code avoid}/{@code entry_dirs} entries, the dock/route/flow
+     * fields of {@link #logistics}, and every params key and string scalar {@link #boundedCopy}
+     * walks. Enum-parsed texts (site facing, connect kind, dock approach, entry_dirs names) are
+     * charged on the string that was read, before the parse that may reject it.
+     */
+    private static final long MAX_RECORDED_CHARS = 1_000_000;
     /** Total characters {@link #printed} may retain across the whole run - same reason as {@link #MAX_RECORDED_ELEMENTS}. */
     private static final long MAX_PRINTED_CHARS = 1_000_000;
     private static final List<String> DOCK_KEYS = List.of("id", "pad", "clearance", "approach", "ports", "connectors");
@@ -86,6 +99,7 @@ public final class PlanRecorder implements PlanApi {
     private int styleAt = -1;
     private final List<String> printed = new ArrayList<>();
     private long recordedElements;
+    private long recordedChars;
     private long printedChars;
 
     public PlanPatch toPatch(String patchId, int baseRevision, String stageId) {
@@ -114,12 +128,14 @@ public final class PlanRecorder implements PlanApi {
         }
         Box box = new Box(bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5]);
         chargeRecordedElements(1);
+        chargeRecordedChars(textChars(dimension) + textChars(facing) + textChars(terrainDigest) + textChars(claimId));
         ops.add(new PlanOp.SetSite(new Site(dimension, new BuildFrame(new IntPos(x, y, z), Facing.parse(facing)), box, terrainDigest, claimId)));
     }
 
     @Override
     public void style(String role, String material) {
         chargeRecordedElements(1);
+        chargeRecordedChars(textChars(role) + textChars(material));
         touchStyle();
         palette.put(role, material);
     }
@@ -127,6 +143,7 @@ public final class PlanRecorder implements PlanApi {
     @Override
     public void mood(String tag) {
         chargeRecordedElements(1);
+        chargeRecordedChars(textChars(tag));
         touchStyle();
         mood.add(tag);
     }
@@ -134,30 +151,39 @@ public final class PlanRecorder implements PlanApi {
     @Override
     public void part(String id, String type, String parent, PlanAnchorArgs anchor, Map<String, Object> params, List<String> tags, String label) {
         chargeRecordedElements(1 + tags.size());
+        chargeRecordedChars(textChars(id) + textChars(type) + textChars(parent) + textChars(label));
+        chargeRecordedCharsOf(tags);
         ops.add(new PlanOp.AddNode(new PlanNode(id, type, parent, toAnchor(anchor), toParams(params), Set.copyOf(tags), label)));
     }
 
     @Override
     public void updateParams(String id, Map<String, Object> params) {
         chargeRecordedElements(1);
+        chargeRecordedChars(textChars(id));
         ops.add(new PlanOp.UpdateParams(id, toParams(params)));
     }
 
     @Override
     public void relocate(String id, PlanAnchorArgs anchor) {
         chargeRecordedElements(1);
+        chargeRecordedChars(textChars(id));
         ops.add(new PlanOp.MoveNode(id, toAnchor(anchor)));
     }
 
     @Override
     public void removePart(String id) {
         chargeRecordedElements(1);
+        chargeRecordedChars(textChars(id));
         ops.add(new PlanOp.RemoveNode(id));
     }
 
     @Override
     public void connect(String id, String from, String to, String kind, List<String> via, Map<String, Object> constraints) {
         chargeRecordedElements(1 + (via == null ? 0 : via.size()));
+        chargeRecordedChars(textChars(id) + textChars(from) + textChars(to) + textChars(kind));
+        if (via != null) {
+            chargeRecordedCharsOf(via);
+        }
         ops.add(new PlanOp.AddConnection(new Connection(id, port(from), port(to), ConnKind.parse(kind),
                 via == null ? Routing.AUTO : new Routing.Explicit(via), toConstraints(constraints))));
     }
@@ -165,6 +191,7 @@ public final class PlanRecorder implements PlanApi {
     @Override
     public void disconnect(String id) {
         chargeRecordedElements(1);
+        chargeRecordedChars(textChars(id));
         ops.add(new PlanOp.RemoveConnection(id));
     }
 
@@ -180,12 +207,19 @@ public final class PlanRecorder implements PlanApi {
             // charged BEFORE the PortRef list is built: a dock whose ports list is huge must be
             // refused here, not after a PortRef per entry has been materialised
             chargeRecordedElements(1 + portSpecs.size() + connectorSpecs.size());
+            String dockId = text(d.get("id"), "id");
+            String approach = text(d.get("approach"), "approach");
+            chargeRecordedChars(textChars(dockId) + textChars(approach));
             List<PortRef> ports = new ArrayList<>();
             for (Object p : portSpecs) {
-                ports.add(port(text(p, "ports")));
+                String portSpec = text(p, "ports");
+                chargeRecordedChars(portSpec.length());
+                ports.add(port(portSpec));
             }
-            dockList.add(new LogisticsPlan.Dock(text(d.get("id"), "id"), box(d.get("pad"), "pad"), box(d.get("clearance"), "clearance"),
-                    Facing.parse(text(d.get("approach"), "approach")), ports, strings(connectorSpecs, "connectors")));
+            List<String> connectorIds = strings(connectorSpecs, "connectors");
+            chargeRecordedCharsOf(connectorIds);
+            dockList.add(new LogisticsPlan.Dock(dockId, box(d.get("pad"), "pad"), box(d.get("clearance"), "clearance"),
+                    Facing.parse(approach), ports, connectorIds));
         }
         List<LogisticsPlan.Route> routeList = new ArrayList<>();
         for (Object o : routes) {
@@ -201,8 +235,12 @@ public final class PlanRecorder implements PlanApi {
                 }
                 pts.add(new LocalPos(integer(c.get(0)), integer(c.get(1)), integer(c.get(2))));
             }
-            routeList.add(new LogisticsPlan.Route(text(r.get("id"), "id"), text(r.get("from"), "from"), text(r.get("to"), "to"), pts,
-                    r.get("airship") == null || r.get("airship") instanceof MicraNone ? null : text(r.get("airship"), "airship")));
+            String routeId = text(r.get("id"), "id");
+            String from = text(r.get("from"), "from");
+            String to = text(r.get("to"), "to");
+            String airship = r.get("airship") == null || r.get("airship") instanceof MicraNone ? null : text(r.get("airship"), "airship");
+            chargeRecordedChars(textChars(routeId) + textChars(from) + textChars(to) + textChars(airship));
+            routeList.add(new LogisticsPlan.Route(routeId, from, to, pts, airship));
         }
         List<LogisticsPlan.CargoFlow> flowList = new ArrayList<>();
         for (Object o : flows) {
@@ -212,17 +250,23 @@ public final class PlanRecorder implements PlanApi {
                 throw new IllegalArgumentException("流れの per_min は数が必要です");
             }
             chargeRecordedElements(1);
-            flowList.add(new LogisticsPlan.CargoFlow(text(f.get("item"), "item"), perMin, text(f.get("from"), "from"), text(f.get("to"), "to")));
+            String item = text(f.get("item"), "item");
+            String from = text(f.get("from"), "from");
+            String to = text(f.get("to"), "to");
+            chargeRecordedChars(textChars(item) + textChars(from) + textChars(to));
+            flowList.add(new LogisticsPlan.CargoFlow(item, perMin, from, to));
         }
         ops.add(new PlanOp.SetLogistics(new LogisticsPlan(dockList, routeList, flowList)));
     }
 
     @Override
     public void print(String text) {
-        printedChars += text.length();
-        if (printedChars > MAX_PRINTED_CHARS) {
-            throw new IllegalArgumentException("出力が大きすぎます(記録する文字は合計 " + MAX_PRINTED_CHARS + " 字まで)");
+        // checked BEFORE the counter moves: a refused text is retained nowhere, so its
+        // characters must not be counted - a following small print still fits when there is room
+        if (printedChars + text.length() > MAX_PRINTED_CHARS) {
+            throw new PlanBudgetException("出力が大きすぎます(記録する文字は合計 " + MAX_PRINTED_CHARS + " 字まで)");
         }
+        printedChars += text.length();
         printed.add(text);
     }
 
@@ -230,13 +274,39 @@ public final class PlanRecorder implements PlanApi {
 
     /**
      * Counts elements the run is about to retain against {@link #MAX_RECORDED_ELEMENTS}; a refusal
-     * is an ordinary IllegalArgumentException, which the dispatcher turns into a script error.
+     * is a {@link PlanBudgetException}, which the dispatcher reports as a limit (E-SCRIPT-LIMIT).
      */
     private void chargeRecordedElements(long units) {
         recordedElements += units;
         if (recordedElements > MAX_RECORDED_ELEMENTS) {
-            throw new IllegalArgumentException("記録する計画が大きすぎます(要素は合計 " + MAX_RECORDED_ELEMENTS + " 個まで)");
+            throw new PlanBudgetException("記録する計画が大きすぎます(要素は合計 " + MAX_RECORDED_ELEMENTS + " 個まで)");
         }
+    }
+
+    /**
+     * Counts characters of strings the run is about to retain against {@link #MAX_RECORDED_CHARS}
+     * - the element budget counts nodes, not what the text inside them weighs. A refusal is a
+     * {@link PlanBudgetException} for the same reason.
+     */
+    private void chargeRecordedChars(long chars) {
+        recordedChars += chars;
+        if (recordedChars > MAX_RECORDED_CHARS) {
+            throw new PlanBudgetException("記録する計画が大きすぎます(記録する文字は合計 " + MAX_RECORDED_CHARS + " 字まで)");
+        }
+    }
+
+    /** Charges the length of every string in the list; a null entry costs 0. */
+    private void chargeRecordedCharsOf(Iterable<String> strings) {
+        long chars = 0;
+        for (String s : strings) {
+            chars += textChars(s);
+        }
+        chargeRecordedChars(chars);
+    }
+
+    /** The characters one retained string costs; null (nothing kept) costs 0. */
+    private static long textChars(String s) {
+        return s == null ? 0 : s.length();
     }
 
     private static Anchor toAnchor(PlanAnchorArgs a) {
@@ -264,6 +334,7 @@ public final class PlanRecorder implements PlanApi {
         Map<String, ParamValue> out = new TreeMap<>();
         ParamBudget budget = new ParamBudget();
         for (Map.Entry<String, Object> e : params.entrySet()) {
+            chargeRecordedChars(textChars(e.getKey()));
             Object value = boundedCopy(e.getKey(), e.getValue(), budget, 0);
             try {
                 out.put(e.getKey(), ParamValue.fromTree(value));
@@ -295,6 +366,11 @@ public final class PlanRecorder implements PlanApi {
         }
         chargeRecordedElements(1);
         if (!(value instanceof List<?> list)) {
+            // a scalar the copy keeps - a string's characters count against the run-wide
+            // character budget on top of its one element
+            if (value instanceof String s) {
+                chargeRecordedChars(s.length());
+            }
             return value;
         }
         // a list nested inside `depth` lists is level depth+1; level 9 or deeper is refused, so an
@@ -337,11 +413,13 @@ public final class PlanRecorder implements PlanApi {
                 case "avoid" -> {
                     List<String> names = strings(e.getValue(), "avoid");
                     chargeRecordedElements(names.size());
+                    chargeRecordedCharsOf(names);
                     avoid.addAll(names);
                 }
                 case "entry_dirs" -> {
                     List<String> names = strings(e.getValue(), "entry_dirs");
                     chargeRecordedElements(names.size());
+                    chargeRecordedCharsOf(names);
                     for (String d : names) {
                         dirs.add(Dir6.parse(d));
                     }

@@ -21,6 +21,22 @@ class PlanScriptRunnerTest {
         return r.issues().stream().map(i -> i.code().label()).toList();
     }
 
+    /** The stack the overflow tests run under, so they do not depend on the test JVM's -Xss. */
+    private static final long OVERFLOW_TEST_STACK_BYTES = 256L * 1024;
+
+    /**
+     * Runs the scripts on a thread with a deliberately small stack: a deeply nested or cyclic
+     * script overflows the parser/interpreter deterministically whatever stack size the test
+     * JVM itself was started with.
+     */
+    private static PlanScriptRunner.Result runOnASmallStack(String... scripts) throws InterruptedException {
+        PlanScriptRunner.Result[] out = new PlanScriptRunner.Result[1];
+        Thread worker = new Thread(null, () -> out[0] = run(scripts), "small-stack", OVERFLOW_TEST_STACK_BYTES);
+        worker.start();
+        worker.join();
+        return out[0];
+    }
+
     @Test
     void aValidScriptBecomesAPatch() {
         PlanScriptRunner.Result r = run("structure(\"hut\", None, [0, 0, 0], {\"width\": 7})\nprint(\"built\")\n");
@@ -197,9 +213,10 @@ class PlanScriptRunnerTest {
     }
 
     @Test
-    void aStackOverflowInsideARunIsALimitIssueNotAnError() {
-        // Java list equality on cyclic lists recurses until the stack gives out
-        PlanScriptRunner.Result r = run("a = []\na.append(a)\nb = []\nb.append(b)\nprint(a == b)");
+    void aStackOverflowInsideARunIsALimitIssueNotAnError() throws InterruptedException {
+        // Java list equality on cyclic lists recurses until the stack gives out; the run happens
+        // on a small-stack thread so the overflow is deterministic whatever -Xss the JVM uses
+        PlanScriptRunner.Result r = runOnASmallStack("a = []\na.append(a)\nb = []\nb.append(b)\nprint(a == b)");
         assertNull(r.patch());
         assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r));
         assertEquals("E-SCRIPT-LIMIT:#stack:1", r.issues().get(0).id());
@@ -304,12 +321,13 @@ class PlanScriptRunnerTest {
         // R (the controller's measurement): every wall() call records a fresh 9,001-node copy of
         // the same 9,000-element list, so the recorder's cumulative 200,000-element budget
         // refuses the 23rd call (22 x 9,002 = 198,044, +9,002 = 207,046) instead of letting the
-        // recorded ops fill the heap
+        // recorded ops fill the heap. A budget refusal is a limit, not a malformed value, so it
+        // is reported as E-SCRIPT-LIMIT
         PlanScriptRunner.Result r = run("a = []\nfor i in range(9000):\n    a.append(i)\n"
                 + "while True:\n    wall(\"w\", None, [0,0,0], {\"x\": a})\n");
         assertNull(r.patch());
-        assertEquals(List.of("E-SCHEMA"), codes(r));
-        assertEquals("E-SCHEMA:#run:1", r.issues().get(0).id());
+        assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r));
+        assertEquals("E-SCRIPT-LIMIT:#run:1", r.issues().get(0).id());
         assertTrue(r.issues().get(0).message().contains("200000"), r.issues().get(0).message());
     }
 
@@ -318,14 +336,15 @@ class PlanScriptRunnerTest {
         // S (the controller's measurement): docks holds 19,000 references to one dock whose
         // ports holds 19,000 references - reading it the old way materialised 361,000,000
         // PortRefs in a single step. Each dock is charged 1 + 19,000 + 0 = 19,001 before its
-        // ports are read, so the 11th dock (190,011 + 19,001 > 200,000) is refused quickly
+        // ports are read, so the 11th dock (190,011 + 19,001 > 200,000) is refused quickly - a
+        // budget refusal, reported as E-SCRIPT-LIMIT
         PlanScriptRunner.Result r = run(
                 "d = {\"id\": \"x\", \"pad\": [0,0,0,1,1,1], \"clearance\": [0,0,0,1,1,1], \"approach\": \"north\", \"ports\": []}\n"
                         + "for i in range(19000):\n    d[\"ports\"].append(\"n.p\")\n"
                         + "docks = []\nfor i in range(19000):\n    docks.append(d)\n"
                         + "logistics(docks, [], [])\n");
         assertNull(r.patch());
-        assertEquals(List.of("E-SCHEMA"), codes(r));
+        assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r));
         assertTrue(r.issues().get(0).message().contains("200000"), r.issues().get(0).message());
     }
 
@@ -339,18 +358,19 @@ class PlanScriptRunnerTest {
     }
 
     @Test
-    void aScriptThatNestsTooDeeplyIsALimitIssueNotAnError() {
+    void aScriptThatNestsTooDeeplyIsALimitIssueNotAnError() throws InterruptedException {
         // T/U/V (the controller's measurements): 4,000 nested parentheses, 4,000 nested brackets
         // and a 9,900-strong unary-minus chain all overflow the recursive-descent parser's stack
         // during parse - before the interpreter ever runs. Each is under 10,000 characters, and
-        // each must become an E-SCRIPT-LIMIT issue keyed stack:1, not an escaping Error
+        // each must become an E-SCRIPT-LIMIT issue keyed stack:1, not an escaping Error. The run
+        // happens on a small-stack thread so the overflow does not depend on the JVM's -Xss
         List<String> scripts = List.of(
                 "x = " + "(".repeat(4_000) + "1" + ")".repeat(4_000),
                 "x = " + "[".repeat(4_000) + "]".repeat(4_000),
                 "x = " + "-".repeat(9_900) + "1");
         for (String script : scripts) {
             assertTrue(script.length() <= PlanScriptWriter.MAX_SCRIPT_CHARS);
-            PlanScriptRunner.Result r = run(script);
+            PlanScriptRunner.Result r = runOnASmallStack(script);
             assertNull(r.patch());
             assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r));
             assertEquals("E-SCRIPT-LIMIT:#stack:1", r.issues().get(0).id());
@@ -359,10 +379,12 @@ class PlanScriptRunnerTest {
     }
 
     @Test
-    void aStackOverflowInASecondScriptStillLeavesNoPatch() {
+    void aStackOverflowInASecondScriptStillLeavesNoPatch() throws InterruptedException {
         // script 1 is fine, script 2 overflows during parse: script 1's recorded work is
-        // discarded (patch null) and the issue names script 2
-        PlanScriptRunner.Result r = run("mood(\"ok\")", "x = " + "(".repeat(4_000) + "1" + ")".repeat(4_000));
+        // discarded (patch null) and the issue names script 2. Same small-stack thread as its
+        // sibling overflow tests
+        PlanScriptRunner.Result r = runOnASmallStack("mood(\"ok\")",
+                "x = " + "(".repeat(4_000) + "1" + ")".repeat(4_000));
         assertNull(r.patch());
         assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r));
         assertEquals("E-SCRIPT-LIMIT:#stack:2", r.issues().get(0).id());
@@ -441,5 +463,19 @@ class PlanScriptRunnerTest {
         assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r2));
         assertTrue(r2.issues().get(0).message().contains("total allocation limit of 10000000"),
                 r2.issues().get(0).message());
+    }
+
+    // ---- a budget refusal is a limit issue; an ordinary bad value stays a schema issue (fix round 7) ----
+
+    @Test
+    void anUnknownLogisticsKeyIsStillASchemaIssueNotALimit() {
+        // an unknown dock key is an ordinary IllegalArgumentException from the recorder - a
+        // script mistake, not a budget refusal - so it keeps the E-SCHEMA path; only a
+        // PlanBudgetException becomes E-SCRIPT-LIMIT
+        PlanScriptRunner.Result r = run("logistics([{\"id\": \"d\", \"bogus\": 1}], [], [])");
+        assertNull(r.patch());
+        assertEquals(List.of("E-SCHEMA"), codes(r));
+        assertEquals("E-SCHEMA:#run:1", r.issues().get(0).id());
+        assertTrue(r.issues().get(0).message().contains("bogus"), r.issues().get(0).message());
     }
 }

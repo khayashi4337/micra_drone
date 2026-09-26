@@ -118,11 +118,13 @@ public final class Interpreter {
     private static final int PLAN_MAX_COLLECTION_ELEMENTS = 100_000;
     /**
      * Total units one construction-script run may allocate: one unit is about eight bytes of
-     * retained heap - one ArrayList slot, or one character of a string the script produces - so
-     * 10,000,000 units of the heaviest weight are about 80 MB, which fits comfortably under a
-     * small heap. A list literal's element counts {@link #PLAN_LIST_LITERAL_ELEMENT_UNITS} units,
-     * a dict entry or set element counts {@link #PLAN_HASH_ENTRY_UNITS} units, and a character of
-     * a split string counts {@link #PLAN_CHAR_ELEMENT_UNITS} units. The per-value
+     * retained heap for a list slot; a character of a produced string counts one unit although
+     * it retains only one to two bytes - deliberately generous - and the heavier objects carry
+     * higher weights, so the whole 10,000,000-unit budget stays around 80 MB of retained heap,
+     * which fits comfortably under a small heap. A list literal's element counts {@link
+     * #PLAN_LIST_LITERAL_ELEMENT_UNITS} units, a dict entry or set element counts {@link
+     * #PLAN_HASH_ENTRY_UNITS} units, and a character of a split string counts {@link
+     * #PLAN_CHAR_ELEMENT_UNITS} units. The per-value
      * caps ({@link #PLAN_MAX_STRING_CHARS}, {@link #PLAN_MAX_COLLECTION_ELEMENTS}) bound each
      * single value but not what a whole run retains - printing or copying a legal-sized value in
      * a loop still exhausts the heap, so the run as a whole gets a budget too. Charged where a
@@ -1000,10 +1002,11 @@ public final class Interpreter {
                 if (planLimits != null) {
                     try {
                         api.print(rendered);
-                    } catch (IllegalArgumentException e) {
-                        // the recorder's printed-output budget is an expected limit, not an
-                        // internal error - rethrown with the line so the runner reports
-                        // E-SCRIPT-LIMIT instead of an unexpected failure
+                    } catch (PlanBudgetException e) {
+                        // the recorder's budgets are expected limits, not internal errors -
+                        // rethrown with the line so the runner reports E-SCRIPT-LIMIT instead
+                        // of an unexpected failure. Any other exception from the api is a
+                        // recorder bug and propagates unchanged
                         throw new PlanLimitException(call.line(), e.getMessage());
                     }
                 } else {

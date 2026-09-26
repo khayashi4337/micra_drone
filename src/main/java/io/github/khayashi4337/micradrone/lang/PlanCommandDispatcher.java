@@ -66,6 +66,9 @@ final class PlanCommandDispatcher {
     static Object invoke(PlanApi api, String name, List<Object> args, int line) {
         try {
             return dispatch(api, name, args, line);
+        } catch (PlanBudgetException e) {
+            // a recorder budget refusal is a limit (E-SCRIPT-LIMIT), not a malformed value
+            throw new PlanLimitException(line, name + "(): " + e.getMessage());
         } catch (IllegalArgumentException e) {
             throw new MicraLangException(line, name + "(): " + e.getMessage());
         }
