@@ -735,6 +735,98 @@ class PlanInterpreterTest {
         assertEquals(List.of("4096"), api.printed);
     }
 
+    // ---- a single expensive statement pays its worst-case work as steps (H-1a) ----
+
+    /**
+     * Seed for the substring-search work charge: 11 doublings of "a" leave s at 2,048
+     * characters, p = s + "b" is a 2,049-character needle and t = s + s a 4,096-character
+     * text, so one {@code p in t} costs (4,096 - 2,049 + 1) x 2,049 = 2,048 x 2,049 =
+     * 4,196,352 work units = exactly 4,196,352 / 4,096 = 1,024 steps. The five preamble
+     * lines cost 1 + (1 + 11 x 2) + 1 + 1 = 26 statement steps.
+     */
+    private static final String SUBSTRING_SEED_2049_IN_4096 =
+            "s = \"a\"\nfor i in range(11):\n    s = s + s\np = s + \"b\"\nt = s + s\n";
+
+    @Test
+    void aSubstringSearchIsChargedItsWorstCaseWorkAsStepsBeforeItRuns() {
+        // each `x = p in t` below ends 1,025 steps higher than the last (1 statement step
+        // + 1,024 work steps): 1,051 / 2,076 / 3,101 / 4,126. Exactly two searches fit a
+        // 2,076-step budget; at 3,100 the third statement's own step (2,077) still passes
+        // and its charge - 2,077 + 1,024 = 3,101 - trips the step limit on that line
+        // before the search runs.
+        run(SUBSTRING_SEED_2049_IN_4096 + "x = p in t\n".repeat(2), new RecordingPlanApi(),
+                new PlanRunLimits(2_076, 60_000));
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(SUBSTRING_SEED_2049_IN_4096 + "x = p in t\n".repeat(4),
+                        new RecordingPlanApi(), new PlanRunLimits(3_100, 60_000)));
+        assertEquals("line 8: construction script exceeded 3100 steps", e.getMessage());
+    }
+
+    @Test
+    void theSubstringReproAtSmallScaleStaysCheapEnoughToComplete() {
+        // the reviewer's repro shape at small scale: s = 4,096 ("x" doubled 12 times),
+        // p = 4,097, t = 3 x 4,096 = 12,288: work = (12,288 - 4,097 + 1) x 4,097 =
+        // 8,192 x 4,097 = 33,562,624 = exactly 8,194 steps - well under the default
+        // 100,000-step budget, so the statement just runs (and finds nothing: the "b"
+        // is never in an all-"x" text)
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(STRING_SEED_4096 + "p = s + \"b\"\nt = s + s + s\nx = p in t\nprint(x)\n", api);
+        assertEquals(List.of("False"), api.printed);
+    }
+
+    @Test
+    void aHugeSubstringSearchIsRefusedUpFrontByItsWorkCharge() {
+        // the reviewer's repro at full scale: s = 131,072 (17 doublings), p = 131,073,
+        // t = 393,216: work = (393,216 - 131,073 + 1) x 131,073 = 262,144 x 131,073 =
+        // 34,360,000,512 = exactly 8,388,672 steps - over the default 100,000-step budget
+        // on its own, so the charge throws BEFORE String.contains starts (this test would
+        // take ~10 s per assertion if the search actually ran)
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run("s = \"x\"\nfor i in range(17):\n    s = s + s\n"
+                                + "p = s + \"b\"\nt = s + s + s\nx = p in t\n",
+                        new RecordingPlanApi(), PlanRunLimits.DEFAULT));
+        assertEquals("line 6: construction script exceeded 100000 steps", e.getMessage());
+    }
+
+    @Test
+    void aSubstringSearchLoopHitsTheStepLimitBeforeTheTimeLimit() {
+        // the reviewer's loop repro: each `p in t` over the 4,097-character needle and
+        // 12,288-character text is charged 8,194 steps, so about a dozen iterations reach
+        // the step limit long before the 5,000 ms clock could be polled at a boundary
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(STRING_SEED_4096 + "p = s + \"b\"\nt = s + s + s\n"
+                                + "while True:\n    x = p in t\n",
+                        new RecordingPlanApi(), PlanRunLimits.DEFAULT));
+        assertEquals("line 7: construction script exceeded 100000 steps", e.getMessage());
+    }
+
+    @Test
+    void aSubstringSearchBelowTheWorkQuantumAddsNoSteps() {
+        // a 5-character needle in a 20-character text: work = (20 - 5 + 1) x 5 = 80 units,
+        // under the 4,096-unit step quantum, so it charges 0 steps and the 2-statement
+        // script still fits exactly a 2-step budget (a 1-step budget still refuses it)
+        String script = "x = \"abcde\" in \"" + "x".repeat(20) + "\"\nmood(\"ok\")\n";
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(script, api, new PlanRunLimits(2, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+        assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(1, 60_000)));
+    }
+
+    @Test
+    void substringSearchWorkChargesDoNotApplyToFarmScripts() {
+        // farm interpreters have no step budget: the 2^15 search below (work =
+        // 65,536 x 32,769 = 2,147,549,184 units, i.e. ~524,306 steps in plan mode) plus a
+        // 200-iteration while loop of short searches just runs, as before
+        FakeDroneApi api = new FakeDroneApi(5);
+        new Interpreter(api).run(new Parser(new Lexer(
+                "s = \"x\"\nfor i in range(15):\n    s = s + s\n"
+                        + "p = s + \"b\"\nt = s + s + s\nx = p in t\n"
+                        + "c = 0\nwhile c < 200:\n    y = \"ab\" in \"xxabxx\"\n    c = c + 1\n"
+                        + "print(x)\nprint(c)\n").scan()).parseProgram());
+        assertEquals(List.of("False", "200"), api.printed);
+    }
+
     /** A {@link PlanApi} whose {@code print} refuses with a {@link PlanBudgetException}, the way the recorder's budgets do. */
     private static PlanApi budgetRefusingPrintPlanApi() {
         return printRefusingPlanApi(new PlanBudgetException("printed output refused"));

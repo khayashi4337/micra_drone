@@ -105,6 +105,15 @@ public final class Interpreter {
     private long planStartNanos = 0;
     /** Checking the clock on every statement would cost more than the statements; every 1024th is enough. */
     private static final long PLAN_TIME_CHECK_MASK = 0x3FF;
+    /**
+     * How many charged work units (roughly character comparisons or node visits) equal one
+     * statement step. Expensive single operations pay {@code work / PLAN_WORK_PER_STEP}
+     * deterministic steps BEFORE they run (see {@link #chargePlanWork}), so the step budget -
+     * not the wall clock, which a single statement can outrun between polls - decides whether
+     * the operation may start. At 4,096 units per step the whole default 100,000-step budget
+     * is about 4x10^8 units of work, on the order of a second or two of Java time.
+     */
+    private static final long PLAN_WORK_PER_STEP = 4_096;
     private static final String PLAN_REFUSED_SUFFIX =
             "' cannot be used in a construction script (only construction commands and pure helpers)";
     /**
@@ -481,19 +490,30 @@ public final class Interpreter {
             // Construction scripts have their own limits, so the farm heuristic below (statements without a drone
             // action) is skipped: it would fire first on a fast run and hide which limit was actually exceeded.
             planSteps++;
-            if (planSteps > planLimits.maxSteps()) {
-                throw new PlanLimitException(line, "construction script exceeded " + planLimits.maxSteps() + " steps");
-            }
-            if ((planSteps & PLAN_TIME_CHECK_MASK) == 0
-                    && TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - planStartNanos) > planLimits.maxMillis()) {
-                throw new PlanLimitException(line, "construction script exceeded " + planLimits.maxMillis() + " ms");
-            }
+            checkPlanLimits(line, (planSteps & PLAN_TIME_CHECK_MASK) == 0);
             return;
         }
         statementsSinceApiCall++;
         if (statementsSinceApiCall > RUNAWAY_STATEMENT_THRESHOLD) {
             throw new MicraLangException(line,
                     "script ran too long without any drone action (possible infinite loop) - stopped");
+        }
+    }
+
+    /**
+     * The limit checks every construction-script step pays: the deterministic step counter
+     * against {@code maxSteps}, and - only when {@code pollClock} says a polling point was
+     * reached - the wall clock against {@code maxMillis}. {@link #checkCancellation} polls
+     * the clock every 1,024th step; {@link #chargePlanWork} polls it whenever a single
+     * charge is big enough to have skipped such a boundary entirely.
+     */
+    private void checkPlanLimits(int line, boolean pollClock) {
+        if (planSteps > planLimits.maxSteps()) {
+            throw new PlanLimitException(line, "construction script exceeded " + planLimits.maxSteps() + " steps");
+        }
+        if (pollClock
+                && TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - planStartNanos) > planLimits.maxMillis()) {
+            throw new PlanLimitException(line, "construction script exceeded " + planLimits.maxMillis() + " ms");
         }
     }
 
@@ -1399,10 +1419,46 @@ public final class Interpreter {
             return m.containsKey(item);
         }
         if (container instanceof String s) {
-            return s.contains(asString(item, line));
+            String needle = asString(item, line);
+            // charged BEFORE the search runs: a single `in` over large strings could
+            // otherwise keep running far past the step and time limits between two polls
+            chargePlanWork(substringSearchWork(s.length(), needle.length()), line);
+            return s.contains(needle);
         }
         throw new MicraLangException(line, "'in' expects a list, a set, a dict, or a string on the right, but got "
                 + typeName(container));
+    }
+
+    /**
+     * Converts the estimated cost of one expensive operation into deterministic steps and
+     * pays them BEFORE the operation runs: a statement whose cost alone exceeds the
+     * remaining step budget is refused up front instead of after it has already burned
+     * the time. Only the step counter keeps the outcome the same on every machine - the
+     * wall clock stays a backstop. A no-op for farm interpreters (no plan limits). The
+     * clock is re-polled for a charge of at least {@link #PLAN_WORK_PER_STEP} units,
+     * because a jump of that size may have skipped the 1,024-step polling boundary
+     * {@link #checkCancellation} relies on.
+     */
+    private void chargePlanWork(long work, int line) {
+        if (planLimits == null) {
+            return;
+        }
+        planSteps += work / PLAN_WORK_PER_STEP;
+        checkPlanLimits(line, work >= PLAN_WORK_PER_STEP);
+    }
+
+    /**
+     * Worst-case cost of {@code needle in text} for two strings: the needle is tried at
+     * each of {@code textLength - needleLength + 1} positions and each try may compare all
+     * {@code needleLength} characters (Java's substring search is naive). Zero when the
+     * needle is empty or longer than the text - {@code contains} answers immediately in
+     * both cases. Computed in {@code long} so the product cannot overflow.
+     */
+    private static long substringSearchWork(int textLength, int needleLength) {
+        if (needleLength == 0 || needleLength > textLength) {
+            return 0;
+        }
+        return (long) (textLength - needleLength + 1) * needleLength;
     }
 
     private double asDouble(Object v, int line) {

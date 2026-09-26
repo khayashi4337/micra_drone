@@ -506,4 +506,21 @@ class PlanScriptRunnerTest {
             }
         }
     }
+
+    // ---- a single expensive statement pays its worst-case work as steps (P3 H-1a) ----
+
+    @Test
+    void aSubstringSearchLoopIsAnExecutionLimitIssue() {
+        // the reviewer's loop repro: each `p in t` over a 4,097-character needle in a
+        // 12,288-character text is charged (12,288 - 4,097 + 1) x 4,097 = 33,562,624 work
+        // units = 8,194 steps up front, so the deterministic step limit - not the wall
+        // clock - ends the while loop as an E-SCRIPT-LIMIT issue
+        PlanScriptRunner.Result r = run("s = \"x\"\nfor i in range(12):\n    s = s + s\n"
+                + "p = s + \"b\"\nt = s + s + s\nwhile True:\n    x = p in t\n");
+        assertNull(r.patch());
+        assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r));
+        assertEquals("E-SCRIPT-LIMIT:#run:1", r.issues().get(0).id());
+        assertTrue(r.issues().get(0).message().contains("construction script exceeded 100000 steps"),
+                r.issues().get(0).message());
+    }
 }
