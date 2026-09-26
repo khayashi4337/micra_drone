@@ -105,6 +105,16 @@ class GenContextTest {
     }
 
     @Test
+    void aCoordinateAtTheIntLimitIsRefusedNotWrapped() {
+        // the checks add the span in long arithmetic: MAX_VALUE + 1 must not wrap around and fit
+        GenContext ctx = generated(List.of());
+        assertEquals("E-OPENING-NO-WALL:d#anchor", refusal(ctx, door(NORTH_WALL, Side.OUTER, Integer.MAX_VALUE, 0)),
+                "u at the int limit");
+        assertEquals("E-OPENING-NO-WALL:d#anchor", refusal(ctx, door(NORTH_WALL, Side.OUTER, 0, Integer.MAX_VALUE)),
+                "v at the int limit");
+    }
+
+    @Test
     void aFaceOtherThanOuterOrInnerIsAnAnchorIssue() {
         GenContext ctx = generated(List.of());
         assertEquals("E-ANCHOR:d#anchor", refusal(ctx, door(NORTH_WALL, Side.TOP, 1, 0)));

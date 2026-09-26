@@ -187,11 +187,35 @@ public final class GenContext {
         }
         WallInfo wall = wallInfo(s.nodeId()).orElseThrow(() -> fail(node, IssueCode.E_OPENING_NO_WALL, KEY_ANCHOR,
                 "付ける壁(" + s.nodeId() + ")が、施工できる壁ではありません"));
-        if (s.u() < 0 || !wall.fitsAlong(s.u(), 1) || s.v() < 0 || s.v() >= wall.height()) {
+        if (s.u() < 0 || !wall.fitsAlong(s.u(), 1) || s.v() < 0 || !wall.fitsUp(s.v(), 1)) {
             throw fail(node, IssueCode.E_OPENING_NO_WALL, KEY_ANCHOR, "壁(" + wall.id() + ")の面の上の位置(u=" + s.u() + ", v=" + s.v()
                     + ")が、壁の外です(u は0〜" + (wall.length() - 1) + "、v は0〜" + (wall.height() - 1) + ")");
         }
         return wall;
+    }
+
+    /**
+     * Refuses (E-ANCHOR on {@code extent}) a span of {@code span} cells that starts at position {@code i} along
+     * {@code wall} and runs past the wall's end. {@code what} names the part in the message. A generator calls it
+     * before anything is looked up and before the first emit, so a refusal leaves nothing behind. The anchor's own
+     * cell is already on the wall ({@link #wallOfAnchor} checked it), so only the far end can be past it.
+     */
+    public void requireAlongWall(PlanNode node, WallInfo wall, int i, int span, String what) {
+        if (!wall.fitsAlong(i, span)) {
+            throw fail(node, IssueCode.E_ANCHOR, KEY_EXTENT, node.id() + "の" + what + "(u=" + i + "から幅" + span
+                    + ")が、壁(" + wall.id() + ")の外にはみ出しています(壁は長さ" + wall.length() + ")");
+        }
+    }
+
+    /**
+     * The upward mirror of {@link #requireAlongWall}: {@code span} rows that start at row {@code v} and run past
+     * the wall's top are refused.
+     */
+    public void requireUpWall(PlanNode node, WallInfo wall, int v, int span, String what) {
+        if (!wall.fitsUp(v, span)) {
+            throw fail(node, IssueCode.E_ANCHOR, KEY_EXTENT, node.id() + "の" + what + "(v=" + v + "から高さ" + span
+                    + ")が、壁(" + wall.id() + ")の外にはみ出しています(壁は高さ" + wall.height() + ")");
+        }
     }
 
     private Rot rotOf(PlanNode node) {

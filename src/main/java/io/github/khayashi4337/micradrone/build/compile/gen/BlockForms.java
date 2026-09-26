@@ -37,6 +37,7 @@ public final class BlockForms {
 
     private static final String LADDER = "minecraft:ladder";
     private static final String LANTERN = "minecraft:lantern";
+    private static final String TORCH = "minecraft:torch";
     private static final String IRON_BARS = "minecraft:iron_bars";
 
     private static final List<String> AXIS_SUFFIXES = List.of("_log", "_wood", "_stem", "_hyphae", "_block_axis");
@@ -87,6 +88,11 @@ public final class BlockForms {
 
     public static BlockSpec lantern(boolean hanging) {
         return BlockSpec.of(LANTERN, PROP_HANGING, String.valueOf(hanging));
+    }
+
+    /** A torch standing on the ground: it lists no state (a torch on a wall is a different block). */
+    public static BlockSpec torch() {
+        return plain(TORCH);
     }
 
     public static boolean isAxisBlock(String id) {

@@ -16,8 +16,6 @@ final class PlanterGen implements PartGenerator {
     /** The palette roles of the soil row and of the plants on it. */
     private static final String ROLE_PLANTER = "planter";
     private static final String ROLE_PLANT = "plant";
-    /** {@code layer} -1 of a wall is the first cell outside its outermost layer. */
-    private static final int OUTSIDE_LAYER = -1;
     /** The plant stands on the soil. */
     private static final int PLANT_ABOVE_SOIL = 1;
 
@@ -30,17 +28,14 @@ final class PlanterGen implements PartGenerator {
         }
         int width = p.i(P_WIDTH);
         // The bed lies along the wall it is attached to. Checked before anything is looked up or placed, so a refusal
-        // leaves no cell behind. The anchor's own cell is already on the wall, so only the far end can be past it.
-        if (!wall.fitsAlong(a.u(), width)) {
-            throw ctx.fail(node, IssueCode.E_ANCHOR, GenContext.KEY_EXTENT, node.id() + "の植栽(u=" + a.u() + "から幅" + width
-                    + ")が、壁(" + wall.id() + ")の外にはみ出しています(壁は長さ" + wall.length() + ")");
-        }
+        // leaves no cell behind.
+        ctx.requireAlongWall(node, wall, a.u(), width, "植栽");
         // Every block that will be placed is asked of the palette before the first one goes down.
         BlockSpec soil = ctx.plainBlock(ROLE_PLANTER, node);
         BlockSpec plant = ctx.plainBlock(ROLE_PLANT, node);
         for (int i = a.u(); i < a.u() + width; i++) {
-            ctx.emitAbs(node, wall.cell(i, OUTSIDE_LAYER, a.v()), soil);
-            ctx.emitAbs(node, wall.cell(i, OUTSIDE_LAYER, a.v() + PLANT_ABOVE_SOIL), plant);
+            ctx.emitAbs(node, wall.cell(i, WallInfo.OUTSIDE_LAYER, a.v()), soil);
+            ctx.emitAbs(node, wall.cell(i, WallInfo.OUTSIDE_LAYER, a.v() + PLANT_ABOVE_SOIL), plant);
         }
     }
 }

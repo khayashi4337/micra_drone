@@ -96,8 +96,12 @@ public final class BuildingParts {
     private static final int MAX_RUN = 32;
     /** Widest strip, border or foundation depth, in blocks. */
     private static final int MAX_STRIP = 8;
-    /** A sign holds four lines of at most fifteen characters. */
-    private static final int MAX_SIGN_TEXT = 60;
+    /** A sign holds at most this many lines of text. */
+    public static final int SIGN_MAX_LINES = 4;
+    /** A sign line holds at most this many characters. */
+    public static final int SIGN_MAX_LINE_CHARS = 15;
+    /** The longest text the sign takes: four full lines plus the three "|" separators between them. */
+    private static final int MAX_SIGN_TEXT = SIGN_MAX_LINES * SIGN_MAX_LINE_CHARS + (SIGN_MAX_LINES - 1);
     /** A floor hole is a rectangle written as four numbers (u0, w0, u1, w1). */
     private static final int VALUES_PER_HOLE = 4;
     private static final int MAX_HOLES = 16;

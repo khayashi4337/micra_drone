@@ -26,7 +26,9 @@ class BuildingPartsTest {
      * {@code name:int(min..max)=default}, {@code name:bool=default}, {@code name:enum(a|b)=default} ({@code !} =
      * required), {@code name:material=role}, {@code name:str(max N)=!}, {@code name:ints(min..max, N items)=[]}.
      * The table leaves the upper bounds of wall from/length and cargo_u/cargo_w open ("0~"); they are the largest
-     * footprint the structure allows (64 blocks, so index 63).
+     * footprint the structure allows (64 blocks, so index 63). The design's sign limit of "60 characters" is read
+     * as four lines of 15 characters not counting the "|" separators, so the stored text's max is 63: four full
+     * lines plus the three separators between them.
      */
     private static final String DESIGN_TABLE = """
             structure width:int(3..64)=7 depth:int(3..64)=7 floors:int(1..8)=1 floor_height:int(3..8)=4
@@ -51,7 +53,7 @@ class BuildingPartsTest {
             chimney height:int(2..32)=6 size:int(1..3)=1 cap:bool=true material:material=chimney
             ramp length:int(2..32)=6 dir:enum(north|east|south|west)=north width:int(1..8)=2 material:material=ramp
             lamp kind:enum(lantern|hanging|post|torch)=lantern height:int(1..6)=2
-            sign text:str(max60)=! material:material=sign
+            sign text:str(max63)=! material:material=sign
             planter width:int(1..8)=3
             trim length:int(1..64)=3 axis:enum(horizontal|vertical)=horizontal shape:enum(block|slab)=block \
             material:material=trim

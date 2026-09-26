@@ -32,11 +32,8 @@ final class BalconyGen implements PartGenerator {
         }
         int width = p.i(P_WIDTH);
         // The floor lies along the wall it is attached to. Checked before anything is looked up or placed, so a refusal
-        // leaves no cell behind. The anchor's own cell is already on the wall, so only the far end can be past it.
-        if (!wall.fitsAlong(a.u(), width)) {
-            throw ctx.fail(node, IssueCode.E_ANCHOR, GenContext.KEY_EXTENT, node.id() + "のバルコニー(u=" + a.u() + "から幅" + width
-                    + ")が、壁(" + wall.id() + ")の外にはみ出しています(壁は長さ" + wall.length() + ")");
-        }
+        // leaves no cell behind.
+        ctx.requireAlongWall(node, wall, a.u(), width, "バルコニー");
         int depth = p.i(P_DEPTH);
         boolean rail = p.b(P_RAIL);
         int firstI = a.u();

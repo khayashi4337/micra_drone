@@ -8,6 +8,7 @@ import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.on
 import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.params;
 import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.shell;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -44,6 +45,7 @@ class DecorPartsTest {
     private static final String WALL = "micra:wall";
     private static final String STRUCTURE_ID = "s";
     private static final String WALL_N = "wall-n";
+    private static final String WALL_E = "wall-e";
 
     private static final String LANTERN = "minecraft:lantern";
     private static final String TORCH = "minecraft:torch";
@@ -75,6 +77,7 @@ class DecorPartsTest {
     private static final String P_MATERIAL = "material";
     private static final String P_SIDE = "side";
     private static final String P_FROM = "from";
+    private static final String P_THICKNESS = "thickness";
     private static final String P_FLOORS = "floors";
     private static final String P_FLOOR_HEIGHT = "floor_height";
     private static final String KIND_HANGING = "hanging";
@@ -84,6 +87,7 @@ class DecorPartsTest {
     private static final String SHAPE_SLAB = "slab";
     private static final String NORTH = "north";
     private static final String SOUTH = "south";
+    private static final String EAST = "east";
 
     // Block-state property names and values, as they are written in a block state.
     private static final String PROP_FACING = "facing";
@@ -133,6 +137,15 @@ class DecorPartsTest {
         nodes.replaceAll(n -> n.id().equals(WALL_N)
                 ? node(WALL_N, WALL, STRUCTURE_ID, 0, 0, 0,
                         params(P_SIDE, NORTH, P_FROM, SEGMENT_FROM, P_LENGTH, SEGMENT_LENGTH))
+                : n);
+        return nodes;
+    }
+
+    /** The hall whose north wall is {@code thickness} cells thick, with the part given. */
+    private static List<PlanNode> hallWithNorthWallThickness(int thickness, PlanNode decor) {
+        List<PlanNode> nodes = hallWith(decor);
+        nodes.replaceAll(n -> n.id().equals(WALL_N)
+                ? node(WALL_N, WALL, STRUCTURE_ID, 0, 0, 0, params(P_SIDE, NORTH, P_THICKNESS, thickness))
                 : n);
         return nodes;
     }
@@ -238,17 +251,47 @@ class DecorPartsTest {
     }
 
     @Test
+    void anOuterSignOnAnEastWallFacesEast() {
+        Map<LocalPos, BlockSpec> c = build(
+                onWall(SIGN_ID, SIGN, STRUCTURE_ID, WALL_E, Side.OUTER, 2, 1, params(P_TEXT, "E")));
+        // the east wall is at u = 6 facing east; the sign is one cell out (u = 7), position 2 along it (w = 2)
+        assertEquals(BlockSpec.of(OAK_WALL_SIGN, PROP_FACING, EAST), c.get(new LocalPos(7, 2, 2)));
+    }
+
+    @Test
+    void aSignTakesFourFullLinesOfFifteenCharacters() {
+        // the longest text the registry accepts: four lines of fifteen characters plus the three separators (63)
+        String line = "123456789012345";
+        CompileResult r = withWalls(onNorthWall(SIGN_ID, SIGN, Side.OUTER, 3, 1,
+                params(P_TEXT, line + "|" + line + "|" + line + "|" + line)));
+        assertTrue(r.issues().isEmpty(), r.issues().toString());
+        assertEquals(Map.of("line1", line, "line2", line, "line3", line, "line4", line),
+                placementOf(r, SIGN_ID).blockEntityConfig());
+    }
+
+    @Test
     void signTextLimitsAreParamRangeIssues() {
         assertEquals(List.of(SIGN_BAD_TEXT_ID),
                 ids(withWalls(onNorthWall(SIGN_ID, SIGN, Side.OUTER, 3, 1, params(P_TEXT, "a|b|c|d|e")))), "five lines");
         assertEquals(List.of(SIGN_BAD_TEXT_ID),
+                ids(withWalls(onNorthWall(SIGN_ID, SIGN, Side.OUTER, 3, 1, params(P_TEXT, "a|b|c|d|")))),
+                "a trailing separator opens a fifth, empty line");
+        assertEquals(List.of(SIGN_BAD_TEXT_ID),
                 ids(withWalls(onNorthWall(SIGN_ID, SIGN, Side.OUTER, 3, 1, params(P_TEXT, "0123456789abcdef")))),
                 "a sixteen-letter line");
+        // a first line of exactly fifteen characters with three shorter lines after it is accepted
+        assertTrue(withWalls(onNorthWall(SIGN_ID, SIGN, Side.OUTER, 3, 1, params(P_TEXT, "123456789012345|b|c|d")))
+                .issues().isEmpty());
         assertTrue(withWalls(onNorthWall(SIGN_ID, SIGN, Side.OUTER, 3, 1, params(P_TEXT, "日本語の看板"))).issues().isEmpty());
         // an empty line keeps its place but writes no line key
         CompileResult skipped = withWalls(onNorthWall(SIGN_ID, SIGN, Side.OUTER, 3, 1, params(P_TEXT, "A||B")));
         assertTrue(skipped.issues().isEmpty(), skipped.issues().toString());
         assertEquals(Map.of("line1", "A", "line3", "B"), placementOf(skipped, SIGN_ID).blockEntityConfig());
+        // a refused text is checked before the material: a sign-role lookup would be caught by the block policy
+        assertEquals(List.of(SIGN_BAD_TEXT_ID),
+                ids(compile(roleIs(ROLE_SIGN, BEDROCK),
+                        hallWith(onNorthWall(SIGN_ID, SIGN, Side.OUTER, 3, 1, params(P_TEXT, "a|b|c|d|e"))))),
+                "no E-BLOCK-FORBIDDEN: the sign role was never resolved");
     }
 
     @Test
@@ -327,6 +370,35 @@ class DecorPartsTest {
         // the inner face of the one-thick wall is w = 5
         assertEquals(BlockSpec.of(STONE_BRICKS), c.get(new LocalPos(2, 2, 5)));
         assertEquals(BlockSpec.of(STONE_BRICKS), c.get(new LocalPos(3, 2, 5)));
+    }
+
+    @Test
+    void anInnerFaceIsTheFirstCellInsideTheWallsOwnThickness() {
+        // layer = thickness: a constant inside layer would land on w = 5 at every thickness
+        CompileResult signOnTwo = compile(
+                hallWithNorthWallThickness(2, onNorthWall(SIGN_ID, SIGN, Side.INNER, 3, 1, params(P_TEXT, "IN"))));
+        assertTrue(signOnTwo.issues().isEmpty(), signOnTwo.issues().toString());
+        // the two-cell wall occupies w = 6 and w = 5; the sign sits on the first cell inside, w = 4
+        assertEquals(BlockSpec.of(OAK_WALL_SIGN, PROP_FACING, SOUTH),
+                cells(signOnTwo.manifest()).get(new LocalPos(3, 2, 4)));
+        CompileResult signOnThree = compile(
+                hallWithNorthWallThickness(3, onNorthWall(SIGN_ID, SIGN, Side.INNER, 3, 1, params(P_TEXT, "IN"))));
+        assertTrue(signOnThree.issues().isEmpty(), signOnThree.issues().toString());
+        // the three-cell wall occupies w = 6, 5 and 4; the sign sits on the first cell inside, w = 3
+        assertEquals(BlockSpec.of(OAK_WALL_SIGN, PROP_FACING, SOUTH),
+                cells(signOnThree.manifest()).get(new LocalPos(3, 2, 3)));
+        CompileResult trimOnTwo = compile(
+                hallWithNorthWallThickness(2, onNorthWall(TRIM_ID, TRIM, Side.INNER, 2, 1, params(P_LENGTH, 2))));
+        assertTrue(trimOnTwo.issues().isEmpty(), trimOnTwo.issues().toString());
+        Map<LocalPos, BlockSpec> onTwo = cells(trimOnTwo.manifest());
+        assertEquals(BlockSpec.of(STONE_BRICKS), onTwo.get(new LocalPos(2, 2, 4)));
+        assertEquals(BlockSpec.of(STONE_BRICKS), onTwo.get(new LocalPos(3, 2, 4)));
+        CompileResult trimOnThree = compile(
+                hallWithNorthWallThickness(3, onNorthWall(TRIM_ID, TRIM, Side.INNER, 2, 1, params(P_LENGTH, 2))));
+        assertTrue(trimOnThree.issues().isEmpty(), trimOnThree.issues().toString());
+        Map<LocalPos, BlockSpec> onThree = cells(trimOnThree.manifest());
+        assertEquals(BlockSpec.of(STONE_BRICKS), onThree.get(new LocalPos(2, 2, 3)));
+        assertEquals(BlockSpec.of(STONE_BRICKS), onThree.get(new LocalPos(3, 2, 3)));
     }
 
     @Test
@@ -426,9 +498,10 @@ class DecorPartsTest {
 
     @Test
     void aRefusedDecorationLeavesNothingOfItselfOnTheCanvas() {
-        // What this pins: the issue id of each refusal, and that the canvas is untouched afterwards. The refusals
-        // carry a forbidden material in the palette: a lookup before the check would record the use, so reaching the
-        // check proves no palette lookup and no emit ran first.
+        // What this pins: the issue id of each refusal, that the canvas is untouched afterwards, and that no
+        // material was resolved before the check — a lookup would record the block in palette().usedBy(). The
+        // bedrock overrides are inert in a direct generator call (the block policy only runs in a full compile),
+        // so usedBy, not an issue, is what proves the order.
         List<Refusal> refusals = List.of(
                 new Refusal(onNorthWall(PLANTER_ID, PLANTER, Side.INNER, 1, 0, Map.of()), Map.of(), PLANTER_SIDE_ID),
                 new Refusal(onNorthWall(PLANTER_ID, PLANTER, Side.OUTER, 5, 0, params(P_WIDTH, 3)),
@@ -453,6 +526,9 @@ class DecorPartsTest {
             assertEquals(r.issueId(), refusal.issue().id());
             assertEquals(before, ctx.canvas().size(), r.issueId() + ": nothing was placed");
             assertTrue(ctx.canvas().all().stream().noneMatch(cell -> cell.ownerId().equals(r.part().id())), r.issueId());
+            for (String block : r.paletteOverride().values()) {
+                assertFalse(ctx.palette().usedBy().containsKey(block), r.issueId() + ": " + block + " was resolved");
+            }
         }
     }
 

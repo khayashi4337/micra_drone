@@ -14,9 +14,19 @@ public record WallInfo(String id, StructureInfo structure, Facing side, int leve
     private static final String CORNER_GROUP_PREFIX = "wall:";
     /** The storey's floor takes the lowest row, so a wall starts one row above it (row 0) and is one row shorter. */
     static final int FLOOR_ROWS = 1;
+    /** {@code layer} -1 of a wall is the first cell outside its outermost layer (see {@link #cell}). */
+    public static final int OUTSIDE_LAYER = -1;
 
     public Facing outward() {
         return side;
+    }
+
+    /**
+     * The {@link #cell} layer a part attached to a face of this wall goes in: {@link #OUTSIDE_LAYER}, the first
+     * cell out, for the outer face; {@code thickness}, the first cell inside, for the inner face.
+     */
+    public int faceLayer(boolean outer) {
+        return outer ? OUTSIDE_LAYER : thickness;
     }
 
     /** North and south walls run along u (east); east and west walls along w (north). */
