@@ -1,4 +1,4 @@
-hash 9660bad4bf97cef21f508af91244090121e0503491992afcb698485617f313c1
+hash 4fca639b5dd45a179a42dc8ddc897c0cbc6bf84bfdfba7c30ad1fb9efa34946b
 0 100 63 200 minecraft:cobblestone EXACT STRUCTURE
 1 101 63 200 minecraft:cobblestone EXACT STRUCTURE
 2 102 63 200 minecraft:cobblestone EXACT STRUCTURE

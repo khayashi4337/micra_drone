@@ -2,18 +2,24 @@ package io.github.khayashi4337.micradrone.build.parts;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.build.model.ParamValue;
+import io.github.khayashi4337.micradrone.chat.MiniJson;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 class BuildingPartsTest {
@@ -90,6 +96,24 @@ class BuildingPartsTest {
             assertFalse(t.visualDescription().isBlank(), name + " needs a visual description");
         }
         assertEquals(22, r.userParts().size());
+    }
+
+    /**
+     * The visual descriptions feed the registry version and later the image and AI prompts, where a part must not be
+     * pinned to a default material (a caller may pick another one). These words are the default palette's blocks
+     * (D/05 section 1.1.1) that no part description needs for another reason.
+     */
+    private static final List<String> DEFAULT_MATERIAL_WORDS = List.of("stone", "brick", "cobble", "oak", "plank", "log",
+            "grated", "iron", "trapdoor", "gravel", "concrete", "barrel", "dirt", "poppy", "fence");
+
+    @Test
+    void visualDescriptionsDoNotNameADefaultMaterial() {
+        for (PartType t : BuildingParts.registry().all()) {
+            String text = t.visualDescription().toLowerCase(Locale.ROOT);
+            for (String word : DEFAULT_MATERIAL_WORDS) {
+                assertFalse(text.contains(word), t.id() + " names \"" + word + "\": " + t.visualDescription());
+            }
+        }
     }
 
     @Test
@@ -173,20 +197,95 @@ class BuildingPartsTest {
         assertEquals(Set.of("open", "powered"), BuildingParts.registry().get("micra:door").volatileProps());
     }
 
-    @Test
-    void defaultPaletteIsTheDocumentedOne() {
-        assertEquals("minecraft:stone_bricks", BuildingParts.DEFAULT_PALETTE.get("wall"));
-        assertEquals("minecraft:oak_planks", BuildingParts.DEFAULT_PALETTE.get("roof"));
-        assertEquals("minecraft:glass_pane", BuildingParts.DEFAULT_PALETTE.get("glass"));
-        assertEquals(22, BuildingParts.DEFAULT_PALETTE.size());
-        assertNotNull(BuildingParts.registry().version());
-    }
+    /** The default palette as design doc 05, section 1.1.1 lists it (all blocks are in the minecraft namespace). */
+    private static final String DESIGN_PALETTE = """
+            wall=stone_bricks floor=oak_planks roof=oak_planks foundation=cobblestone pillar=stone_bricks beam=oak_log \
+            trim=stone_bricks glass=glass_pane door=oak_door gate=oak_fence_gate fence=oak_fence stairs=oak_stairs \
+            ramp=stone catwalk=iron_trapdoor chimney=bricks path=gravel pad=smooth_stone marker=yellow_concrete \
+            cargo=barrel sign=oak_wall_sign planter=dirt plant=poppy
+            """;
+    private static final String NAMESPACE = "minecraft:";
+    private static final String ROLE_SEPARATOR = "=";
 
     @Test
-    void everyDisplayNameKeyExistsInTheEnglishLanguageFile() throws IOException {
-        String lang = Files.readString(Path.of("src/main/resources/assets/micradrone/lang/en_us.json"), StandardCharsets.UTF_8);
+    void defaultPaletteIsTheDocumentedOne() {
+        Map<String, String> documented = new TreeMap<>();
+        for (String entry : DESIGN_PALETTE.strip().split("\\s+")) {
+            String[] roleAndBlock = entry.split(ROLE_SEPARATOR);
+            assertEquals(2, roleAndBlock.length, entry);
+            assertNull(documented.put(roleAndBlock[0], NAMESPACE + roleAndBlock[1]), "role listed twice: " + entry);
+        }
+        assertEquals(22, documented.size());
+        assertEquals(documented, BuildingParts.DEFAULT_PALETTE);
+        assertEquals(documented, BuildingParts.registry().defaultPalette());
+    }
+
+    /**
+     * How each part's blocks are compared after building, from the rule in design doc 05, section 1.1.1 ("検証の既定"):
+     * blocks without state are EXACT; stairs, slabs, doors, gates, ladders, signs, lanterns and barrels are STATE_SUBSET
+     * (only the recorded states are compared); glass panes and fences, whose state follows their neighbours, are
+     * BLOCK_ONLY. A part takes the strictest mode that holds for every block it places.
+     */
+    private static final Map<String, VerifyMode> DESIGN_VERIFY = Map.ofEntries(
+            // no blocks of its own, and blocks without state
+            Map.entry("structure", VerifyMode.EXACT), Map.entry("foundation", VerifyMode.EXACT),
+            Map.entry("wall", VerifyMode.EXACT), Map.entry("pillar", VerifyMode.EXACT),
+            Map.entry("planter", VerifyMode.EXACT), Map.entry("road", VerifyMode.EXACT),
+            // slabs, logs (axis), stairs, doors and gates, ladders, lanterns, signs, barrels
+            Map.entry("floor", VerifyMode.STATE_SUBSET), Map.entry("beam", VerifyMode.STATE_SUBSET),
+            Map.entry("roof", VerifyMode.STATE_SUBSET), Map.entry("door", VerifyMode.STATE_SUBSET),
+            Map.entry("stairs", VerifyMode.STATE_SUBSET), Map.entry("ladder", VerifyMode.STATE_SUBSET),
+            Map.entry("chimney", VerifyMode.STATE_SUBSET), Map.entry("ramp", VerifyMode.STATE_SUBSET),
+            Map.entry("lamp", VerifyMode.STATE_SUBSET), Map.entry("sign", VerifyMode.STATE_SUBSET),
+            Map.entry("trim", VerifyMode.STATE_SUBSET), Map.entry("dock_pad", VerifyMode.STATE_SUBSET),
+            // glass panes and fences
+            Map.entry("window", VerifyMode.BLOCK_ONLY), Map.entry("catwalk", VerifyMode.BLOCK_ONLY),
+            Map.entry("balcony", VerifyMode.BLOCK_ONLY), Map.entry("railing", VerifyMode.BLOCK_ONLY));
+
+    @Test
+    void verifyModesFollowTheDesignRule() {
+        assertEquals(new TreeSet<>(BuildingParts.NAMES), new TreeSet<>(DESIGN_VERIFY.keySet()));
         for (String name : BuildingParts.NAMES) {
-            assertTrue(lang.contains("\"micradrone.part." + name + "\""), name);
+            assertEquals(DESIGN_VERIFY.get(name), BuildingParts.registry().get(BuildingParts.ID_PREFIX + name).verify(), name);
+        }
+    }
+
+    /**
+     * A golden, not a derived number: the hash of every part, parameter range, description and the default palette. It
+     * changes whenever any of them does, so a deliberate registry change updates it here and, because a manifest's hash
+     * includes the registry version, the hash line of the golden hut manifest (src/test/resources/build/golden).
+     */
+    private static final String PINNED_REGISTRY_VERSION = "726753df4a5db0e1bcac2ff10f171a0e64dd88010cc408654963eead8cf9e350";
+
+    @Test
+    void theRegistryVersionIsPinned() {
+        assertEquals(PINNED_REGISTRY_VERSION, BuildingParts.registry().version());
+    }
+
+    private static final Path LANG_EN_US = Path.of("src/main/resources/assets/micradrone/lang/en_us.json");
+    private static final String DISPLAY_KEY_PREFIX = "micradrone.part.";
+
+    @Test
+    void everyDisplayNameKeyExistsOnceAndNotBlankInTheEnglishLanguageFile() throws IOException {
+        String text = Files.readString(LANG_EN_US, StandardCharsets.UTF_8);
+        // parsing fails on invalid JSON; the map keeps only the last of two equal keys, so duplicates are counted in the text
+        Map<?, ?> lang = assertInstanceOf(Map.class, MiniJson.parse(text));
+        Set<String> expectedKeys = new TreeSet<>();
+        for (String name : BuildingParts.NAMES) {
+            expectedKeys.add(DISPLAY_KEY_PREFIX + name);
+            assertEquals(DISPLAY_KEY_PREFIX + name, BuildingParts.registry().get(BuildingParts.ID_PREFIX + name).displayNameKey());
+        }
+        Set<String> partKeys = new TreeSet<>();
+        for (Object key : lang.keySet()) {
+            if (String.valueOf(key).startsWith(DISPLAY_KEY_PREFIX)) {
+                partKeys.add(String.valueOf(key));
+            }
+        }
+        assertEquals(expectedKeys, partKeys, "the file has a part key that is not a part, or lacks one");
+        for (String key : expectedKeys) {
+            Object value = lang.get(key);
+            assertTrue(value instanceof String s && !s.isBlank(), key + " must have a non-blank text");
+            assertEquals(1, text.split("\"" + Pattern.quote(key) + "\"", -1).length - 1, key + " appears more than once");
         }
     }
 }
