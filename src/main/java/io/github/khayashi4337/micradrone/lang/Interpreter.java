@@ -116,6 +116,17 @@ public final class Interpreter {
     private static final int PLAN_MAX_STRING_CHARS = 1_000_000;
     /** The largest element count one construction-script collection may hold - same reason as {@link #PLAN_MAX_STRING_CHARS}. */
     private static final int PLAN_MAX_COLLECTION_ELEMENTS = 100_000;
+    /**
+     * Total units one construction-script run may allocate: one unit is one character of a string
+     * the script produces or one element of a collection it creates or copies. The per-value caps
+     * ({@link #PLAN_MAX_STRING_CHARS}, {@link #PLAN_MAX_COLLECTION_ELEMENTS}) bound each single
+     * value but not what a whole run retains - printing or copying a legal-sized value in a loop
+     * still exhausts the heap, so the run as a whole gets a budget too. Charged only where a new
+     * string or collection materialises; {@code append}/{@code add}/item assignment/literals are
+     * already bounded by the step limit or the script length.
+     */
+    private static final long PLAN_MAX_ALLOCATED_UNITS = 10_000_000;
+    private long planAllocatedUnits = 0;
 
     public Interpreter(DroneApi api) {
         this(api, null);
@@ -168,6 +179,7 @@ public final class Interpreter {
     public void run(List<Stmt> program) {
         planStartNanos = System.nanoTime();
         planSteps = 0;
+        planAllocatedUnits = 0;
         execBlock(program);
     }
 
@@ -369,15 +381,21 @@ public final class Interpreter {
     private Iterable<Object> iterableOf(Object value, int line) {
         if (value instanceof List<?> list) {
             checkPlanCollectionSize(list.size(), line);
-            return new ArrayList<>(list);
+            List<Object> snapshot = new ArrayList<>(list);
+            chargePlanAllocation(snapshot.size(), line);
+            return snapshot;
         }
         if (value instanceof Set<?> set) {
             checkPlanCollectionSize(set.size(), line);
-            return new ArrayList<>(set);
+            List<Object> snapshot = new ArrayList<>(set);
+            chargePlanAllocation(snapshot.size(), line);
+            return snapshot;
         }
         if (value instanceof Map<?, ?> map) {
             checkPlanCollectionSize(map.size(), line);
-            return new ArrayList<>(map.keySet());
+            List<Object> snapshot = new ArrayList<>(map.keySet());
+            chargePlanAllocation(snapshot.size(), line);
+            return snapshot;
         }
         if (value instanceof String s) {
             checkPlanCollectionSize(s.length(), line);
@@ -385,6 +403,7 @@ public final class Interpreter {
             for (int i = 0; i < s.length(); i++) {
                 chars.add(String.valueOf(s.charAt(i)));
             }
+            chargePlanAllocation(chars.size(), line);
             return chars;
         }
         throw new MicraLangException(line, "cannot loop over " + typeName(value)
@@ -576,12 +595,14 @@ public final class Interpreter {
                 requireMethodArgCount(call, args, 0);
                 List<Object> keys = new ArrayList<>(map.keySet());
                 checkPlanCollectionSize(keys.size(), call.line());
+                chargePlanAllocation(keys.size(), call.line());
                 yield keys;
             }
             case "values" -> {
                 requireMethodArgCount(call, args, 0);
                 List<Object> values = new ArrayList<>(map.values());
                 checkPlanCollectionSize(values.size(), call.line());
+                chargePlanAllocation(values.size(), call.line());
                 yield values;
             }
             // Unlike d[k], this answers None for a missing key instead of stopping the script.
@@ -706,6 +727,7 @@ public final class Interpreter {
         if (e.op().equals("+") && left instanceof String ls && right instanceof String rs) {
             String joined = ls + rs;
             checkPlanStringSize(joined, e.line());
+            chargePlanAllocation(joined.length(), e.line());
             return joined;
         }
         if (e.op().equals("==")) {
@@ -935,7 +957,10 @@ public final class Interpreter {
             }
             case "print" -> {
                 requireArgCount(call, 1);
-                api.print(stringifyValue(eval(args.get(0)), call.line()));
+                String rendered = stringifyValue(eval(args.get(0)), call.line());
+                // charged before the api sees the text: a print that blows the budget is not recorded
+                chargePlanAllocation(rendered.length(), call.line());
+                api.print(rendered);
                 yield MicraNone.INSTANCE;
             }
             // ---- general-purpose builtins (no drone involved) ----
@@ -955,19 +980,27 @@ public final class Interpreter {
             }
             case "str" -> {
                 requireArgCount(call, 1);
-                yield stringifyValue(eval(args.get(0)), call.line());
+                String rendered = stringifyValue(eval(args.get(0)), call.line());
+                chargePlanAllocation(rendered.length(), call.line());
+                yield rendered;
             }
             case "list" -> {
                 requireArgCount(call, args.isEmpty() ? 0 : 1);
-                yield args.isEmpty() ? new ArrayList<>() : new ArrayList<>(collectionArg(call, "list"));
+                List<Object> copy = args.isEmpty() ? new ArrayList<>() : new ArrayList<>(collectionArg(call, "list"));
+                chargePlanAllocation(copy.size(), call.line());
+                yield copy;
             }
             case "set" -> {
                 requireArgCount(call, args.isEmpty() ? 0 : 1);
-                yield args.isEmpty() ? new LinkedHashSet<>() : new LinkedHashSet<>(collectionArg(call, "set"));
+                Set<Object> copy = args.isEmpty() ? new LinkedHashSet<>() : new LinkedHashSet<>(collectionArg(call, "set"));
+                chargePlanAllocation(copy.size(), call.line());
+                yield copy;
             }
             case "dict" -> {
                 requireArgCount(call, 0);
-                yield new LinkedHashMap<>();
+                Map<Object, Object> copy = new LinkedHashMap<>();
+                chargePlanAllocation(copy.size(), call.line());
+                yield copy;
             }
             case "semaphore" -> {
                 requireArgCount(call, 0);
@@ -1237,6 +1270,7 @@ public final class Interpreter {
             }
         }
         checkPlanCollectionSize(candidates.size(), call.line());
+        chargePlanAllocation(candidates.size(), call.line());
         if (candidates.isEmpty()) {
             throw new MicraLangException(call.line(), call.name() + "() got an empty collection");
         }
@@ -1328,7 +1362,7 @@ public final class Interpreter {
         throw new MicraLangException(line, "expected a bool but got " + typeName(v));
     }
 
-    private static String typeName(Object v) {
+    static String typeName(Object v) {
         if (v instanceof Double) return "number";
         if (v instanceof String) return "string";
         if (v instanceof Boolean) return "bool";
@@ -1395,6 +1429,24 @@ public final class Interpreter {
     private void checkPlanCollectionSize(int size, int line) {
         if (planLimits != null && size > PLAN_MAX_COLLECTION_ELEMENTS) {
             throw collectionSizeExceeded(line);
+        }
+    }
+
+    /**
+     * Counts script-built characters/elements against the run-wide allocation budget; a no-op for
+     * farm interpreters. Called only where plan-mode code materialises a new string or collection:
+     * {@code +} concatenation, {@code str()}/{@code print()}, {@code list()}/{@code set()}/
+     * {@code dict()} results, {@code keys()}/{@code values()}, the for-loop snapshot and the
+     * {@code min}/{@code max} candidate list.
+     */
+    private void chargePlanAllocation(int units, int line) {
+        if (planLimits == null) {
+            return;
+        }
+        planAllocatedUnits += units;
+        if (planAllocatedUnits > PLAN_MAX_ALLOCATED_UNITS) {
+            throw new PlanLimitException(line, "construction script exceeded the total allocation limit of "
+                    + PLAN_MAX_ALLOCATED_UNITS + " (characters and collection elements created)");
         }
     }
 

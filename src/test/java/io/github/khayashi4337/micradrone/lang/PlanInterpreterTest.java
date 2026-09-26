@@ -167,7 +167,7 @@ class PlanInterpreterTest {
                 errorOf("door(\"d\", None, [\"slot\", \"s\", 1, True, 5], {})"));
         assertEquals("line 1: door(): 回転数は0〜3です(4)", errorOf("door(\"d\", None, [\"slot\", \"s\", 4], {})"));
         assertEquals("line 1: relocate(): 回転数は0〜3です(4)", errorOf("relocate(\"d\", [0, 0, 0, 4])"));
-        assertEquals("line 1: relocate(): True か False が必要です(1.0)", errorOf("relocate(\"d\", [0, 0, 0, 0, 1])"));
+        assertEquals("line 1: relocate(): True か False が必要です(1)", errorOf("relocate(\"d\", [0, 0, 0, 0, 1])"));
         assertEquals("line 1: relocate(): 位置指定の種類が不明です: line", errorOf("relocate(\"d\", [\"line\", 0, 0])"));
         assertEquals("line 1: relocate(): [u, v, w] か [u, v, w, 回転数, 鏡像] の形にしてください",
                 errorOf("relocate(\"d\", [0, 0, 0, 0, False, 1])"));
@@ -371,5 +371,79 @@ class PlanInterpreterTest {
         new Interpreter(api).run(new Parser(new Lexer(
                 "s = \"x\"\nfor i in range(20):\n    s = s + s\nt = s + s\nprint(len(t))\n").scan()).parseProgram());
         assertEquals(List.of("2097152"), api.printed);
+    }
+
+    // ---- run-wide allocation budget (construction scripts only; farm scripts are unchanged) ----
+
+    @Test
+    void theAllocationBudgetStopsAPrintLoopOfALegalSizedString() {
+        RecordingPlanApi api = new RecordingPlanApi();
+        // the doubling charges 2+4+...+524,288 = 1,048,574 units, leaving 10,000,000 - 1,048,574 = 8,951,426;
+        // each print charges 524,288, so 17 fit (8,912,896) but the 18th does not (9,437,184) - and a
+        // refused print is never recorded, so exactly 17 lines are printed
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run("s = \"x\"\nfor i in range(19):\n    s = s + s\nwhile True:\n    print(s)\n", api,
+                        new PlanRunLimits(1_000_000, 60_000)));
+        assertEquals(17, api.printed.size());
+        assertEquals("line 5: construction script exceeded the total allocation limit of 10000000 (characters and collection elements created)",
+                e.getMessage());
+    }
+
+    @Test
+    void theAllocationBudgetStopsAStringConcatenationLoop() {
+        // script D: every iteration builds another 524,289-character string (s + "!")
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run("s = \"x\"\nfor i in range(19):\n    s = s + s\nacc = []\nwhile True:\n    acc.append(s + \"!\")\n",
+                        new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
+        assertTrue(e.getMessage().contains("total allocation limit"), e.getMessage());
+    }
+
+    @Test
+    void theAllocationBudgetStopsRepeatedCopiesOfALegalSizedList() {
+        // script E: each list(l) copy charges its 20,000 elements
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run("l = []\nfor i in range(20000):\n    l.append(i)\nacc = []\nwhile True:\n    acc.append(list(l))\n",
+                        new RecordingPlanApi(), new PlanRunLimits(1_000_000, 60_000)));
+        assertTrue(e.getMessage().contains("total allocation limit"), e.getMessage());
+    }
+
+    @Test
+    void aLegitimateLoopStaysWellUnderTheAllocationBudget() {
+        RecordingPlanApi api = new RecordingPlanApi();
+        // 1,000 iterations x (a 100-character concatenation + a 100-element list copy) = 200,000 units
+        run("h = \"" + "x".repeat(50) + "\"\n"
+                + "l = []\nfor i in range(100):\n    l.append(i)\n"
+                + "for i in range(1000):\n    t = h + h\n    c = list(l)\n", api, new PlanRunLimits(100_000, 60_000));
+    }
+
+    @Test
+    void aStringExactlyAtTheSizeCapIsAccepted() {
+        RecordingPlanApi api = new RecordingPlanApi();
+        // s = "x" then six times s = s+s+...+s (ten terms) = exactly 1,000,000 characters; the
+        // concatenations charge 54 x (1+10+100+1,000+10,000+100,000) = 5,999,994 units
+        run("s = \"x\"\n"
+                + "s = s + s + s + s + s + s + s + s + s + s\n".repeat(6)
+                + "print(len(s))\n", api, new PlanRunLimits(100_000, 60_000));
+        assertEquals(List.of("1000000"), api.printed);
+    }
+
+    @Test
+    void theFirstConcatPastTheSizeCapStillReportsTheStringSizeLimit() {
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run("s = \"x\"\n"
+                        + "s = s + s + s + s + s + s + s + s + s + s\n".repeat(6)
+                        + "t = s + \"x\"\n", new RecordingPlanApi(), new PlanRunLimits(100_000, 60_000)));
+        assertEquals("line 8: construction script exceeded the string size limit of 1000000 characters", e.getMessage());
+    }
+
+    @Test
+    void theAllocationBudgetDoesNotApplyToFarmScripts() {
+        FakeDroneApi api = new FakeDroneApi(5);
+        // doubling to 524,288 characters then 30 prints is 15,728,640 units - over the construction
+        // budget - but a farm interpreter has no allocation budget at all
+        new Interpreter(api).run(new Parser(new Lexer(
+                "s = \"x\"\nfor i in range(19):\n    s = s + s\nfor i in range(30):\n    print(s)\n").scan()).parseProgram());
+        assertEquals(30, api.printed.size());
+        assertEquals(524288, api.printed.get(0).length());
     }
 }

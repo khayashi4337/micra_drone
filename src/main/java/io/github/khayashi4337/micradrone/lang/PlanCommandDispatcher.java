@@ -197,14 +197,14 @@ final class PlanCommandDispatcher {
         if (v instanceof Double d && d == Math.rint(d) && d >= Integer.MIN_VALUE && d <= Integer.MAX_VALUE) {
             return (int) (double) d;
         }
-        throw new IllegalArgumentException("整数が必要です(" + v + ")");
+        throw new IllegalArgumentException("整数が必要です(" + PlanValueText.describe(v) + ")");
     }
 
     private static boolean bool(Object v) {
         if (v instanceof Boolean b) {
             return b;
         }
-        throw new IllegalArgumentException("True か False が必要です(" + v + ")");
+        throw new IllegalArgumentException("True か False が必要です(" + PlanValueText.describe(v) + ")");
     }
 
     private static int[] ints(Object v, int size) {
@@ -258,7 +258,7 @@ final class PlanCommandDispatcher {
 
     private static String facing(String f) {
         if (!FACINGS.contains(f)) {
-            throw new IllegalArgumentException("向きは " + FACINGS_QUOTED + " のどれかです(" + f + ")");
+            throw new IllegalArgumentException("向きは " + FACINGS_QUOTED + " のどれかです(" + PlanValueText.describe(f) + ")");
         }
         return f;
     }
@@ -267,7 +267,7 @@ final class PlanCommandDispatcher {
     private static String nodePort(String s) {
         int dot = s.indexOf(NODE_PORT_SEPARATOR);
         if (dot <= 0 || dot == s.length() - 1) {
-            throw new IllegalArgumentException("\"ノードID.ポート名\" の形にしてください(" + s + ")");
+            throw new IllegalArgumentException("\"ノードID.ポート名\" の形にしてください(" + PlanValueText.describe(s) + ")");
         }
         return s;
     }
@@ -294,7 +294,8 @@ final class PlanCommandDispatcher {
                                 + "\", u, v] の形にしてください");
                     }
                     if (!side.equals(SIDE_OUTER) && !side.equals(SIDE_INNER)) {
-                        throw new IllegalArgumentException("面の側は \"" + SIDE_OUTER + "\" か \"" + SIDE_INNER + "\" です(" + side + ")");
+                        throw new IllegalArgumentException("面の側は \"" + SIDE_OUTER + "\" か \"" + SIDE_INNER
+                                + "\" です(" + PlanValueText.describe(side) + ")");
                     }
                     return PlanAnchorArgs.surface(target, side, integer(a.get(3)), integer(a.get(4)));
                 }
@@ -304,7 +305,7 @@ final class PlanCommandDispatcher {
                     }
                     return PlanAnchorArgs.slot(slot, a.size() > 2 ? turns(a.get(2)) : 0, a.size() > 3 && bool(a.get(3)));
                 }
-                default -> throw new IllegalArgumentException("位置指定の種類が不明です: " + kind);
+                default -> throw new IllegalArgumentException("位置指定の種類が不明です: " + PlanValueText.describe(kind));
             }
         }
         if (a.size() < ABSOLUTE_ANCHOR_MIN_SIZE || a.size() > ABSOLUTE_ANCHOR_MAX_SIZE) {

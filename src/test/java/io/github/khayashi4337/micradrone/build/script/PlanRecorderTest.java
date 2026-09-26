@@ -12,6 +12,7 @@ import io.github.khayashi4337.micradrone.build.model.Connection;
 import io.github.khayashi4337.micradrone.build.model.Dir6;
 import io.github.khayashi4337.micradrone.build.model.Facing;
 import io.github.khayashi4337.micradrone.build.model.LocalPos;
+import io.github.khayashi4337.micradrone.build.model.LogisticsPlan;
 import io.github.khayashi4337.micradrone.build.model.ParamValue;
 import io.github.khayashi4337.micradrone.build.model.PlanOp;
 import io.github.khayashi4337.micradrone.build.model.PlanPatch;
@@ -183,5 +184,67 @@ class PlanRecorderTest {
         PlanPatch patch = r.toPatch("p", 0, "s");
         assertEquals(1, patch.ops().size());
         assertEquals(Map.of("roof", "minecraft:bricks"), ((PlanOp.SetStyle) patch.ops().get(0)).style().palette());
+    }
+
+    // ---- strictness of the logistics dicts and the cases the first round missed (fix round 1) ----
+
+    @Test
+    void unknownKeysInTheLogisticsDictsAreRejectedWithTheAllowedKeysNamed() {
+        PlanRecorder r = new PlanRecorder();
+        List<Object> box = List.of(0.0, 0.0, 0.0, 8.0, 0.0, 8.0);
+        IllegalArgumentException dock = assertThrows(IllegalArgumentException.class, () -> r.logistics(
+                List.of(params("id", "d", "pad", box, "clearance", box, "approach", "north", "port", List.of("a.b"))),
+                List.of(), List.of()));
+        assertTrue(dock.getMessage().contains("port"), dock.getMessage());
+        assertTrue(dock.getMessage().contains("ports"), dock.getMessage());
+        IllegalArgumentException route = assertThrows(IllegalArgumentException.class, () -> r.logistics(List.of(),
+                List.of(params("id", "r", "from", "a", "to", "b", "waypoint", List.of())), List.of()));
+        assertTrue(route.getMessage().contains("waypoint"), route.getMessage());
+        assertTrue(route.getMessage().contains("waypoints"), route.getMessage());
+        IllegalArgumentException flow = assertThrows(IllegalArgumentException.class, () -> r.logistics(List.of(),
+                List.of(), List.of(params("item", "i", "per_min", 1.0, "from", "a", "to", "b", "rate", 2.0))));
+        assertTrue(flow.getMessage().contains("rate"), flow.getMessage());
+        assertTrue(flow.getMessage().contains("per_min"), flow.getMessage());
+    }
+
+    @Test
+    void disconnectIsRecordedAsARemoveConnection() {
+        PlanRecorder r = new PlanRecorder();
+        r.disconnect("c-1");
+        assertEquals(new PlanOp.RemoveConnection("c-1"), r.toPatch("p", 0, "s").ops().get(0));
+    }
+
+    @Test
+    void aNoneAirshipIsRecordedAsNull() {
+        PlanRecorder r = new PlanRecorder();
+        r.logistics(List.of(), List.of(params("id", "r", "from", "a", "to", "b", "airship", MicraNone.INSTANCE)), List.of());
+        LogisticsPlan.Route route = ((PlanOp.SetLogistics) r.toPatch("p", 0, "s").ops().get(0)).logistics().routes().get(0);
+        assertNull(route.airshipTemplateId());
+        // a missing key means the same
+        PlanRecorder r2 = new PlanRecorder();
+        r2.logistics(List.of(), List.of(params("id", "r", "from", "a", "to", "b")), List.of());
+        assertNull(((PlanOp.SetLogistics) r2.toPatch("p", 0, "s").ops().get(0)).logistics().routes().get(0).airshipTemplateId());
+    }
+
+    @Test
+    void aNonNumberPerMinAndAWaypointThatIsNotThreeNumbersAreRejected() {
+        PlanRecorder r = new PlanRecorder();
+        assertThrows(IllegalArgumentException.class, () -> r.logistics(List.of(), List.of(),
+                List.of(params("item", "i", "per_min", "fast", "from", "a", "to", "b"))));
+        assertThrows(IllegalArgumentException.class, () -> r.logistics(List.of(),
+                List.of(params("id", "r", "from", "a", "to", "b", "waypoints", List.of(List.of(0.0, 5.0)))), List.of()));
+        assertThrows(IllegalArgumentException.class, () -> r.logistics(List.of(),
+                List.of(params("id", "r", "from", "a", "to", "b", "waypoints", List.of(List.of(0.0, "x", 0.0)))), List.of()));
+    }
+
+    @Test
+    void aMoodAloneRecordsAsOneSetStyle() {
+        PlanRecorder r = new PlanRecorder();
+        r.mood("cozy");
+        PlanPatch patch = r.toPatch("p", 0, "s");
+        assertEquals(1, patch.ops().size());
+        PlanOp.SetStyle style = (PlanOp.SetStyle) patch.ops().get(0);
+        assertEquals(Set.of("cozy"), style.style().moodTags());
+        assertTrue(style.style().palette().isEmpty());
     }
 }

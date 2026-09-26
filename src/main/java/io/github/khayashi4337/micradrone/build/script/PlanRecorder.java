@@ -24,6 +24,7 @@ import io.github.khayashi4337.micradrone.build.model.StyleSpec;
 import io.github.khayashi4337.micradrone.lang.MicraNone;
 import io.github.khayashi4337.micradrone.lang.PlanAnchorArgs;
 import io.github.khayashi4337.micradrone.lang.PlanApi;
+import io.github.khayashi4337.micradrone.lang.PlanValueText;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +45,21 @@ import java.util.TreeSet;
 public final class PlanRecorder implements PlanApi {
     private static final int SITE_BOUNDS_SIZE = 6;
     private static final int LOCAL_POS_SIZE = 3;
+    /**
+     * Deepest list nesting one params value may hold (a list of numbers is 1 level, a list of
+     * lists of numbers is 2). Unbounded because the script's values are LIVE objects: a list that
+     * contains itself would recurse forever inside {@link ParamValue#fromTree}.
+     */
+    private static final int MAX_PARAM_DEPTH = 8;
+    /**
+     * Total nodes (every list and every scalar counts one) across ALL params of one call. A nest
+     * of shared references expands exponentially when read as a tree, so the walk stops here
+     * instead of materialising it.
+     */
+    private static final int MAX_PARAM_NODES = 10_000;
+    private static final List<String> DOCK_KEYS = List.of("id", "pad", "clearance", "approach", "ports", "connectors");
+    private static final List<String> ROUTE_KEYS = List.of("id", "from", "to", "waypoints", "airship");
+    private static final List<String> FLOW_KEYS = List.of("item", "per_min", "from", "to");
 
     private final List<PlanOp> ops = new ArrayList<>();
     private final TreeMap<String, String> palette = new TreeMap<>();
@@ -127,6 +143,7 @@ public final class PlanRecorder implements PlanApi {
         List<LogisticsPlan.Dock> dockList = new ArrayList<>();
         for (Object o : docks) {
             Map<String, Object> d = dict(o, "ドック");
+            checkKeys(d, "ドック", DOCK_KEYS);
             List<PortRef> ports = new ArrayList<>();
             for (Object p : list(d.getOrDefault("ports", List.of()), "ports")) {
                 ports.add(port(text(p, "ports")));
@@ -137,6 +154,7 @@ public final class PlanRecorder implements PlanApi {
         List<LogisticsPlan.Route> routeList = new ArrayList<>();
         for (Object o : routes) {
             Map<String, Object> r = dict(o, "航路");
+            checkKeys(r, "航路", ROUTE_KEYS);
             List<LocalPos> pts = new ArrayList<>();
             for (Object p : list(r.getOrDefault("waypoints", List.of()), "waypoints")) {
                 List<Object> c = list(p, "waypoints");
@@ -151,6 +169,7 @@ public final class PlanRecorder implements PlanApi {
         List<LogisticsPlan.CargoFlow> flowList = new ArrayList<>();
         for (Object o : flows) {
             Map<String, Object> f = dict(o, "流れ");
+            checkKeys(f, "流れ", FLOW_KEYS);
             if (!(f.get("per_min") instanceof Double perMin) || !Double.isFinite(perMin)) {
                 throw new IllegalArgumentException("流れの per_min は数が必要です");
             }
@@ -172,7 +191,7 @@ public final class PlanRecorder implements PlanApi {
             case SURFACE -> {
                 Side side = Side.parse(a.side());
                 if (side != Side.OUTER && side != Side.INNER) {
-                    throw new IllegalArgumentException("面の側は \"outer\" か \"inner\" です(" + a.side() + ")");
+                    throw new IllegalArgumentException("面の側は \"outer\" か \"inner\" です(" + PlanValueText.describe(a.side()) + ")");
                 }
                 yield new Anchor.OnSurface(a.target(), side, a.u(), a.v());
             }
@@ -183,23 +202,65 @@ public final class PlanRecorder implements PlanApi {
     /**
      * Copies the params dict into the plan's own immutable values at call time. {@link ParamValue#fromTree}
      * already refuses non-data (dicts, functions, None, sets); the wrapper names which argument held it.
+     * The value is first rebuilt inside fresh lists under {@link #MAX_PARAM_DEPTH}/
+     * {@link #MAX_PARAM_NODES}, so a cyclic list cannot make {@code fromTree} recurse forever and a
+     * shared-reference nest cannot expand into an unbounded copy inside one call.
      */
     private static Map<String, ParamValue> toParams(Map<String, Object> params) {
         Map<String, ParamValue> out = new TreeMap<>();
+        ParamBudget budget = new ParamBudget();
         for (Map.Entry<String, Object> e : params.entrySet()) {
+            Object value = boundedCopy(e.getKey(), e.getValue(), budget, 0);
             try {
-                out.put(e.getKey(), ParamValue.fromTree(e.getValue()));
+                out.put(e.getKey(), ParamValue.fromTree(value));
             } catch (IllegalArgumentException bad) {
-                throw new IllegalArgumentException("params の「" + e.getKey() + "」はデータの値にしてください: " + bad.getMessage());
+                throw new IllegalArgumentException("params の「" + PlanValueText.describe(e.getKey())
+                        + "」はデータの値にしてください: " + bad.getMessage());
             }
         }
         return out;
     }
 
+    /** The node count one {@link #toParams} call is still allowed to walk, shared across its keys. */
+    private static final class ParamBudget {
+        int nodes;
+    }
+
+    /**
+     * Rebuilds {@code value} as fresh lists within the depth/node limits shared by the whole call.
+     * Scalars are carried by value; anything that is not a list passes through UNCHANGED so
+     * {@link ParamValue#fromTree} keeps producing its existing rejection for non-data - the copy
+     * deliberately does not look inside it.
+     */
+    private static Object boundedCopy(String key, Object value, ParamBudget budget, int depth) {
+        budget.nodes++;
+        if (budget.nodes > MAX_PARAM_NODES) {
+            throw tooDeep(key);
+        }
+        if (!(value instanceof List<?> list)) {
+            return value;
+        }
+        // a list nested inside `depth` lists is level depth+1; level 9 or deeper is refused, so an
+        // empty list at level 9 is caught too and a cyclic list can never recurse without end
+        if (depth >= MAX_PARAM_DEPTH) {
+            throw tooDeep(key);
+        }
+        List<Object> copy = new ArrayList<>(list.size());
+        for (Object item : list) {
+            copy.add(boundedCopy(key, item, budget, depth + 1));
+        }
+        return copy;
+    }
+
+    private static IllegalArgumentException tooDeep(String key) {
+        return new IllegalArgumentException("params の「" + PlanValueText.describe(key) + "」は、深さ "
+                + MAX_PARAM_DEPTH + " 段・合計 " + MAX_PARAM_NODES + " 要素までです");
+    }
+
     private static PortRef port(String text) {
         int dot = text.indexOf('.');
         if (dot <= 0 || dot == text.length() - 1) {
-            throw new IllegalArgumentException("\"ノードID.ポート名\" の形にしてください: " + text);
+            throw new IllegalArgumentException("\"ノードID.ポート名\" の形にしてください: " + PlanValueText.describe(text));
         }
         return new PortRef(text.substring(0, dot), text.substring(dot + 1));
     }
@@ -222,11 +283,21 @@ public final class PlanRecorder implements PlanApi {
                         dirs.add(Dir6.parse(d));
                     }
                 }
-                default -> throw new IllegalArgumentException("constraints に「" + e.getKey()
+                default -> throw new IllegalArgumentException("constraints に「" + PlanValueText.describe(e.getKey())
                         + "」はありません(max_length・avoid・max_turns・entry_dirs)");
             }
         }
         return new Constraints(maxLength, avoid, maxTurns, dirs);
+    }
+
+    /** Every key of a logistics dict must be one of the documented ones, like {@link #toConstraints} already requires. */
+    private static void checkKeys(Map<String, Object> dict, String what, List<String> allowedKeys) {
+        for (Object key : dict.keySet()) {
+            if (!(key instanceof String) || !allowedKeys.contains(key)) {
+                throw new IllegalArgumentException(what + "に「" + PlanValueText.describe(key)
+                        + "」はありません(" + String.join("・", allowedKeys) + ")");
+            }
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -264,7 +335,7 @@ public final class PlanRecorder implements PlanApi {
         if (o instanceof Double d && d == Math.rint(d) && d >= Integer.MIN_VALUE && d <= Integer.MAX_VALUE) {
             return (int) (double) d;
         }
-        throw new IllegalArgumentException("整数が必要です(" + o + ")");
+        throw new IllegalArgumentException("整数が必要です(" + PlanValueText.describe(o) + ")");
     }
 
     private static Box box(Object o, String what) {
