@@ -9,7 +9,8 @@ import io.github.khayashi4337.micradrone.build.parts.Params;
 
 /**
  * A floor that projects out of a wall, with a fence along its outer three sides. The anchor's u is counted from the
- * wall's start and its v from the storey's floor, which is the row just below the wall's lowest row.
+ * wall's start and its v from the storey's floor, which is the row just below the wall's lowest row. The floor lies
+ * along the wall it is attached to: a width that runs past the wall's end is refused.
  */
 final class BalconyGen implements PartGenerator {
     private static final String P_WIDTH = "width";
@@ -17,8 +18,6 @@ final class BalconyGen implements PartGenerator {
     private static final String P_RAIL = "rail";
     private static final String P_MATERIAL = "material";
     private static final String ROLE_FENCE = "fence";
-    /** The storey's floor is this many rows below the wall's lowest row, so the anchor's v is the wall row v - 1. */
-    private static final int FLOOR_ROWS_BELOW_WALL = 1;
     /** The fence stands on the floor. */
     private static final int RAIL_ABOVE_FLOOR = 1;
     /** The first cell out from the wall: layer -1 of a wall is the first cell outside its outermost layer. */
@@ -31,11 +30,18 @@ final class BalconyGen implements PartGenerator {
         if (a.side() != Side.OUTER) {
             throw ctx.fail(node, IssueCode.E_ANCHOR, GenContext.KEY_ANCHOR, "バルコニーは、壁の外側(outer)にだけ付けられます");
         }
+        int width = p.i(P_WIDTH);
+        // The floor lies along the wall it is attached to. Checked before anything is looked up or placed, so a refusal
+        // leaves no cell behind. The anchor's own cell is already on the wall, so only the far end can be past it.
+        if (!wall.fitsAlong(a.u(), width)) {
+            throw ctx.fail(node, IssueCode.E_ANCHOR, GenContext.KEY_EXTENT, node.id() + "のバルコニー(u=" + a.u() + "から幅" + width
+                    + ")が、壁(" + wall.id() + ")の外にはみ出しています(壁は長さ" + wall.length() + ")");
+        }
         int depth = p.i(P_DEPTH);
         boolean rail = p.b(P_RAIL);
         int firstI = a.u();
-        int lastI = a.u() + p.i(P_WIDTH) - 1;
-        int floorRow = a.v() - FLOOR_ROWS_BELOW_WALL;
+        int lastI = a.u() + width - 1;
+        int floorRow = wall.rowAboveStoreyFloor(a.v());
         // Every block that will be placed is asked of the palette before the first one goes down (a refused material
         // leaves no cell behind), and only those that will be placed: the fence role is asked for by a railed balcony only.
         BlockSpec floor = ctx.plainBlock(p.s(P_MATERIAL), node);

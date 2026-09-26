@@ -12,6 +12,8 @@ public record WallInfo(String id, StructureInfo structure, Facing side, int leve
                        int from, int length) {
     /** Prefix of the merge group shared by the walls of one building (see {@link #cornerGroup}). */
     private static final String CORNER_GROUP_PREFIX = "wall:";
+    /** The storey's floor takes the lowest row, so a wall starts one row above it (row 0) and is one row shorter. */
+    static final int FLOOR_ROWS = 1;
 
     public Facing outward() {
         return side;
@@ -43,6 +45,27 @@ public record WallInfo(String id, StructureInfo structure, Facing side, int leve
 
     public int sideLength() {
         return sideLength(structure, side);
+    }
+
+    /**
+     * Whether {@code span} cells that start at position {@code i} along the wall all lie within the wall: the last one,
+     * {@code i + span - 1}, is at most the wall's last position, {@code length - 1}. Positions count from the wall's own
+     * start ({@code from}), so this compares with the wall's length, not with the length of the side it stands on (a wall
+     * may cover only a part of its side). It looks at nothing else: the caller has a position {@code i >= 0} on this wall
+     * (see {@link GenContext#wallOfAnchor}), and rows are its own concern. A part that is attached to a wall face, such as an
+     * opening or a balcony, uses it to keep its extent along the wall inside the wall.
+     */
+    public boolean fitsAlong(int i, int span) {
+        return i + span <= length;
+    }
+
+    /**
+     * The row, in {@link #cell}'s numbering, of the cells {@code above} rows above the storey's floor. The floor's own level
+     * ({@code above} 0) is the row just below the wall's lowest row, so it is row -{@link #FLOOR_ROWS} here, and the wall's
+     * lowest row (row 0) is {@code above} = {@link #FLOOR_ROWS}.
+     */
+    public int rowAboveStoreyFloor(int above) {
+        return above - FLOOR_ROWS;
     }
 
     /** {@code layer} 0 is the outermost layer, thickness-1 the innermost; -1 is the first cell outside the wall. */

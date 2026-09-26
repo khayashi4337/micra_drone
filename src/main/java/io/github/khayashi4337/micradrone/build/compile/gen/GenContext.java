@@ -29,6 +29,8 @@ public final class GenContext {
     // Keys that tell apart several issues of one code on one node.
     static final String KEY_ANCHOR = "anchor";
     static final String KEY_LEVEL = "level";
+    /** A part on a wall face whose extent along the wall runs past the wall's end. */
+    static final String KEY_EXTENT = "extent";
     private static final String KEY_PARENT = "parent";
     private static final String KEY_FROM = "from";
     private static final String KEY_LENGTH = "length";
@@ -49,8 +51,6 @@ public final class GenContext {
     private static final String PART_HALF = "half";
     /** A length or height of 0 means "all of it" (the rest of the side, the storey minus its floor row). */
     private static final int AUTO = 0;
-    /** The storey's floor takes the lowest row, so a wall starts one row above it and is one row shorter. */
-    private static final int FLOOR_ROWS = 1;
     private static final String NO_PARENT = "なし";
 
     /** A node with its resolved parameters and its local origin (null for nodes placed on a wall face). */
@@ -166,11 +166,11 @@ public final class GenContext {
         if (from + length > sideLen) {
             throw fail(wall, IssueCode.E_PARAM_RANGE, KEY_LENGTH, "壁の端を越えます(from=" + from + " + length=" + length + " > " + sideLen + ")");
         }
-        int height = p.i(P_HEIGHT) == AUTO ? st.floorHeight() - FLOOR_ROWS : p.i(P_HEIGHT);
+        int height = p.i(P_HEIGHT) == AUTO ? st.floorHeight() - WallInfo.FLOOR_ROWS : p.i(P_HEIGHT);
         if (p.s(P_PART).equals(PART_HALF)) {
             height = (height + 1) / 2; // the lower half, rounded up
         }
-        int baseV = st.origin().v() + level * st.floorHeight() + FLOOR_ROWS;
+        int baseV = st.origin().v() + level * st.floorHeight() + WallInfo.FLOOR_ROWS;
         return new WallInfo(wall.id(), st, side, level, baseV, height, p.i(P_THICKNESS), from, length);
     }
 

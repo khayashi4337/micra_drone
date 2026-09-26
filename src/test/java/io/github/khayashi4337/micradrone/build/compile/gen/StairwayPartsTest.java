@@ -119,6 +119,7 @@ class StairwayPartsTest {
     private static final String BAD_BALCONY_MATERIAL_ID = "E-PARAM-RANGE:" + BALCONY_ID + "#material";
     private static final String BALCONY_ANCHOR_ID = "E-ANCHOR:" + BALCONY_ID + "#anchor";
     private static final String BALCONY_OFF_WALL_ID = "E-OPENING-NO-WALL:" + BALCONY_ID + "#anchor";
+    private static final String BALCONY_EXTENT_ID = "E-ANCHOR:" + BALCONY_ID + "#extent";
     private static final String BUDGET_ISSUE_ID = "E-OUT-OF-BOUNDS:#cells";
 
     /** The hall: 7 x 7, one floor, floor height 4: walls are 3 rows high (v = 1..3), the floor row is v = 0. */
@@ -127,6 +128,9 @@ class StairwayPartsTest {
     private static final int FLOORS = 1;
     private static final int TWO_FLOORS = 2;
     private static final int MAX_CELLS = 1_000;
+    /** The hall's north wall in pieces: it covers u = 2..5 only, so its positions 0..3 are the building's u = 2..5. */
+    private static final int SEGMENT_FROM = 2;
+    private static final int SEGMENT_LENGTH = 4;
 
     private static final StyleSpec NO_STYLE = StyleSpec.EMPTY;
 
@@ -399,6 +403,14 @@ class StairwayPartsTest {
         return nodes;
     }
 
+    /** The hall whose north wall covers only u = SEGMENT_FROM.. (SEGMENT_LENGTH cells), with the balconies given. */
+    private static List<PlanNode> hallWithNorthSegment(PlanNode... balconies) {
+        List<PlanNode> nodes = hallWith(balconies);
+        nodes.replaceAll(n -> n.id().equals(WALL_N)
+                ? node(WALL_N, WALL, STRUCTURE_ID, 0, 0, 0, params(P_SIDE, NORTH, P_FROM, SEGMENT_FROM, P_LENGTH, SEGMENT_LENGTH)) : n);
+        return nodes;
+    }
+
     private static PlanNode balcony(String wall, Side side, int u, int v, Map<String, ParamValue> params) {
         return onWall(BALCONY_ID, BALCONY, STRUCTURE_ID, wall, side, u, v, params);
     }
@@ -510,11 +522,41 @@ class StairwayPartsTest {
     @Test
     void aBalconysPositionCountsFromTheStartOfItsWallSegment() {
         // the north wall covers u = 2..5 only; position 1 of it is u = 3. One deep: the far edge is the whole railing.
-        List<PlanNode> nodes = hallWith(balcony(WALL_N, Side.OUTER, 1, 0, params(P_WIDTH, 2, P_DEPTH, 1)));
-        nodes.replaceAll(n -> n.id().equals(WALL_N) ? node(WALL_N, WALL, STRUCTURE_ID, 0, 0, 0, params(P_SIDE, NORTH, P_FROM, 2, P_LENGTH, 4)) : n);
-        Map<LocalPos, BlockSpec> c = buildBalconies(nodes);
+        Map<LocalPos, BlockSpec> c = buildBalconies(
+                hallWithNorthSegment(balcony(WALL_N, Side.OUTER, 1, 0, params(P_WIDTH, 2, P_DEPTH, 1))));
         assertEquals(box(0, 3, 4, 7, 7), positionsOf(c, OAK_PLANKS));
         assertEquals(box(1, 3, 4, 7, 7), positionsOf(c, OAK_FENCE));
+    }
+
+    @Test
+    void aBalconyMayEndExactlyAtTheEndOfItsWallButNotPastIt() {
+        // the north wall is 7 long: positions 0..6. From position 4 a 3-wide balcony ends on position 6, the last one.
+        Map<LocalPos, BlockSpec> fits = buildBalconies(hallWith(balcony(WALL_N, Side.OUTER, 4, 0, params(P_WIDTH, 3, P_DEPTH, 2))));
+        assertEquals(box(0, 4, 6, 7, 8), positionsOf(fits, OAK_PLANKS));
+        assertEquals(union(box(1, 4, 6, 8, 8), box(1, 4, 4, 7, 7), box(1, 6, 6, 7, 7)), positionsOf(fits, OAK_FENCE));
+        // a balcony one cell wide on the last position fits too
+        Map<LocalPos, BlockSpec> last = buildBalconies(hallWith(balcony(WALL_N, Side.OUTER, 6, 0, params(P_WIDTH, 1, P_DEPTH, 1))));
+        assertEquals(box(0, 6, 6, 7, 7), positionsOf(last, OAK_PLANKS));
+        // one cell over: from position 5 the same balcony would end past the wall's end and past the building's corner
+        assertEquals(List.of(BALCONY_EXTENT_ID),
+                ids(compile(hallWith(balcony(WALL_N, Side.OUTER, 5, 0, params(P_WIDTH, 3, P_DEPTH, 2))))));
+        assertEquals(List.of(BALCONY_EXTENT_ID),
+                ids(compile(hallWith(balcony(WALL_N, Side.OUTER, 0, 0, params(P_WIDTH, HALL_SIDE + 1, P_DEPTH, 1))))));
+    }
+
+    @Test
+    void aBalconyMustFitTheWallItIsOnAndNotJustTheSideOfTheBuilding() {
+        // The north wall covers u = 2..5 (its length is 4) on a side that is 7 long. From position 2 a 3-wide balcony would
+        // end on position 4, past this wall's end, though it would still be inside the side.
+        assertEquals(List.of(BALCONY_EXTENT_ID),
+                ids(compile(hallWithNorthSegment(balcony(WALL_N, Side.OUTER, 2, 0, params(P_WIDTH, 3, P_DEPTH, 1))))));
+        // exact fits on the segment: positions 1..3 are the building's u = 3..5, and the last position alone is u = 5
+        Map<LocalPos, BlockSpec> fits = buildBalconies(
+                hallWithNorthSegment(balcony(WALL_N, Side.OUTER, 1, 0, params(P_WIDTH, 3, P_DEPTH, 1))));
+        assertEquals(box(0, 3, 5, 7, 7), positionsOf(fits, OAK_PLANKS));
+        Map<LocalPos, BlockSpec> last = buildBalconies(
+                hallWithNorthSegment(balcony(WALL_N, Side.OUTER, 3, 0, params(P_WIDTH, 1, P_DEPTH, 1))));
+        assertEquals(box(0, 5, 5, 7, 7), positionsOf(last, OAK_PLANKS));
     }
 
     @Test
@@ -633,7 +675,10 @@ class StairwayPartsTest {
 
     @Test
     void aRefusedPartLeavesNothingOfItselfOnTheCanvas() {
-        // Each part asks the palette for every block it will place before the first one goes down, so a refusal is clean.
+        // What this pins: the issue id of each refusal, and that the canvas is untouched afterwards. The material and anchor
+        // refusals fail at the very first lookup or check, before any block could be placed even by a part that placed as it
+        // went, so they do not pin the order. The extent refusal does: the floor and the fence would be laid before the
+        // check if it came after the loops, so it pins that a balcony is validated before its first block goes down.
         List<Refusal> refusals = List.of(
                 new Refusal(single(STAIRS, params(P_MATERIAL, SMOOTH_STONE)), BAD_MATERIAL_ID),
                 new Refusal(single(RAMP, params(P_MATERIAL, RED_TERRACOTTA)), BAD_MATERIAL_ID),
@@ -641,6 +686,8 @@ class StairwayPartsTest {
                 new Refusal(single(RAILING, params(P_MATERIAL, UNKNOWN_ROLE)), BAD_MATERIAL_ID),
                 new Refusal(balcony(WALL_N, Side.OUTER, 2, 0, params(P_MATERIAL, UNKNOWN_ROLE)), BAD_BALCONY_MATERIAL_ID),
                 new Refusal(balcony(WALL_N, Side.INNER, 2, 0, Map.of()), BALCONY_ANCHOR_ID),
+                // 3 wide from position 5 of a 7-long wall: it passes the anchor check and every lookup, and is refused for its extent
+                new Refusal(balcony(WALL_N, Side.OUTER, 5, 0, params(P_WIDTH, 3, P_DEPTH, 2)), BALCONY_EXTENT_ID),
                 // the patcher refuses a target that is not a wall, so only a hand-built plan gets this far
                 new Refusal(balcony(STRUCTURE_ID, Side.OUTER, 0, 0, Map.of()), BALCONY_OFF_WALL_ID));
         for (Refusal r : refusals) {
