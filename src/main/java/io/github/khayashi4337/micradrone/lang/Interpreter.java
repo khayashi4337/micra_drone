@@ -325,6 +325,7 @@ public final class Interpreter {
         }
         if (target instanceof Map<?, ?> map) {
             checkPlanHashable(index, s.line());
+            chargeHashProbe(index, map.size(), s.line());
             @SuppressWarnings("unchecked")
             Map<Object, Object> mutable = (Map<Object, Object>) map;
             mutable.put(index, value);
@@ -668,6 +669,7 @@ public final class Interpreter {
             case "add" -> {
                 requireMethodArgCount(call, args, 1);
                 checkPlanHashable(args.get(0), call.line());
+                chargeHashProbe(args.get(0), set.size(), call.line());
                 set.add(args.get(0));
                 checkPlanCollectionSize(set.size(), call.line());
                 yield MicraNone.INSTANCE;
@@ -675,6 +677,7 @@ public final class Interpreter {
             case "remove" -> {
                 requireMethodArgCount(call, args, 1);
                 checkPlanHashable(args.get(0), call.line());
+                chargeHashProbe(args.get(0), set.size(), call.line());
                 if (!set.remove(args.get(0))) {
                     throw new MicraLangException(call.line(), stringifyValue(args.get(0), call.line()) + " is not in this set");
                 }
@@ -709,12 +712,14 @@ public final class Interpreter {
             case "get" -> {
                 requireMethodArgCount(call, args, 1);
                 checkPlanHashable(args.get(0), call.line());
+                chargeHashProbe(args.get(0), map.size(), call.line());
                 Object value = map.get(args.get(0));
                 yield value == null ? MicraNone.INSTANCE : value;
             }
             case "remove" -> {
                 requireMethodArgCount(call, args, 1);
                 checkPlanHashable(args.get(0), call.line());
+                chargeHashProbe(args.get(0), map.size(), call.line());
                 if (!map.containsKey(args.get(0))) {
                     throw new MicraLangException(call.line(), "no key " + stringifyValue(args.get(0), call.line()) + " in this dict");
                 }
@@ -774,6 +779,7 @@ public final class Interpreter {
         for (int i = 0; i < e.keys().size(); i++) {
             Object key = eval(e.keys().get(i));
             checkPlanHashable(key, e.line());
+            chargeHashProbe(key, map.size(), e.line());
             map.put(key, eval(e.values().get(i)));
         }
         checkPlanCollectionSize(map.size(), e.line());
@@ -786,6 +792,7 @@ public final class Interpreter {
         for (Expr element : e.elements()) {
             Object value = eval(element);
             checkPlanHashable(value, e.line());
+            chargeHashProbe(value, set.size(), e.line());
             set.add(value);
         }
         checkPlanCollectionSize(set.size(), e.line());
@@ -801,6 +808,7 @@ public final class Interpreter {
         }
         if (target instanceof Map<?, ?> map) {
             checkPlanHashable(index, e.line());
+            chargeHashProbe(index, map.size(), e.line());
             Object value = map.get(index);
             if (value == null && !map.containsKey(index)) {
                 throw new MicraLangException(e.line(), "no key " + stringifyValue(index, e.line()) + " in this dict");
@@ -1120,9 +1128,13 @@ public final class Interpreter {
                 if (planLimits != null) {
                     // scanned before the set is built: collections cannot be hashed
                     // (checkPlanHashable), so set([[1]]) refuses on the argument rather
-                    // than inside LinkedHashSet's hashing
+                    // than inside LinkedHashSet's hashing; each String element also
+                    // pays for the insert probe against the full SOURCE size (the new
+                    // table is sized from the input, so every probe walks a structure
+                    // that big even when the set deduplicates most of it away)
                     for (Object element : source) {
                         checkPlanHashable(element, call.line());
+                        chargeHashProbe(element, source.size(), call.line());
                     }
                 }
                 // charged on the INPUT size: new LinkedHashSet<>(source) sizes its hash table
@@ -1489,10 +1501,12 @@ public final class Interpreter {
         }
         if (container instanceof Set<?> set) {
             checkPlanHashable(item, line);
+            chargeHashProbe(item, set.size(), line);
             return set.contains(item);
         }
         if (container instanceof Map<?, ?> m) {
             checkPlanHashable(item, line);
+            chargeHashProbe(item, m.size(), line);
             return m.containsKey(item);
         }
         if (container instanceof String s) {
@@ -1533,6 +1547,34 @@ public final class Interpreter {
     }
 
     /**
+     * ceil(log2(x)) for container sizes: 0 for x <= 1, otherwise the number of
+     * bits in x - 1 (so powers of two map to their own exponent and everything
+     * else rounds up: ceilLog2(2) = 1, ceilLog2(3) = 2, ceilLog2(1,025) = 11).
+     */
+    private static int ceilLog2(int x) {
+        return x <= 1 ? 0 : Integer.SIZE - Integer.numberOfLeadingZeros(x - 1);
+    }
+
+    /**
+     * Charges the modelled cost of one hash-table probe or insert of {@code key}
+     * into a container of {@code containerSize} entries. Only a String key does
+     * real work: the probe's {@code equals}/{@code compareTo} scans the key's
+     * characters at least once, and keys that share a hashCode pile into one
+     * bucket that Java treeifies, so a lookup costs about log2(containerSize)
+     * comparisons - (key.length() + 1) x (1 + ceilLog2(containerSize + 1)) units
+     * covers the scan plus that depth. Every other key type (numbers, booleans,
+     * None, functions, semaphores) is a constant-time probe and pays nothing -
+     * and collections are refused outright by {@link #checkPlanHashable}. The
+     * units land on the run-wide step counter through {@link #chargePlanWork},
+     * so this is a no-op for farm interpreters.
+     */
+    private void chargeHashProbe(Object key, int containerSize, int line) {
+        if (key instanceof String s) {
+            chargePlanWork((s.length() + 1) * (long) (1 + ceilLog2(containerSize + 1)), line);
+        }
+    }
+
+    /**
      * Worst-case cost of {@code needle in text} for two strings: the needle is tried at
      * each of {@code textLength - needleLength + 1} positions and each try may compare all
      * {@code needleLength} characters (Java's substring search is naive). Zero when the
@@ -1550,10 +1592,11 @@ public final class Interpreter {
      * Refuses the plan-mode use of a collection where Java would have to HASH it: as a
      * set element, a dict key, or the probe of a membership test/lookup on a set or
      * dict. Python has the same rule (lists, sets and dicts are unhashable); here it is
-     * also what keeps hashing cheap for {@link #planEqualsAt} and stops a set/dict
-     * operation from recursing over a shared nest inside hashCode the way equals used
-     * to. A no-op for farm interpreters, whose Java collections happily hash other
-     * collections.
+     * also what keeps {@link #planEqualsAt} from recursing over a shared nest inside
+     * hashCode the way equals used to - and the legal keys left (numbers, booleans,
+     * None, functions, semaphores, and strings) either probe in constant time or pay
+     * their scan through {@link #chargeHashProbe} at every call site. A no-op for
+     * farm interpreters, whose Java collections happily hash other collections.
      */
     private void checkPlanHashable(Object v, int line) {
         if (planLimits != null && (v instanceof List<?> || v instanceof Set<?> || v instanceof Map<?, ?>)) {
@@ -1635,8 +1678,12 @@ public final class Interpreter {
             if (sa.size() != sb.size()) {
                 return false;
             }
-            // set elements are scalars (checkPlanHashable), so the containsAll inside
-            // AbstractSet.equals stays constant-time per element
+            // set elements are scalars (checkPlanHashable), but a String element's
+            // containsAll probe still scans its characters and walks the bucket
+            // tree - charged per element before the equals runs
+            for (Object element : sa) {
+                chargeHashProbe(element, sb.size(), line);
+            }
             work.spend(sa.size(), line);
             return sa.equals(sb);
         }
@@ -1644,8 +1691,11 @@ public final class Interpreter {
             if (ma.size() != mb.size()) {
                 return false;
             }
-            // keys are scalars too, so the lookups are cheap; the VALUES can nest and go
-            // through the same bounded walk
+            // keys are scalars too, but a String key's lookup pays the same probe
+            // scan; the VALUES can nest and go through the same bounded walk
+            for (Object key : ma.keySet()) {
+                chargeHashProbe(key, mb.size(), line);
+            }
             work.spend(ma.size(), line);
             for (Map.Entry<?, ?> entry : ma.entrySet()) {
                 Object other = mb.get(entry.getKey());

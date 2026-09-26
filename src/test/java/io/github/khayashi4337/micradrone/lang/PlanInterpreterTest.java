@@ -1258,6 +1258,162 @@ class PlanInterpreterTest {
         assertEquals("line 10: construction script exceeded 100000 steps", e.getMessage());
     }
 
+    // ---- string keys pay for their hash probes (H-1c-2) ----
+
+    @Test
+    void aStringSetProbePaysForScanningTheKey() {
+        // `k in s` on a 1-element set probes the hash bucket: a 4,095-character
+        // key is charged (4,095 + 1) x (1 + ceilLog2(1 + 1)) = 4,096 x 2 = 8,192
+        // work units = exactly 2 steps on top of the statement step - the
+        // equals scan of the key plus the colliding-bucket depth. A number key
+        // hashes without scanning anything: zero extra steps
+        String script = "k = \"" + "x".repeat(4_095) + "\"\ns = {1}\nx = k in s\nmood(\"ok\")\n";
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(script, api, new PlanRunLimits(6, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(5, 60_000)));
+        assertEquals("line 4: construction script exceeded 5 steps", e.getMessage());
+        e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(4, 60_000)));
+        assertEquals("line 3: construction script exceeded 4 steps", e.getMessage());
+        // the same script probing with a number fits its 4-statement budget exactly
+        api = new RecordingPlanApi();
+        run("k = 7\ns = {1}\nx = k in s\nmood(\"ok\")\n", api, new PlanRunLimits(4, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+    }
+
+    /**
+     * Every plan-mode site that probes or inserts a String key, as the tail of a
+     * script that starts by binding {@code k} and ends in {@code mood("ok")}.
+     * The third column is the exact step count of the NUMBER-key twin (each
+     * statement costs 1, number probes cost nothing).
+     */
+    private static Stream<Arguments> stringKeyProbeSites() {
+        return Stream.of(
+                Arguments.of("'in' on a set", "s = {1}\nx = k in s\n", 4),
+                Arguments.of("'in' on a dict", "d = {1: 2}\nx = k in d\n", 4),
+                Arguments.of("a dict index read", "d = {}\nd[k] = 1\nx = d[k]\n", 5),
+                Arguments.of("a dict item assignment", "d = {}\nd[k] = 1\n", 4),
+                Arguments.of("set.add", "s = set()\ns.add(k)\n", 4),
+                Arguments.of("set.remove", "s = set()\ns.add(k)\ns.remove(k)\n", 5),
+                Arguments.of("dict.get", "d = {}\nd[k] = 1\nx = d.get(k)\n", 5),
+                Arguments.of("dict.remove", "d = {}\nd[k] = 1\nx = d.remove(k)\n", 5),
+                Arguments.of("a dict literal key", "d = {k: 1}\n", 3),
+                Arguments.of("a set literal element", "s = {k}\n", 3),
+                Arguments.of("set() of a list element", "s = set([k])\n", 3),
+                Arguments.of("== on two sets", "s1 = {k}\ns2 = {k}\nx = s1 == s2\n", 5),
+                Arguments.of("== on two dicts", "d1 = {k: 1}\nd2 = {k: 1}\nx = d1 == d2\n", 5));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("stringKeyProbeSites")
+    void everyStringKeyProbePaysForScanningTheKey(String site, String uses, int twinSteps) {
+        // the number-key twin of each script fits its exact statement budget;
+        // the 4,095-character-key version must need at least one step MORE -
+        // so the twin's exact budget already refuses it
+        String probed = "k = \"" + "x".repeat(4_095) + "\"\n" + uses + "mood(\"ok\")\n";
+        String numeric = "k = 7\n" + uses + "mood(\"ok\")\n";
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(numeric, api, new PlanRunLimits(twinSteps, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(probed, new RecordingPlanApi(), new PlanRunLimits(twinSteps, 60_000)),
+                site);
+        assertTrue(e.getMessage().endsWith("construction script exceeded " + twinSteps + " steps"),
+                site + ": " + e.getMessage());
+    }
+
+    @Test
+    void aDictInsertAndASetAddPayExactlyOneStepIntoAnEmptyContainer() {
+        // probing an EMPTY container costs (key.length() + 1) x (1 + ceilLog2(1))
+        // = 4,096 x 1 = 4,096 units = exactly ONE step for the 4,095-character
+        // key: the tree depth factor is 1, only the equals scan is paid
+        String key = "x".repeat(4_095);
+        // k = ... (1), d = {} (1), d[k] = 1 (1 + 1 work step) = 4, mood() = 5
+        String script = "k = \"" + key + "\"\nd = {}\nd[k] = 1\nmood(\"ok\")\n";
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(script, api, new PlanRunLimits(5, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(4, 60_000)));
+        assertEquals("line 4: construction script exceeded 4 steps", e.getMessage());
+        e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(3, 60_000)));
+        assertEquals("line 3: construction script exceeded 3 steps", e.getMessage());
+        // s.add(k) into an empty set is the same 1-step probe
+        String setScript = "k = \"" + key + "\"\ns = set()\ns.add(k)\nmood(\"ok\")\n";
+        api = new RecordingPlanApi();
+        run(setScript, api, new PlanRunLimits(5, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+        e = assertThrows(PlanLimitException.class,
+                () -> run(setScript, new RecordingPlanApi(), new PlanRunLimits(4, 60_000)));
+        assertEquals("line 4: construction script exceeded 4 steps", e.getMessage());
+        e = assertThrows(PlanLimitException.class,
+                () -> run(setScript, new RecordingPlanApi(), new PlanRunLimits(3, 60_000)));
+        assertEquals("line 3: construction script exceeded 3 steps", e.getMessage());
+    }
+
+    @Test
+    void aSetEqualityOfHashCollidingStringKeysIsRefusedByTheStepLimit() {
+        // the reviewer's second bomb: 1,024 keys of 4,116 characters sharing one
+        // hashCode - a 4,096-character prefix plus ten blocks of "Aa"/"BB"
+        // ('B'-'A' = +1 and 'B'-'a' = -31 cancel in the polynomial hash, so any
+        // single-block swap leaves the hashCode unchanged; 10 positions give
+        // 2^10 colliding keys and the hash bucket degenerates to a tree).
+        // Building the sets probes each add: 2 x 4,117 x sum_{i=0..1023}(1 +
+        // ceilLog2(i + 1)) = 2 x 4,117 x 10,241 = 84,324,394 units = 20,587 steps
+        // plus a 42-unit carry, on top of 6,187 statement steps = 26,774.
+        // Then ONE `a == b` pays 1 + 1,024 probes of (4,116 + 1) x (1 +
+        // ceilLog2(1,025)) = 4,117 x 12 = 49,404 units each plus the
+        // 1,024-element size: 50,590,721 units + the 42-unit carry = 12,351
+        // more steps - more than 10,000 steps for a single comparison
+        String seed = "p = \"" + "x".repeat(4_096) + "\"\nkeys = [\"\"]\n"
+                + "for i in range(10):\n    nxt = []\n    for k in keys:\n"
+                + "        nxt.append(k + \"Aa\")\n        nxt.append(k + \"BB\")\n"
+                + "    keys = nxt\n"
+                + "a = set()\nb = set()\nfor k in keys:\n    a.add(p + k)\n    b.add(p + k)\n";
+        // a budget just 10,000 steps above the 26,774-step preamble refuses the
+        // one comparison on its own line - so it costs more than 10,000 steps
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(seed + "x = a == b\nmood(\"ok\")\n", new RecordingPlanApi(),
+                        new PlanRunLimits(36_774, 60_000)));
+        assertEquals("line 14: construction script exceeded 36774 steps", e.getMessage());
+        // exactly: the comparison ends line 14 at 39,126, so 39,125 refuses it
+        // mid-statement, 39,126 leaves nothing for mood(), and 39,127 runs
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(seed + "x = a == b\nmood(\"ok\")\n", api, new PlanRunLimits(39_127, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+        e = assertThrows(PlanLimitException.class,
+                () -> run(seed + "x = a == b\nmood(\"ok\")\n", new RecordingPlanApi(),
+                        new PlanRunLimits(39_126, 60_000)));
+        assertEquals("line 15: construction script exceeded 39126 steps", e.getMessage());
+        e = assertThrows(PlanLimitException.class,
+                () -> run(seed + "x = a == b\nmood(\"ok\")\n", new RecordingPlanApi(),
+                        new PlanRunLimits(39_125, 60_000)));
+        assertEquals("line 14: construction script exceeded 39125 steps", e.getMessage());
+        // the reviewer's loop bomb: under the default limits the STEP counter
+        // ends it - in the old code a chain of these ran 62.6 s on the clock
+        e = assertThrows(PlanLimitException.class,
+                () -> assertTimeoutPreemptively(Duration.ofSeconds(5),
+                        () -> run(seed + "while True:\n    x = a == b\n",
+                                new RecordingPlanApi(), PlanRunLimits.DEFAULT)));
+        assertEquals("line 15: construction script exceeded 100000 steps", e.getMessage());
+    }
+
+    @Test
+    void stringKeyProbesAreFreeForFarmScripts() {
+        // no plan limits: the probe charge lands nowhere, so a farm script
+        // probes a 4,095-character key at every site and just runs
+        String key = "x".repeat(4_095);
+        FakeDroneApi api = new FakeDroneApi(5);
+        new Interpreter(api).run(new Parser(new Lexer(
+                "k = \"" + key + "\"\ns = {k}\nx = k in s\nd = {}\nd[k] = 1\ny = d[k]\n"
+                        + "z = d.get(k)\ns.remove(k)\nd.remove(k)\ns.add(k)\n"
+                        + "print(x)\nprint(y)\nprint(z)\n").scan()).parseProgram());
+        assertEquals(List.of("True", "1", "1"), api.printed);
+    }
+
     /** A {@link PlanApi} whose {@code print} refuses with a {@link PlanBudgetException}, the way the recorder's budgets do. */
     private static PlanApi budgetRefusingPrintPlanApi() {
         return printRefusingPlanApi(new PlanBudgetException("printed output refused"));
