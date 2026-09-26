@@ -18,15 +18,19 @@ import io.github.khayashi4337.micradrone.build.parts.BuildingParts;
 import io.github.khayashi4337.micradrone.lang.CommandNames;
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.PriorityQueue;
+import java.util.Set;
 import java.util.TreeMap;
 
 /**
  * Writes a plan as construction scripts a person can read and edit: one statement per line, one call per plan
  * operation. Feeding the scripts to {@link PlanScriptRunner} and applying the recorded patch to an empty plan
  * gives back a plan with the same content hash. Plans that do not fit one script are cut into several numbered
- * scripts which must be run in order (nodes are written parents before children).
+ * scripts which must be run in order (nodes are written after their parent and after the wall they rest on).
  */
 public final class PlanScriptWriter {
     /**
@@ -48,6 +52,9 @@ public final class PlanScriptWriter {
     /** How much of an over-long statement is quoted in the IllegalStateException message. */
     private static final int OVERFLOW_PREVIEW_CHARS = 60;
 
+    /** How many node ids the message of a plan that cannot be ordered lists (the rest is summarised). */
+    private static final int STUCK_NODES_LISTED = 10;
+
     private PlanScriptWriter() {
     }
 
@@ -66,7 +73,7 @@ public final class PlanScriptWriter {
 
     /**
      * One statement per plan element, in the order the runner must see them: the site, the style entries,
-     * the mood tags, the nodes in plan order (the plan stores parents before children), the connections,
+     * the mood tags, the nodes in dependency order (see {@link #inDependencyOrder}), the connections,
      * then the logistics.
      */
     private static List<String> statements(SemanticPlan plan) {
@@ -80,7 +87,7 @@ public final class PlanScriptWriter {
         for (String mood : plan.style().moodTags()) {
             out.add("mood(" + q(mood) + ")");
         }
-        for (PlanNode n : plan.nodes()) {
+        for (PlanNode n : inDependencyOrder(plan.nodes())) {
             out.add(nodeLine(n));
         }
         for (Connection c : plan.connections()) {
@@ -90,6 +97,81 @@ public final class PlanScriptWriter {
             out.add(logisticsLine(plan.logistics()));
         }
         return out;
+    }
+
+    /**
+     * The nodes in a STABLE topological order: repeatedly the earliest node (in the plan's own order) whose parent and
+     * whose {@code OnSurface} wall are already written, or are not nodes of the plan. A plan stores nodes in the
+     * order they were added, and a relocation can put a node onto a wall added AFTER it, so the plan's own order is
+     * not always one a script can be replayed in (the patcher refuses a node whose wall does not exist yet). A plan
+     * that is already in dependency order comes out unchanged, statement for statement. The order does not touch the
+     * content hash, which sorts nodes by id. Kahn's algorithm with the ready nodes in a queue keyed by plan
+     * position: O(n log n), no recursion. The plan model refuses loops through parents and walls, so this always
+     * finishes; a hand-built plan that breaks that rule gets an {@link IllegalStateException} naming the nodes
+     * that could not be placed.
+     */
+    private static List<PlanNode> inDependencyOrder(List<PlanNode> nodes) {
+        Map<String, Integer> positionOf = new HashMap<>();
+        for (int i = 0; i < nodes.size(); i++) {
+            positionOf.put(nodes.get(i).id(), i);
+        }
+        int[] missing = new int[nodes.size()];
+        List<List<Integer>> waiting = new ArrayList<>();
+        for (int i = 0; i < nodes.size(); i++) {
+            waiting.add(new ArrayList<>());
+        }
+        for (int i = 0; i < nodes.size(); i++) {
+            PlanNode n = nodes.get(i);
+            Set<Integer> needs = new HashSet<>();
+            addNeed(needs, positionOf, n.parent());
+            if (n.anchor() instanceof Anchor.OnSurface surface) {
+                addNeed(needs, positionOf, surface.nodeId());
+            }
+            missing[i] = needs.size();
+            for (int need : needs) {
+                waiting.get(need).add(i);
+            }
+        }
+        PriorityQueue<Integer> ready = new PriorityQueue<>();
+        for (int i = 0; i < nodes.size(); i++) {
+            if (missing[i] == 0) {
+                ready.add(i);
+            }
+        }
+        List<PlanNode> ordered = new ArrayList<>(nodes.size());
+        boolean[] written = new boolean[nodes.size()];
+        while (!ready.isEmpty()) {
+            int next = ready.poll();
+            ordered.add(nodes.get(next));
+            written[next] = true;
+            for (int dependent : waiting.get(next)) {
+                missing[dependent]--;
+                if (missing[dependent] == 0) {
+                    ready.add(dependent);
+                }
+            }
+        }
+        if (ordered.size() < nodes.size()) {
+            List<String> stuck = new ArrayList<>();
+            for (int i = 0; i < nodes.size(); i++) {
+                if (!written[i]) {
+                    stuck.add(nodes.get(i).id());
+                }
+            }
+            throw new IllegalStateException("nodes that depend on each other in a loop cannot be written in any order a script can replay ("
+                    + stuck.size() + " of " + nodes.size() + " stuck): "
+                    + String.join(", ", stuck.subList(0, Math.min(STUCK_NODES_LISTED, stuck.size())))
+                    + (stuck.size() > STUCK_NODES_LISTED ? ", ..." : ""));
+        }
+        return ordered;
+    }
+
+    /** Adds the position of the node {@code id} to {@code needs} when the plan has such a node (a null id needs nothing). */
+    private static void addNeed(Set<Integer> needs, Map<String, Integer> positionOf, String id) {
+        Integer position = id == null ? null : positionOf.get(id);
+        if (position != null) {
+            needs.add(position);
+        }
     }
 
     /** Greedy packing: statements go into the current script while they fit; an over-long one is refused. */

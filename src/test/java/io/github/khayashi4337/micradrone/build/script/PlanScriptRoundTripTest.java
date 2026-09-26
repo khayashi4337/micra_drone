@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.build.TestParts;
@@ -50,12 +51,18 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 class PlanScriptRoundTripTest {
@@ -78,22 +85,95 @@ class PlanScriptRoundTripTest {
                 plan.style(), plan.nodes(), plan.connections(), plan.logistics(), plan.provenance());
     }
 
-    /** plan -> scripts -> recorder -> plan again: the content hash and the plan itself must not move. Returns the scripts. */
-    private List<String> assertRoundTrip(SemanticPlan plan) {
+    /** The scripts written for a plan, and the plan that running them and applying the recorded patch to an empty plan gives. */
+    private record Replay(List<String> scripts, SemanticPlan plan) {
+    }
+
+    /** plan -> scripts -> recorder -> patch -> an empty plan patched: every step must work; {@code context} names the case. */
+    private Replay replay(SemanticPlan plan, String context) {
         List<String> scripts = PlanScriptWriter.write(plan);
+        String shown = context + "\n" + String.join("\n---\n", scripts);
         for (String s : scripts) {
             assertTrue(s.length() <= PlanScriptWriter.MAX_SCRIPT_CHARS, "script length " + s.length());
         }
         PlanScriptRunner.Result r = PlanScriptRunner.run(scripts, "rt", 0, "test", PlanRunLimits.DEFAULT);
-        assertTrue(r.ok(), r.issues().toString() + "\n" + String.join("\n---\n", scripts));
+        assertTrue(r.ok(), r.issues().toString() + "\n" + shown);
         PatchResult applied = patcher.apply(SemanticPlan.empty("rt-plan"), r.patch());
-        assertTrue(applied.ok(), applied.issues().toString());
-        assertEquals(plan.contentHash(), applied.plan().contentHash(), String.join("\n---\n", scripts));
+        assertTrue(applied.ok(), applied.issues().toString() + "\n" + shown);
+        return new Replay(scripts, applied.plan());
+    }
+
+    /**
+     * plan -> scripts -> recorder -> plan again, for a plan whose stored nodes already come parents and wall
+     * faces first: the content hash and the plan itself, node order included, must not move. Returns the scripts.
+     */
+    private List<String> assertRoundTrip(SemanticPlan plan) {
+        Replay replayed = replay(plan, "");
+        assertEquals(plan.contentHash(), replayed.plan().contentHash(), String.join("\n---\n", replayed.scripts()));
         // the hash ignores what the plan model could still get wrong (the sign of a zero); equality does not
-        assertEquals(atRevisionOf(plan, applied.plan()), applied.plan(), String.join("\n---\n", scripts));
-        assertEquals(plan.nodes().size(), applied.plan().nodes().size());
-        assertEquals(plan.connections().size(), applied.plan().connections().size());
-        return scripts;
+        assertEquals(atRevisionOf(plan, replayed.plan()), replayed.plan(), String.join("\n---\n", replayed.scripts()));
+        return replayed.scripts();
+    }
+
+    /** The plan with its nodes in id order, the order the content hash uses. */
+    private static SemanticPlan nodesById(SemanticPlan plan) {
+        List<PlanNode> sorted = new ArrayList<>(plan.nodes());
+        sorted.sort(Comparator.comparing(PlanNode::id));
+        return new SemanticPlan(plan.schemaVersion(), plan.planId(), plan.revision(), plan.parentRevision(), plan.site(),
+                plan.style(), sorted, plan.connections(), plan.logistics(), plan.provenance());
+    }
+
+    /** True when every node comes after its parent and after the wall it rests on (when those are nodes of the list). */
+    private static boolean isDependencyOrder(List<PlanNode> nodes) {
+        Set<String> all = new HashSet<>();
+        for (PlanNode n : nodes) {
+            all.add(n.id());
+        }
+        Set<String> placed = new HashSet<>();
+        for (PlanNode n : nodes) {
+            boolean parentReady = n.parent() == null || !all.contains(n.parent()) || placed.contains(n.parent());
+            boolean wallReady = !(n.anchor() instanceof Anchor.OnSurface s) || !all.contains(s.nodeId()) || placed.contains(s.nodeId());
+            if (!parentReady || !wallReady) {
+                return false;
+            }
+            placed.add(n.id());
+        }
+        return true;
+    }
+
+    /**
+     * For a plan whose stored order is NOT a dependency order (a node relocated onto a wall added after it): the
+     * replay adds nodes in a valid order, so it is the same plan with the nodes reordered - equal once both are put
+     * in id order, and equal in hash. Returns the replay.
+     */
+    private Replay assertRoundTripInDependencyOrder(SemanticPlan plan, String context) {
+        Replay replayed = replay(plan, context);
+        String shown = context + "\n" + String.join("\n---\n", replayed.scripts());
+        assertEquals(plan.contentHash(), replayed.plan().contentHash(), shown);
+        assertEquals(nodesById(atRevisionOf(plan, replayed.plan())), nodesById(replayed.plan()), shown);
+        assertTrue(isDependencyOrder(replayed.plan().nodes()), "the replay adds nodes in a valid order: " + shown);
+        return replayed;
+    }
+
+    private static List<String> nodeIds(SemanticPlan plan) {
+        return plan.nodes().stream().map(PlanNode::id).toList();
+    }
+
+    private static final Pattern STATEMENT_HEAD = Pattern.compile("^([a-z_]+)\\(\"([^\"]*)\"");
+    private static final Set<String> NON_NODE_COMMANDS = Set.of("site", "style", "mood", "connect", "logistics");
+
+    /** The ids of the node statements in the order the scripts hold them. */
+    private static List<String> nodeIdsInScripts(List<String> scripts) {
+        List<String> ids = new ArrayList<>();
+        for (String script : scripts) {
+            for (String line : script.split("\n")) {
+                Matcher m = STATEMENT_HEAD.matcher(line);
+                if (m.find() && !NON_NODE_COMMANDS.contains(m.group(1))) {
+                    ids.add(m.group(2));
+                }
+            }
+        }
+        return ids;
     }
 
     private static PlanNode node(String id, String type, String parent, Anchor anchor, Map<String, ParamValue> params, Set<String> tags, String label) {
@@ -544,5 +624,176 @@ class PlanScriptRoundTripTest {
             }
             assertTrue(found, "no statement line starts with " + name + "(");
         }
+    }
+
+    // ------------------------------------------------------------------ dependency order
+
+    private static PlanNode wall(String id) {
+        return node(id, "micra:wall", null, abs(0, 0, 0), Map.of("side", new StrV("north")), Set.of(), "");
+    }
+
+    private static PlanNode plain(String id, String type, String parent) {
+        return node(id, type, parent, abs(0, 0, 0), Map.of(), Set.of(), "");
+    }
+
+    private static PlanOp relocateOnto(String id, String wallId) {
+        return new PlanOp.MoveNode(id, new Anchor.OnSurface(wallId, Side.OUTER, 1, 0));
+    }
+
+    @Test
+    void aNodeRelocatedOntoAWallAddedLaterIsWrittenAfterThatWall() {
+        // built through the patcher with a real MoveNode: door-1 is stored before wall-1 and then rests on it
+        SemanticPlan plan = build(List.of(
+                new PlanOp.AddNode(plain("door-1", "micra:door", null)),
+                new PlanOp.AddNode(wall("wall-1")),
+                relocateOnto("door-1", "wall-1")));
+        assertEquals(List.of("door-1", "wall-1"), nodeIds(plan), "the plan stores the door first");
+
+        List<String> scripts = PlanScriptWriter.write(plan);
+        // hand-derived: wall-1 goes first because the door needs it; the header, then one statement per node
+        assertEquals(List.of("# 建設スクリプト 1/1(計画 rt-plan)\n"
+                + "wall(\"wall-1\", None, [0, 0, 0], {\"side\": \"north\"})\n"
+                + "door(\"door-1\", None, [\"surface\", \"wall-1\", \"outer\", 1, 0], {})\n"), scripts);
+
+        Replay replayed = assertRoundTripInDependencyOrder(plan, "door-1 onto wall-1");
+        assertEquals(List.of("wall-1", "door-1"), nodeIds(replayed.plan()));
+    }
+
+    @Test
+    void aChainOfFiveWallsEachRelocatedOntoTheNextOneAddedLaterIsWrittenFromTheEndOfTheChain() {
+        // w0 rests on w1, w1 on w2, w2 on w3, w3 on w4: every wall but the last needs one added after it
+        SemanticPlan plan = build(List.of(
+                new PlanOp.AddNode(wall("w0")), new PlanOp.AddNode(wall("w1")), new PlanOp.AddNode(wall("w2")),
+                new PlanOp.AddNode(wall("w3")), new PlanOp.AddNode(wall("w4")),
+                relocateOnto("w0", "w1"), relocateOnto("w1", "w2"), relocateOnto("w2", "w3"), relocateOnto("w3", "w4")));
+        assertEquals(List.of("w0", "w1", "w2", "w3", "w4"), nodeIds(plan));
+
+        // hand-derived: only w4 needs nothing, then w3 can go, then w2, w1, w0
+        assertEquals(List.of("w4", "w3", "w2", "w1", "w0"), nodeIdsInScripts(PlanScriptWriter.write(plan)));
+        Replay replayed = assertRoundTripInDependencyOrder(plan, "chain of five");
+        assertEquals(List.of("w4", "w3", "w2", "w1", "w0"), nodeIds(replayed.plan()));
+    }
+
+    @Test
+    void theNodesThatAreReadyGoInTheirOwnOrderAndNothingElseIsMoved() {
+        // stored: door-1, pillar-1, wall-1, pillar-2; the door rests on the wall. Hand-derived: pillar-1 is ready first;
+        // then wall-1 (the earliest ready node); that frees door-1, which is earlier than pillar-2, so door-1 goes
+        // next and pillar-2 last.
+        SemanticPlan plan = build(List.of(
+                new PlanOp.AddNode(plain("door-1", "micra:door", null)), new PlanOp.AddNode(plain("pillar-1", "micra:pillar", null)),
+                new PlanOp.AddNode(wall("wall-1")), new PlanOp.AddNode(plain("pillar-2", "micra:pillar", null)),
+                relocateOnto("door-1", "wall-1")));
+        assertEquals(List.of("pillar-1", "wall-1", "door-1", "pillar-2"), nodeIdsInScripts(PlanScriptWriter.write(plan)));
+        assertRoundTripInDependencyOrder(plan, "ready nodes keep their own order");
+    }
+
+    @Test
+    void theChildrenOfARelocatedNodeFollowIt() {
+        // knob-1 hangs below door-1 (parent); the door is then relocated onto wall-1, which was added after both
+        SemanticPlan plan = build(List.of(
+                new PlanOp.AddNode(plain("door-1", "micra:door", null)), new PlanOp.AddNode(plain("knob-1", "micra:pillar", "door-1")),
+                new PlanOp.AddNode(wall("wall-1")), relocateOnto("door-1", "wall-1")));
+        assertEquals(List.of("wall-1", "door-1", "knob-1"), nodeIdsInScripts(PlanScriptWriter.write(plan)));
+        assertRoundTripInDependencyOrder(plan, "a child follows its relocated parent");
+    }
+
+    @Test
+    void aPlanAlreadyInDependencyOrderIsWrittenInItsOwnOrderWithTheSameText() {
+        SemanticPlan plan = build(List.of(
+                new PlanOp.AddNode(node("hut", "micra:structure", null, abs(0, 0, 0), Map.of("width", new IntV(7)), Set.of(), "")),
+                new PlanOp.AddNode(node("wall-n", "micra:wall", "hut", abs(0, 0, 0), Map.of("side", new StrV("north")), Set.of(), "")),
+                new PlanOp.AddNode(node("door-1", "micra:door", "hut", new Anchor.OnSurface("wall-n", Side.INNER, 3, 0), Map.of(), Set.of(), "")),
+                new PlanOp.AddNode(node("pillar-1", "micra:pillar", null, abs(10, 0, 0), Map.of("height", new IntV(5)), Set.of(), ""))));
+        assertTrue(isDependencyOrder(plan.nodes()));
+        assertEquals(List.of("# 建設スクリプト 1/1(計画 rt-plan)\n"
+                + "structure(\"hut\", None, [0, 0, 0], {\"width\": 7})\n"
+                + "wall(\"wall-n\", \"hut\", [0, 0, 0], {\"side\": \"north\"})\n"
+                + "door(\"door-1\", \"hut\", [\"surface\", \"wall-n\", \"inner\", 3, 0], {})\n"
+                + "pillar(\"pillar-1\", None, [10, 0, 0], {\"height\": 5})\n"), PlanScriptWriter.write(plan));
+        assertRoundTrip(plan);
+    }
+
+    @Test
+    void theRichPlanKeepsItsNodeOrderInTheScripts() {
+        SemanticPlan plan = build(richOps());
+        assertTrue(isDependencyOrder(plan.nodes()));
+        assertEquals(nodeIds(plan), nodeIdsInScripts(PlanScriptWriter.write(plan)));
+    }
+
+    /** Deep enough that a recursive ordering would overflow the stack and a quadratic one would take minutes. */
+    private static final int LONG_CHAIN_NODES = 50_000;
+
+    @Test
+    void aLongDependencyChainIsOrderedWithoutRecursionOrDelay() {
+        // w0 rests on w1, w1 on w2, ...: the whole plan has to be written backwards
+        List<PlanOp> ops = new ArrayList<>();
+        for (int i = 0; i < LONG_CHAIN_NODES; i++) {
+            ops.add(new PlanOp.AddNode(wall("w" + i)));
+        }
+        for (int i = 0; i + 1 < LONG_CHAIN_NODES; i++) {
+            ops.add(relocateOnto("w" + i, "w" + (i + 1)));
+        }
+        SemanticPlan plan = build(ops);
+        List<String> scripts = assertTimeoutPreemptively(Duration.ofSeconds(20), () -> PlanScriptWriter.write(plan));
+        List<String> expected = new ArrayList<>();
+        for (int i = LONG_CHAIN_NODES - 1; i >= 0; i--) {
+            expected.add("w" + i);
+        }
+        assertEquals(expected, nodeIdsInScripts(scripts));
+    }
+
+    @Test
+    void aPlanThatCannotBeOrderedIsRefusedNamingTheStuckNodes() {
+        // hand-built, so the patcher's rules did not keep it out: w1 and w2 hang below each other, w3 rests on w1
+        PlanNode w1 = node("w1", "micra:wall", "w2", abs(0, 0, 0), Map.of("side", new StrV("north")), Set.of(), "");
+        PlanNode w2 = node("w2", "micra:wall", "w1", abs(0, 0, 0), Map.of("side", new StrV("north")), Set.of(), "");
+        PlanNode w3 = node("w3", "micra:wall", null, new Anchor.OnSurface("w1", Side.OUTER, 0, 0), Map.of("side", new StrV("north")), Set.of(), "");
+        SemanticPlan stuck = new SemanticPlan(SemanticPlan.SCHEMA_VERSION, "rt-plan", 0, null, null, StyleSpec.EMPTY,
+                List.of(plain("free-1", "micra:pillar", null), w1, w2, w3), List.of(), null, Provenance.NONE);
+        IllegalStateException e = assertThrows(IllegalStateException.class, () -> PlanScriptWriter.write(stuck));
+        assertTrue(e.getMessage().contains("w1") && e.getMessage().contains("w2") && e.getMessage().contains("w3"), e.getMessage());
+        assertFalse(e.getMessage().contains("free-1"), "a node that could be written is not named: " + e.getMessage());
+
+        PlanNode onItself = node("w1", "micra:wall", null, new Anchor.OnSurface("w1", Side.OUTER, 0, 0), Map.of("side", new StrV("north")), Set.of(), "");
+        SemanticPlan self = new SemanticPlan(SemanticPlan.SCHEMA_VERSION, "rt-plan", 0, null, null, StyleSpec.EMPTY,
+                List.of(onItself), List.of(), null, Provenance.NONE);
+        assertThrows(IllegalStateException.class, () -> PlanScriptWriter.write(self));
+    }
+
+    /** How many random plans are grown, and how many operations each of them tries. */
+    private static final int RANDOM_SEEDS = 300;
+    private static final int RANDOM_ATTEMPTS = 80;
+    /**
+     * Of the random plans at least this many must have a stored order that is NOT a dependency order, or the test
+     * would no longer exercise the reordering (the seeded generator yields 125 of the 300 plans).
+     */
+    private static final int MIN_REORDERED_PLANS = 60;
+
+    @Test
+    void randomPlansGrownByEveryKindOfOperationRoundTripAsEqualPlans() {
+        // The plans come from operations applied one at a time and kept only when the patcher accepts them, so they
+        // are exactly what the patcher lets in: relocations onto walls added later, every anchor and routing form,
+        // constraints, logistics, style and mood, and sites with only a digest, only a claim id or neither.
+        int reordered = 0;
+        Map<String, Integer> acceptedByKind = new TreeMap<>();
+        for (long seed = 1; seed <= RANDOM_SEEDS; seed++) {
+            RandomPlanOps grower = new RandomPlanOps(seed, patcher, TestParts.registryWithDial());
+            SemanticPlan plan = grower.build(RANDOM_ATTEMPTS);
+            grower.acceptedByKind().forEach((kind, n) -> acceptedByKind.merge(kind, n, Integer::sum));
+            String context = "seed " + seed;
+            if (isDependencyOrder(plan.nodes())) {
+                Replay replayed = replay(plan, context);
+                assertEquals(plan.contentHash(), replayed.plan().contentHash(), context);
+                assertEquals(atRevisionOf(plan, replayed.plan()), replayed.plan(), context + ": node order included");
+            } else {
+                reordered++;
+                assertRoundTripInDependencyOrder(plan, context);
+            }
+        }
+        for (String kind : List.of("AddNode", "MoveNode", "UpdateParams", "RemoveNode", "AddConnection", "RemoveConnection",
+                "SetStyle", "SetSite", "SetLogistics")) {
+            assertTrue(acceptedByKind.getOrDefault(kind, 0) > 0, "no " + kind + " was accepted in any plan: " + acceptedByKind);
+        }
+        assertTrue(reordered >= MIN_REORDERED_PLANS, "only " + reordered + " plans needed reordering; " + acceptedByKind);
     }
 }
