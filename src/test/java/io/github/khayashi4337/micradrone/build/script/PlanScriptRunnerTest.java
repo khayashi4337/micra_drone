@@ -303,6 +303,40 @@ class PlanScriptRunnerTest {
         assertTrue(r.issues().get(0).message().contains("スクリプト2"), r.issues().get(0).message());
     }
 
+    // ---- enum refusals never quote the raw script text (final review minors) ----
+
+    /** Long enough that leaking it into an issue would prove the raw script text is quoted. */
+    private static final String RAW_ENUM_TEXT = "q".repeat(300);
+
+    private static void assertEnumIssue(String field, List<String> allowed, PlanScriptRunner.Result r) {
+        assertEquals(List.of("E-SCHEMA"), codes(r));
+        String message = r.issues().get(0).message();
+        assertTrue(message.contains(field), field + ": " + message);
+        for (String name : allowed) {
+            assertTrue(message.contains(name), name + " missing from: " + message);
+        }
+        assertFalse(message.contains(RAW_ENUM_TEXT), field + ": " + message);
+    }
+
+    @Test
+    void enumRefusalsAreSchemaIssuesThatNameTheFieldAndAllowedNamesButNotTheRawValue() {
+        // Each script-facing enum site gets a refusal naming the field and the allowed lowercase
+        // names - never Enum.valueOf's verbatim "No enum constant ..." message. Whichever layer
+        // refuses first (the dispatcher's own membership check, or the recorder's parseEnum) is
+        // bounded: the dispatcher quotes at most PlanValueText's short prefix, the recorder none.
+        assertEnumIssue("向き", List.of("\"north\"", "\"east\"", "\"south\"", "\"west\""),
+                run("site(\"d\", 0, 0, 0, \"" + RAW_ENUM_TEXT + "\", [0, 0, 0, 1, 1, 1])"));
+        assertEnumIssue("kind", List.of("\"rotation\"", "\"item\"", "\"fluid\"", "\"redstone\"", "\"heat\"", "\"dock\""),
+                run("connect(\"c\", \"a.p\", \"b.q\", \"" + RAW_ENUM_TEXT + "\")"));
+        assertEnumIssue("approach", List.of("\"north\"", "\"east\"", "\"south\"", "\"west\""),
+                run("logistics([{\"id\": \"d\", \"pad\": [0, 0, 0, 8, 0, 8], "
+                        + "\"clearance\": [0, 0, 0, 8, 16, 8], \"approach\": \"" + RAW_ENUM_TEXT + "\"}], [], [])"));
+        assertEnumIssue("面の側", List.of("\"outer\"", "\"inner\""),
+                run("relocate(\"d\", [\"surface\", \"w\", \"" + RAW_ENUM_TEXT + "\", 0, 0])"));
+        assertEnumIssue("entry_dirs", List.of("\"up\"", "\"down\"", "\"north\"", "\"east\"", "\"south\"", "\"west\""),
+                run("connect(\"c\", \"a.p\", \"b.q\", \"item\", None, {\"entry_dirs\": [\"" + RAW_ENUM_TEXT + "\"]})"));
+    }
+
     @Test
     void aHugeErrorMessageInsideAnIssueIsCutToFourHundredCharacters() {
         // a missing dict key message embeds the key's rendering - here a 524,288-character string

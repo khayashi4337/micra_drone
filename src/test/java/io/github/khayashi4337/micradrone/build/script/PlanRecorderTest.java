@@ -1,6 +1,7 @@
 package io.github.khayashi4337.micradrone.build.script;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -132,6 +133,44 @@ class PlanRecorderTest {
         assertThrows(IllegalArgumentException.class, () -> r.connect("c", "a.o", "b.i", "steam", null, null));
         assertThrows(IllegalArgumentException.class, () -> r.connect("c", "a.o", "b.i", "item", null, params("bogus", 1.0)));
         assertThrows(IllegalArgumentException.class, () -> r.part("a", "micra:pillar", null, PlanAnchorArgs.surface("w", "top", 0, 0), params(), List.of(), ""));
+    }
+
+    /** Long enough that leaking it into a message would prove the raw script text is quoted. */
+    private static final String RAW_ENUM_TEXT = "q".repeat(300);
+
+    private static void assertEnumRefusal(String field, List<String> allowed,
+            IllegalArgumentException e) {
+        assertTrue(e.getMessage().contains(field), field + ": " + e.getMessage());
+        for (String name : allowed) {
+            assertTrue(e.getMessage().contains(name), name + " missing from: " + e.getMessage());
+        }
+        assertFalse(e.getMessage().contains(RAW_ENUM_TEXT), field + ": " + e.getMessage());
+    }
+
+    @Test
+    void enumRefusalsNameTheFieldAndAllowedNamesButNeverTheRawValue() {
+        // Enum.valueOf's own "No enum constant" message quotes the script text verbatim, so every
+        // enum-typed field goes through one helper that answers with the field name and the
+        // allowed lowercase names only - a 300-character input must not reach the message.
+        PlanRecorder r = new PlanRecorder();
+        assertEnumRefusal("向き", List.of("\"north\"", "\"east\"", "\"south\"", "\"west\""),
+                assertThrows(IllegalArgumentException.class,
+                        () -> r.site("d", 0, 0, 0, RAW_ENUM_TEXT, new int[]{0, 0, 0, 1, 1, 1}, "", "")));
+        assertEnumRefusal("kind", List.of("\"rotation\"", "\"item\"", "\"fluid\"", "\"redstone\"", "\"heat\"", "\"dock\""),
+                assertThrows(IllegalArgumentException.class,
+                        () -> r.connect("c", "a.o", "b.i", RAW_ENUM_TEXT, null, null)));
+        assertEnumRefusal("approach", List.of("\"north\"", "\"east\"", "\"south\"", "\"west\""),
+                assertThrows(IllegalArgumentException.class,
+                        () -> r.logistics(List.of(params("id", "d", "pad", BOX6, "clearance", BOX6,
+                                "approach", RAW_ENUM_TEXT)), List.of(), List.of())));
+        assertEnumRefusal("面の側", List.of("\"outer\"", "\"inner\""),
+                assertThrows(IllegalArgumentException.class,
+                        () -> r.part("d", "t", null, PlanAnchorArgs.surface("w", RAW_ENUM_TEXT, 0, 0),
+                                params(), List.of(), "")));
+        assertEnumRefusal("entry_dirs", List.of("\"up\"", "\"down\"", "\"north\"", "\"east\"", "\"south\"", "\"west\""),
+                assertThrows(IllegalArgumentException.class,
+                        () -> r.connect("c", "a.o", "b.i", "item", null,
+                                params("entry_dirs", List.of(RAW_ENUM_TEXT)))));
     }
 
     @Test

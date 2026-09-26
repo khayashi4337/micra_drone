@@ -18,7 +18,17 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
-/** Checks and runs construction scripts, in order, into one {@link PlanPatch}. Any problem means no patch at all. */
+/**
+ * Checks and runs construction scripts, in order, into one {@link PlanPatch}. Any problem means
+ * no patch at all.
+ *
+ * <p>The {@link PlanRunLimits} apply PER SCRIPT: every script gets its own {@link Interpreter}
+ * with its own step counter and its own clock, so a run of N scripts can take up to N times
+ * {@code maxSteps} steps and N times {@code maxMillis} milliseconds. The recorder's budgets -
+ * recorded elements, recorded characters and printed characters - are the only RUN-WIDE limits.
+ * A caller that accepts scripts from outside (the future submit command) must therefore bound
+ * the number of scripts and the total wall-clock time itself.
+ */
 public final class PlanScriptRunner {
     /**
      * The longest interpreter message quoted inside an issue. A script error can legitimately

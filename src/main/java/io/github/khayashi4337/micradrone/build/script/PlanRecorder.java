@@ -28,10 +28,12 @@ import io.github.khayashi4337.micradrone.lang.PlanBudgetException;
 import io.github.khayashi4337.micradrone.lang.PlanValueText;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Function;
 
 /**
  * Records what a construction script says as a {@link PlanPatch}: one command, one operation. Style and mood calls
@@ -93,6 +95,8 @@ public final class PlanRecorder implements PlanApi {
     private static final List<String> DOCK_KEYS = List.of("id", "pad", "clearance", "approach", "ports", "connectors");
     private static final List<String> ROUTE_KEYS = List.of("id", "from", "to", "waypoints", "airship");
     private static final List<String> FLOW_KEYS = List.of("item", "per_min", "from", "to");
+    /** The only {@link Side} values a surface anchor accepts - the field's real allowed set. */
+    private static final Side[] SURFACE_SIDES = {Side.OUTER, Side.INNER};
 
     private final List<PlanOp> ops = new ArrayList<>();
     private final TreeMap<String, String> palette = new TreeMap<>();
@@ -130,7 +134,9 @@ public final class PlanRecorder implements PlanApi {
         Box box = new Box(bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5]);
         chargeRecordedElements(1);
         chargeRecordedChars(textChars(dimension) + textChars(facing) + textChars(terrainDigest) + textChars(claimId));
-        ops.add(new PlanOp.SetSite(new Site(dimension, new BuildFrame(new IntPos(x, y, z), Facing.parse(facing)), box, terrainDigest, claimId)));
+        ops.add(new PlanOp.SetSite(new Site(dimension,
+                new BuildFrame(new IntPos(x, y, z), parseEnum("向き", facing, Facing.values(), Facing::parse)),
+                box, terrainDigest, claimId)));
     }
 
     @Override
@@ -185,7 +191,8 @@ public final class PlanRecorder implements PlanApi {
         if (via != null) {
             chargeRecordedCharsOf(via);
         }
-        ops.add(new PlanOp.AddConnection(new Connection(id, port(from), port(to), ConnKind.parse(kind),
+        ops.add(new PlanOp.AddConnection(new Connection(id, port(from), port(to),
+                parseEnum("kind", kind, ConnKind.values(), ConnKind::parse),
                 via == null ? Routing.AUTO : new Routing.Explicit(via), toConstraints(constraints))));
     }
 
@@ -220,7 +227,7 @@ public final class PlanRecorder implements PlanApi {
             List<String> connectorIds = strings(connectorSpecs, "connectors");
             chargeRecordedCharsOf(connectorIds);
             dockList.add(new LogisticsPlan.Dock(dockId, box(d.get("pad"), "pad"), box(d.get("clearance"), "clearance"),
-                    Facing.parse(approach), ports, connectorIds));
+                    parseEnum("approach", approach, Facing.values(), Facing::parse), ports, connectorIds));
         }
         List<LogisticsPlan.Route> routeList = new ArrayList<>();
         for (Object o : routes) {
@@ -321,7 +328,7 @@ public final class PlanRecorder implements PlanApi {
         return switch (a.kind()) {
             case ABSOLUTE -> new Anchor.Absolute(new LocalPos(a.u(), a.v(), a.w()), new Rot(a.turns(), a.mirror()));
             case SURFACE -> {
-                Side side = Side.parse(a.side());
+                Side side = parseEnum("面の側", a.side(), SURFACE_SIDES, Side::parse);
                 if (side != Side.OUTER && side != Side.INNER) {
                     throw new IllegalArgumentException("面の側は \"outer\" か \"inner\" です(" + PlanValueText.describe(a.side()) + ")");
                 }
@@ -398,6 +405,26 @@ public final class PlanRecorder implements PlanApi {
                 + MAX_PARAM_DEPTH + " 段・合計 " + MAX_PARAM_NODES + " 要素までです");
     }
 
+    /**
+     * Parses one of the script-facing enums ({@link Facing}, {@link ConnKind}, {@link Side},
+     * {@link Dir6}) with a refusal that names the FIELD and the allowed lowercase names - never
+     * the raw text: {@code Enum.valueOf}'s own "No enum constant" message quotes the script's
+     * input verbatim, and that input can be a hundred thousand characters that must never land
+     * in an issue.
+     */
+    private static <E extends Enum<E>> E parseEnum(String field, String text, E[] allowed,
+            Function<String, E> parse) {
+        try {
+            return parse.apply(text);
+        } catch (IllegalArgumentException e) {
+            List<String> names = new ArrayList<>(allowed.length);
+            for (E value : allowed) {
+                names.add("\"" + value.name().toLowerCase(Locale.ROOT) + "\"");
+            }
+            throw new IllegalArgumentException(field + "は " + String.join("・", names) + " のどれかです");
+        }
+    }
+
     private static PortRef port(String text) {
         int dot = text.indexOf('.');
         if (dot <= 0 || dot == text.length() - 1) {
@@ -429,7 +456,7 @@ public final class PlanRecorder implements PlanApi {
                     chargeRecordedElements(names.size());
                     chargeRecordedCharsOf(names);
                     for (String d : names) {
-                        dirs.add(Dir6.parse(d));
+                        dirs.add(parseEnum("entry_dirs", d, Dir6.values(), Dir6::parse));
                     }
                 }
                 default -> throw new IllegalArgumentException("constraints に「" + PlanValueText.describe(e.getKey())
