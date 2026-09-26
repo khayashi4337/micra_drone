@@ -4,9 +4,11 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Proxy;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -825,6 +827,47 @@ class PlanInterpreterTest {
                         + "c = 0\nwhile c < 200:\n    y = \"ab\" in \"xxabxx\"\n    c = c + 1\n"
                         + "print(x)\nprint(c)\n").scan()).parseProgram());
         assertEquals(List.of("False", "200"), api.printed);
+    }
+
+    // ---- the charge's quantum boundary and up-front timing (H-1a tests) ----
+
+    @Test
+    void aSearchCostingExactlyOneQuantumPaysExactlyOneStep() {
+        // the PLAN_WORK_PER_STEP = 4,096 boundary: a 64-character needle in a
+        // 127-character text costs (127 - 64 + 1) x 64 = 64 x 64 = 4,096 work units =
+        // exactly ONE extra step, while the same needle in a 126-character text costs
+        // 63 x 64 = 4,032 = ZERO extra steps - so the two two-statement scripts below
+        // differ by exactly one step (3 vs 2)
+        String needle = "n".repeat(64);
+        String oneStep = "x = \"" + needle + "\" in \"" + "x".repeat(126) + "\"\nmood(\"ok\")\n";
+        String twoSteps = "x = \"" + needle + "\" in \"" + "x".repeat(127) + "\"\nmood(\"ok\")\n";
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(oneStep, api, new PlanRunLimits(2, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+        // the 127-character text needs the extra step, and the charge lands on the `in`
+        // line itself: a one-step budget already refuses it there
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(twoSteps, new RecordingPlanApi(), new PlanRunLimits(1, 60_000)));
+        assertEquals("line 1: construction script exceeded 1 steps", e.getMessage());
+        e = assertThrows(PlanLimitException.class,
+                () -> run(twoSteps, new RecordingPlanApi(), new PlanRunLimits(2, 60_000)));
+        assertEquals("line 2: construction script exceeded 2 steps", e.getMessage());
+        run(twoSteps, api, new PlanRunLimits(3, 60_000));
+    }
+
+    @Test
+    void aHugeSubstringSearchIsRefusedBeforeTheSearchItselfCouldRun() {
+        // the same refusal as aHugeSubstringSearchIsRefusedUpFrontByItsWorkCharge, now
+        // pinned against a "charge AFTER the search" mutant: with the work paid up
+        // front the run takes about a millisecond, while actually searching a
+        // 131,073-character needle in a 393,216-character text took ~11 s on the
+        // controller's machine - far past this timeout
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> assertTimeoutPreemptively(Duration.ofSeconds(5),
+                        () -> run("s = \"x\"\nfor i in range(17):\n    s = s + s\n"
+                                        + "p = s + \"b\"\nt = s + s + s\nx = p in t\n",
+                                new RecordingPlanApi(), PlanRunLimits.DEFAULT)));
+        assertEquals("line 6: construction script exceeded 100000 steps", e.getMessage());
     }
 
     /** A {@link PlanApi} whose {@code print} refuses with a {@link PlanBudgetException}, the way the recorder's budgets do. */
