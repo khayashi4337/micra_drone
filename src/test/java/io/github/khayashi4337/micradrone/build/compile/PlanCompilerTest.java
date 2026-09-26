@@ -46,6 +46,7 @@ import io.github.khayashi4337.micradrone.build.plan.SlotResolver;
 import io.github.khayashi4337.micradrone.build.plan.TemplateBundle;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -58,6 +59,11 @@ class PlanCompilerTest {
     private static final String OAK_PLANKS = "minecraft:oak_planks";
     private static final String STONE_BRICKS = "minecraft:stone_bricks";
     private static final Duration WALK_TIMEOUT = Duration.ofSeconds(10);
+    /** A plan that is refused up front must not spend any real time on the work it never starts. */
+    private static final Duration REFUSED_QUICKLY_TIMEOUT = Duration.ofSeconds(2);
+    private static final Duration CHAIN_TIMEOUT = Duration.ofSeconds(3);
+    private static final int CHAIN_LENGTH = 20_000;
+    private static final String CHAIN_ID_PREFIX = "chain-";
 
     /** 5x5 building, one floor of height 4: floor slab at v=0, walls at v=1..3. */
     private static List<PlanNode> box5(PlanNode... extra) {
@@ -372,6 +378,75 @@ class PlanCompilerTest {
     }
 
     @Test
+    void aLongParentChainIsOrderedInLinearTime() {
+        // The patcher has no depth cap, so a plan may be one chain of 20,000 buildings. Climbing the whole chain again for
+        // every node is about 200 million steps (measured 7.9 s before the depth was computed once per node).
+        List<PlanNode> chain = new ArrayList<>();
+        for (int k = 0; k < CHAIN_LENGTH; k++) {
+            chain.add(node(chainId(k), STRUCTURE, k == 0 ? null : chainId(k - 1), 0, 0, 0, Map.of()));
+        }
+        CompileResult r = assertTimeoutPreemptively(CHAIN_TIMEOUT, () -> compileHandBuilt(CompileFixtures.site(Facing.NORTH), chain));
+        assertNotNull(r.manifest(), r.issues().toString());
+        assertTrue(r.issues().isEmpty(), r.issues().toString());
+        assertTrue(r.manifest().placements().isEmpty(), "a building has no blocks of its own");
+    }
+
+    private static String chainId(int k) {
+        return CHAIN_ID_PREFIX + k;
+    }
+
+    private static List<String> orderedIds(List<PlanNode> nodes) {
+        Map<String, PlanNode> byId = new HashMap<>();
+        for (PlanNode n : nodes) {
+            byId.put(n.id(), n);
+        }
+        return PlanCompiler.order(nodes, byId).stream().map(PlanNode::id).toList();
+    }
+
+    private static PlanNode child(String id, String parent) {
+        return node(id, STRUCTURE, parent, 0, 0, 0, Map.of());
+    }
+
+    @Test
+    void parentsComeBeforeChildrenAndTheSameDepthGoesById() {
+        // depth 0: a, z; depth 1: b1 (under a), c1 (under z); depth 2: c2 (under c1); given in a scrambled order
+        List<PlanNode> scrambled = List.of(child("c2", "c1"), child("z", null), child("b1", "a"), child("c1", "z"), child("a", null));
+        assertEquals(List.of("a", "z", "b1", "c1", "c2"), orderedIds(scrambled));
+    }
+
+    @Test
+    void aChainGivenBottomUpIsOrderedTopDown() {
+        int length = 50;
+        List<PlanNode> reversed = new ArrayList<>();
+        List<String> expected = new ArrayList<>();
+        for (int k = length - 1; k >= 0; k--) {
+            reversed.add(child(chainId(k), k == 0 ? null : chainId(k - 1)));
+        }
+        for (int k = 0; k < length; k++) {
+            expected.add(chainId(k));
+        }
+        // "chain-10" sorts before "chain-2" as text, so only the depth can put the chain in this order
+        assertEquals(expected, orderedIds(reversed));
+    }
+
+    @Test
+    void aNodeWithAMissingParentCountsTheHopIntoTheGap() {
+        // orphan hangs from a parent that is not in the plan: depth 1, so it comes after the root "z" although "a" < "z"
+        // and its own child "b" (depth 2) comes last although "b" < "z"
+        List<PlanNode> nodes = List.of(child("b", "a"), child("a", "ghost"), child("z", null));
+        assertEquals(List.of("z", "a", "b"), orderedIds(nodes));
+    }
+
+    @Test
+    void nodesInsideOrBelowAParentLoopComeLastByIdWithoutLoopingForever() {
+        // b and c are each other's parent; a hangs from b. None has a root, so all three share the one depth above every
+        // real depth and go by id, after the root z although "z" > "a".
+        List<PlanNode> nodes = List.of(child("c", "b"), child("a", "b"), child("z", null), child("b", "c"));
+        List<String> ordered = assertTimeoutPreemptively(WALK_TIMEOUT, () -> orderedIds(nodes));
+        assertEquals(List.of("z", "a", "b", "c"), ordered);
+    }
+
+    @Test
     void aRepeatedNodeIdInAHandBuiltPlanIsRefused() {
         List<PlanNode> twice = new ArrayList<>(box5());
         twice.add(node("f", FLOOR, "s", 0, 0, 0, Map.of()));
@@ -425,12 +500,14 @@ class PlanCompilerTest {
 
     @Test
     void aHugeBuildingWhoseFloorIsAllHolesIsRefusedQuickly() {
-        // Without the range check this loops over n*n cells placing none, so the cell budget never stops it.
+        // Without the range check the floor would walk n*n cells and place none. Every hole cell is charged to the work
+        // budget, so that budget would end it after 2 x DEFAULT_MAX_CELLS steps with E-OUT-OF-BOUNDS:#cells; the exact
+        // issue list below (range issues on s and f) is what tells the up-front refusal apart from that late stop.
         int n = 60_000;
         List<PlanNode> nodes = List.of(
                 node("s", STRUCTURE, null, 0, 0, 0, params("width", n, "depth", n, "floors", 1, "floor_height", 4)),
                 node("f", FLOOR, "s", 0, 0, 0, params("holes", new ParamValue.ListV(List.of(i(0), i(0), i(n - 1), i(n - 1))))));
-        CompileResult r = assertTimeoutPreemptively(Duration.ofSeconds(2), () -> compileHandBuilt(CompileFixtures.site(Facing.NORTH), nodes));
+        CompileResult r = assertTimeoutPreemptively(REFUSED_QUICKLY_TIMEOUT, () -> compileHandBuilt(CompileFixtures.site(Facing.NORTH), nodes));
         assertNull(r.manifest());
         assertEquals(List.of("E-PARAM-RANGE:s#depth", "E-PARAM-RANGE:s#width", "E-PARAM-RANGE:f#holes"), ids(r));
     }

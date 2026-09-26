@@ -54,6 +54,9 @@ public final class PlanCompiler {
     private static final String KEY_GENERATOR = "generator";
     private static final String DATA_EXCEPTION = "exception";
     private static final String DATA_BLOCK = "block";
+    /** Depth of the position above a root (so the root is 0) and of the gap a missing parent leaves (so its child is 1). */
+    private static final int ROOT_PARENT_DEPTH = -1;
+    private static final int MISSING_PARENT_DEPTH = 0;
 
     /** Cells in construction order: phase, then bottom to top, then front to back, then left to right. */
     private static final Comparator<LocalPos> VWU = Comparator.comparingInt(LocalPos::v).thenComparingInt(LocalPos::w)
@@ -175,26 +178,59 @@ public final class PlanCompiler {
     }
 
     /**
-     * Parents before children; the same depth by id. Deterministic whatever order the nodes arrived in. The climb is
-     * capped at the node count, so a parent loop in a hand-built plan ends (Origins reports the loop).
+     * Parents before children; the same depth by id. Deterministic whatever order the nodes arrived in. Package-private
+     * so that the ordering rules can be tested without running the generators.
      */
-    private static List<PlanNode> order(List<PlanNode> nodes, Map<String, PlanNode> byId) {
-        Map<String, Integer> depth = new HashMap<>();
-        for (PlanNode n : nodes) {
-            int d = 0;
-            PlanNode cur = n;
-            while (cur.parent() != null && d <= nodes.size()) {
-                cur = byId.get(cur.parent());
-                d++;
-                if (cur == null) {
-                    break;
-                }
-            }
-            depth.put(n.id(), d);
-        }
+    static List<PlanNode> order(List<PlanNode> nodes, Map<String, PlanNode> byId) {
+        Map<String, Integer> depth = depths(nodes, byId);
         List<PlanNode> sorted = new ArrayList<>(nodes);
         sorted.sort(Comparator.comparingInt((PlanNode n) -> depth.get(n.id())).thenComparing(PlanNode::id));
         return sorted;
+    }
+
+    /**
+     * The number of parent hops from each node up to a root, worked out once per node. A climb goes up until it meets
+     * a node whose depth is known (or the root, or a missing parent) and then fills in the nodes it passed from the top
+     * down, so a chain of any length costs one step per node in total; nothing recurses. A node whose parent is missing
+     * counts the hop into the gap (depth 1). A node in or below a parent loop has no root: the climb is capped at the
+     * node count (no chain of distinct nodes is longer), and such nodes get the node count plus one, more than any real
+     * depth. Origins reports the loop.
+     */
+    private static Map<String, Integer> depths(List<PlanNode> nodes, Map<String, PlanNode> byId) {
+        int loopDepth = nodes.size() + 1;
+        Map<String, Integer> depth = new HashMap<>();
+        for (PlanNode start : nodes) {
+            List<PlanNode> passed = new ArrayList<>();
+            int above;
+            PlanNode cur = start;
+            while (true) {
+                Integer known = depth.get(cur.id());
+                if (known != null) {
+                    above = known;
+                    break;
+                }
+                if (passed.size() > nodes.size()) {
+                    above = loopDepth;
+                    break;
+                }
+                passed.add(cur);
+                if (cur.parent() == null) {
+                    above = ROOT_PARENT_DEPTH;
+                    break;
+                }
+                PlanNode parent = byId.get(cur.parent());
+                if (parent == null) {
+                    above = MISSING_PARENT_DEPTH;
+                    break;
+                }
+                cur = parent;
+            }
+            for (int i = passed.size() - 1; i >= 0; i--) {
+                above = Math.min(above + 1, loopDepth);
+                depth.put(passed.get(i).id(), above);
+            }
+        }
+        return depth;
     }
 
     private void runNode(GenContext ctx, PartTypeRegistry registry, PlanNode node, PartGenerators.Stage stage, List<Issue> issues,
