@@ -1065,6 +1065,136 @@ class PlanInterpreterTest {
         assertEquals("line 2: 3 is not in this list", e.getMessage());
     }
 
+    // ---- the six unpinned paths the H-1b mutants survived: !=, deep farm compares, ----
+    // ---- set/dict size work, dict value depth, and the list.remove scan          ----
+
+    @Test
+    void aSharedNestInequalityPaysItsNodeVisitsAsSteps() {
+        // the measured bomb through `!=` (the == case is pinned above): k=10 is
+        // 2^11 - 1 = 2,047 node visits and answers False quickly (equal nests);
+        // k=30 would need ~2^31 visits, so the 1,000-step budget's 4,096,000
+        // charged work units run out at the != line instead
+        RecordingPlanApi api = new RecordingPlanApi();
+        assertTimeoutPreemptively(Duration.ofSeconds(5),
+                () -> run("a = [1]\nb = [1]\nfor i in range(10):\n    a = [a, a]\n    b = [b, b]\n"
+                                + "print(a != b)\n",
+                        api, new PlanRunLimits(1_000, 60_000)));
+        assertEquals(List.of("False"), api.printed);
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> assertTimeoutPreemptively(Duration.ofSeconds(5),
+                        () -> run("a = [1]\nb = [1]\nfor i in range(30):\n    a = [a, a]\n    b = [b, b]\n"
+                                        + "print(a != b)\n",
+                                new RecordingPlanApi(), new PlanRunLimits(1_000, 60_000))));
+        assertEquals("line 6: construction script exceeded 1000 steps", e.getMessage());
+    }
+
+    @Test
+    void aFarmComparisonDeeperThanThePlanCompareLimitStillRuns() {
+        // two equal 100-level linear nests: deeper than the plan compare depth
+        // limit of 64, so ANY accidental use of planEquals in farm mode would
+        // refuse with the compare-depth message - a farm interpreter keeps plain
+        // Object.equals and simply answers True then False
+        FakeDroneApi api = new FakeDroneApi(5);
+        new Interpreter(api).run(new Parser(new Lexer(
+                "a = [1]\nb = [1]\nfor i in range(100):\n    a = [a]\n    b = [b]\n"
+                        + "print(a == b)\nprint(a != b)\n").scan()).parseProgram());
+        assertEquals(List.of("True", "False"), api.printed);
+    }
+
+    @Test
+    void aSetComparisonPaysItsSizeAsWorkSteps() {
+        // s1 == s2 over two equal 20,000-element sets spends 1 node visit + the
+        // 20,000-element size = 20,001 work units = 4 whole quanta (4 x 4,096 =
+        // 16,384, remainder 3,617) = exactly 4 extra steps - so a removed size
+        // charge would leave the script 4 steps cheaper. Statements before the
+        // compare: 1 + 1 + (1 + 20,000x2) x 2 = 80,004; the compare line ends at
+        // 80,009 and print lands at 80,010
+        String seed = "s1 = set()\ns2 = set()\nfor i in range(20000):\n    s1.add(i)\n"
+                + "for i in range(20000):\n    s2.add(i)\n";
+        String script = seed + "x = s1 == s2\nprint(x)\n";
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(script, api, new PlanRunLimits(80_010, 60_000));
+        assertEquals(List.of("True"), api.printed);
+        // one step less and the compare's fourth quantum leaves nothing for print
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(80_009, 60_000)));
+        assertEquals("line 8: construction script exceeded 80009 steps", e.getMessage());
+        // two less and the compare itself is refused mid-statement
+        e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(80_008, 60_000)));
+        assertEquals("line 7: construction script exceeded 80008 steps", e.getMessage());
+    }
+
+    @Test
+    void aDictComparisonPaysItsSizeAndValueVisitsAsWorkSteps() {
+        // d1 == d2 over two equal 20,000-entry dicts spends 1 node visit + the
+        // 20,000-entry size + one node visit per value pair = 40,001 work units
+        // = 9 whole quanta (9 x 4,096 = 36,864, remainder 3,137) = exactly 9
+        // extra steps. Same statement accounting as the set case: 80,004 before
+        // the compare, the compare line ends at 80,014, print lands at 80,015
+        String seed = "d1 = {}\nd2 = {}\nfor i in range(20000):\n    d1[i] = i\n"
+                + "for i in range(20000):\n    d2[i] = i\n";
+        String script = seed + "x = d1 == d2\nprint(x)\n";
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(script, api, new PlanRunLimits(80_015, 60_000));
+        assertEquals(List.of("True"), api.printed);
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(80_014, 60_000)));
+        assertEquals("line 8: construction script exceeded 80014 steps", e.getMessage());
+        e = assertThrows(PlanLimitException.class,
+                () -> run(script, new RecordingPlanApi(), new PlanRunLimits(80_013, 60_000)));
+        assertEquals("line 7: construction script exceeded 80013 steps", e.getMessage());
+    }
+
+    @Test
+    void aCyclicDictIsRefusedByTheCompareDepthLimitNotByTheStack() {
+        // the dict counterpart of the cyclic-list case above: d1["k"] = d1 walks
+        // into its own value forever, and the compare depth limit refuses it
+        // deterministically instead of a -Xss-dependent StackOverflowError
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run("d1 = {}\nd1[\"k\"] = d1\nd2 = {}\nd2[\"k\"] = d2\nprint(d1 == d2)\n",
+                        new RecordingPlanApi(), PlanRunLimits.DEFAULT));
+        assertEquals("line 5: construction script exceeded the compare depth limit of 64", e.getMessage());
+    }
+
+    @Test
+    void dictNestingAtExactlyTheCompareDepthLimitRunsAndDeeperIsRefused() {
+        // x = {} then n times x = {"k": x}: a Map's values compare at depth + 1,
+        // so the innermost {} pair sits at depth n - 64 wrappings is exactly the
+        // limit and answers True, 65 is refused. A linear chain keeps the node
+        // count tiny: it is the DEPTH that is refused, not the work
+        String prefix = "x1 = {}\nfor i in range(%d):\n    x1 = {\"k\": x1}\n"
+                + "x2 = {}\nfor i in range(%d):\n    x2 = {\"k\": x2}\n";
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(String.format(prefix, 64, 64) + "print(x1 == x2)\n", api, PlanRunLimits.DEFAULT);
+        assertEquals(List.of("True"), api.printed);
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(String.format(prefix, 65, 65) + "x = x1 == x2\n",
+                        new RecordingPlanApi(), PlanRunLimits.DEFAULT));
+        assertEquals("line 7: construction script exceeded the compare depth limit of 64", e.getMessage());
+    }
+
+    @Test
+    void listRemovePaysItsElementScanAsSteps() {
+        // l.remove(b) on the measured shared nests: remove scans for the first
+        // element planEquals to the argument - the same bounded walk as `in` -
+        // so the 30-level pair is refused at the remove line instead of running
+        // ~18 s of unbounded Object.equals, and the equal 10-level pair is found
+        // and removed (the list ends empty)
+        RecordingPlanApi api = new RecordingPlanApi();
+        assertTimeoutPreemptively(Duration.ofSeconds(5),
+                () -> run("a = [1]\nb = [1]\nfor i in range(10):\n    a = [a, a]\n    b = [b, b]\n"
+                                + "l = [a]\nl.remove(b)\nprint(len(l))\n",
+                        api, new PlanRunLimits(1_000, 60_000)));
+        assertEquals(List.of("0"), api.printed);
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> assertTimeoutPreemptively(Duration.ofSeconds(5),
+                        () -> run("a = [1]\nb = [1]\nfor i in range(30):\n    a = [a, a]\n    b = [b, b]\n"
+                                        + "l = [a]\nl.remove(b)\n",
+                                new RecordingPlanApi(), new PlanRunLimits(1_000, 60_000))));
+        assertEquals("line 7: construction script exceeded 1000 steps", e.getMessage());
+    }
+
     /** A {@link PlanApi} whose {@code print} refuses with a {@link PlanBudgetException}, the way the recorder's budgets do. */
     private static PlanApi budgetRefusingPrintPlanApi() {
         return printRefusingPlanApi(new PlanBudgetException("printed output refused"));
