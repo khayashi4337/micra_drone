@@ -15,6 +15,7 @@ import io.github.khayashi4337.micradrone.lang.ast.Stmt;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
@@ -28,6 +29,16 @@ import java.util.function.Supplier;
  * recorded elements, recorded characters and printed characters - are the only RUN-WIDE limits.
  * A caller that accepts scripts from outside (the future submit command) must therefore bound
  * the number of scripts and the total wall-clock time itself.
+ *
+ * <p>Runs are serialized process-wide through {@link #RUN_PERMIT}, so at most one run's heap
+ * is ever live at a time. One run's heap peak is about 130-160 MB in the worst case the
+ * budgets allow (the recorder's recorded values plus the interpreter's values in flight on
+ * the 128 MiB worker stack): a single permitted run can never be multiplied by the number of
+ * callers asking for one. The price is queueing - a caller waiting for the permit may wait
+ * for every run ahead of it, each up to N x {@code maxMillis} - so {@link #run} should be
+ * invoked off the server thread. Calling {@code run} or {@link #runOnWorker} from inside a
+ * running body is NOT supported: the permit is not reentrant and the nested caller would
+ * wait on itself forever.
  */
 public final class PlanScriptRunner {
     /**
@@ -70,6 +81,15 @@ public final class PlanScriptRunner {
      */
     static final long PLAN_RUN_STACK_BYTES = 128L * 1024 * 1024;
 
+    /**
+     * The process-wide serialization point of {@link #runOnWorker}: a single FAIR permit, so
+     * callers run in the order they arrived and at most one run's ~130-160 MB heap peak is
+     * live. Acquired before the worker starts and released in a {@code finally}, so the
+     * permit is never held by the caller after the call returns - but it is also not
+     * reentrant, which is why a body must never call back into {@code run}/{@code runOnWorker}.
+     */
+    private static final Semaphore RUN_PERMIT = new Semaphore(1, true);
+
     public record Result(PlanPatch patch, List<Issue> issues, List<String> printed) {
         public Result {
             issues = List.copyOf(issues);
@@ -103,39 +123,56 @@ public final class PlanScriptRunner {
      * thrown inside the worker is rethrown unchanged on the caller thread - the run's own
      * per-script catches turn script failures into issues before they can reach this boundary.
      * Package-private so tests can push arbitrary work across this same thread boundary.
+     *
+     * <p>The caller first queues on the fair {@link #RUN_PERMIT} and holds it for the whole
+     * run, so bodies never overlap and only one run's ~130-160 MB heap peak is ever live.
+     * {@link Semaphore#acquireUninterruptibly()} is used exactly like the join loop: an
+     * interrupt poked at the caller while it queues only sets the flag - the wait continues,
+     * the first {@code join()} below then notices it just like a mid-run poke, and the flag
+     * is set again once the result is in. The permit is released in a {@code finally}, so a
+     * body that throws or a worker that fails to start still frees the next caller, and the
+     * caller never returns still holding it. A caller queued behind an in-progress run may
+     * wait for every run ahead of it (each up to scripts x {@code maxMillis}), so invoke this
+     * off the server thread - and a body must never call back into {@code run}/{@code
+     * runOnWorker}, as the permit is not reentrant and it would wait on itself forever.
      */
     static <T> T runOnWorker(Supplier<T> body) {
-        AtomicReference<T> result = new AtomicReference<>();
-        AtomicReference<Throwable> failure = new AtomicReference<>();
-        Thread worker = new Thread(null, () -> {
-            try {
-                result.set(body.get());
-            } catch (RuntimeException | Error e) {
-                failure.set(e);
+        RUN_PERMIT.acquireUninterruptibly();
+        try {
+            AtomicReference<T> result = new AtomicReference<>();
+            AtomicReference<Throwable> failure = new AtomicReference<>();
+            Thread worker = new Thread(null, () -> {
+                try {
+                    result.set(body.get());
+                } catch (RuntimeException | Error e) {
+                    failure.set(e);
+                }
+            }, "micra-construction-script", PLAN_RUN_STACK_BYTES);
+            worker.start();
+            boolean interrupted = false;
+            while (true) {
+                try {
+                    worker.join();
+                    break;
+                } catch (InterruptedException e) {
+                    // keep waiting - the result still matters; the flag is restored below
+                    interrupted = true;
+                }
             }
-        }, "micra-construction-script", PLAN_RUN_STACK_BYTES);
-        worker.start();
-        boolean interrupted = false;
-        while (true) {
-            try {
-                worker.join();
-                break;
-            } catch (InterruptedException e) {
-                // keep waiting - the result still matters; the flag is restored below
-                interrupted = true;
+            if (interrupted) {
+                Thread.currentThread().interrupt();
             }
+            Throwable thrown = failure.get();
+            if (thrown instanceof RuntimeException e) {
+                throw e;
+            }
+            if (thrown != null) {
+                throw (Error) thrown;
+            }
+            return result.get();
+        } finally {
+            RUN_PERMIT.release();
         }
-        if (interrupted) {
-            Thread.currentThread().interrupt();
-        }
-        Throwable thrown = failure.get();
-        if (thrown instanceof RuntimeException e) {
-            throw e;
-        }
-        if (thrown != null) {
-            throw (Error) thrown;
-        }
-        return result.get();
     }
 
     /**

@@ -18,8 +18,14 @@ import io.github.khayashi4337.micradrone.lang.Lexer;
 import io.github.khayashi4337.micradrone.lang.Parser;
 import io.github.khayashi4337.micradrone.lang.PlanRunLimits;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class PlanScriptRunnerTest {
@@ -938,6 +944,189 @@ class PlanScriptRunnerTest {
         Thread ran = PlanScriptRunner.runOnWorker(Thread::currentThread);
         assertEquals("micra-construction-script", ran.getName());
         assertNotSame(Thread.currentThread(), ran);
+    }
+
+    // ---- one run's heap at a time: the process-wide run permit (P3 H-4c) ----
+
+    /**
+     * Waits inside a body on the gate a test uses to keep that body alive. A timeout or an
+     * interrupt unwinds the body instead of hanging it, so a broken run can never wedge the
+     * permit for the rest of the suite.
+     */
+    private static void awaitGate(CountDownLatch gate) {
+        try {
+            assertTrue(gate.await(10, TimeUnit.SECONDS), "the test gate stayed closed forever");
+        } catch (InterruptedException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    /**
+     * Spins (never sleeps) until {@code caller} is parked inside the run permit's acquire
+     * wait - told apart from every other WAITING state (such as the worker's join()) by the
+     * {@code java.util.concurrent} frames in its stack. Asserts it actually parked rather
+     * than finishing or wedging somewhere else.
+     */
+    private static void awaitParkedOnThePermit(Thread caller, String who) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (!parkedOnThePermit(caller)) {
+            assertTrue(caller.isAlive(), who + " finished without ever parking on the permit");
+            assertTrue(System.nanoTime() < deadline,
+                    who + " never parked on the run permit (state " + caller.getState() + ")");
+            Thread.yield();
+        }
+    }
+
+    /**
+     * Whether {@code caller} is parked inside {@code Semaphore.acquireUninterruptibly}: the
+     * acquire parks through {@code java.util.concurrent} frames, while the other parking
+     * wait inside runOnWorker - the worker's join() - parks through {@code Object.wait}.
+     */
+    private static boolean parkedOnThePermit(Thread caller) {
+        if (caller.getState() != Thread.State.WAITING) {
+            return false;
+        }
+        for (StackTraceElement frame : caller.getStackTrace()) {
+            if (frame.getClassName().startsWith("java.util.concurrent")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Test
+    void twoRunsAtOnceNeverOverlapInsideTheWorker() throws InterruptedException {
+        // caller A parks inside its body on a gate; caller B starts while A is still inside
+        // and can only enter its own body after A is completely out - the maximum number of
+        // bodies live at once must stay 1, because only one run's heap may ever be live
+        AtomicInteger inBody = new AtomicInteger();
+        AtomicInteger maxInBody = new AtomicInteger();
+        CountDownLatch aInside = new CountDownLatch(1);
+        CountDownLatch gate = new CountDownLatch(1);
+        AtomicReference<String> aResult = new AtomicReference<>();
+        AtomicReference<String> bResult = new AtomicReference<>();
+        CountDownLatch bInside = new CountDownLatch(1);
+        Thread a = new Thread(() -> aResult.set(PlanScriptRunner.runOnWorker(() -> {
+            maxInBody.accumulateAndGet(inBody.incrementAndGet(), Math::max);
+            aInside.countDown();
+            awaitGate(gate);
+            inBody.decrementAndGet();
+            return "a";
+        })));
+        Thread b = new Thread(() -> bResult.set(PlanScriptRunner.runOnWorker(() -> {
+            maxInBody.accumulateAndGet(inBody.incrementAndGet(), Math::max);
+            bInside.countDown();
+            inBody.decrementAndGet();
+            return "b";
+        })));
+        a.start();
+        assertTrue(aInside.await(10, TimeUnit.SECONDS), "A never entered its body");
+        b.start();
+        // wait until B either queues for its turn (correct: parked on the permit while A
+        // is still inside) or has already entered its own body next to A (the overlap
+        // being forbidden) - only then is it safe to let A out without making the check
+        // depend on how fast B happened to be scheduled
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (bInside.getCount() > 0 && !parkedOnThePermit(b) && b.isAlive()
+                && System.nanoTime() < deadline) {
+            Thread.yield();
+        }
+        assertTrue(bInside.getCount() == 0 || parkedOnThePermit(b) || !b.isAlive(),
+                "B neither queued nor ran its body within 10 s");
+        gate.countDown();
+        a.join();
+        b.join();
+        assertEquals("a", aResult.get());
+        assertEquals("b", bResult.get());
+        assertEquals(1, maxInBody.get(), "the two bodies ran at the same time");
+        assertEquals(0, inBody.get());
+    }
+
+    @Test
+    void waitingCallersGetThePermitInArrivalOrder() throws InterruptedException {
+        // the permit is fair: with A parked inside its body and B then C queued behind it,
+        // the bodies run in the callers' arrival order. Each waiter is only started after
+        // the previous one is OBSERVED parked on the permit, so the queue order B-then-C
+        // is real rather than hoped for
+        CountDownLatch aInside = new CountDownLatch(1);
+        CountDownLatch gate = new CountDownLatch(1);
+        List<String> order = Collections.synchronizedList(new ArrayList<>());
+        Thread a = new Thread(() -> PlanScriptRunner.runOnWorker(() -> {
+            aInside.countDown();
+            awaitGate(gate);
+            order.add("a");
+            return null;
+        }));
+        a.start();
+        assertTrue(aInside.await(10, TimeUnit.SECONDS), "A never entered its body");
+        Thread b = new Thread(() -> PlanScriptRunner.runOnWorker(() -> {
+            order.add("b");
+            return null;
+        }));
+        b.start();
+        awaitParkedOnThePermit(b, "B");
+        Thread c = new Thread(() -> PlanScriptRunner.runOnWorker(() -> {
+            order.add("c");
+            return null;
+        }));
+        c.start();
+        awaitParkedOnThePermit(c, "C");
+        gate.countDown();
+        a.join();
+        b.join();
+        c.join();
+        assertEquals(List.of("a", "b", "c"), order);
+    }
+
+    @Test
+    void aBodyThatThrowsStillReleasesThePermit() {
+        // the worker dies mid-run: the caller still gets the failure rethrown, and the next
+        // caller is not left parked forever on a permit nobody holds any more
+        RuntimeException boom = new RuntimeException("boom");
+        RuntimeException caught = assertThrows(RuntimeException.class,
+                () -> PlanScriptRunner.runOnWorker(() -> {
+                    throw boom;
+                }));
+        assertSame(boom, caught);
+        assertTimeoutPreemptively(Duration.ofSeconds(5),
+                () -> assertEquals("ok", PlanScriptRunner.runOnWorker(() -> "ok")));
+    }
+
+    @Test
+    void anInterruptedWaiterStillGetsItsResultWithTheFlagSet() throws InterruptedException {
+        // caller A parks inside its body holding the permit; caller B queues behind it and
+        // is interrupted while parked in the acquire. The poke must not drop the wait: B
+        // still gets its own result afterwards, and its interrupt flag is set again by the
+        // time runOnWorker returns - the same remember-and-restore the join loop already
+        // gives a mid-run interrupt
+        CountDownLatch aInside = new CountDownLatch(1);
+        CountDownLatch gate = new CountDownLatch(1);
+        AtomicReference<String> aResult = new AtomicReference<>();
+        AtomicReference<String> bResult = new AtomicReference<>();
+        AtomicBoolean bFlagAfter = new AtomicBoolean();
+        Thread a = new Thread(() -> aResult.set(PlanScriptRunner.runOnWorker(() -> {
+            aInside.countDown();
+            awaitGate(gate);
+            return "a";
+        })));
+        a.start();
+        assertTrue(aInside.await(10, TimeUnit.SECONDS), "A never entered its body");
+        Thread b = new Thread(() -> {
+            bResult.set(PlanScriptRunner.runOnWorker(() -> "b"));
+            bFlagAfter.set(Thread.currentThread().isInterrupted());
+        });
+        b.start();
+        awaitParkedOnThePermit(b, "B");
+        b.interrupt();
+        // A still holds the permit and its gate is still closed, so B can only produce a
+        // result by having escaped the acquire wait - there must be none yet
+        assertNull(bResult.get(), "an interrupt must not end the acquire wait early");
+        gate.countDown();
+        a.join();
+        b.join();
+        assertEquals("a", aResult.get());
+        assertEquals("b", bResult.get());
+        assertTrue(bFlagAfter.get(), "the interrupt flag must be set again when the run returns");
     }
 
     // ---- block statements count against the parse nesting limit too (P3 H-3, mutant Q4) ----
