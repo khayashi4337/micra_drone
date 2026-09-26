@@ -59,6 +59,12 @@ public final class PlanJson {
     private static final String KEY_TURNS = "turns";
     private static final String KEY_MIRROR = "mirror";
 
+    // Members of a {key, value} parameter pair (the compact array form of "params").
+    private static final String KEY_PAIR_KEY = "key";
+    private static final String KEY_PAIR_VALUE = "value";
+    /** A rot that names no turns means no rotation. */
+    private static final int DEFAULT_QUARTER_TURNS = 0;
+
     private static final String KEY_PORT = "port";
     private static final String KEY_FROM = "from";
     private static final String KEY_TO = "to";
@@ -404,7 +410,10 @@ public final class PlanJson {
             return Rot.NONE;
         }
         Map<String, Object> m = JsonTree.obj(v, path);
-        return new Rot(JsonTree.reqInt(m, KEY_TURNS, path), JsonTree.reqBool(m, KEY_MIRROR, path));
+        Integer turns = JsonTree.optInt(m, KEY_TURNS, path);
+        Object mirrorValue = m.get(KEY_MIRROR);
+        boolean mirror = mirrorValue != null && JsonTree.bool(mirrorValue, JsonTree.child(path, KEY_MIRROR));
+        return new Rot(turns == null ? DEFAULT_QUARTER_TURNS : turns, mirror);
     }
 
     static <E extends Enum<E>> E enumOf(Class<E> type, Function<String, E> parse, Object v, String path) {
@@ -468,8 +477,26 @@ public final class PlanJson {
                 JsonTree.optStr(m, KEY_LABEL, path));
     }
 
+    /** {@code params} may be an object or, in the compact form, an array of {@code {key, value}} pairs. */
     static Map<String, ParamValue> paramsFromTree(Object v, String path) {
         Map<String, ParamValue> params = new TreeMap<>();
+        if (v == null) {
+            return params;
+        }
+        if (v instanceof List<?> pairs) {
+            for (int i = 0; i < pairs.size(); i++) {
+                String pairPath = JsonTree.item(path, i);
+                Map<String, Object> pair = JsonTree.obj(pairs.get(i), pairPath);
+                String key = JsonTree.str(JsonTree.req(pair, KEY_PAIR_KEY, pairPath),
+                        JsonTree.child(pairPath, KEY_PAIR_KEY));
+                if (params.containsKey(key)) {
+                    throw JsonTree.bad(JsonTree.child(pairPath, KEY_PAIR_KEY), "duplicate key \"" + key + "\"");
+                }
+                params.put(key, paramFromTree(JsonTree.req(pair, KEY_PAIR_VALUE, pairPath),
+                        JsonTree.child(pairPath, KEY_PAIR_VALUE)));
+            }
+            return params;
+        }
         for (Map.Entry<String, Object> e : JsonTree.obj(v, path).entrySet()) {
             params.put(e.getKey(), paramFromTree(e.getValue(), JsonTree.child(path, e.getKey())));
         }
