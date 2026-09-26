@@ -187,7 +187,7 @@ public final class GenContext {
         }
         WallInfo wall = wallInfo(s.nodeId()).orElseThrow(() -> fail(node, IssueCode.E_OPENING_NO_WALL, KEY_ANCHOR,
                 "付ける壁(" + s.nodeId() + ")が、施工できる壁ではありません"));
-        if (s.u() < 0 || s.u() >= wall.length() || s.v() < 0 || s.v() >= wall.height()) {
+        if (s.u() < 0 || !wall.fitsAlong(s.u(), 1) || s.v() < 0 || s.v() >= wall.height()) {
             throw fail(node, IssueCode.E_OPENING_NO_WALL, KEY_ANCHOR, "壁(" + wall.id() + ")の面の上の位置(u=" + s.u() + ", v=" + s.v()
                     + ")が、壁の外です(u は0〜" + (wall.length() - 1) + "、v は0〜" + (wall.height() - 1) + ")");
         }

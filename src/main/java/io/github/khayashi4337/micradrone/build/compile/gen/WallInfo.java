@@ -56,7 +56,16 @@ public record WallInfo(String id, StructureInfo structure, Facing side, int leve
      * opening or a balcony, uses it to keep its extent along the wall inside the wall.
      */
     public boolean fitsAlong(int i, int span) {
-        return i + span <= length;
+        return (long) i + span <= length;
+    }
+
+    /**
+     * Whether {@code span} rows that start at row {@code v} all lie within the wall: the last one,
+     * {@code v + span - 1}, is at most the wall's top row, {@code height - 1}. The mirror of {@link #fitsAlong}
+     * for the upward direction.
+     */
+    public boolean fitsUp(int v, int span) {
+        return (long) v + span <= height;
     }
 
     /**

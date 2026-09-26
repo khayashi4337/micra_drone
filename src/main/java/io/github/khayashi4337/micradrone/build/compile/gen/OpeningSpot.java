@@ -46,7 +46,7 @@ record OpeningSpot(WallInfo wall, int i, int row, boolean outer, int layer, int 
 
     /** Refuses an opening that would leave the wall's own extent, with the same issue (no key) as the carve's. */
     private void requireInsideWall(GenContext ctx, PlanNode node) {
-        if (!wall.fitsAlong(i, width) || row + height > wall.height()) {
+        if (!wall.fitsAlong(i, width) || !wall.fitsUp(row, height)) {
             throw ctx.fail(node, IssueCode.E_OPENING_NO_WALL, NO_KEY, node.id() + "の開口部(u=" + i + "から幅" + width + "、v=" + row
                     + "から高さ" + height + ")が、壁(" + wall.id() + ")の外にはみ出しています(壁は長さ" + wall.length() + "、高さ"
                     + wall.height() + ")");

@@ -29,6 +29,10 @@ public final class PartGenerators {
             Map.entry("micra:catwalk", new Entry(new CatwalkGen(), Stage.BASE)),
             Map.entry("micra:railing", new Entry(new RailingGen(), Stage.BASE)),
             Map.entry("micra:balcony", new Entry(new BalconyGen(), Stage.BASE)),
+            Map.entry("micra:lamp", new Entry(new LampGen(), Stage.BASE)),
+            Map.entry("micra:sign", new Entry(new SignGen(), Stage.BASE)),
+            Map.entry("micra:planter", new Entry(new PlanterGen(), Stage.BASE)),
+            Map.entry("micra:trim", new Entry(new TrimGen(), Stage.BASE)),
             Map.entry("micra:door", new Entry(new DoorGen(), Stage.CARVE)),
             Map.entry("micra:window", new Entry(new WindowGen(), Stage.CARVE)));
 
