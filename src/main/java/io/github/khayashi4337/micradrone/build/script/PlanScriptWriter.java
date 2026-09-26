@@ -33,14 +33,17 @@ import java.util.TreeMap;
  * dependency order comes back with its nodes reordered). Plans that do not fit one script are cut into several
  * numbered scripts which must be run in order (nodes are written after their parent and after the wall they rest on).
  *
- * <p>What the round trip does not promise. The writer refuses only what it cannot write: one statement longer than a
- * script may hold (it is refused, never split; a {@code logistics(...)} call is ONE statement, so the docks, routes
- * and flows of a plan must fit in a single script together) and a script limit that cannot hold the header. It does
- * NOT check the run-wide budgets of the {@link PlanRecorder} that reads the scripts back: at most 200,000 recorded
- * elements and 1,000,000 recorded characters over a whole run. A plan beyond them is written without complaint and
- * then refused by the runner as a batch (E-SCRIPT-LIMIT). Measured on this writer's own output: about 56,000 small
- * nodes (pillars with ids of up to 6 characters) run and more do not; about 100 nodes with labels of 9,800
- * characters (101 run, 102 do not); about 5,850 floors with 32 hole values each (5,882 run, 5,883 do not).
+ * <p>What the round trip does not promise. The writer refuses, with an exception, only what it cannot write: one
+ * statement longer than a script may hold (it is refused, never split; a {@code logistics(...)} call is ONE
+ * statement, so the docks, routes and flows of a plan must fit in a single script together), a script limit that
+ * cannot hold the header, and nodes that depend on each other in a loop through parents and walls (a plan the
+ * patcher never builds; an {@link IllegalStateException}). It does NOT check the run-wide budgets of the
+ * {@link PlanRecorder} that reads the scripts back: at most 200,000 recorded elements and 1,000,000 recorded
+ * characters over a whole run. A plan beyond them is written without complaint and then refused by the runner as a
+ * batch (E-SCRIPT-LIMIT). Examples, measured on this writer's output (they move if the recorder budgets or the
+ * writer's spelling change): about 56,000 small nodes (56,172 pillars with ids of up to 6 characters run, 56,173 do
+ * not); about 100 nodes with labels of 9,800 characters (101 run, 102 do not); about 3,000 floors with the maximum 64
+ * hole values (3,030 run, 3,031 do not; with 32 hole values each, 5,882 run and 5,883 do not).
  */
 public final class PlanScriptWriter {
     /**

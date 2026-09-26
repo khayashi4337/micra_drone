@@ -6,7 +6,10 @@ import java.util.Optional;
 
 /**
  * The design data: the source of truth (D-2). Scripts are a round-trippable view of it. {@code nodes} is in
- * insertion order and a parent always comes before its children; {@code contentHash} ignores the order.
+ * insertion order and a parent always comes before its children; {@code contentHash} ignores the order. A node that
+ * was relocated onto a wall added AFTER it rests on a wall listed after it, so the stored order is not always one a
+ * plan can be rebuilt in: whatever rebuilds a plan from its nodes (the script writer, {@code PlanPatcher.normalize})
+ * uses {@link NodeOrder}, which puts each node after its parent and after the wall it rests on.
  */
 public record SemanticPlan(int schemaVersion, String planId, int revision, Integer parentRevision, Site site,
                            StyleSpec style, List<PlanNode> nodes, List<Connection> connections,

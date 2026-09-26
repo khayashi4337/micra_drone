@@ -121,6 +121,12 @@ public final class PlanPatcher {
         }
     }
 
+    /**
+     * Applies the patch to the plan: the new plan, or every issue found. The base plan is assumed to come from this
+     * patcher or from {@link #normalize}, so no node refers to a parent or a wall that is not in the plan (no dangling
+     * references); that is why only a MoveNode is checked for a dependency loop ({@link #checkNoDependencyLoop}). A
+     * plan built by hand with dangling references or loops is outside that guarantee.
+     */
     public PatchResult apply(SemanticPlan plan, PlanPatch patch) {
         if (patch.baseRevision() != plan.revision()) {
             return new PatchResult(null, List.of(staleIssue(plan, patch)));
@@ -140,7 +146,11 @@ public final class PlanPatcher {
 
     /**
      * Types a loosely read plan against the registry; keeps planId, revision and provenance. The plan is built
-     * by adding everything to an empty one, so it passes exactly the checks a patch would.
+     * by adding everything to an empty one, so it passes exactly the checks a patch would. The nodes are added in the
+     * dependency order of {@link NodeOrder} (each after its parent and after the wall it rests on), NOT in the order
+     * the loose plan lists them, so a plan that lists a node before its wall (after a relocation) or a child before its
+     * parent is accepted. Nodes that can never be placed (a loop through parents and walls) are added last, in the
+     * plan's own order, and refused by the ordinary anchor checks.
      */
     public PatchResult normalize(SemanticPlan loose) {
         SemanticPlan empty = new SemanticPlan(loose.schemaVersion(), loose.planId(), EMPTY_REVISION, null, null,
@@ -341,7 +351,9 @@ public final class PlanPatcher {
      * node depends on its parent and on the wall its {@link Anchor.OnSurface} anchor rests on; a loop mixing the two
      * kinds cannot be written by any script (its statements would have to come in an order where each one needs the
      * other first) and would never end for anything that walks the chain. Only a move can close one: a node that is
-     * being added is not yet the parent or the wall of anything, so adding is not checked (and stays constant-time).
+     * being added is not yet the parent or the wall of anything (given a base plan without dangling references, see
+     * {@link #apply}), so adding is not checked and stays constant-time. A move costs O(nodes) in the worst case
+     * (the walk visits each node once), so a long chain built by many relocations is quadratic overall.
      */
     private static boolean checkNoDependencyLoop(State st, String ownerId, Anchor anchor, List<Issue> issues) {
         if (anchor instanceof Anchor.OnSurface s && dependsOn(st, s.nodeId(), ownerId)) {

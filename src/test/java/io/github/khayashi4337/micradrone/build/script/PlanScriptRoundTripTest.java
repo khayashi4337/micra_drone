@@ -592,7 +592,7 @@ class PlanScriptRoundTripTest {
     @Test
     void numValuesAreWrittenAsPlainDecimalsAndReadBackUnchanged() {
         // Hand-derived: number() writes BigDecimal.valueOf(d).stripTrailingZeros().toPlainString() and
-        // the script language has no exponent form, so 1e15 comes out as fifteen digits. An integral
+        // the script language has no exponent form, so 1e15 comes out as sixteen digits. An integral
         // value reads back as IntV and the NUM spec coerces it to NumV, so the value survives.
         List<NumCase> cases = List.of(
                 new NumCase(2.0, "2", 2.0),

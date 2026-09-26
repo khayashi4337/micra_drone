@@ -106,7 +106,7 @@ final class RandomPlanOps {
 
     /** Numbers a NUM parameter or a cargo rate may take (all inside the dial's 0..256 range): the sign of zero, tiny and long fractions. */
     private static final double[] NUMBERS = {-0.0, 0.0, 12.5, 0.1, 0.0000001, 255.0, 0.30000000000000004, 100.25};
-    /** A rate no NUM parameter may take: fifteen digits in plain decimal text. */
+    /** A rate no NUM parameter may take: sixteen digits in plain decimal text. */
     private static final double LARGE_RATE = 1.0E15;
     private static final List<String> ROLES = List.of("roof", "wall", "floor", "door", "glass");
     private static final List<String> BLOCKS = List.of("minecraft:stone_bricks", "minecraft:oak_planks", "mod:some_block",
