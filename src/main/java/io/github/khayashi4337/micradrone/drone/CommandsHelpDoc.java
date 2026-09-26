@@ -8,7 +8,8 @@ package io.github.khayashi4337.micradrone.drone;
  * in-game as help scrolls from the enchanting table (see {@link SampleCatalog}) - it lives in this
  * Minecraft-free package (moved from {@code client}) because the server writes it into scroll
  * items. Each constant's leading "#" line makes {@link ScriptFileStore#describeScript} produce a
- * real description wherever the scroll is listed.
+ * real description wherever the scroll is listed. {@link #BUILD_COMMANDS}, the construction-script
+ * reference, is a fifth text that is not among those four scrolls: nothing hands it out yet.
  */
 public final class CommandsHelpDoc {
 
@@ -654,6 +655,177 @@ public final class CommandsHelpDoc {
                 if get_rod_durability() >= 0 and get_rod_durability() < 5:
                     if is_anvil() and get_repair_cost() >= 0:
                         repair_rod()
+            """;
+
+    /**
+     * The construction-script reference: the commands that design a building or factory, the building parts they place,
+     * the limits a script runs under and the error names it can end in. BuildCommandsHelpTest holds every number, command,
+     * part parameter and error name in it to the code, and runs its example through the whole pipeline. Not handed out as
+     * a scroll yet: the construction editor that can run these scripts arrives with the review screens (phase P5), which
+     * adds it to {@link SampleCatalog} together with the README and CurseForge text.
+     */
+    public static final String BUILD_COMMANDS = """
+            # コマンド一覧(建設): 建物や工場の設計を書く命令のリファレンス(実行するスクリプトではない)
+            === MicraDrone 建設スクリプト コマンド一覧 ===
+
+            ■ 畑のスクリプトとのちがい
+            建設のスクリプトは、畑のスクリプトとは別物です。畑の命令(move・harvest・till・plant など)、
+            乱数・時刻・天気を調べる命令(random・get_time など)、create_task は使えず、書くと
+            E-SCRIPT-FORBIDDEN になります。同じスクリプトからいつも同じ設計ができるようにするためで、
+            畑の命令と混ぜることもできません。
+            使えるのは、このページの命令と、if・elif・else・for・while・def・return・break・continue・変数と、
+            print len abs min max str list dict set range だけです(range は for の中でだけ。値につける
+            append や get などの操作も使えます)。
+            def は一番外側にだけ書けて、呼ぶより前に書きます。wall や door など、命令と同じ名前の関数は作れません。
+
+            ■ 書き方のきまり
+            ・1つの文は1行に収める。( ) [ ] { } の中でも改行できず、最後の , も付けられない。
+            ・字下げは半角スペース(タブは不可)。数字は半角の0〜9で書く(全角の１２は、行番号つきで断られる。
+              文字列・# の説明・名前の中ならよい)。全角の空白や（ ）も、文字列と説明の外では使えない。
+            ・文字列は "…" か '…' で書き、中で \\\\ \\" \\' \\n \\t が使える。# から行末までは説明。
+            ・整数が要る所に 3.5 のような小数は書けない(7 / 2 は 3.5)。
+
+            ■ 上限(超えると止まる)
+            1本のスクリプトごとに、実行は100,000文・5秒まで、長さは10,000字まで(大きな設計は複数に分ける)。
+            文字列は1,000,000字、リスト・辞書・集合は100,000個まで。超えると E-SCRIPT-LIMIT になる。
+            何本かをまとめて実行しても、記録できる設計は要素200,000個・文字1,000,000字まで(E-SCRIPT-LIMIT)。
+            print(値)は、建物には何もせず実行の記録に残るだけで、合計1,000,000字まで(E-SCRIPT-LIMIT)。
+            次は書き方のエラー(E-SCHEMA): if・for・カッコの入れ子が100段を超える、構文の深さが200を超える
+            (1+1+… を200個ほどつなぐ)、関数の呼び出しの入れ子が200段を超える。
+
+            ■ IDと名前
+            部品と接続のIDは、半角の小文字・数字・ハイフンで48字まで(E-ID-INVALID)。同じIDは2回使えない(E-ID-DUPLICATE)。
+            接続の端は "部品のID.ポート名" で、最初の . で分ける(ポート名の中の . はよい)。どちらの側も空にすると E-SCHEMA。
+            ラベルとタグに、改行とタブ以外の制御文字は使えない(E-PARAM-RANGE)。
+
+            ■ 座標と向き
+            u=右、v=上、w=前。位置は [u, v, w] で、親(parent)があれば親の原点から、None なら敷地の原点からの相対位置。
+            建物(structure)の中は、u が 0〜幅-1、w が 0〜奥行-1、床が v=0 で、[0, 0, 0] は左手前の床の角。
+            向きは north=前(+w)、east=右(+u)、south=後ろ(-w)、west=左(-u)。家全体の向きは、site の facing
+            (前が世界のどちらを向くか)で決めます。位置の各成分は±30,000,000まで(E-PARAM-RANGE)。
+
+            ■ 場所と素材
+            site(dimension, x, y, z, facing, bounds[, terrain_digest[, claim_id]])
+                建てる場所。例: site("minecraft:overworld", 100, 64, 200, "north", [-2, -3, -2, 12, 8, 12])
+                (x, y, z) が [0, 0, 0] にあたる世界の位置。facing は "north" "east" "south" "west"(小文字)。
+                bounds は [minU, minV, minW, maxU, maxV, maxW](両端を含み、min が max より大きいとエラー)。
+                この外に出るブロックは E-OUT-OF-BOUNDS、site が無いと E-SITE-MISSING。
+                terrain_digest と claim_id は省略できる(今は記録されるだけ)。
+            style(role, material)
+                役割の素材を決める。例: style("roof", "minecraft:red_nether_bricks")  素材は namespace:name の形。
+                役割: beam cargo catwalk chimney door fence floor foundation gate glass marker pad path pillar plant planter ramp roof sign stairs trim wall
+                部品の material には、役割名か、minecraft:stone のようなブロックIDを書く。
+                roof_stairs と roof_slab のように、役割名に _stairs か _slab を付けると、階段とスラブを別に決められる。
+                階段やスラブの形が要る部品(roof・stairs・ramp など)の素材は、ゲーム標準に階段とスラブの両方がある素材
+                (木材・石レンガ・レンガ・赤いネザーレンガなど)にする。赤いテラコッタなどは E-PARAM-RANGE。
+                コマンドブロックなど置いてはいけないブロックや、許可リストに無い素材は E-BLOCK-FORBIDDEN。
+            mood(tag)
+                雰囲気の目印(例: mood("cozy"))。設計に書き残すだけで、今は建物の形を変えません。
+
+            ■ 部品を置く
+            <部品名>(id, parent, anchor, params[, tags[, label]])
+                parent は親のIDか None。親は先に置いておく(あとに書いた部品は親にできない)。tags は文字列のリスト、
+                label は文字列。params は {"名前": 値} で、値は数・文字列・True/False・数のリスト。名前のまちがいや、
+                必須の書き忘れは E-PARAM-RANGE。例: wall("wall-n", "hut", [0, 0, 0], {"side": "north"})
+                foundation・floor・wall・roof の parent は、建物(structure)でなければ E-ANCHOR。
+            part(id, type, parent, anchor, params[, tags[, label]])
+                部品ID全体("micra:wall" など)で置く。create: や mod: の部品は、まだ登録簿(使える部品の名簿)に
+                無いので、置こうとすると E-UNKNOWN-PART。
+            anchor の書き方(位置の指定)
+                [u, v, w]  /  [u, v, w, 回転数, 鏡像](回転数は0〜3、鏡像は True か False)
+                ["surface", 壁のid, "outer" か "inner", u, v]  壁の面の上。door window sign planter trim balcony はこれで置く。
+                    u は壁が伸びる向き(north・south の壁は右、east・west の壁は前)に、壁の始点(from)から数える。
+                    v は壁の一番下の段から上へ数える。planter と balcony は outer だけ。壁や位置が無いと E-OPENING-NO-WALL。
+                ["slot", スロットのid, 回転数, 鏡像]  建屋の解析がまだ無いので使えません(E-ANCHOR)。
+                回転数・鏡像を付けられない部品(付けると E-ANCHOR):
+                    balcony door floor foundation planter roof sign structure trim wall window
+            update_params(id, params)   書いた名前のパラメータだけを変える(ほかはそのまま)
+            relocate(id, anchor)        位置を変える。あとから置いた壁の面へ移すこともできるが、親と面の相手が輪になる移動は E-ANCHOR
+            remove_part(id)             消す。他の部品の親や面の相手、接続・発着場に使われている物は消せない(E-ANCHOR)
+                update_params・relocate・remove_part で、無いIDを指しても E-ANCHOR。
+
+            ■ 建築の部品と、params の名前
+            = のあとは範囲か候補、( ) の中は書かなかったときの値(必須は必ず書く)。material は役割名かブロックIDで、
+            書かなかったときは ( ) の役割の素材になる。
+            structure(…): 建物の箱(基礎・床・壁・屋根の親)。width=3〜64(7) depth=3〜64(7) floors=1〜8(1) floor_height=3〜8(4)
+            foundation(…): 基礎。margin=0〜8(0) depth=1〜8(1) material=素材(foundation)
+            floor(…): 床。level=0〜7(0) kind=block/slab(block) holes=整数のリスト(0〜63、64個まで) material=素材(floor)
+            wall(…): 壁(建物の1つの側に立てる)。side=north/east/south/west(必須) level=0〜7(0) height=0〜16(0) thickness=1〜3(1)
+                from=0〜63(0) length=0〜64(0) part=full/half(full) material=素材(wall)
+            pillar(…): 柱。height=1〜32(4) base=True/False(True) capital=True/False(True) material=素材(pillar)
+            beam(…): 梁。axis=u/v/w(u) length=1〜64(3) material=素材(beam)
+            roof(…): 屋根。kind=gable/hip/flat/shed/sawtooth/monitor(gable) overhang=0〜3(1) ridge=auto/u/w(auto)
+                high_side=north/east/south/west(east) gable_fill=True/False(True) tooth=2〜8(3) monitor_width=1〜5(1)
+                monitor_height=1〜3(1) material=素材(roof)
+            door(…): 扉。kind=single/double/hangar(single) width=3〜9(5) height=3〜6(4) hinge=left/right(left)
+                material=素材(door)
+            window(…): 窓。kind=pane/wide/arch(pane) lattice=True/False(False) material=素材(glass)
+            stairs(…): 階段。steps=1〜32(4) width=1〜8(1) dir=north/east/south/west(north) material=素材(stairs)
+            ladder(…): はしご。height=1〜32(3) facing=north/east/south/west(north)
+            catwalk(…): 歩廊。length=1〜64(6) dir=north/east/south/west(north) width=1〜5(2) rail=True/False(True)
+                material=素材(catwalk)
+            balcony(…): バルコニー。width=1〜16(3) depth=1〜8(2) rail=True/False(True) material=素材(floor)
+            railing(…): 手すり。length=1〜64(3) dir=north/east/south/west(north) height=1〜3(1) material=素材(fence)
+            chimney(…): 煙突。height=2〜32(6) size=1〜3(1) cap=True/False(True) material=素材(chimney)
+            ramp(…): 斜路。length=2〜32(6) dir=north/east/south/west(north) width=1〜8(2) material=素材(ramp)
+            lamp(…): 照明。kind=lantern/hanging/post/torch(lantern) height=1〜6(2)
+            sign(…): 看板。text=文字列(必須) material=素材(sign)
+            planter(…): 植栽。width=1〜8(3)
+            trim(…): 縁取り。length=1〜64(3) axis=horizontal/vertical(horizontal) shape=block/slab(block)
+                material=素材(trim)
+            dock_pad(…): 飛行船の発着場。width=5〜64(9) depth=5〜64(9) clearance=4〜64(16) cargo_u=0〜63(1) cargo_w=0〜63(1)
+                marker=True/False(True) material=素材(pad)
+            road(…): 道。length=1〜128(8) dir=north/east/south/west(north) width=1〜8(2) material=素材(path)
+            wall の height と length の 0 は「自動」で、高さは階の高さ-1、長さは側の端まで(from から数える)。
+            part=half は高さの半分(切り上げ)。wall と floor の level は、structure の floors より小さい数。
+            floor の holes は、穴の長方形 [u0, w0, u1, w1] を並べる(4個ずつ。4の倍数でないと E-PARAM-RANGE)。
+            sign の text は | で行を分け、4行まで・1行15字まで(超えると E-PARAM-RANGE)。
+            roof の ridge は棟の向き(auto は長い側に沿う)、high_side は shed の高い側。
+
+            ■ つなぐ・物流
+            connect(id, from, to, kind[, via[, constraints]])
+                from と to は "部品のID.ポート名"。kind は "rotation" "item" "fluid" "redstone" "heat" "dock" のどれか。
+                今の建築部品(micra:)にはポートが1つも無いので、つなごうとすると E-CONN-INVALID(つなぎ口が無い)。
+                ポートのある部品(Create の機械など)は、まだ登録簿に載っていない。
+                via を書かない(または None)と、経路を自動で作る指定になる。経路を自動で作る仕組みはまだ無いので、
+                部品を展開するときに E-NO-ROUTE になる。
+                via に部品のIDのリスト(["s1", "s2"])を書くと、その部品を通る(無いIDは E-CONN-INVALID)。
+                空のリスト [] は、間に部品を置かず直接つなぐ。
+                constraints は {"max_length": 20, "avoid": ["id"], "max_turns": 3, "entry_dirs": ["up"]}。
+                書けるキーはこの4つで、entry_dirs は up down north east south west のどれか。
+            disconnect(id)   接続を消す(無いIDは E-CONN-INVALID)
+            logistics(docks, routes, flows)
+                発着場・航路・荷の流れを、まとめて置き換える。どれも辞書のリスト(空でもよい)。
+                docks: id pad clearance approach [ports connectors]。
+                pad と clearance は [minU, minV, minW, maxU, maxV, maxW]、approach は "north" など、
+                ports は "部品のID.ポート名" のリスト、connectors は部品IDのリスト。
+                routes: id from to [waypoints airship]。from と to は発着場のID(無いと E-CONN-INVALID)、
+                waypoints は [u, v, w] のリスト、airship は文字列。
+                flows: item per_min from to。per_min は有限の数、from と to は発着場のID。
+
+            ■ 例: 赤い屋根の小屋
+            site("minecraft:overworld", 100, 64, 200, "north", [-2, -3, -2, 12, 8, 12])
+            style("roof", "minecraft:red_nether_bricks")
+            structure("hut", None, [0, 0, 0], {"width": 7, "depth": 7})
+            floor("floor-0", "hut", [0, 0, 0], {})
+            wall("wall-n", "hut", [0, 0, 0], {"side": "north"})
+            wall("wall-s", "hut", [0, 0, 0], {"side": "south"})
+            wall("wall-e", "hut", [0, 0, 0], {"side": "east"})
+            wall("wall-w", "hut", [0, 0, 0], {"side": "west"})
+            door("door-1", "hut", ["surface", "wall-s", "outer", 3, 0], {})
+            for i in range(2):
+                window("win-" + str(i), "hut", ["surface", "wall-e", "outer", 1 + i * 3, 1], {})
+            roof("roof-1", "hut", [0, 0, 0], {"overhang": 0})
+
+            ■ エラーの名前(スクリプトの実行、設計への取り込み、建物の計算の順に調べ、見つかった段階で止まる)
+            E-SCHEMA  書き方や引数のまちがい(行番号つき)
+            E-SCRIPT-FORBIDDEN  使えない命令    E-SCRIPT-LIMIT  実行の上限を超えた
+            E-ID-INVALID  IDの形がちがう    E-ID-DUPLICATE  同じIDが2つある
+            E-UNKNOWN-PART  登録簿に無い部品    E-PARAM-RANGE  パラメータの名前・型・範囲のまちがい、必須の書き忘れ
+            E-ANCHOR  位置・親・回転のまちがい、消せない・輪になる移動    E-CONN-INVALID  接続の端・via・発着場が無い
+            E-NO-ROUTE  自動の経路が作れない    E-SITE-MISSING  site が無い
+            E-OUT-OF-BOUNDS  bounds の外に出た    E-OVERLAP  部品どうしが重なる
+            E-OPENING-NO-WALL  壁の面に付ける部品の、壁や位置が無い    E-BLOCK-FORBIDDEN  置けないブロック
             """;
 
     private CommandsHelpDoc() {
