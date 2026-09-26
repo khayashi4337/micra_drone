@@ -565,4 +565,28 @@ class PlanScriptRunnerTest {
             assertEquals("E-SCRIPT-LIMIT:#run:1", r.issues().get(0).id());
         });
     }
+
+    // ---- the run-wide work carry: per-element remainders accumulate (P3 H-1c-1) ----
+
+    @Test
+    void aListMembershipScanLoopIsAnExecutionLimitIssue() {
+        // the reviewer's zero-step membership bomb: 20,000 references to one
+        // 2,049-character string, scanned by an or-chain of `p in l` probes whose
+        // 2,050-unit element compares used to flush sub-quantum remainders to
+        // zero steps per compare - the whole statement ran ~20 s under the wall
+        // clock while the step counter never moved. With the run-wide carry each
+        // `in` pays ~10,009 steps, so the deterministic step limit ends the while
+        // loop inside the 5-second default as an E-SCRIPT-LIMIT issue
+        assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
+            PlanScriptRunner.Result r = run("s = \"x\"\nfor i in range(11):\n    s = s + s\n"
+                    + "base = s + \"c\"\np = s + \"b\"\nl = []\n"
+                    + "for i in range(20000):\n    l.append(base)\n"
+                    + "while True:\n    x = " + "(p in l) or ".repeat(40) + "(p in l)\n");
+            assertNull(r.patch());
+            assertEquals(List.of("E-SCRIPT-LIMIT"), codes(r));
+            assertEquals("E-SCRIPT-LIMIT:#run:1", r.issues().get(0).id());
+            assertTrue(r.issues().get(0).message().contains("construction script exceeded 100000 steps"),
+                    r.issues().get(0).message());
+        });
+    }
 }

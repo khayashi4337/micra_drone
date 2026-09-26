@@ -102,6 +102,14 @@ public final class Interpreter {
     /** The construction script's step/time limits; non-null exactly when {@link #planApi} is. */
     private final PlanRunLimits planLimits;
     private long planSteps = 0;
+    /**
+     * The sub-quantum remainder of all work charged so far in this run. Work charges
+     * convert to steps through {@link #PLAN_WORK_PER_STEP}, but dropping the remainder
+     * at each charge would let a loop of many sub-quantum operations (e.g. scanning a
+     * list element by element) run forever without paying a single step, so the
+     * leftover units carry over to the next charge instead - see {@link #chargePlanWork}.
+     */
+    private long planWorkCarry = 0;
     private long planStartNanos = 0;
     /** Checking the clock on every statement would cost more than the statements; every 1024th is enough. */
     private static final long PLAN_TIME_CHECK_MASK = 0x3FF;
@@ -111,7 +119,9 @@ public final class Interpreter {
      * deterministic steps BEFORE they run (see {@link #chargePlanWork}), so the step budget -
      * not the wall clock, which a single statement can outrun between polls - decides whether
      * the operation may start. At 4,096 units per step the whole default 100,000-step budget
-     * is about 4x10^8 units of work, on the order of a second or two of Java time.
+     * is a bound of about 4x10^8 work units - how much wall-clock time that buys depends on
+     * what a unit models (a cheap character compare costs less than a hash probe), which is
+     * exactly why the step counter, not the clock, is the limit that decides.
      */
     private static final long PLAN_WORK_PER_STEP = 4_096;
     /**
@@ -233,6 +243,7 @@ public final class Interpreter {
     public void run(List<Stmt> program) {
         planStartNanos = System.nanoTime();
         planSteps = 0;
+        planWorkCarry = 0;
         planAllocatedUnits = 0;
         execBlock(program);
     }
@@ -515,8 +526,9 @@ public final class Interpreter {
      * The limit checks every construction-script step pays: the deterministic step counter
      * against {@code maxSteps}, and - only when {@code pollClock} says a polling point was
      * reached - the wall clock against {@code maxMillis}. {@link #checkCancellation} polls
-     * the clock every 1,024th step; {@link #chargePlanWork} polls it whenever a single
-     * charge is big enough to have skipped such a boundary entirely.
+     * the clock every 1,024th step; {@link #chargePlanWork} polls it whenever a
+     * charge advanced the step counter, because a statement that did so may have
+     * skipped such a boundary entirely.
      */
     private void checkPlanLimits(int line, boolean pollClock) {
         if (planSteps > planLimits.maxSteps()) {
@@ -1499,17 +1511,25 @@ public final class Interpreter {
      * pays them BEFORE the operation runs: a statement whose cost alone exceeds the
      * remaining step budget is refused up front instead of after it has already burned
      * the time. Only the step counter keeps the outcome the same on every machine - the
-     * wall clock stays a backstop. A no-op for farm interpreters (no plan limits). The
-     * clock is re-polled for a charge of at least {@link #PLAN_WORK_PER_STEP} units,
-     * because a jump of that size may have skipped the 1,024-step polling boundary
-     * {@link #checkCancellation} relies on.
+     * wall clock stays a backstop. A no-op for farm interpreters (no plan limits).
+     *
+     * <p>The sub-quantum remainder is never dropped: {@link #planWorkCarry} accumulates
+     * every unit charged during the run and pays a step each time it crosses a whole
+     * {@link #PLAN_WORK_PER_STEP}, so a million operations of 4,095 units each cost a
+     * million times 4,095 units - not zero. The clock is re-polled whenever a charge
+     * produced at least one whole step, because such a charge may have skipped the
+     * 1,024-step polling boundary {@link #checkCancellation} relies on; a charge that
+     * only grows the carry polls nothing.
      */
     private void chargePlanWork(long work, int line) {
         if (planLimits == null) {
             return;
         }
-        planSteps += work / PLAN_WORK_PER_STEP;
-        checkPlanLimits(line, work >= PLAN_WORK_PER_STEP);
+        planWorkCarry += work;
+        long steps = planWorkCarry / PLAN_WORK_PER_STEP;
+        planWorkCarry %= PLAN_WORK_PER_STEP;
+        planSteps += steps;
+        checkPlanLimits(line, steps > 0);
     }
 
     /**
@@ -1554,39 +1574,23 @@ public final class Interpreter {
      * refuses nesting deeper than {@link #PLAN_MAX_COMPARE_DEPTH} deterministically,
      * and pays its node visits as deterministic steps through {@link #chargePlanWork}
      * while it proceeds, so a comparison bigger than the remaining step budget is
-     * refused after at most one quantum of unpaid work.
+     * refused as soon as the budget is exceeded.
      */
     private boolean planEquals(Object a, Object b, int line) {
         PlanCompareBudget work = new PlanCompareBudget();
-        boolean result = planEqualsAt(a, b, 0, work, line);
-        work.flush(line);
-        return result;
+        return planEqualsAt(a, b, 0, work, line);
     }
 
     /**
-     * The not-yet-paid node visits of one {@link #planEquals} walk. A {@code long}
-     * cannot be shared down the recursion by reference, so the counter lives in this
-     * little holder: each time it accumulates a whole {@link #PLAN_WORK_PER_STEP}
-     * quantum that quantum is paid to the step counter immediately (which is what
-     * bounds the unpaid work a refused comparison can have done), and {@link #flush}
-     * pays whatever is left once the walk has finished.
+     * The work-charge adapter one {@link #planEquals} walk pays through. The visits
+     * are passed to {@link #chargePlanWork} one at a time, whose run-wide {@link
+     * #planWorkCarry} pays a step for every whole {@link #PLAN_WORK_PER_STEP} quantum
+     * they accumulate - so a refused comparison has no unpaid work left at all, and
+     * sub-quantum visits still count toward the next operation's charge.
      */
     private final class PlanCompareBudget {
-        private long pending;
-
         void spend(long units, int line) {
-            pending += units;
-            while (pending >= PLAN_WORK_PER_STEP) {
-                chargePlanWork(PLAN_WORK_PER_STEP, line);
-                pending -= PLAN_WORK_PER_STEP;
-            }
-        }
-
-        void flush(int line) {
-            if (pending > 0) {
-                chargePlanWork(pending, line);
-                pending = 0;
-            }
+            chargePlanWork(units, line);
         }
     }
 

@@ -743,22 +743,28 @@ class PlanInterpreterTest {
      * Seed for the substring-search work charge: 11 doublings of "a" leave s at 2,048
      * characters, p = s + "b" is a 2,049-character needle and t = s + s a 4,096-character
      * text, so one {@code p in t} costs (4,096 - 2,049 + 1) x 2,049 = 2,048 x 2,049 =
-     * 4,196,352 work units = exactly 4,196,352 / 4,096 = 1,024 steps. The five preamble
-     * lines cost 1 + (1 + 11 x 2) + 1 + 1 = 26 statement steps.
+     * 4,196,352 work units = 1,024.5 quanta - the half-quantum remainder used to be
+     * dropped per charge; carried run-wide it makes every second search pay one step
+     * more. The five preamble lines cost 1 + (1 + 11 x 2) + 1 + 1 = 26 statement steps.
      */
     private static final String SUBSTRING_SEED_2049_IN_4096 =
             "s = \"a\"\nfor i in range(11):\n    s = s + s\np = s + \"b\"\nt = s + s\n";
 
     @Test
     void aSubstringSearchIsChargedItsWorstCaseWorkAsStepsBeforeItRuns() {
-        // each `x = p in t` below ends 1,025 steps higher than the last (1 statement step
-        // + 1,024 work steps): 1,051 / 2,076 / 3,101 / 4,126. Exactly two searches fit a
-        // 2,076-step budget; at 3,100 the third statement's own step (2,077) still passes
-        // and its charge - 2,077 + 1,024 = 3,101 - trips the step limit on that line
-        // before the search runs.
+        // each `x = p in t` pays 4,196,352 = 1,024.5 quanta, so the carried remainder
+        // makes the searches end at 1,051 / 2,077 / 3,102 / 4,128 (odd searches pay
+        // 1,024 steps, even ones 1,025 - the dropped half-quantum now counts). Two
+        // searches fit a 2,077-step budget exactly; at 2,076 the second is refused
+        // mid-statement, and at 3,100 the third search's charge ends at 3,102 and
+        // trips the step limit on that line before the search runs.
         run(SUBSTRING_SEED_2049_IN_4096 + "x = p in t\n".repeat(2), new RecordingPlanApi(),
-                new PlanRunLimits(2_076, 60_000));
+                new PlanRunLimits(2_077, 60_000));
         PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run(SUBSTRING_SEED_2049_IN_4096 + "x = p in t\n".repeat(2),
+                        new RecordingPlanApi(), new PlanRunLimits(2_076, 60_000)));
+        assertEquals("line 7: construction script exceeded 2076 steps", e.getMessage());
+        e = assertThrows(PlanLimitException.class,
                 () -> run(SUBSTRING_SEED_2049_IN_4096 + "x = p in t\n".repeat(4),
                         new RecordingPlanApi(), new PlanRunLimits(3_100, 60_000)));
         assertEquals("line 8: construction script exceeded 3100 steps", e.getMessage());
@@ -1193,6 +1199,63 @@ class PlanInterpreterTest {
                                         + "l = [a]\nl.remove(b)\n",
                                 new RecordingPlanApi(), new PlanRunLimits(1_000, 60_000))));
         assertEquals("line 7: construction script exceeded 1000 steps", e.getMessage());
+    }
+
+    // ---- the run-wide work carry: sub-quantum charges accumulate (H-1c-1) ----
+
+    @Test
+    void twoSubQuantumChargesAddUpToOneStepThroughTheCarry() {
+        // a 63-character needle in a 127-character text costs (127 - 63 + 1) x 63 =
+        // 65 x 63 = 4,095 work units - one unit under the 4,096 quantum, so ONE
+        // search charges zero steps. But the second search's 4,095 units combine
+        // with the first's leftover in the run-wide carry: 8,190 units pay 1 step
+        // (remainder 4,094), so the two-search script needs one step MORE than its
+        // three statements - the dropped-remainder hole this commit closes
+        String needle = "n".repeat(63);
+        String search = "\"" + needle + "\" in \"" + "x".repeat(127) + "\"";
+        RecordingPlanApi api = new RecordingPlanApi();
+        // one search alone: 1 statement + 0 work steps = 1 step, mood() a second
+        run("x = " + search + "\nmood(\"ok\")\n", api, new PlanRunLimits(2, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+        // two searches: 1 + (1 + 1 work step) + 1 = 4 steps
+        api = new RecordingPlanApi();
+        run("x = " + search + "\ny = " + search + "\nmood(\"ok\")\n", api,
+                new PlanRunLimits(4, 60_000));
+        assertEquals(List.of("mood ok"), api.calls);
+        // at 3 the carried step leaves nothing for mood(), at 2 the second
+        // search's own line trips the limit mid-statement
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> run("x = " + search + "\ny = " + search + "\nmood(\"ok\")\n",
+                        new RecordingPlanApi(), new PlanRunLimits(3, 60_000)));
+        assertEquals("line 3: construction script exceeded 3 steps", e.getMessage());
+        e = assertThrows(PlanLimitException.class,
+                () -> run("x = " + search + "\ny = " + search + "\nmood(\"ok\")\n",
+                        new RecordingPlanApi(), new PlanRunLimits(2, 60_000)));
+        assertEquals("line 2: construction script exceeded 2 steps", e.getMessage());
+    }
+
+    @Test
+    void aListMembershipScanPaysItsElementComparesThroughTheCarry() {
+        // the reviewer's second repro: 20,000 references to one 2,049-character
+        // string, probed by an equal-length string differing in the last
+        // character, so every element compare is 1 + 2,049 = 2,050 work units.
+        // Under the dropped-remainder design each compare flushed 2,050 / 4,096 =
+        // 0 steps and the scan charged nothing at all (measured: ~20 s before
+        // the wall clock noticed). Now one `p in l` pays 20,000 x 2,050 =
+        // 41,000,000 units ~= 10,009 steps, and the carry keeps the remainders:
+        // six `in` probes of the 41-term or-chain land the statement at
+        // 40,031 + (10,009 + 10,010 + 10,010 + 10,010 + 10,009 + 10,010) =
+        // 100,089 - the sixth probe crosses the 100,000-step budget
+        // mid-statement, so the STEP limit, not the 5,000 ms clock, ends the
+        // run at line 10
+        String script = "s = \"x\"\nfor i in range(11):\n    s = s + s\n"
+                + "base = s + \"c\"\np = s + \"b\"\nl = []\n"
+                + "for i in range(20000):\n    l.append(base)\n"
+                + "while True:\n    x = " + "(p in l) or ".repeat(40) + "(p in l)\n";
+        PlanLimitException e = assertThrows(PlanLimitException.class,
+                () -> assertTimeoutPreemptively(Duration.ofSeconds(5),
+                        () -> run(script, new RecordingPlanApi(), PlanRunLimits.DEFAULT)));
+        assertEquals("line 10: construction script exceeded 100000 steps", e.getMessage());
     }
 
     /** A {@link PlanApi} whose {@code print} refuses with a {@link PlanBudgetException}, the way the recorder's budgets do. */
