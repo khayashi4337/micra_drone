@@ -169,8 +169,9 @@ public final class PlanScriptRunner {
 
     /**
      * Checks and runs one script, appending its issues to {@code issues}. Every failure mode is a
-     * recorded issue and the method returns; only a {@link StackOverflowError} propagates, to the
-     * caller's catch (it is an Error, and it can come from the parse or the run alike).
+     * recorded issue and the method returns; only an {@link Error} propagates (a
+     * {@link StackOverflowError} from anywhere in the script's work lands in the caller's catch;
+     * anything worse still kills the run).
      */
     private static void runScript(String source, int number, String label, PlanRecorder recorder,
             PlanRunLimits limits, List<Issue> issues) {
@@ -185,17 +186,35 @@ public final class PlanScriptRunner {
         } catch (MicraLangException e) {
             issues.add(Issue.of(IssueCode.E_SCHEMA, "syntax:" + number, List.of(), label + "の構文エラー: " + detail(e.getMessage())));
             return;
+        } catch (NumberFormatException e) {
+            // Lexer.number() scans on Character.isDigit - which accepts every Unicode digit -
+            // while Double.parseDouble only understands ASCII 0-9, so a full-width or other
+            // script's digit in a number literal lands here. Report it like a syntax error,
+            // pointing at the line of the first non-ASCII digit in the source.
+            issues.add(Issue.of(IssueCode.E_SCHEMA, "syntax:" + number, List.of(),
+                    label + nonAsciiDigitMessage(source)));
+            return;
+        } catch (RuntimeException e) {
+            issues.add(internalIssue(number, label, e));
+            return;
         }
         // a left-associative chain parses without nesting, so the parse limit cannot see it;
         // measure the finished tree instead. This is iterative (see AstDepth) and runs before
         // the profile's and the interpreter's own recursion
-        int astDepth = AstDepth.of(program);
+        int astDepth;
+        List<PlanScriptProfile.Violation> violations;
+        try {
+            astDepth = AstDepth.of(program);
+            violations = PlanScriptProfile.check(program);
+        } catch (RuntimeException e) {
+            issues.add(internalIssue(number, label, e));
+            return;
+        }
         if (astDepth > PLAN_MAX_AST_DEPTH) {
             issues.add(Issue.of(IssueCode.E_SCHEMA, "syntax:" + number, List.of(),
                     label + "の構文木が深すぎます(深さ " + astDepth + " > 上限 " + PLAN_MAX_AST_DEPTH + ")"));
             return;
         }
-        List<PlanScriptProfile.Violation> violations = PlanScriptProfile.check(program);
         for (int k = 0; k < violations.size(); k++) {
             PlanScriptProfile.Violation v = violations.get(k);
             issues.add(Issue.of(IssueCode.E_SCRIPT_FORBIDDEN,
@@ -223,6 +242,35 @@ public final class PlanScriptRunner {
     /** An interpreter/parser message quoted inside an issue, cut so a huge rendered value cannot fill it. */
     private static String detail(String text) {
         return PlanValueText.cut(text, MAX_ISSUE_DETAIL_CHARS);
+    }
+
+    /**
+     * The "use half-width digits" advice a {@link Double#parseDouble} failure maps to: names the
+     * 1-based line of the first source character that {@link Character#isDigit} accepts but
+     * ASCII-only parsing does not (full-width, Arabic-Indic, Devanagari, ... digits). When the
+     * source carries none - the exception then came from somewhere else - the line is omitted.
+     */
+    private static String nonAsciiDigitMessage(String source) {
+        int line = 1;
+        for (int i = 0; i < source.length(); i++) {
+            char c = source.charAt(i);
+            if (c == '\n') {
+                line++;
+            } else if (Character.isDigit(c) && (c < '0' || c > '9')) {
+                return "の" + line + "行目に半角でない数字があります。数字は半角の0〜9で書いてください";
+            }
+        }
+        return "に半角でない数字があります。数字は半角の0〜9で書いてください";
+    }
+
+    /**
+     * An unexpected failure inside the checking phase (parse, AST-depth measurement or the static
+     * profile), reported like one from the interpreter run below: a bug on our side must still
+     * surface as an ordinary issue, not a RuntimeException escaping the run.
+     */
+    private static Issue internalIssue(int number, String label, RuntimeException e) {
+        return Issue.of(IssueCode.E_SCHEMA, "internal:" + number, List.of(),
+                label + "の解析中に、想定外のエラー: " + detail(String.valueOf(e)));
     }
 
     private static String describe(PlanScriptProfile.Reason reason) {

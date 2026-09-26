@@ -963,4 +963,82 @@ class PlanScriptRunnerTest {
         assertTrue(r.issues().get(0).message().contains("nested too deeply (limit 100)"),
                 r.issues().get(0).message());
     }
+
+    // ---- a digit the lexer cannot parse is a syntax issue, never an exception (P3 Task 20 final review) ----
+
+    @Test
+    void aNonAsciiDigitInANumberIsASyntaxIssueNotAnException() {
+        // Character.isDigit accepts every Unicode digit but Double.parseDouble only
+        // understands ASCII 0-9: a full-width or other script's digit used to escape
+        // run() as a raw NumberFormatException and lose the whole batch
+        List<String> scripts = List.of(
+                "x = １２\n",
+                "for i in range(５):\n    pass\n",
+                "x = [０, 0, 0]\n",
+                "x = ٣\n",
+                "x = 1१\n");
+        for (String script : scripts) {
+            PlanScriptRunner.Result r = run(script);
+            assertNull(r.patch(), script);
+            assertEquals(List.of("E-SCHEMA"), codes(r), script);
+            assertEquals("E-SCHEMA:#syntax:1", r.issues().get(0).id(), script);
+            assertTrue(r.issues().get(0).message().contains("スクリプト1"), r.issues().get(0).message());
+            assertTrue(r.issues().get(0).message().contains("1行目"), r.issues().get(0).message());
+            assertTrue(r.issues().get(0).message().contains("0〜9"), r.issues().get(0).message());
+        }
+    }
+
+    @Test
+    void aNonAsciiDigitIssueNamesTheLineOfTheDigit() {
+        // the first non-ASCII digit sits on line 2 of a three-line script
+        PlanScriptRunner.Result r = run("x = 1\ny = １２\nz = 3\n");
+        assertNull(r.patch());
+        assertEquals("E-SCHEMA:#syntax:1", r.issues().get(0).id());
+        assertTrue(r.issues().get(0).message().contains("スクリプト1の2行目"), r.issues().get(0).message());
+    }
+
+    @Test
+    void aNonAsciiDigitInOneScriptLeavesTheRestOfTheBatchRunning() {
+        // script 2 carries the bad digit: only it gets an issue, and the batch is
+        // still refused (patch null) while scripts 1 and 3 simply run
+        PlanScriptRunner.Result r = run("mood(\"a\")", "x = １２\n", "mood(\"b\")");
+        assertNull(r.patch());
+        assertEquals(List.of("E-SCHEMA"), codes(r));
+        assertEquals("E-SCHEMA:#syntax:2", r.issues().get(0).id());
+        assertTrue(r.issues().get(0).message().contains("スクリプト2"), r.issues().get(0).message());
+    }
+
+    @Test
+    void aUnicodeHeavyFuzzOfScriptsNeverThrowsOutOfRun() {
+        // a seeded corpus of 300 scripts mixed from Unicode digits, whitespace and
+        // format marks, unpaired surrogates and ASCII code fragments: whatever a
+        // script turns out to be, run() must hand back a Result for it - the
+        // reviewer's fuzz measured 1,534 escapes in 40,000 scripts, all of them
+        // NumberFormatException out of the lexer
+        String[] pieces = {
+                "x = ", "print(", ")", "(", "[", "]", ",", "+", "-", ":",
+                "if True:\n    ", "for i in range(3):\n    ", "pass", "mood(\"ok\")",
+                "\n", " ", "\t", "　", " ", "​", "﻿", "\"abc\"", "# c",
+                "0", "9", "１", "７", "１２", "٣", "١", "१", "১", "๙",
+                "x", "def f():", "1.5", ".", "￣", ""};
+        java.util.Random rnd = new java.util.Random(20_260_926L);
+        for (int i = 0; i < 300; i++) {
+            StringBuilder script = new StringBuilder();
+            int pieceCount = 1 + rnd.nextInt(40);
+            for (int k = 0; k < pieceCount; k++) {
+                script.append(pieces[rnd.nextInt(pieces.length)]);
+            }
+            if (script.length() > PlanScriptWriter.MAX_SCRIPT_CHARS) {
+                script.setLength(PlanScriptWriter.MAX_SCRIPT_CHARS);
+            }
+            assertNotNull(run(script.toString()), "script " + i + " threw out of run()");
+        }
+    }
+
+    @Test
+    void aPlainAsciiNumberScriptStillWorks() {
+        PlanScriptRunner.Result r = run("x = 12\nprint(x + 1)\n");
+        assertTrue(r.ok(), r.issues().toString());
+        assertEquals(List.of("13"), r.printed());
+    }
 }
