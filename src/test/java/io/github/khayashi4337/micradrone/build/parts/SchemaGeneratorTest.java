@@ -1,5 +1,6 @@
 package io.github.khayashi4337.micradrone.build.parts;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -21,6 +22,7 @@ import io.github.khayashi4337.micradrone.build.model.LocalPos;
 import io.github.khayashi4337.micradrone.build.model.LogisticsPlan;
 import io.github.khayashi4337.micradrone.build.model.ParamValue;
 import io.github.khayashi4337.micradrone.build.model.PlanJson;
+import io.github.khayashi4337.micradrone.build.model.PlanJsonException;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.model.PlanOp;
 import io.github.khayashi4337.micradrone.build.model.PlanPatch;
@@ -52,10 +54,11 @@ class SchemaGeneratorTest {
     /** The hand-written golden plan patch, kept in sync with the compiler by GoldenHutTest. */
     private static final String GOLDEN_HUT = "/build/golden/hut.patch.json";
 
-    /** BuildingParts' sign text limit: SIGN_MAX_LINES * SIGN_MAX_LINE_CHARS plus the separators between lines. */
-    private static final int SIGN_TEXT_LIMIT = 4 * 15 + 3;
-    /** BuildingParts' hole limit: MAX_HOLES rectangles of four numbers each. */
-    private static final int HOLE_VALUE_LIMIT = 16 * 4;
+    /** BuildingParts' sign text limit: full lines of SIGN_MAX_LINE_CHARS plus the separators between them. */
+    private static final int SIGN_TEXT_LIMIT =
+            BuildingParts.SIGN_MAX_LINES * BuildingParts.SIGN_MAX_LINE_CHARS + (BuildingParts.SIGN_MAX_LINES - 1);
+    /** BuildingParts' hole limit, read back from the floor's "holes" parameter (never a re-typed literal). */
+    private static final int HOLE_VALUE_LIMIT = listLimit("micra:floor", "holes");
     /** Characters cmd.exe would read as control codes inside a command line. */
     private static final String CMD_META_CHARS = "&|<>^%!";
 
@@ -99,6 +102,16 @@ class SchemaGeneratorTest {
     @Test
     void typedModeRejectsRegistryDerivedBounds() {
         MiniSchemaValidator v = validator(SchemaGenerator.patchSchema(REGISTRY, SchemaGenerator.Mode.TYPED, null));
+        // positive controls at the exact limits: a rejection below then means the limit, not something else
+        assertEquals(List.of(), v.validate(addNode("sign-ok", "micra:sign",
+                "\"text\":\"" + "x".repeat(SIGN_TEXT_LIMIT) + "\"")), "longest allowed sign text");
+        StringBuilder maxHoles = new StringBuilder();
+        for (int i = 0; i < HOLE_VALUE_LIMIT; i++) {
+            maxHoles.append(i == 0 ? "" : ",").append(0);
+        }
+        assertEquals(List.of(), v.validate(addNode("floor-ok", "micra:floor",
+                "\"holes\":[" + maxHoles + "]")), "largest allowed holes array");
+
         assertFalse(v.validate(addNode("sign-1", "micra:sign",
                 "\"text\":\"" + "x".repeat(SIGN_TEXT_LIMIT + 1) + "\"")).isEmpty(), "sign text over the limit");
         StringBuilder holes = new StringBuilder();
@@ -272,13 +285,82 @@ class SchemaGeneratorTest {
         }
         assertEquals(List.of("add_node", "update_params", "move_node", "remove_node", "add_connection",
                 "remove_connection", "set_style", "set_site", "set_logistics"), offered);
+
+        // and the serialized form reads back to the very same patch
+        assertEquals(patch, PlanJson.patchFromTree(PlanJson.toTree(patch)));
+    }
+
+    @Test
+    void theSchemaAndTheParserAgreeOnRequiredMembers() {
+        // A member both sides require must not survive removal from only the schema's "required" list;
+        // PlanJson.patchFromTree is the second guard, and its message must name the missing member.
+        MiniSchemaValidator typed = validator(SchemaGenerator.patchSchema(REGISTRY, SchemaGenerator.Mode.TYPED, null));
+        MiniSchemaValidator flat = validator(SchemaGenerator.patchSchema(REGISTRY, SchemaGenerator.Mode.FLAT, null));
+        String dock = "{\"id\":\"d1\",\"pad\":[0,0,0,3,0,3],\"clearance\":[0,0,0,5,4,5],"
+                + "\"approach\":\"north\",\"ports\":[{\"node\":\"a\",\"port\":\"in\"}],\"connectors\":[\"b\"]}";
+        String logisticsWithDock = "{\"docks\":[" + dock + "],\"routes\":[],\"flows\":[]}";
+        String logisticsWithRoute = "{\"docks\":[],\"routes\":[{\"id\":\"r1\",\"from\":\"d1\",\"to\":\"d2\","
+                + "\"waypoints\":[[1,2,3]],\"airship\":\"ship-1\"}],\"flows\":[]}";
+        String connection = "{\"id\":\"c1\",\"from\":{\"node\":\"a\",\"port\":\"out\"},"
+                + "\"to\":{\"node\":\"b\",\"port\":\"in\"},\"kind\":\"item\","
+                + "\"routing\":{\"mode\":\"explicit\",\"via\":[\"a\"]}}";
+        // flatRejects says whether the FLAT schema models the member at all: the routing def is the same in
+        // both forms, but the FLAT logistics def is a loose {"type":"object"} and leaves members to the parser.
+        List<RequiredMemberCase> cases = List.of(
+                new RequiredMemberCase("ports",
+                        "{\"op\":\"set_logistics\",\"logistics\":" + logisticsWithDock + "}",
+                        List.of("logistics", "docks", 0, "ports"), false),
+                new RequiredMemberCase("connectors",
+                        "{\"op\":\"set_logistics\",\"logistics\":" + logisticsWithDock + "}",
+                        List.of("logistics", "docks", 0, "connectors"), false),
+                new RequiredMemberCase("waypoints",
+                        "{\"op\":\"set_logistics\",\"logistics\":" + logisticsWithRoute + "}",
+                        List.of("logistics", "routes", 0, "waypoints"), false),
+                new RequiredMemberCase("via",
+                        "{\"op\":\"add_connection\",\"connection\":" + connection + "}",
+                        List.of("connection", "routing", "via"), true));
+        for (RequiredMemberCase c : cases) {
+            Map<String, Object> op = obj(MiniJson.parse(c.opJson()));
+            // positive control: the complete document passes the schema and the parser
+            assertEquals(List.of(), typed.validate(Map.of("ops", List.of(op))),
+                    c.missing() + " complete document, typed schema");
+            assertEquals(List.of(), flat.validate(Map.of("ops", List.of(op))),
+                    c.missing() + " complete document, flat schema");
+            assertDoesNotThrow(() -> PlanJson.patchFromTree(envelope(op)),
+                    c.missing() + " complete document, parser");
+
+            removeMember(op, c.memberPath());
+            Map<String, Object> doc = Map.of("ops", List.of(op));
+            assertFalse(typed.validate(doc).isEmpty(), "typed schema still requires " + c.missing());
+            assertEquals(c.flatRejects(), !flat.validate(doc).isEmpty(),
+                    "flat schema on missing " + c.missing());
+            PlanJsonException e = assertThrows(PlanJsonException.class,
+                    () -> PlanJson.patchFromTree(envelope(op)), "parser on missing " + c.missing());
+            assertTrue(e.getMessage().contains("\"" + c.missing() + "\""), e.getMessage());
+        }
+    }
+
+    @Test
+    void theSerializersOwnDefaultOutputValidates() {
+        // Constraints.NONE serializes with explicit JSON nulls (maxLength, maxTurns); the schema must take
+        // what PlanJson.toTree itself emits, or every default connection would be rejected.
+        PlanPatch patch = new PlanPatch("p", 0, "ai", List.of(new PlanOp.AddConnection(
+                new Connection("c1", new PortRef("a", "out"), new PortRef("b", "in"),
+                        ConnKind.ITEM, Routing.AUTO, Constraints.NONE))));
+        Object doc = Map.of("ops", PlanJson.toTree(patch).get("ops"));
+        assertEquals(List.of(),
+                validator(SchemaGenerator.patchSchema(REGISTRY, SchemaGenerator.Mode.TYPED, null)).validate(doc),
+                "typed schema on serializer defaults");
+        assertEquals(List.of(),
+                validator(SchemaGenerator.patchSchema(REGISTRY, SchemaGenerator.Mode.FLAT, null)).validate(doc),
+                "flat schema on serializer defaults");
     }
 
     @Test
     void theWholeSchemaTreeIsCheckedUpFront() {
         // the validator's constructor walks every sub-schema, not only the ones a document reaches
-        assertNotNull(validator(SchemaGenerator.patchSchema(REGISTRY, SchemaGenerator.Mode.TYPED, null)));
-        assertNotNull(validator(SchemaGenerator.patchSchema(REGISTRY, SchemaGenerator.Mode.FLAT, null)));
+        assertDoesNotThrow(() -> validator(SchemaGenerator.patchSchema(REGISTRY, SchemaGenerator.Mode.TYPED, null)));
+        assertDoesNotThrow(() -> validator(SchemaGenerator.patchSchema(REGISTRY, SchemaGenerator.Mode.FLAT, null)));
     }
 
     @Test
@@ -287,11 +369,16 @@ class SchemaGeneratorTest {
             Map<String, Object> schema = SchemaGenerator.patchSchema(REGISTRY, mode, null);
             Map<String, Object> defs = defs(schema);
             Map<String, String> docs = minimalDocs(mode == SchemaGenerator.Mode.FLAT);
+            Map<String, String> wrong = wrongDocs(mode == SchemaGenerator.Mode.FLAT);
             assertEquals(docs.keySet(), defs.keySet(), mode + " $defs");
+            assertEquals(docs.keySet(), wrong.keySet(), mode + " rejecting docs");
             for (Map.Entry<String, String> e : docs.entrySet()) {
                 Map<String, Object> against = Map.of("$defs", defs, "$ref", "#/$defs/" + e.getKey());
-                assertEquals(List.of(), validator(against).validate(MiniJson.parse(e.getValue())),
+                MiniSchemaValidator v = validator(against);
+                assertEquals(List.of(), v.validate(MiniJson.parse(e.getValue())),
                         mode + " $defs." + e.getKey());
+                assertFalse(v.validate(MiniJson.parse(wrong.get(e.getKey()))).isEmpty(),
+                        mode + " $defs." + e.getKey() + " takes a clearly wrong document");
             }
         }
     }
@@ -432,6 +519,35 @@ class SchemaGeneratorTest {
         return docs;
     }
 
+    /**
+     * A clearly wrong document per $defs name: drops a required member or breaks the value's form, so a def
+     * that stopped checking anything could not pass silently.
+     */
+    private static Map<String, String> wrongDocs(boolean flat) {
+        Map<String, String> docs = new LinkedHashMap<>();
+        docs.put("pos", "[0,0]"); // a position is three integers
+        docs.put("rot", "{\"turns\":9}"); // quarter turns run 0..3
+        docs.put("anchor", "{\"kind\":\"absolute\"}"); // pos is required
+        docs.put("connection", "{\"id\":\"c\",\"from\":{\"node\":\"a\",\"port\":\"o\"},"
+                + "\"to\":{\"node\":\"b\",\"port\":\"i\"}}"); // kind is required
+        docs.put("site", "{\"dimension\":\"d\",\"origin\":[0,0,0],\"facing\":\"north\"}"); // bounds is required
+        docs.put("style", "{}"); // palette is required
+        // the dock drops "ports" and the route drops "waypoints"; the loose FLAT def only requires an object
+        docs.put("logistics", flat ? "[]"
+                : "{\"docks\":[{\"id\":\"d\",\"pad\":[0,0,0,1,0,1],\"clearance\":[0,0,0,1,0,1],"
+                + "\"approach\":\"north\",\"connectors\":[]}],"
+                + "\"routes\":[{\"id\":\"r\",\"from\":\"d\",\"to\":\"e\"}],\"flows\":[]}");
+        // TYPED takes a params object; FLAT takes {key, value} pairs, so a value-less pair must fail
+        docs.put("anyParams", flat ? "[{\"key\":\"k\"}]" : "[]");
+        docs.put("routing", "{\"mode\":\"explicit\"}"); // via is required
+        docs.put("constraints", flat ? "[]" : "{\"entryDirs\":[\"sideways\"]}"); // a dir6 enum value
+        if (!flat) {
+            docs.put("material", "\"Not A Role\"");
+            docs.put("dir4", "\"up\"");
+        }
+        return docs;
+    }
+
     private static void assertNoUnionTypes(Object tree, String path, SchemaGenerator.Mode mode) {
         if (tree instanceof Map<?, ?> m) {
             if (m.get("type") instanceof List<?> types) {
@@ -446,6 +562,37 @@ class SchemaGeneratorTest {
                 assertNoUnionTypes(l.get(i), path + "[" + i + "]", mode);
             }
         }
+    }
+
+    /** A member both the schema's {@code required} list and the parser must refuse to lose. */
+    private record RequiredMemberCase(String missing, String opJson, List<Object> memberPath,
+                                      boolean flatRejects) {
+    }
+
+    /** The {@code maxItems} bound of {@code partId}'s {@code paramName}, read from the registry itself. */
+    private static int listLimit(String partId, String paramName) {
+        return REGISTRY.get(partId).param(paramName)
+                .orElseThrow(() -> new IllegalArgumentException(partId + " has no parameter " + paramName))
+                .maxItems();
+    }
+
+    /** Removes the member at {@code path} (map keys as Strings, list indices as Integers) from a parsed op. */
+    private static void removeMember(Map<String, Object> op, List<Object> path) {
+        Object node = op;
+        for (int i = 0; i + 1 < path.size(); i++) {
+            node = path.get(i) instanceof Integer index ? list(node).get(index) : obj(node).get(path.get(i));
+        }
+        obj(node).remove(path.get(path.size() - 1));
+    }
+
+    /** A full patch envelope (patchId, baseRevision, stageId) around a single op, as patchFromTree reads it. */
+    private static Map<String, Object> envelope(Map<String, Object> op) {
+        Map<String, Object> doc = new LinkedHashMap<>();
+        doc.put("patchId", "p");
+        doc.put("baseRevision", 0);
+        doc.put("stageId", "ai");
+        doc.put("ops", List.of(op));
+        return doc;
     }
 
     private static Object addNode(String id, String type, String paramsJson) {
