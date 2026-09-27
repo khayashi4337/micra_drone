@@ -181,6 +181,135 @@ class PlanInterpreterTest {
                 errorOf("relocate(\"d\", [0, 0, 0, 0, False, 1])"));
     }
 
+    // ---- optional arguments: None is the same as leaving the argument out (T19-4) ----
+
+    private static List<String> recorded(String source) {
+        RecordingPlanApi api = new RecordingPlanApi();
+        run(source, api);
+        return api.calls;
+    }
+
+    @Test
+    void noneMeansOmittedForEveryOptionalArgument() {
+        // tags and label of every part command, and the terrain digest and claim of site, like parent, params, via and constraints
+        assertEquals(recorded("pillar(\"p\", None, [0, 0, 0], {})\n"), recorded("pillar(\"p\", None, [0, 0, 0], {}, None)\n"));
+        assertEquals(recorded("pillar(\"p\", None, [0, 0, 0], {})\n"), recorded("pillar(\"p\", None, [0, 0, 0], {}, None, None)\n"));
+        assertEquals(recorded("pillar(\"p\", None, [0, 0, 0], {}, [\"a\"])\n"),
+                recorded("pillar(\"p\", None, [0, 0, 0], {}, [\"a\"], None)\n"));
+        assertEquals(recorded("part(\"p\", \"micra:beam\", None, [0, 0, 0], {})\n"),
+                recorded("part(\"p\", \"micra:beam\", None, [0, 0, 0], {}, None, None)\n"));
+        assertEquals(recorded("site(\"d\", 0, 0, 0, \"north\", [0, 0, 0, 1, 1, 1])\n"),
+                recorded("site(\"d\", 0, 0, 0, \"north\", [0, 0, 0, 1, 1, 1], None, None)\n"));
+        assertEquals(recorded("site(\"d\", 0, 0, 0, \"north\", [0, 0, 0, 1, 1, 1], \"abc\")\n"),
+                recorded("site(\"d\", 0, 0, 0, \"north\", [0, 0, 0, 1, 1, 1], \"abc\", None)\n"));
+        // and what an omitted argument records: no tags, an empty label, an empty digest and claim
+        assertEquals(List.of("part p micra:pillar parent=null "
+                + "PlanAnchorArgs[kind=ABSOLUTE, u=0, v=0, w=0, turns=0, mirror=false, target=null, side=null, slot=null] {} [] ''"),
+                recorded("pillar(\"p\", None, [0, 0, 0], {}, None, None)\n"));
+        assertEquals(List.of("site d 0,0,0 north [0, 0, 0, 1, 1, 1] [|]"),
+                recorded("site(\"d\", 0, 0, 0, \"north\", [0, 0, 0, 1, 1, 1], None, None)\n"));
+    }
+
+    @Test
+    void aWrongTypeForAnOptionalArgumentIsStillRefused() {
+        assertEquals("line 1: pillar(): リストが必要です", errorOf("pillar(\"p\", None, [0, 0, 0], {}, 5)"));
+        assertEquals("line 1: pillar(): 6番目の引数は文字列が必要です", errorOf("pillar(\"p\", None, [0, 0, 0], {}, [], 5)"));
+        assertEquals("line 1: site(): 7番目の引数は文字列が必要です", errorOf("site(\"d\", 0, 0, 0, \"north\", [0, 0, 0, 1, 1, 1], 5)"));
+    }
+
+    // ---- integer arguments at the edges of the int range (T19-7b) ----
+
+    @Test
+    void integerArgumentsAcceptTheWholeIntRangeAndRefuseOneBeyondIt() {
+        assertEquals(List.of("site d 2147483647,-2147483648,0 north [0, 0, 0, 1, 1, 1] [|]"),
+                recorded("site(\"d\", 2147483647, -2147483648, 0, \"north\", [0, 0, 0, 1, 1, 1])\n"));
+        assertEquals("line 1: site(): 整数が必要です(2147483648)", errorOf("site(\"d\", 2147483648, 0, 0, \"north\", [0, 0, 0, 1, 1, 1])"));
+        assertEquals("line 1: site(): 整数が必要です(-2147483649)", errorOf("site(\"d\", 0, -2147483649, 0, \"north\", [0, 0, 0, 1, 1, 1])"));
+        assertEquals("line 1: site(): 整数が必要です(2147483648)", errorOf("site(\"d\", 0, 0, 0, \"north\", [0, 0, 0, 1, 1, 2147483648])"));
+        assertEquals("line 1: wall(): 整数が必要です(2147483648)", errorOf("wall(\"w\", None, [2147483648, 0, 0], {})"));
+        // a division by zero is the interpreter's own error, raised before any command is called
+        assertEquals("line 1: division by zero", errorOf("site(\"d\", 1 / 0, 0, 0, \"north\", [0, 0, 0, 1, 1, 1])"));
+        assertEquals("line 1: division by zero", errorOf("site(\"d\", 1 % 0, 0, 0, \"north\", [0, 0, 0, 1, 1, 1])"));
+    }
+
+    // ---- a function bound to a command name (T19-7a) ----
+
+    @Test
+    void aFunctionAssignedToACommandNameIsCalledInsteadOfTheCommand() {
+        // def wall() is refused (aFunctionMayNotShadowAConstructionCommand), but a function value assigned to the name is a
+        // user function like any other, and the interpreter looks user functions up before it looks at command names
+        // (Interpreter.evalCall): the call goes to the function and nothing reaches the plan. A plain value assigned to the
+        // name does not hide the command (aVariableNamedLikeAConstructionCommandDoesNotHideTheCommand).
+        RecordingPlanApi api = new RecordingPlanApi();
+        run("def helper(id, parent, anchor, params):\n    print(\"helper \" + id)\nwall = helper\nwall(\"w\", None, [0, 0, 0], {})\n", api);
+        assertEquals(List.of(), api.calls, "the command was not called");
+        assertEquals(List.of("helper w"), api.printed);
+        RecordingPlanApi site = new RecordingPlanApi();
+        run("def h(x):\n    print(\"h\" + str(x))\nsite = h\nsite(1)\n", site);
+        assertEquals(List.of(), site.calls);
+        assertEquals(List.of("h1"), site.printed);
+    }
+
+    // ---- what an exception from the PlanApi means (T19-3) ----
+
+    /** A {@link PlanApi} whose {@code part} throws {@code failure}. */
+    private static PlanApi partFailingPlanApi(RuntimeException failure) {
+        return (PlanApi) Proxy.newProxyInstance(PlanApi.class.getClassLoader(), new Class<?>[]{PlanApi.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("part")) {
+                        throw failure;
+                    }
+                    return null;
+                });
+    }
+
+    private static void runWith(PlanApi api, String source) {
+        new Interpreter(api, PlanRunLimits.DEFAULT).run(new Parser(new Lexer(source).scan()).parseProgram());
+    }
+
+    @Test
+    void anIllegalArgumentFromThePlanApiIsTheScriptsBadValueAndNamesTheCommandAndTheLine() {
+        // By contract a PlanApi reports a value it cannot accept as an IllegalArgumentException: PlanRecorder relies on this
+        // for what the model records refuse (for example a site box whose minimum exceeds its maximum), so the dispatcher
+        // blames the script for it. A limit is a PlanBudgetException (a subclass) and stays a limit.
+        MicraLangException bad = assertThrows(MicraLangException.class, () -> runWith(
+                partFailingPlanApi(new IllegalArgumentException("not acceptable")), "x = 1\nwall(\"w\", None, [0, 0, 0], {})\n"));
+        assertEquals("line 2: wall(): not acceptable", bad.getMessage());
+        PlanLimitException limit = assertThrows(PlanLimitException.class, () -> runWith(
+                partFailingPlanApi(new PlanBudgetException("too big")), "wall(\"w\", None, [0, 0, 0], {})\n"));
+        assertEquals("line 1: wall(): too big", limit.getMessage());
+    }
+
+    @Test
+    void anyOtherFailureOfThePlanApiPropagatesUnchanged() {
+        // not the script's fault: it is not turned into a script error with a line
+        IllegalStateException bug = assertThrows(IllegalStateException.class, () -> runWith(
+                partFailingPlanApi(new IllegalStateException("broken")), "wall(\"w\", None, [0, 0, 0], {})\n"));
+        assertEquals("broken", bug.getMessage());
+    }
+
+    // ---- the DroneApi of a construction interpreter (T19-7e) ----
+
+    @Test
+    void theDroneApiOfAConstructionInterpreterRefusesEveryDroneCommandButPrint() {
+        RecordingPlanApi plan = new RecordingPlanApi();
+        DroneApi drone = PlanModeDroneApi.create(plan);
+        // the interpreter refuses farm commands before they get here; this is the second line of defence, with line 0
+        assertEquals("line 0: 'move' is a drone command and cannot be used in a construction script",
+                assertThrows(MicraLangException.class, () -> drone.move("north")).getMessage());
+        assertEquals("line 0: 'till' is a drone command and cannot be used in a construction script",
+                assertThrows(MicraLangException.class, drone::till).getMessage());
+        // print is the one thing a construction script may do with it: it goes to the plan's own log
+        drone.print("hello");
+        assertEquals(List.of("hello"), plan.printed);
+        // the Object methods answer for the proxy itself and never reach the plan
+        assertTrue(drone.equals(drone));
+        assertFalse(drone.equals(PlanModeDroneApi.create(plan)));
+        assertEquals(System.identityHashCode(drone), drone.hashCode());
+        assertEquals("PlanModeDroneApi", drone.toString());
+        assertEquals(List.of(), plan.calls);
+    }
+
     /** Arities are hand-copied from the design (04_foundations.md F-6), not from the implementation. */
     @Test
     void everyCommandChecksItsArgumentCount() {

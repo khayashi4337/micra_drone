@@ -9,6 +9,12 @@ import java.util.Map;
  * Values arrive as the interpreter holds them (numbers as Double, dicts as Map, lists as List).
  * Those collections are the script's live objects, valid only for the duration of the call; an
  * implementation that keeps a value must copy what it keeps (the script can mutate it afterwards).
+ *
+ * <p>How a method fails tells the dispatcher whose fault it is: a value the implementation cannot accept is an
+ * {@link IllegalArgumentException} (the dispatcher reports it as the script's error, with the command and the line;
+ * the records of the plan model refuse their own bad values this way, and the recorder lets those through), a limit
+ * on how much one run may keep is a {@link PlanBudgetException}, and anything else is a failure of the
+ * implementation itself, which propagates unchanged.
  */
 public interface PlanApi {
     /**

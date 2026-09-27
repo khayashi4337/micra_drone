@@ -2,9 +2,11 @@ package io.github.khayashi4337.micradrone.lang;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.build.parts.BuildingParts;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -35,13 +37,14 @@ class PlanCommandNamesTest {
 
     @Test
     void everyPlanCommandIsRecognisedByAConstructionInterpreter() {
+        // Called with no arguments, a recognised command reaches the dispatcher, which refuses it for its argument count:
+        // "line 1: <name>() takes <n> arguments but got 0". Anything else (no error at all, "unknown function", a different
+        // error) means the name is not wired to its command. PlanInterpreterTest pins each command's exact arity text.
         for (String name : CommandNames.PLAN) {
-            try {
-                new Interpreter(new RecordingPlanApi(), PlanRunLimits.DEFAULT)
-                        .run(new Parser(new Lexer(name + "()").scan()).parseProgram());
-            } catch (MicraLangException e) {
-                assertFalse(e.getMessage().contains("unknown function"), name + "() is in CommandNames.PLAN but is not recognised: " + e.getMessage());
-            }
+            MicraLangException e = assertThrows(MicraLangException.class, () -> new Interpreter(new RecordingPlanApi(), PlanRunLimits.DEFAULT)
+                    .run(new Parser(new Lexer(name + "()").scan()).parseProgram()), name);
+            assertTrue(e.getMessage().startsWith("line 1: " + name + "() takes "), name + ": " + e.getMessage());
+            assertTrue(e.getMessage().endsWith(" arguments but got 0"), name + ": " + e.getMessage());
         }
     }
 
@@ -53,5 +56,20 @@ class PlanCommandNamesTest {
             assertFalse(nondeterministic.contains(helper), helper);
         }
         assertEquals(CommandNames.PLAN.size() + CommandNames.PLAN_HELPERS.size(), CommandNames.PLAN_VISIBLE.size());
+    }
+
+    @Test
+    void theVisibleNamesAreTheConstructionCommandsThenThePureHelpers() {
+        // what the construction editor highlights and completes: every command, every helper, once, and no farm command
+        List<String> expected = new ArrayList<>(CommandNames.PLAN);
+        expected.addAll(CommandNames.PLAN_HELPERS);
+        assertEquals(expected, CommandNames.PLAN_VISIBLE);
+        assertEquals(CommandNames.PLAN_VISIBLE.size(), new HashSet<>(CommandNames.PLAN_VISIBLE).size(), "a name is listed twice");
+        for (String name : List.of("site", "wall", "dock_pad", "logistics", "print", "range")) {
+            assertTrue(CommandNames.PLAN_VISIBLE.contains(name), name);
+        }
+        for (String farm : List.of("move", "harvest", "get_pos_x", "random", "sleep_ticks", "semaphore")) {
+            assertFalse(CommandNames.PLAN_VISIBLE.contains(farm), farm + " is a farm command");
+        }
     }
 }

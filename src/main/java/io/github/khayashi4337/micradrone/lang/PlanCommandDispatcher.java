@@ -13,6 +13,7 @@ import java.util.stream.Collectors;
  * Turns an evaluated construction command call into a typed {@link PlanApi} call. Argument problems become
  * {@link MicraLangException}s that name the command and the line. Arguments are read in order through an
  * {@link ArgReader}, so a type error names the argument's position without each command repeating it.
+ * An optional argument may be left out or written as None, with the same meaning.
  */
 final class PlanCommandDispatcher {
     /** How many arguments a command takes (inclusive range). */
@@ -69,6 +70,8 @@ final class PlanCommandDispatcher {
             // a recorder budget refusal is a limit (E-SCRIPT-LIMIT), not a malformed value
             throw new PlanLimitException(line, name + "(): " + e.getMessage());
         } catch (IllegalArgumentException e) {
+            // a bad argument: one of the readers below, or the PlanApi refusing a value (see PlanApi); any other
+            // exception, which would be a bug in the implementation, is not caught here
             throw new MicraLangException(line, name + "(): " + e.getMessage());
         }
     }
@@ -141,7 +144,7 @@ final class PlanCommandDispatcher {
         String parent = r.stringOrNone();
         PlanAnchorArgs anchor = anchor(r.next());
         Map<String, Object> params = map(r.next());
-        List<String> tags = r.hasMore() ? strings(r.next()) : List.of();
+        List<String> tags = r.optionalStrings();
         api.part(id, type, parent, anchor, params, tags, r.optionalString());
         return id;
     }
@@ -183,15 +186,32 @@ final class PlanCommandDispatcher {
         }
 
         String stringOrNone() {
-            if (args.get(next) instanceof MicraNone) {
-                next++;
-                return null;
+            return skipNone() ? null : string();
+        }
+
+        /** The next argument as text; left out or None it is the empty text. */
+        String optionalString() {
+            if (!hasMore() || skipNone()) {
+                return ABSENT_TEXT;
             }
             return string();
         }
 
-        String optionalString() {
-            return hasMore() ? string() : ABSENT_TEXT;
+        /** The next argument as a list of texts; left out or None it is the empty list. */
+        List<String> optionalStrings() {
+            if (!hasMore() || skipNone()) {
+                return List.of();
+            }
+            return strings(next());
+        }
+
+        /** Consumes the next argument if it is None. */
+        private boolean skipNone() {
+            if (args.get(next) instanceof MicraNone) {
+                next++;
+                return true;
+            }
+            return false;
         }
     }
 
