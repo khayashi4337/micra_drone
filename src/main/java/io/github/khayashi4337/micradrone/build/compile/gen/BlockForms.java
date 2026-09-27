@@ -40,9 +40,17 @@ public final class BlockForms {
     private static final String TORCH = "minecraft:torch";
     private static final String IRON_BARS = "minecraft:iron_bars";
 
-    private static final List<String> AXIS_SUFFIXES = List.of("_log", "_wood", "_stem", "_hyphae", "_block_axis");
+    // Blocks with an "axis" state (x, y, z) in Minecraft 1.21.1: every log, wood and hyphae block by its id suffix (which
+    // also fits a modded wood), and the others by id. Not "_stem": melon, pumpkin, mushroom and dripleaf stems end in it
+    // and have no axis, so the four nether stems are listed by id. FreestandingPartsTest holds the full list of 55 ids read
+    // from the game's blockstate files and beams each one in the three directions.
+    private static final List<String> AXIS_SUFFIXES = List.of("_log", "_wood", "_hyphae");
     private static final List<String> AXIS_IDS = List.of("minecraft:bamboo_block", "minecraft:stripped_bamboo_block",
-            "minecraft:hay_block", "minecraft:bone_block", "minecraft:basalt", "minecraft:polished_basalt");
+            "minecraft:crimson_stem", "minecraft:stripped_crimson_stem", "minecraft:warped_stem",
+            "minecraft:stripped_warped_stem", "minecraft:hay_block", "minecraft:bone_block", "minecraft:basalt",
+            "minecraft:polished_basalt", "minecraft:quartz_pillar", "minecraft:purpur_pillar", "minecraft:deepslate",
+            "minecraft:infested_deepslate", "minecraft:chain", "minecraft:ochre_froglight", "minecraft:verdant_froglight",
+            "minecraft:pearlescent_froglight", "minecraft:muddy_mangrove_roots");
 
     private BlockForms() {
     }

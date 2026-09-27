@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.build.compile.CompileFixtures;
 import io.github.khayashi4337.micradrone.build.compile.CompileResult;
+import io.github.khayashi4337.micradrone.build.compile.PlaceableBlockPolicy;
 import io.github.khayashi4337.micradrone.build.compile.PlanCompiler;
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.Facing;
@@ -27,8 +28,14 @@ import io.github.khayashi4337.micradrone.build.model.Rot;
 import io.github.khayashi4337.micradrone.build.model.SemanticPlan;
 import io.github.khayashi4337.micradrone.build.model.Side;
 import io.github.khayashi4337.micradrone.build.model.StyleSpec;
+import io.github.khayashi4337.micradrone.build.plan.ExpandResult;
+import io.github.khayashi4337.micradrone.build.plan.PlanExpander;
+import io.github.khayashi4337.micradrone.build.plan.Router;
+import io.github.khayashi4337.micradrone.build.plan.SlotResolver;
+import io.github.khayashi4337.micradrone.build.plan.TemplateBundle;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -188,6 +195,82 @@ class FreestandingPartsTest {
         assertEquals(AXIS_Y, up.get(new LocalPos(0, 1, 0)).get(BlockForms.PROP_AXIS));
         Map<LocalPos, BlockSpec> plainBeam = build(single(BEAM, 0, 0, 0, params(P_LENGTH, 2, P_MATERIAL, STONE)));
         assertEquals(BlockSpec.of(STONE), plainBeam.get(new LocalPos(1, 0, 0)));
+    }
+
+    /**
+     * The 55 blocks of Minecraft 1.21.1 whose block state has an "axis" of x, y and z. (nether_portal has an axis too, but
+     * only x and z, and it can never be placed.) Read from the blockstate files (assets/minecraft/blockstates) of the client
+     * resources jar of this build (neoforge-21.1.238) and cross-checked with the block classes that declare the property:
+     * RotatedPillarBlock with HayBlock, InfestedRotatedPillarBlock and MuddyMangroveRootsBlock, and ChainBlock.
+     */
+    private static final String VANILLA_AXIS_BLOCKS = """
+            acacia_log acacia_wood bamboo_block basalt birch_log birch_wood bone_block chain cherry_log cherry_wood
+            crimson_hyphae crimson_stem dark_oak_log dark_oak_wood deepslate hay_block infested_deepslate jungle_log
+            jungle_wood mangrove_log mangrove_wood muddy_mangrove_roots oak_log oak_wood ochre_froglight
+            pearlescent_froglight polished_basalt purpur_pillar quartz_pillar spruce_log spruce_wood stripped_acacia_log
+            stripped_acacia_wood stripped_bamboo_block stripped_birch_log stripped_birch_wood stripped_cherry_log
+            stripped_cherry_wood stripped_crimson_hyphae stripped_crimson_stem stripped_dark_oak_log
+            stripped_dark_oak_wood stripped_jungle_log stripped_jungle_wood stripped_mangrove_log stripped_mangrove_wood
+            stripped_oak_log stripped_oak_wood stripped_spruce_log stripped_spruce_wood stripped_warped_hyphae
+            stripped_warped_stem verdant_froglight warped_hyphae warped_stem
+            """;
+    /**
+     * Blocks from the same game data that have no axis, including the six whose id ends in "_stem" but which are not
+     * trunks (a melon, a pumpkin, a mushroom and a dripleaf stem), and near neighbours of axis blocks.
+     */
+    private static final String VANILLA_NON_AXIS_BLOCKS = """
+            attached_melon_stem attached_pumpkin_stem big_dripleaf_stem melon_stem mushroom_stem pumpkin_stem
+            smooth_basalt quartz_block chiseled_quartz_block purpur_block deepslate_bricks cobbled_deepslate mangrove_roots
+            oak_planks stone
+            """;
+    private static final String NAMESPACE = "minecraft:";
+    private static final int AXIS_BLOCK_COUNT = 55;
+    private static final int BEAM_TEST_LENGTH = 2;
+
+    private static List<String> blockIds(String names) {
+        return Arrays.stream(names.strip().split("\\s+")).map(name -> NAMESPACE + name).toList();
+    }
+
+    /** A beam of {@code blockId} alone, compiled with a policy that accepts it: the built-in list does not name most of these. */
+    private static Map<LocalPos, BlockSpec> beamOf(String blockId, String axis) {
+        SemanticPlan plan = CompileFixtures.plan(CompileFixtures.site(Facing.NORTH), STYLE, List.of(
+                single(BEAM, 0, 0, 0, params(P_AXIS, axis, P_LENGTH, BEAM_TEST_LENGTH, P_MATERIAL, blockId))));
+        ExpandResult expanded = new PlanExpander(CompileFixtures.REGISTRY, SlotResolver.NONE).expand(plan, TemplateBundle.EMPTY, Router.NONE);
+        assertTrue(expanded.issues().isEmpty(), expanded.issues().toString());
+        CompileResult r = new PlanCompiler().compile(expanded.plan(), CompileFixtures.REGISTRY,
+                new PlaceableBlockPolicy(Set.of(blockId)), CompileFixtures.survey());
+        assertTrue(r.issues().isEmpty(), blockId + " " + axis + ": " + r.issues());
+        return cells(r.manifest());
+    }
+
+    @Test
+    void everyVanillaBlockWithAnAxisGetsItInAllThreeBeamDirections() {
+        List<String> ids = blockIds(VANILLA_AXIS_BLOCKS);
+        assertEquals(AXIS_BLOCK_COUNT, ids.size());
+        assertEquals(AXIS_BLOCK_COUNT, new HashSet<>(ids).size(), "an id is listed twice");
+        for (String id : ids) {
+            // beam axis u runs along x, v along y, w along z; the two cells are one step apart on that axis
+            Map<LocalPos, BlockSpec> alongU = beamOf(id, "u");
+            assertEquals(Map.of(new LocalPos(0, 0, 0), BlockSpec.of(id, BlockForms.PROP_AXIS, AXIS_X),
+                    new LocalPos(1, 0, 0), BlockSpec.of(id, BlockForms.PROP_AXIS, AXIS_X)), alongU, id + " along u");
+            Map<LocalPos, BlockSpec> alongV = beamOf(id, "v");
+            assertEquals(Map.of(new LocalPos(0, 0, 0), BlockSpec.of(id, BlockForms.PROP_AXIS, AXIS_Y),
+                    new LocalPos(0, 1, 0), BlockSpec.of(id, BlockForms.PROP_AXIS, AXIS_Y)), alongV, id + " along v");
+            Map<LocalPos, BlockSpec> alongW = beamOf(id, "w");
+            assertEquals(Map.of(new LocalPos(0, 0, 0), BlockSpec.of(id, BlockForms.PROP_AXIS, AXIS_Z),
+                    new LocalPos(0, 0, 1), BlockSpec.of(id, BlockForms.PROP_AXIS, AXIS_Z)), alongW, id + " along w");
+        }
+    }
+
+    @Test
+    void aBlockWithoutAnAxisGetsNoAxisFromABeam() {
+        for (String id : blockIds(VANILLA_NON_AXIS_BLOCKS)) {
+            for (String axis : List.of("u", "v", "w")) {
+                for (BlockSpec block : beamOf(id, axis).values()) {
+                    assertEquals(BlockSpec.of(id), block, id + " along " + axis);
+                }
+            }
+        }
     }
 
     // ------------------------------------------------------------------ chimney
