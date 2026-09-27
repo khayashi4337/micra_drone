@@ -124,8 +124,10 @@
 
 ## F-11 Create/Aeronauticsの依存と版固定(D-13)
 
-- 現状(Phase 1で実装・実機確認済み): Create 6.0.10、Aeronautics 1.3.0、Sable 2.0.x。`neoforge.mods.toml`の依存範囲は、Create `[6.0.10,6.1.0)`、Aeronautics `[1.3.0,1.4.0)`、Sable `[2.0.0,3.0.0)`。Aeronauticsの同梱jarは、中に`aeronautics`・`simulated`・`offroad`の3つのmodを持つ(jarJar)。**飛行船の組み立て・操縦・係留の部品は`simulated`のもの**なので、`PartType.requires`は、`simulated`(`[1.3.0,1.4.0)`)と`offroad`のmod IDも指定でき、部品の表示名は`assets/simulated/lang/`から取る。`mods.toml`の依存に`simulated`を足すかは、P13の計画書で、実際の同梱の挙動を確かめて決める。
-- `PartType.requires`(版の範囲)を、登録時に実行中のModListと照らし、範囲外なら**その部品だけ無効**にして、理由(必要な版・実際の版)を利用者に見せる。無効な部品を含む計画は`E-REGISTRY-VERSION`。
+- **Create/Aeronautics/Sableはoptional依存**(林さんの裁定 2026-09-27: どのmodが入っていてもAIが対応する。「畑だけ遊ぶ」「雰囲気だけの建築」も許す)。`neoforge.mods.toml`では3つとも`type="optional"`。**modが入っていなければ、そのpackの部品だけが無効**になり、残りの部品は動く(能力駆動。D-13の「版の範囲外」を「modの不在」にも広げる)。
+- optional依存はFMLが守らない(無くても起動する)ので、Create/Aeronautics/Sableのクラス(Ponder・Flywheel・Registrate・offroad・simulatedを含む)に触れるコードは、**専用の`integration`パッケージだけ**に置き、ModListで存在を確かめてから読み込む。それ以外のクラスがそれらをimport・参照しないことは、`OptionalModBoundaryTest`が機械的に検査する(漏れると、mod無しの環境で`NoClassDefFoundError`になる)。
+- 現状の版: Create 6.0.10、Aeronautics 1.3.0、Sable 2.0.x。`neoforge.mods.toml`の依存範囲は、Create `[6.0.10,6.1.0)`、Aeronautics `[1.3.0,1.4.0)`、Sable `[2.0.0,3.0.0)`。Aeronauticsの同梱jarは、中に`aeronautics`・`simulated`・`offroad`の3つのmodを持つ(jarJar)。**飛行船の組み立て・操縦・係留の部品は`simulated`のもの**なので、`PartType.requires`は、`simulated`(`[1.3.0,1.4.0)`)と`offroad`のmod IDも指定でき、部品の表示名は`assets/simulated/lang/`から取る。`mods.toml`の依存に`simulated`を足すかは、P13の計画書で、実際の同梱の挙動を確かめて決める。
+- `PartType.requires`(版の範囲)を、登録時に実行中のModListと照らし、**modが無いか範囲外ならその部品だけ無効**にして、理由(必要なmod・版と実際の有無・版)を利用者に見せる。無効な部品を含む計画は`E-REGISTRY-VERSION`。
 - Createの更新時の手順: (1)忠実度テスト(F-12)を全部流す、(2)部品見本帳を作り直す、(3)モジュールライブラリのテンプレートを再検証、(4)通れば`requires`の範囲を広げる。
 - 参考: Create本体のソースに、実機と同じ版のタグ`mc1.21.1-6.0.10`が実在する(`Creators-of-Create/Create`、調査担当が確認)。部品の設置手順のスパイク(S-5)は、この版のソースを読んで行う。
 

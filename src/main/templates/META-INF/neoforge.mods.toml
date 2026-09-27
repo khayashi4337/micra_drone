@@ -90,31 +90,32 @@ inspired by "The Farmer Was Replaced".
     ordering="NONE"
     side="BOTH"
 
-# Create integration (natural-language factory building feature). build.gradle depends on
-# Create/Aeronautics/Sable as a hard `implementation` dependency (see the comments there), so a
-# player without them installed must see FML's normal "missing dependency" screen, not a
-# NoClassDefFoundError crash the first time this mod's code touches a Create class (code review
-# finding). versionRange/ordering=NONE match the official
+# Create integration (natural-language factory building feature). Create/Aeronautics/Sable are
+# OPTIONAL: the mod must also run for a player who installs none of them (the farm feature does not
+# use them; the factory feature disables the absent pack's parts - see D-13/F-11). Optional deps do
+# not get FML's "missing dependency" screen, so the code must never touch a Create/Aeronautics/Sable
+# class outside the dedicated integration package (guarded by OptionalModBoundaryTest) or a player
+# without the mods would hit NoClassDefFoundError. versionRange/ordering=NONE match the official
 # https://wiki.createmod.net/developers/depend-on-create/neoforge-1.21.1 guidance exactly (an
 # earlier draft used ordering="AFTER" here, which the guidance does not - a second code review
 # found that mismatch, and a real, order-dependent Create/Registrate crash while it was in place).
 [[dependencies.${mod_id}]]
     modId="create"
-    type="required"
+    type="optional"
     versionRange="[6.0.10,6.1.0)"
     ordering="NONE"
     side="BOTH"
 
 [[dependencies.${mod_id}]]
     modId="aeronautics"
-    type="required"
+    type="optional"
     versionRange="[1.3.0,1.4.0)"
     ordering="NONE"
     side="BOTH"
 
 [[dependencies.${mod_id}]]
     modId="sable"
-    type="required"
+    type="optional"
     versionRange="[2.0.0,3.0.0)"
     ordering="NONE"
     side="BOTH"
