@@ -67,9 +67,11 @@
 | Critique Router N-25 | ユーザーのダメ出し文、現在の状態の要約 | `RouteDecision` | 分類がenum | なし |
 | Reconciler(AI部分) N-09 | 決定論の突き合わせ結果 | 提案(`絵を優先`/`工程を優先`+制約) | 制約が数値として妥当 | なし |
 | Module Planner(L8の増設案) N-16 | `RuntimeReport`、`SemanticPlan`(増設案を出すAIの段は、L8ではModule Plannerだけ) | 増設案(`PlanPatch`の下書き) | `PlanPatcher`、`FactoryAnalyzer` | `get_capacity_report` |
+| Mod Interpreter N-34 | `ModCatalog`(正規化した事実のみ。jar・自由文は渡さない)、既存packの例 | `ModDraft`(部品・機器・テンプレートの草案、`DraftClaim`つき) | 各claimの`evidenceFactId`が目録に実在、`unknowns`が明示 | なし |
 
 - **書き込みツールは1つも無い**(D-1)。AIの成果物は、必ず`PlanPatch`などのデータで、決定論の検証器を通ってからでないと次へ進まない。
 - 「許可ツール」は、その段の`--mcp-config`と`--allowedTools`で許可するツール名を絞る(既存の`ClaudeCliBridge.MCP_ALLOWED_TOOL`を、リストに拡張)。
+- **各段の資料には、有効な能力パックの一覧**(`ModScanReport`のpack状態の抜粋。「今使える能力はこれだけ」)**を入れる**(D-30)。Refinerのシステムプロンプトにも同じ一覧を明記する。スキーマの部品名のenum・`query_part_types`の結果は、無効なpackの物を含まないので、通常AIは無効な部品を「書けない」。それでも来た場合は`E-PACK-DISABLED`/`E-UNKNOWN-CAPABILITY`で拒否する。
 
 ---
 
@@ -87,7 +89,10 @@
 | `get_semantic_map` | `SemanticMap`(スロット・部屋) | `BlueprintAnalyzer`(クライアントで計算、サーバーで検証) |
 | `get_capacity_report` | `CapacityReport` | `CapacityCalculator` |
 | `list_open_issues` | 未解決の`Issue` | 現在の解析結果 |
+| `get_mod_scan_report` | `ModScanReport`(導入modの分類・各packの状態と理由・`digest`) | `ModScan`(起動時の走査。サーバー) |
+| `get_device_reference` | 機器の`ReferenceSheet`(できること・できないこと・絶対に止まる条件) | `DeviceGate`(宣言からの自動生成。P17) |
 
+- **`query_part_types`・`query_module_library`・`query_recipes`は、有効な登録簿(`EnabledRegistry`)の物だけを返す**(F-25)。modを入れ替えた環境では、返る語彙が自動で変わる。
 - サーバーが答えるツールは、`QueryRequestPayload(id, kind, args)`(クライアント→サーバー)と`QueryResponsePayload(id, json)`(サーバー→クライアント)で往復する。MCPの呼び出しスレッドは、応答の`Future`を待つ(既存の`ClientMainThreadDispatch`と同じ作法。タイムアウトあり)。
 - **応答のサイズ制限**: 1回の応答は64KB以内(既存の`MAX_BODY_BYTES`と同じ考え方)。大きい物は要約して返し、範囲を絞って再問い合わせさせる(`get_block_snapshot`の既存上限`MAX_BLOCKS_PER_QUERY=1000`も維持)。
 
@@ -95,7 +100,7 @@
 
 ## 4. スキーマ生成と検証
 
-- `SchemaGenerator`が、`PartTypeRegistry`から`--json-schema`用のスキーマを作る(P-16)。部品の識別子は`enum`。パラメータは部品ごとの仕様から。`additionalProperties:false`を基本にする。
+- `SchemaGenerator`が、**有効な登録簿(`EnabledRegistry`)**から`--json-schema`用のスキーマを作る(P-16、D-30)。部品の識別子は`enum`。パラメータは部品ごとの仕様から。`additionalProperties:false`を基本にする。
 - **AIの出力は信用しない**: スキーマに通っても、`PlanPatcher`・`PlanCompiler`・各アナライザが独立に検証する。スキーマは「形を整える助け」であって、検証の代わりではない。
 - **方式(S-1で確定)**: `oneOf`・`$defs`・`const`・再帰は使えると実測できたので、機能の不足を理由にした切り替えは要らない。既定は**型つきの方式**(`type`が部品IDの`enum`で、部品ごとに`params`の型・範囲を`oneOf`で持つ)。スキーマが安全上限(直接起動20,000文字、`cmd.exe`経由5,000文字)を超える規模では、**パラメータ配列の方式**(`params: [{key, value}]`。型ごとの検証は自前の検証器)に自動で切り替える。**2方式の収まり方(P3で確定)**: `FLAT`(配列の方式)は、`cmd.exe`経由の5,000文字に収めるため、`logistics`・`constraints`の中身・パラメータ名・IDの`pattern`を緩める(検証は`PlanJson`・`PlanPatcher`が行う)。型つき(`TYPED`)は、`material`や4方向の`enum`などの共通部品を`$defs`へ寄せて、20,000文字に収める。収まらない規模では`SchemaTooLargeException`を投げる(黙って出さない)。1分岐は約160文字(簡素な場合)で、直接起動の上限で約120部品が目安。50分岐を超えたときの、検証エラー文の長さとモデルの選択精度は**未確認**(P7の評価で測る)。
 
@@ -149,7 +154,7 @@
 
 ### 5.4 部品見本帳(`PartAtlas`)
 
-- **作る**: `client/build/PartAtlasRenderer`が、登録簿の各部品を、ゲームの描画機能で**画面外(オフスクリーン)**に描く(等角投影、背景は無地、セル256px)。各セルの下に、その部品の表示名(JEIと同じ翻訳キーの、ユーザーの言語の文字列)を入れる。全セルを敷き詰めた全体シートと、`AtlasEntry`の表(部品ID・表示名・座標)を保存する。
+- **作る**: `client/build/PartAtlasRenderer`が、**有効な登録簿(`EnabledRegistry`)**の各部品を、ゲームの描画機能で**画面外(オフスクリーン)**に描く(等角投影、背景は無地、セル256px)。無効なpackの部品は見本帳にも出ない。各セルの下に、その部品の表示名(JEIと同じ翻訳キーの、ユーザーの言語の文字列)を入れる。全セルを敷き詰めた全体シートと、`AtlasEntry`の表(部品ID・表示名・座標)を保存する。
 - **描画の方法(案、S-4で確定)**: オフスクリーンの`RenderTarget`にブロックの状態(または`ItemStack`のアイコン)を描き、`NativeImage`に読み出してPNG化する。複数ブロックでできる部品(ベルト、水車、風車など)は、代表的な向きの小さな設置例を、一時的に描画用の空間へ置いて撮る、という代替も検討する(S-4で、どの部品がどの方法で描けるかを一覧にする)。
 - **版**: 登録簿の版ハッシュごとにキャッシュ。Createのバージョンや登録が変わると作り直す。
 - **絞り込み**: `AtlasSlicer.slice(atlas, partIds, maxCells=12)`。セルをそのまま並べ直し、行列に詰める。
@@ -158,7 +163,7 @@
 
 ### 5.5 `ImagePromptBuilder`(指示文の生成)
 
-登録簿と`ConceptBrief`・`CameraPreset`から、指示文を機械的に作る。構成(Codex同梱の指針: 場面 → 主題 → 詳細 → 制約):
+有効な登録簿(`EnabledRegistry`)と`ConceptBrief`・`CameraPreset`から、指示文を機械的に作る(「使ってよい機械」の一覧には、その環境で有効な部品だけが入る)。構成(Codex同梱の指針: 場面 → 主題 → 詳細 → 制約):
 
 1. 用途: 「Minecraftのmod『Create』を使った工場の、コンセプトアート」
 2. 場面と構図: `CameraPreset`の文(例: 「南東の斜め45度上からの鳥瞰図」)、時間帯・天気

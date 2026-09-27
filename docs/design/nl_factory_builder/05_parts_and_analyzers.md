@@ -129,6 +129,13 @@
 5. 材料の対応(`BlockToItem`)に載っている。
 6. 該当するモジュールテンプレートがあれば、検証を通っている。
 7. 稼働で変わるブロック状態(`volatileProps`)と、世界への作用範囲(`EffectSpec`)が、宣言されている。
+8. 所属する能力パック(`pack`)と、そのpackの`requiredMods`・版範囲が記入されている(そのmodが無い環境ではその部品だけが無効になる。1.5節)。
+
+### 1.5 部品と能力パックの対応(`pack`)
+
+- 各部品の登録は、**どの能力パックの物か**(`pack`フィールド)を持つ。`PartTypeRegistry`は全packの宣言を持ち、**実際に使える名簿(`EnabledRegistry`)は、有効なpackの物だけ**から作る(F-25、D-30)。モジュールテンプレート・アナライザ・レシピ源も同じく`pack`を持つ。
+- 対応(現時点): `micra:*`とバニラのブロック・レシピ・畑ドローンの機器=`vanilla`pack(常に`ENABLED`)、`create:*`=`create`pack、`aeronautics:`・`simulated:`・`offroad:`=`aeronautics`pack(3つのmodの全部が揃って初めて有効)、Sable由来=`sable`pack。`create_submarine`・`powergrid`・`create_copper_and_zinc`の部品は、S-11〜S-13で接頭辞と中身を確定してから載せる(それまで登録しない)。
+- **無効なpackの物を使う計画は`E-PACK-DISABLED`**(対象ID・pack ID・理由つき)で、承認の前に拒否する。通常はスキーマ・見本帳・画面の選択肢に出ないので「書けない」が、保存済みの計画の再利用や、modを外した後の環境で起きうる。**未知のmod由来らしいIDは`E-UNKNOWN-CAPABILITY`**(推測で受けない。D-31)。
 
 ---
 
@@ -235,6 +242,14 @@
 | `E-SITE-MISSING` | 敷地(`site`)が未設定 | `PlanCompiler` | `site(...)`を足す |
 | `E-SCRIPT-FORBIDDEN` | 建設のスクリプトで許可されていない命令(乱数・時刻・畑の命令・`create_task`等)を使った | 静的検査(`PlanScriptProfile`) | 許可された命令 |
 | `E-SCRIPT-LIMIT` | 建設のスクリプトが、実行の回数・時間の上限を超えた | 実行時 | 処理を減らす |
+| `E-PACK-DISABLED` | 無効な能力パック(要求するmodが無い・版が範囲外)の部品・テンプレート・能力を計画が使っている | `PlanPatcher`/`PlanCompiler`/承認時 | 有効なpackの部品に替える・そのmodを入れる |
+| `E-UNKNOWN-CAPABILITY` | 未知のmod由来らしい部品ID・能力を計画が使っている(推測で受けない) | `ModScan`/承認時 | 有効なpackの物を使う |
+| `E-DEVICE-RANGE` | 機器への書き込みが、宣言した型・範囲に合わない | `DeviceGate` | 許容範囲 |
+| `E-DEVICE-PRECOND` | 機器の事前条件(`requires`)が満たされていない | `DeviceGate` | 先に満たす操作 |
+| `E-DEVICE-LIMIT` | 機器の安全限界(`hard=true`)を超える指示 | `DeviceGate` | 範囲内の値 |
+| `E-ESTOP` | 緊急停止の発動中の機器への書き込み | `DeviceGate` | 所有者/OPによる明示の解除 |
+| `W-DEVICE-CLAMPED` | 機器への指示を、宣言の範囲に丸めた(`CLAMP`) | `DeviceGate` | (確認) |
+| `W-UNKNOWN-MOD` | 未知のmodが導入されている(情報の提供だけ。部品にはならない) | `ModScan` | (説明を読む) |
 
 **受け入れ可能(`acceptable=true`)なのは、`W-*`と`E-CLOG-RISK`だけ**。それ以外の`E-*`は受け入れ不可で、残っていれば承認できない(`01` 5節、`03` 0.2節)。
 

@@ -479,5 +479,108 @@ enum EffectKind { NONE, BREAK, FLUID, PROJECTILE, MOVE_STRUCTURE }
 | `construction.net` | ペイロード群 | あり |
 | `client.build` | レビュー画面、ホログラム、`PartAtlasRenderer`、`InGameRenderer`、画像表示、`LoopEscalationScreen`、`RouteChooserScreen` | **あり(クライアント)** |
 | `chat`(既存) | `ClaudeCliBridge`に構造化出力・画像入力・予算指定を追加、`CodexCliBridge`を新設、`ChatKey`の導入 | なし |
+| `build.pack` | `CapabilityPack`・`PackStatus`・`ModScanReport`・`EnabledRegistry`の型(13節)。登録簿の合成 | なし |
+| `build.device` | 機器層の純Java部分(13節): `DeviceDescriptor`・`DeviceRegistry`・指示の検査(`DeviceGate`)・監視記録の型 | なし |
+| `integration`(新設) | modのクラス(Create・Ponder・Flywheel・Registrate・Aeronautics・Sable・将来の能力パックのmod)に触れる橋渡しだけ。**modが入っているとModListで確かめてから読み込む**。他のパッケージがこれらのクラスをimport・参照することは`OptionalModBoundaryTest`が禁止する(F-11・F-25) | **あり(該当mod)** |
 
-- **依存の向きは固定されている**: `lang.ast`と`build.model`は内部に何も見ない。`build.parts`は`build.model`、`build.compile.gen`は`build.model`と`build.parts`、`lang`は`lang.ast`・`build.model`・`build.parts`、`build.plan`は`build.model`・`build.parts`・`lang`、`build.compile`は`build.model`・`build.parts`・`build.plan`・`build.compile.gen`、`build.script`は`build.model`・`build.parts`・`lang`・`lang.ast`を見る。`BuildPurityTest`が、この向きと「Minecraft・NeoForge・Createをimportしない」を機械的に検査する(新しい向きを足すときは設計の変更として扱う)。P3の時点では、`build.*`を呼ぶMinecraft側のコードはまだ無い(P4の`construction`が載せる)。`lang`を呼ぶ既存の呼び出し側は、`drone`(畑の言語)と`client`(構文ハイライト)。
+- **依存の向きは固定されている**: `lang.ast`と`build.model`は内部に何も見ない。`build.parts`は`build.model`、`build.compile.gen`は`build.model`と`build.parts`、`lang`は`lang.ast`・`build.model`・`build.parts`、`build.plan`は`build.model`・`build.parts`・`lang`、`build.compile`は`build.model`・`build.parts`・`build.plan`・`build.compile.gen`、`build.script`は`build.model`・`build.parts`・`lang`・`lang.ast`を見る。`BuildPurityTest`が、この向きと「Minecraft・NeoForge・Createをimportしない」を機械的に検査する(新しい向きを足すときは設計の変更として扱う)。P3の時点では、`build.*`を呼ぶMinecraft側のコードはまだ無い(P4の`construction`が載せる)。`lang`を呼ぶ既存の呼び出し側は、`drone`(畑の言語)と`client`(構文ハイライト)。`integration`パッケージは、build.*の型(13節)を実装してmodの実物に結びつける層で、**他のパッケージから`integration`をimportすることは禁止しないが、`integration`以外がmodのクラスに触れることを`OptionalModBoundaryTest`が禁止する**(向きの不変条件は「`integration`だけがmodのクラス名を知る」)。
+
+## 13. 能力パック・機器モデル・未知のmodの読み解き(D-30〜D-32)
+
+能力パック(F-25)、機器モデル・学びの層(F-26・`08`)、未知のmodの読み解き(F-27)の型。機器モデルの型のうち、`MicraLang`の世界観にだけ存在する約束事(操作名・状態名の語彙など)は、このプロジェクトのおもちゃ規格であって、**実在する規格(MHS)の実装ではない**(`08` 1節。推測の節にはその旨を明記する)。
+
+```
+record CapabilityPack(String packId /*例 "vanilla"、"create"、"aeronautics"、"sable"、
+                                      "create_submarine"、"powergrid"、"create_copper_and_zinc"*/,
+                      String displayNameKey,
+                      List<ModRequirement> requiredMods /*全部が入り、版も範囲内のときだけ有効*/,
+                      List<String> partIds /*このpackが登録簿に足す部品*/,
+                      List<String> analyzerIds, List<String> moduleTemplateIds,
+                      List<String> knowledgeTags, List<String> transportProfileIds,
+                      List<String> recipeSourceIds,
+                      List<String> openSpikes /*未確定の事実を示すスパイクID(S-11等)*/,
+                      String docRef)
+record ModRequirement(String modId, String mavenRange /*VersionRangeと同じ形*/)
+enum PackState { ENABLED, DISABLED_ABSENT /*必要なmodが無い*/, DISABLED_VERSION /*版が範囲外*/, DISABLED_ERROR }
+record PackStatus(String packId, PackState state, String reason /*なぜ無効か。日本語の説明文*/,
+                  Map<String,String> actualVersions /*要求したmodの実際の版(入っていれば)*/)
+record EnabledRegistry(PartTypeRegistry parts /*有効なpackの和集合*/,
+                       Map<String,PackStatus> packs, String registryVersion /*版ハッシュ*/,
+                       String enabledDigest /*有効packの組合せを決定的に要約した値*/)
+record ModScanReport(int schemaVersion, String digest /*走査結果の決定的なハッシュ*/,
+                     List<ScannedMod> mods, List<PackStatus> packs, long scannedAtMillis)
+record ScannedMod(String modId, String version, String displayName, List<String> declaredDeps,
+                  ModDisposition disposition, String reason)
+enum ModDisposition { KNOWN_PACK /*要求するpackが有る*/, BUNDLED_IN_PACK /*他modのjarの内側(aeronautics同梱のsimulated等)*/,
+                      UNKNOWN_COMPATIBLE /*未知だが、読み解きの結果は無害*/, UNKNOWN_UNSAFE /*未知かつ取り扱いが危険な可能性*/ }
+```
+
+- **`vanilla`は常に`ENABLED`の基底pack**(`requiredMods`は`minecraft`のみ)。`micra:*`の建築部品・畑ドローン・MCP読み取りツールを全部含み、他のmodが一切無くても動く。工場の雰囲気の建築(バニラブロック+`micra:*`)もこのpackだけでできる(D-30)。
+- `EnabledRegistry`は**有効なpackの和集合だけ**を持つ。無効なpackの部品・テンプレート・レシピ源は、登録簿にも、スキーマ・見本帳・`query_part_types`にも出ない(P-16)。無効なpackの部品を使う保存済みの計画は、`E-PACK-DISABLED`(どのpackが無効かと理由つき)で拒否される。版の不一致は従来どおり`E-REGISTRY-VERSION`。
+- **`unknown`なmodは登録簿に一切足さない**(部品を推測で登録しない。F-27)。
+
+```
+// 機器モデル(推測(本物のMHSではない): このプロジェクトの独自のおもちゃ規格。実在の規格との一致は主張しない)
+record DeviceDescriptor(String deviceId /*例 "drone:ctrl-1"、"dock:east"*/, String kind,
+                        String displayNameKey, String packId /*どのpack由来か。vanillaなら"vanilla"*/,
+                        List<DeviceOp> reads, List<DeviceOp> writes, List<DeviceEvent> events,
+                        List<SafetyLimit> limits, List<Precondition> preconditions,
+                        List<String> tags /*自然言語の目印。日本語*/, String referenceSheetId)
+record DeviceOp(String name /*例 "measure"、"move"*/, OpKind kind /*READ|WRITE*/,
+                List<ParamSpec> params, String returns /*戻り値の型名*/, String description /*日本語*/,
+                boolean needsApproval /*人の確認が要るWRITE(08 4節)*/)
+enum OpKind { READ /*世界を変えない*/, WRITE /*世界・機器の状態を変える*/ }
+record DeviceEvent(String name /*例 "fish_bite"、"dock_arrived"*/, List<ParamSpec> payload,
+                   String description)
+record SafetyLimit(String name /*例 "max_speed"、"reach"*/, ParamValue limit, boolean hard,
+                   String reason /*この限界の日本語の説明*/)
+record Precondition(String id, String description /*日本語*/, String check /*決定論の検査の名前*/)
+record DeviceInstruction(String deviceId, String op, Map<String,ParamValue> args,
+                         String issuer /*"player"|"script"|"ai-plan"*/, long issuedAtMillis)
+record InstructionVerdict(Verdict verdict /*ALLOW|CLAMP|REFUSE*/, DeviceInstruction normalized,
+                          List<Issue> issues, String reason)
+enum Verdict { ALLOW, CLAMP /*安全限界に丸める。丸めた事実はinstructionと一緒に記録*/, REFUSE }
+record MonitorRecord(String deviceId, long atTick, String opOrEvent, String valueJson,
+                     String note /*異常時の説明*/)
+record ReferenceSheet(String sheetId, String deviceId, int schemaVersion,
+                      String bodyMarkdown /*日本語。子供が読める表現で、「できること・できないこと・絶対に止まる条件」*/,
+                      String registryVersion)
+enum DeviceState { OFFLINE, ONLINE, BUSY, FAULT, ESTOP /*緊急停止中。全WRITEを拒否*/, RECOVERING }
+```
+
+- `DeviceGate`(純Java)が、すべての`DeviceInstruction`を、**実行の前に**検査する: (1)デバイスが存在し`OFFLINE`/`ESTOP`でない、(2)事前条件(`Precondition.check`の決定論の検査)を満たす、(3)`hard=true`の`SafetyLimit`を超える引数は`REFUSE`(`CLAMP`は限界内へ丸めるだけの種類の限界に限る)。**AI・スクリプトは`DeviceGate`を迂回できない**(P-17)。検査結果は`MonitorRecord`に残る。
+- 緊急停止(`ESTOP`): 発動した機器は全`WRITE`を`E-ESTOP`で拒否し、動作中の操作は停止する。解除は所有者またはOPの明示操作でのみ可能で、発動・解除ともに`MonitorRecord`とジョブの`journal`に残る。
+- 機器の出来事(`DeviceEvent`)は、言語の`attach_isr(face, fn)`/`raise_interrupt(face)`の面名`"device:<deviceId>:<event>"`に対応づける(既存のソフトウェア割り込み機構を流用。実物のレッドストーン立ち上がり→面名の配線は別途、S-15)。
+
+```
+// 未知のmodの読み解き(F-27。型は走査結果の表現だけで、modのクラスは一切importしない)
+record UnknownModNote(String modId, String version, List<String> observedFacts /*メタデータから確かめられた事実だけ*/,
+                      List<String> missing /*分からなかったこと*/, String childExplanation /*子供向けの説明文*/)
+
+// 事実の目録(ModScanが、ゲームが既に読み込んだレジストリ・レシピ・タグ・言語・汎用の能力から集める)
+record ModCatalog(int schemaVersion, String modId, String version,
+                  List<CatalogEntry> entries, List<String> unknowns /*読めなかった項目*/,
+                  String digest)
+record CatalogEntry(String factId, CatalogKind kind, String key /*ブロックID・タグ名など*/,
+                    Map<String,String> data /*決定的な形に正規化した事実*/)
+enum CatalogKind { BLOCK, ITEM, BLOCK_STATE_PROP, BLOCK_ENTITY, TAG, RECIPE,
+                   LANG_ENTRY, CAPABILITY /*品物・液体・エネルギーのハンドラ*/, REDSTONE_BEHAVIOR }
+
+// AIの通訳(N-34)が作る草案。すべての主張は根拠の事実と信頼度を持つ。未検証の草案は施工に使えない
+record ModDraft(String draftId, String forModId, int schemaVersion,
+                List<DraftPartType> parts, List<DraftDevice> devices,
+                List<String> moduleTemplateIdeas, List<DraftClaim> claims,
+                List<String> unknowns)
+record DraftPartType(String proposedPartId, String roleGuess, Map<String,String> paramsGuess,
+                     String evidenceFactId)
+record DraftDevice(String proposedDeviceId, List<String> reads, List<String> writes,
+                   List<String> events, List<String> limitsGuess, String evidenceFactId)
+record DraftClaim(String text /*日本語*/, String evidenceFactId, Confidence confidence)
+enum Confidence { HIGH, MEDIUM, LOW }
+enum DraftStatus { DRAFT /*作られただけ*/, SANDBOX_TESTED /*試験区画で実測済み*/,
+                   APPROVED /*人が承認*/, PROMOTED /*能力パックへ昇格*/, REJECTED }
+```
+
+- `ModScanReport`は起動のたびに作られ、`digest`が版ハッシュ(`registryVersion`)に含まれる。**同じmod構成からは必ず同じレポートが出る**(決定論)。
+- `childExplanation`は、「このmodは私たちが知らないので、工場の部品としては使いません。自分でブロックとして置くことはできます」といった、**子供に向けた説明文**を生成する(F-27)。
+- **AIに渡すのは`ModCatalog`の事実だけ**(jar・modの説明文などの自由文は渡さない)。`DraftClaim`は全部`evidenceFactId`を持ち、根拠の無い主張は検証で落とす。**施工に使えるのは`PROMOTED`になったpackだけ**(草案→サンドボックス→承認→昇格の流れはF-27)。

@@ -262,6 +262,37 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 
 ---
 
+## 起動時の走査と機器層(Task 25で追加)
+
+### N-32 ModScan(導入modの走査・能力パックの有効化・事実の目録)
+- 種別: 決定論(起動時。AIは使わない)。
+- 役割: `ModList`のmod一覧を読み、**既知の能力パックが要求するmod**(`KNOWN_PACK`)、**他modのjarの内側にあるmod**(`BUNDLED_IN_PACK`。Aeronautics同梱の`simulated`/`offroad`)、**未知のmod**(`UNKNOWN_COMPATIBLE`/`UNKNOWN_UNSAFE`)に分類する。各`CapabilityPack`の`requiredMods`が全部入っていて版も範囲内なら`ENABLED`、そうでなければ理由つきで無効。有効なpackの部品・アナライザ・テンプレート・レシピ源を足し合わせて`EnabledRegistry`を合成し、**以降の全段(Refinerの資料、スキーマ、見本帳、コンパイラの検査)がこの有効な登録簿を使う**(P-16)。未知のmodごとに`UnknownModNote`を付けた`ModScanReport`を出し、さらに**ゲームが既に読み込んだ登録簿**(ブロック・品物・ブロック状態のプロパティ・ブロックエンティティ・タグ・レシピ・言語・品物/液体/エネルギーのハンドラ等の汎用の能力)を集めた`ModCatalog`を作る。**jarやmodのクラスを自分で読み込み・実行はしない**(D-31、F-27)。
+- 入力: `ModList`のmod一覧(サーバー側)、ゲームのレジストリ・`RecipeManager`・言語ファイル・能力の一覧、`CapabilityPack`の宣言の一覧。
+- 出力: `ModScanReport`(全modの分類・packの状態・理由・決定的な`digest`)、`EnabledRegistry`、`ModCatalog`(modごとの正規化した事実の目録)。**`digest`は登録簿の版ハッシュに含まれる**ので、同じmod構成からは同じレポート・同じ登録簿が出る。
+- 実装: **新規** `integration/ModScan.java`(modの存在確認と登録簿の読み取り。modのクラスには触れない) + `build/registry/CapabilityPack.java`・`build/registry/EnabledRegistry.java`・`build/registry/ModCatalog.java`(一覧と合成ルールの純粋な核)。`OptionalModBoundaryTest`が境界を機械的に検査する。
+- 失敗時: 読み取れない・壊れているmodは`UNKNOWN_UNSAFE`扱い(安全側に倒す)。packの要求modが欠けていても、そのpackだけを無効にして残りで起動を続ける(**modの不在はエラーではない**)。走査自体が例外で止まった場合は、`vanilla`だけで起動し、画面に「modの走査に失敗したため基本の部品だけ有効」と出す。
+- フェーズ: **P16**。完了条件: (a)Create無しで起動→`create`packが`DISABLED_ABSENT`・理由つき・畑は動く。(b)全部入りで起動→全packが`ENABLED`。(c)同じ構成で2回起動→`digest`が一致。(d)未知modを入れて起動→分類と`UnknownModNote`が出て、部品としては登録されない。(e)Createを走査した`ModCatalog`が、手書きの部品表(`05` 1.2節)の対象ブロックを事実として含む(校正、F-27)。
+
+### N-33 機器層(`DeviceGate`・出来事・教材)
+- 種別: 決定論(検査は純Java)+サーバー権威(実機に触れる面はサーバー)。
+- 役割: 機器(`DeviceDescriptor`が宣言した「読む・書く・出来事・安全限界・事前条件・緊急停止」)への指示を、**実行の前に必ず検査**する。検査は(1)型と範囲、(2)事前条件(`requires`)、(3)安全限界(`hard`は拒否、丸めてよい種類だけ`CLAMP`)、(4)`ESTOP`の状態、の順。AIもスクリプトも迂回できない(P-17)。出来事は`attach_isr`/`raise_interrupt`の面名`device:<deviceId>:<event>`に載せる。操作・出来事・拒否を`MonitorRecord`として記録し、L9(蓄積)とL8(実測→増設)の材料にする。各機器に子供向けの`ReferenceSheet`(「できること・できないこと・絶対に止まる条件」)を自動生成し、**AIの資料にも同じ物を使う**(正本は1つ)。詳細は`08_device_model.md`。
+- 入力: `DeviceDescriptor`(packまたは同梱データが宣言)、機器への指示(スクリプト・AI段・画面から)、`ESTOP`の状態、サーバーの機器の実測。
+- 出力: 検査を通った機器操作、`DeviceEvent`(ソフトウェア割り込み)、`MonitorRecord`、`ReferenceSheet`、検査失敗の`Issue`(`E-DEVICE-*`、`E-ESTOP`、`W-DEVICE-CLAMPED`)。
+- 実装: **新規** `build/device/DeviceModel.java`・`build/device/DeviceGate.java`(宣言と検査の純粋な核) + `integration/device/`(実機に触れる面。畑ドローンの制御ブロックを最初の機器として包む)。
+- 失敗時: 検査に落ちた指示は`E-DEVICE-*`で拒否(例外で潰さず`Issue`として返す)。`ESTOP`発動中は全書き込みを`E-ESTOP`で拒否し、解除は所有者かOPの明示操作のみ(発動・解除は記録に残る)。機器が応答しない・チャンク未読込みの読み取りは「不明」を返し、欠落や0とは区別する。
+- フェーズ: **P17**。完了条件: 実機で、(a)範囲外の書き込みが`E-DEVICE-RANGE`/`W-DEVICE-CLAMPED`で止まる、(b)`ESTOP`発動→全書き込みが`E-ESTOP`→明示解除で復帰、(c)機器の出来事(例: 収穫可能)が`attach_isr`のISRを起こす、(d)`ReferenceSheet`が宣言どおり生成され、AIの資料と画面に同じ文が出る。
+
+### N-34 Mod Interpreter(未知modの草案を作るAIの段)
+- 種別: AI-構造化(状態なし呼び出し。資料は`Dossier`)。
+- 役割: `ModCatalog`の**事実だけ**を資料にして、`ModDraft`(部品の草案・機器プロファイルの草案・モジュールのテンプレートのアイデア・制御コードの提案)を構造化出力で出す。**すべての主張(`DraftClaim`)は、根拠の目録の事実(`evidenceFactId`)と信頼度を持ち、分からない物は`unknowns`に入れる**(推測で埋めない)。作った草案はそのままでは使えず、サンドボックスの実測(`SANDBOX_TESTED`)と人の承認(`APPROVED`)を経て初めてpackに昇格する(`PROMOTED`)。詳しい流れはF-27。
+- 入力: `ModCatalog`(正規化した事実のみ。jar・modの説明文などの自由文は渡さない)、既存packの例(形式の参考)。
+- 出力: `ModDraft`。
+- 実装: **新規** `build/ai/stages/ModInterpreterStage`。検証は決定論(各claimの`evidenceFactId`が目録に実在すること、`unknowns`が明示されていること)。
+- 失敗時: スキーマ違反→再試行1回→`E-SCHEMA`。根拠の無い主張は草案から除いて警告。mod構成が変わったら(`digest`が違えば)作り直す。
+- フェーズ: **P16**。完了条件: Createを通訳させた草案が、手書きの`create`packの部品表(`05` 1.2節)を高い割合で再発見する(一致率を実測して記録。校正)。新しい3modの草案が、人がjarから読んだ一覧と突き合わせられる。未承認の草案の部品は計画に書けない(`E-UNKNOWN-CAPABILITY`)。
+
+---
+
 ## 横断部品(v3のノード外だが必須)
 
 | 部品 | 役割 | 実装 | フェーズ |
