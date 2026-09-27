@@ -5,6 +5,7 @@ import io.github.khayashi4337.micradrone.build.model.Issue;
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.parts.MaterialFamilies;
+import io.github.khayashi4337.micradrone.build.parts.PartParams;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -24,7 +25,6 @@ public final class Palette {
     private static final String NAMESPACE_SEPARATOR = ":";
     private static final String LIST_SEPARATOR = ",";
     /** The Issue key of every material problem: the parameter that names the material. */
-    private static final String KEY_MATERIAL = "material";
     private static final String DATA_ROLE = "role";
     private static final String DATA_ROLES = "roles";
     private static final String DATA_MATERIAL = "material";
@@ -113,7 +113,7 @@ public final class Palette {
 
     private GenAbort unknownRole(String role, PlanNode node) {
         String known = String.join(LIST_SEPARATOR, roles.keySet());
-        return new GenAbort(Issue.of(IssueCode.E_PARAM_RANGE, KEY_MATERIAL, List.of(node.id()),
+        return new GenAbort(Issue.of(IssueCode.E_PARAM_RANGE, PartParams.MATERIAL, List.of(node.id()),
                 "パレットに役割「" + role + "」がありません(style(\"" + role + "\", \"minecraft:…\")で決めてください)",
                 Map.of(DATA_ROLE, role, DATA_ROLES, known),
                 List.of(new FixHint(HINT_USE_ROLE, Map.of(ARG_ROLES, known)))), false);
@@ -122,7 +122,7 @@ public final class Palette {
     private GenAbort noFamily(String material, String full, String form, PlanNode node) {
         String role = role(material);
         String roleAdvice = role == null ? "" : role + BlockForms.STAIRS_SUFFIX + " / " + role + BlockForms.SLAB_SUFFIX + " か、";
-        return new GenAbort(Issue.of(IssueCode.E_PARAM_RANGE, KEY_MATERIAL, List.of(node.id()),
+        return new GenAbort(Issue.of(IssueCode.E_PARAM_RANGE, PartParams.MATERIAL, List.of(node.id()),
                 full + "には" + form + "の形がありません(ゲーム標準には無い素材です)。" + form + "の素材を、"
                         + roleAdvice + "族のある素材(例: minecraft:red_nether_bricks)で指定してください",
                 Map.of(DATA_MATERIAL, full),

@@ -3,13 +3,10 @@ package io.github.khayashi4337.micradrone.build.compile.gen;
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.parts.Params;
+import io.github.khayashi4337.micradrone.build.parts.PartParams;
 
 /** A brick shaft, hollow when it is three blocks wide, with an optional cap of slabs that overhangs it. */
 final class ChimneyGen implements PartGenerator {
-    private static final String P_HEIGHT = "height";
-    private static final String P_SIZE = "size";
-    private static final String P_CAP = "cap";
-    private static final String P_MATERIAL = "material";
     /** A chimney of this size is a ring around an open flue; a smaller one is solid. */
     private static final int FLUE_SIZE = 3;
     /** The middle cell of a {@link #FLUE_SIZE} row. */
@@ -19,12 +16,12 @@ final class ChimneyGen implements PartGenerator {
 
     @Override
     public void generate(GenContext ctx, PlanNode node, Params p) {
-        int height = p.i(P_HEIGHT);
-        int size = p.i(P_SIZE);
-        BlockSpec shaft = ctx.plainBlock(p.s(P_MATERIAL), node);
+        int height = p.i(PartParams.HEIGHT);
+        int size = p.i(PartParams.SIZE);
+        BlockSpec shaft = ctx.plainBlock(p.s(PartParams.MATERIAL), node);
         // The cap's block is asked of the palette before the first cell of the shaft is placed: a cap that cannot be made
         // (a material with no slab form) must not leave the shaft behind. A chimney without a cap asks for no slab.
-        BlockSpec cap = p.b(P_CAP) ? BlockForms.slab(ctx.palette().slab(p.s(P_MATERIAL), node), false) : null;
+        BlockSpec cap = p.b(PartParams.CAP) ? BlockForms.slab(ctx.palette().slab(p.s(PartParams.MATERIAL), node), false) : null;
         for (int dv = 0; dv < height; dv++) {
             for (int u = 0; u < size; u++) {
                 for (int w = 0; w < size; w++) {

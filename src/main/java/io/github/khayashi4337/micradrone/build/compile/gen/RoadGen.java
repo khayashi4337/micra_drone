@@ -4,23 +4,21 @@ import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.Facing;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.parts.Params;
+import io.github.khayashi4337.micradrone.build.parts.PartParams;
 
 /** A flat strip: its length runs along the direction, its width to the right-hand side of that direction. */
 final class RoadGen implements PartGenerator {
-    private static final String P_LENGTH = "length";
-    private static final String P_WIDTH = "width";
-    private static final String P_DIR = "dir";
-    private static final String P_MATERIAL = "material";
 
     @Override
     public void generate(GenContext ctx, PlanNode node, Params p) {
-        Facing dir = Dirs.of(p.s(P_DIR));
-        int length = p.i(P_LENGTH);
-        int width = p.i(P_WIDTH);
-        BlockSpec block = ctx.plainBlock(p.s(P_MATERIAL), node);
+        Facing dir = Dirs.of(p.s(PartParams.DIR));
+        int length = p.i(PartParams.LENGTH);
+        int width = p.i(PartParams.WIDTH);
+        BlockSpec block = ctx.plainBlock(p.s(PartParams.MATERIAL), node);
         for (int i = 0; i < length; i++) {
             for (int j = 0; j < width; j++) {
-                ctx.emit(node, Dirs.du(dir, i, j), 0, Dirs.dw(dir, i, j), block);
+                Dirs.Offset o = Dirs.offset(dir, i, j);
+                ctx.emit(node, o.u(), 0, o.w(), block);
             }
         }
     }

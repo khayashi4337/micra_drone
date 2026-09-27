@@ -12,6 +12,7 @@ import io.github.khayashi4337.micradrone.build.model.Rot;
 import io.github.khayashi4337.micradrone.build.model.Side;
 import io.github.khayashi4337.micradrone.build.parts.BuildingParts;
 import io.github.khayashi4337.micradrone.build.parts.Params;
+import io.github.khayashi4337.micradrone.build.parts.PartParams;
 import io.github.khayashi4337.micradrone.build.parts.PartType;
 import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
 import java.util.HashMap;
@@ -39,17 +40,6 @@ public final class GenContext {
     private static final String KEY_CARVE = "carve";
 
     // Parameter names of the structure and wall parts.
-    private static final String P_WIDTH = "width";
-    private static final String P_DEPTH = "depth";
-    private static final String P_FLOORS = "floors";
-    private static final String P_FLOOR_HEIGHT = "floor_height";
-    private static final String P_SIDE = "side";
-    private static final String P_LEVEL = "level";
-    private static final String P_FROM = "from";
-    private static final String P_LENGTH = "length";
-    private static final String P_HEIGHT = "height";
-    private static final String P_PART = "part";
-    private static final String P_THICKNESS = "thickness";
     private static final String PART_HALF = "half";
     /** A length or height of 0 means "all of it" (the rest of the side, the storey minus its floor row). */
     private static final int AUTO = 0;
@@ -135,7 +125,7 @@ public final class GenContext {
             throw fail(structureNode, IssueCode.E_ANCHOR, KEY_ANCHOR, "建屋の位置を決められません");
         }
         Params p = info.params();
-        return new StructureInfo(structureNode.id(), origin, p.i(P_WIDTH), p.i(P_DEPTH), p.i(P_FLOORS), p.i(P_FLOOR_HEIGHT));
+        return new StructureInfo(structureNode.id(), origin, p.i(PartParams.WIDTH), p.i(PartParams.DEPTH), p.i(PartParams.FLOORS), p.i(PartParams.FLOOR_HEIGHT));
     }
 
     /** Refuses a storey number that the building does not have (E-PARAM-RANGE on {@code level}). */
@@ -166,24 +156,24 @@ public final class GenContext {
     private WallInfo buildWallInfo(PlanNode wall) {
         StructureInfo st = structureOf(wall);
         Params p = info(wall.id()).params();
-        Facing side = Facing.parse(p.s(P_SIDE));
-        int level = p.i(P_LEVEL);
+        Facing side = Facing.parse(p.s(PartParams.SIDE));
+        int level = p.i(PartParams.LEVEL);
         checkLevel(wall, st, level);
         int sideLen = WallInfo.sideLength(st, side);
-        int from = p.i(P_FROM);
-        int length = p.i(P_LENGTH) == AUTO ? sideLen - from : p.i(P_LENGTH);
+        int from = p.i(PartParams.FROM);
+        int length = p.i(PartParams.LENGTH) == AUTO ? sideLen - from : p.i(PartParams.LENGTH);
         if (from >= sideLen) {
             throw fail(wall, IssueCode.E_PARAM_RANGE, KEY_FROM, "始点(from=" + from + ")が、壁の側の長さ(" + sideLen + ")以上です");
         }
         if (from + length > sideLen) {
             throw fail(wall, IssueCode.E_PARAM_RANGE, KEY_LENGTH, "壁の端を越えます(from=" + from + " + length=" + length + " > " + sideLen + ")");
         }
-        int height = p.i(P_HEIGHT) == AUTO ? st.floorHeight() - WallInfo.FLOOR_ROWS : p.i(P_HEIGHT);
-        if (p.s(P_PART).equals(PART_HALF)) {
+        int height = p.i(PartParams.HEIGHT) == AUTO ? st.floorHeight() - WallInfo.FLOOR_ROWS : p.i(PartParams.HEIGHT);
+        if (p.s(PartParams.PART).equals(PART_HALF)) {
             height = (height + 1) / 2; // the lower half, rounded up
         }
         int baseV = st.origin().v() + level * st.floorHeight() + WallInfo.FLOOR_ROWS;
-        return new WallInfo(wall.id(), st, side, level, baseV, height, p.i(P_THICKNESS), from, length);
+        return new WallInfo(wall.id(), st, side, level, baseV, height, p.i(PartParams.THICKNESS), from, length);
     }
 
     /**

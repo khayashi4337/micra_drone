@@ -53,10 +53,6 @@ public record WallInfo(String id, StructureInfo structure, Facing side, int leve
         return runsAlongU(side) ? Facing.EAST : Facing.NORTH;
     }
 
-    public int sideLength() {
-        return sideLength(structure, side);
-    }
-
     /**
      * Whether {@code span} cells that start at position {@code i} along the wall all lie within the wall: the last one,
      * {@code i + span - 1}, is at most the wall's last position, {@code length - 1}. Positions count from the wall's own

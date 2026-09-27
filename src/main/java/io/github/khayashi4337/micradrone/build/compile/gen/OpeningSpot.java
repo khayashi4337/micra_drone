@@ -14,10 +14,6 @@ import java.util.List;
  * {@code layer} gets anything back: an OUTER opening sits in the outermost layer, an INNER one in the innermost.
  */
 record OpeningSpot(WallInfo wall, int i, int row, boolean outer, int layer, int width, int height) {
-    /** The parameters that every opening part has: what it is, and what it is made of. */
-    static final String P_KIND = "kind";
-    static final String P_MATERIAL = "material";
-
     private static final int OUTERMOST_LAYER = 0;
     /** The Issue key of an opening that leaves the wall: none, like the carve's own E-OPENING-NO-WALL. */
     private static final String NO_KEY = "";

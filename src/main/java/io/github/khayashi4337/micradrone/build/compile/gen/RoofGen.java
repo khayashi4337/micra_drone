@@ -6,6 +6,8 @@ import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.LocalPos;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.parts.Params;
+import io.github.khayashi4337.micradrone.build.parts.PartParams;
+import io.github.khayashi4337.micradrone.build.parts.Roles;
 import java.util.function.IntUnaryOperator;
 
 /**
@@ -14,15 +16,6 @@ import java.util.function.IntUnaryOperator;
  * no partial roof behind (no overlap noise), and a role the kind does not place is never recorded as used.
  */
 final class RoofGen implements PartGenerator {
-    private static final String P_KIND = "kind";
-    private static final String P_OVERHANG = "overhang";
-    private static final String P_RIDGE = "ridge";
-    private static final String P_HIGH_SIDE = "high_side";
-    private static final String P_GABLE_FILL = "gable_fill";
-    private static final String P_TOOTH = "tooth";
-    private static final String P_MONITOR_WIDTH = "monitor_width";
-    private static final String P_MONITOR_HEIGHT = "monitor_height";
-    private static final String P_MATERIAL = "material";
 
     private static final String KIND_GABLE = "gable";
     private static final String KIND_HIP = "hip";
@@ -31,35 +24,32 @@ final class RoofGen implements PartGenerator {
     private static final String KIND_SAWTOOTH = "sawtooth";
     private static final String KIND_MONITOR = "monitor";
 
-    private static final String RIDGE_W = "w";
     private static final String RIDGE_AUTO = "auto";
-    private static final String ROLE_WALL = "wall";
-    private static final String ROLE_GLASS = "glass";
 
     /** Roof stairs and slabs are never upside down: they sit on the bottom half of their cell. */
     private static final boolean UPSIDE_DOWN = false;
     /** A section has two slopes that meet in the middle: every layer steps one cell in from each side. */
     private static final int SLOPES = 2;
+    /** The frame of the building's own footprint grows it by nothing. */
+    private static final int NO_OVERHANG = 0;
 
     @Override
     public void generate(GenContext ctx, PlanNode node, Params p) {
         StructureInfo st = ctx.structureOf(node);
-        int overhang = p.i(P_OVERHANG);
+        int overhang = p.i(PartParams.OVERHANG);
         int base = st.origin().v() + st.totalHeight();
-        String ridge = p.s(P_RIDGE);
-        boolean ridgeAlongW = ridge.equals(RIDGE_W) || (ridge.equals(RIDGE_AUTO) && st.depth() >= st.width());
-        RoofFrame f = frame(st, ridgeAlongW, overhang);
-        // hip and flat are symmetric in u and w: they read the frame with a=u, b=w
-        RoofFrame uw = frame(st, true, overhang);
-        String material = p.s(P_MATERIAL);
-        switch (p.s(P_KIND)) {
-            case KIND_GABLE -> gable(ctx, node, p, st, f, base, material);
-            case KIND_HIP -> hip(ctx, node, uw, base, material);
-            case KIND_FLAT -> flat(ctx, node, uw, base, material);
+        String ridge = p.s(PartParams.RIDGE);
+        boolean ridgeAlongW = ridge.equals(PartParams.AXIS_W) || (ridge.equals(RIDGE_AUTO) && st.depth() >= st.width());
+        String material = p.s(PartParams.MATERIAL);
+        switch (p.s(PartParams.KIND)) {
+            case KIND_GABLE -> gable(ctx, node, p, st, frame(st, ridgeAlongW, overhang), base, material);
+            // hip and flat are symmetric in u and w: they read the frame with a=u, b=w
+            case KIND_HIP -> hip(ctx, node, frame(st, true, overhang), base, material);
+            case KIND_FLAT -> flat(ctx, node, frame(st, true, overhang), base, material);
             case KIND_SHED -> shed(ctx, node, p, st, overhang, base, material);
-            case KIND_SAWTOOTH -> sawtooth(ctx, node, p, f, base, material);
-            case KIND_MONITOR -> monitor(ctx, node, p, st, f, base, material);
-            default -> throw ctx.fail(node, IssueCode.E_PARAM_RANGE, P_KIND, "屋根の種類が不明です");
+            case KIND_SAWTOOTH -> sawtooth(ctx, node, p, frame(st, ridgeAlongW, overhang), base, material);
+            case KIND_MONITOR -> monitor(ctx, node, p, st, frame(st, ridgeAlongW, overhang), base, material);
+            default -> throw ctx.fail(node, IssueCode.E_PARAM_RANGE, PartParams.KIND, "屋根の種類が不明です");
         }
     }
 
@@ -75,7 +65,17 @@ final class RoofGen implements PartGenerator {
 
     /** The building's own footprint (no overhang) in the same axes as {@code f}: its b edges are the gable end faces. */
     private static RoofFrame footprint(StructureInfo st, RoofFrame f) {
-        return frame(st, f.ridgeAlongW(), 0);
+        return frame(st, f.ridgeAlongW(), NO_OVERHANG);
+    }
+
+    /** An even span leaves no middle column between the two slopes. */
+    private static boolean even(int span) {
+        return span % SLOPES == 0;
+    }
+
+    /** The wall block filling the gable ends, or nothing when {@code gable_fill} is off. */
+    private static BlockSpec gableFillBlock(GenContext ctx, PlanNode node, Params p) {
+        return p.b(PartParams.GABLE_FILL) ? ctx.plainBlock(Roles.WALL, node) : null;
     }
 
     private static int[] endFaces(RoofFrame footprint) {
@@ -103,10 +103,10 @@ final class RoofGen implements PartGenerator {
     private static void gable(GenContext ctx, PlanNode node, Params p, StructureInfo st, RoofFrame f, int base, String material) {
         int span = f.a1() - f.a0() + 1;
         int layers = span / SLOPES;
-        boolean hasRidgeRow = span % SLOPES != 0;
+        boolean hasRidgeRow = !even(span);
         String stairsId = ctx.palette().stairs(material, node);
         BlockSpec ridge = hasRidgeRow ? ctx.plainBlock(material, node) : null;
-        BlockSpec wall = p.b(P_GABLE_FILL) ? ctx.plainBlock(ROLE_WALL, node) : null;
+        BlockSpec wall = gableFillBlock(ctx, node, p);
         slopes(ctx, node, f, base, layers, stairsId);
         if (ridge != null) {
             row(ctx, node, f, f.a0() + layers, base + layers, ridge);
@@ -140,7 +140,7 @@ final class RoofGen implements PartGenerator {
         int w0 = f.b0();
         int w1 = f.b1();
         // the last ring is a line exactly when the shorter side is odd, i.e. its last index difference is even
-        boolean endsInALine = Math.min(u1 - u0, w1 - w0) % SLOPES == 0;
+        boolean endsInALine = even(Math.min(u1 - u0, w1 - w0));
         String stairsId = ctx.palette().stairs(material, node);
         BlockSpec full = endsInALine ? ctx.plainBlock(material, node) : null;
         for (int k = 0; u0 + k <= u1 - k && w0 + k <= w1 - k; k++) {
@@ -187,12 +187,12 @@ final class RoofGen implements PartGenerator {
 
     /** One slope rising one cell per column toward {@code high_side}, the stairs' backs toward that side. */
     private static void shed(GenContext ctx, PlanNode node, Params p, StructureInfo st, int overhang, int base, String material) {
-        Facing high = Facing.parse(p.s(P_HIGH_SIDE));
+        Facing high = Facing.parse(p.s(PartParams.HIGH_SIDE));
         boolean acrossU = high == Facing.EAST || high == Facing.WEST;
         RoofFrame f = frame(st, acrossU, overhang);
         boolean risesWithA = high == Facing.EAST || high == Facing.NORTH;
         BlockSpec stairs = BlockForms.stairs(ctx.palette().stairs(material, node), high, UPSIDE_DOWN);
-        BlockSpec wall = p.b(P_GABLE_FILL) ? ctx.plainBlock(ROLE_WALL, node) : null;
+        BlockSpec wall = gableFillBlock(ctx, node, p);
         IntUnaryOperator rise = a -> risesWithA ? a - f.a0() : f.a1() - a;
         for (int a = f.a0(); a <= f.a1(); a++) {
             row(ctx, node, f, a, base + rise.applyAsInt(a), stairs);
@@ -204,9 +204,9 @@ final class RoofGen implements PartGenerator {
 
     /** Teeth of {@code tooth} columns rising toward larger a, with a glass row above the top stair of each. */
     private static void sawtooth(GenContext ctx, PlanNode node, Params p, RoofFrame f, int base, String material) {
-        int tooth = p.i(P_TOOTH);
+        int tooth = p.i(PartParams.TOOTH);
         BlockSpec stairs = BlockForms.stairs(ctx.palette().stairs(material, node), f.towardRidgeFromLow(), UPSIDE_DOWN);
-        BlockSpec glass = ctx.plainBlock(ROLE_GLASS, node);
+        BlockSpec glass = ctx.plainBlock(Roles.GLASS, node);
         for (int a = f.a0(); a <= f.a1(); a++) {
             int idx = (a - f.a0()) % tooth;
             row(ctx, node, f, a, base + idx, stairs);
@@ -223,17 +223,17 @@ final class RoofGen implements PartGenerator {
      */
     private static void monitor(GenContext ctx, PlanNode node, Params p, StructureInfo st, RoofFrame f, int base, String material) {
         int span = f.a1() - f.a0() + 1;
-        int gapWidth = p.i(P_MONITOR_WIDTH);
-        int glassHeight = p.i(P_MONITOR_HEIGHT);
-        if (span <= gapWidth || (span - gapWidth) % SLOPES != 0) {
-            throw ctx.fail(node, IssueCode.E_PARAM_RANGE, P_MONITOR_WIDTH,
+        int gapWidth = p.i(PartParams.MONITOR_WIDTH);
+        int glassHeight = p.i(PartParams.MONITOR_HEIGHT);
+        if (span <= gapWidth || !even(span - gapWidth)) {
+            throw ctx.fail(node, IssueCode.E_PARAM_RANGE, PartParams.MONITOR_WIDTH,
                     "屋根の幅(" + span + ")と越屋根の幅(" + gapWidth + ")の差が、正の偶数になるようにしてください");
         }
         int layers = (span - gapWidth) / SLOPES;
         String stairsId = ctx.palette().stairs(material, node);
-        BlockSpec glass = ctx.plainBlock(ROLE_GLASS, node);
+        BlockSpec glass = ctx.plainBlock(Roles.GLASS, node);
         BlockSpec cap = BlockForms.slab(ctx.palette().slab(material, node), UPSIDE_DOWN);
-        BlockSpec wall = p.b(P_GABLE_FILL) ? ctx.plainBlock(ROLE_WALL, node) : null;
+        BlockSpec wall = gableFillBlock(ctx, node, p);
         slopes(ctx, node, f, base, layers, stairsId);
         int aM0 = f.a0() + layers;
         int aM1 = f.a1() - layers;

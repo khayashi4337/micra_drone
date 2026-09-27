@@ -36,50 +36,11 @@ public final class BuildingParts {
     private static final String DISPLAY_NAME_PREFIX = "micradrone.part.";
     private static final String BLOCK_NAMESPACE = "minecraft:";
 
-    // Palette roles. A material parameter names one of these (or a block id) and the palette maps it to a block.
-    private static final String ROLE_WALL = "wall";
-    private static final String ROLE_FLOOR = "floor";
-    private static final String ROLE_ROOF = "roof";
-    private static final String ROLE_FOUNDATION = "foundation";
-    private static final String ROLE_PILLAR = "pillar";
-    private static final String ROLE_BEAM = "beam";
-    private static final String ROLE_TRIM = "trim";
-    private static final String ROLE_GLASS = "glass";
-    private static final String ROLE_DOOR = "door";
-    private static final String ROLE_GATE = "gate";
-    private static final String ROLE_FENCE = "fence";
-    private static final String ROLE_STAIRS = "stairs";
-    private static final String ROLE_RAMP = "ramp";
-    private static final String ROLE_CATWALK = "catwalk";
-    private static final String ROLE_CHIMNEY = "chimney";
-    private static final String ROLE_PATH = "path";
-    private static final String ROLE_PAD = "pad";
-    private static final String ROLE_MARKER = "marker";
-    private static final String ROLE_CARGO = "cargo";
-    private static final String ROLE_SIGN = "sign";
-    private static final String ROLE_PLANTER = "planter";
-    private static final String ROLE_PLANT = "plant";
+    // Palette roles live in Roles, parameter names in PartParams: a generator and this file cannot spell a name two ways.
 
     // Blocks that serve more than one role.
     private static final String STONE_BRICKS = "stone_bricks";
     private static final String OAK_PLANKS = "oak_planks";
-
-    // Parameter names that several parts share.
-    private static final String WIDTH = "width";
-    private static final String DEPTH = "depth";
-    private static final String HEIGHT = "height";
-    private static final String LENGTH = "length";
-    private static final String LEVEL = "level";
-    private static final String KIND = "kind";
-    private static final String DIR = "dir";
-    private static final String AXIS = "axis";
-    private static final String RAIL = "rail";
-    private static final String MATERIAL = "material";
-
-    // The three local axes, as the values of an "axis" or "ridge" parameter.
-    private static final String AXIS_U = "u";
-    private static final String AXIS_V = "v";
-    private static final String AXIS_W = "w";
 
     // Volatile block states of a door: they change while the world runs and must not fail a verification.
     private static final String STATE_OPEN = "open";
@@ -90,6 +51,10 @@ public final class BuildingParts {
     private static final int MAX_SPAN = 64;
     /** Largest u or w position inside a structure. */
     private static final int MAX_INDEX = MAX_SPAN - 1;
+    /** Open air required above a dock pad, in blocks. */
+    private static final int MAX_CLEARANCE = MAX_SPAN;
+    /** Longest straight road, in blocks. */
+    private static final int MAX_ROAD_LENGTH = 128;
     private static final int MAX_FLOORS = 8;
     private static final int MAX_LEVEL = MAX_FLOORS - 1;
     /** Longest column, ladder, staircase, ramp or chimney, in blocks. */
@@ -140,14 +105,14 @@ public final class BuildingParts {
 
     private static Map<String, String> defaultPalette() {
         Map<String, String> roles = Map.ofEntries(
-                role(ROLE_WALL, STONE_BRICKS), role(ROLE_FLOOR, OAK_PLANKS), role(ROLE_ROOF, OAK_PLANKS),
-                role(ROLE_FOUNDATION, "cobblestone"), role(ROLE_PILLAR, STONE_BRICKS), role(ROLE_BEAM, "oak_log"),
-                role(ROLE_TRIM, STONE_BRICKS), role(ROLE_GLASS, "glass_pane"), role(ROLE_DOOR, "oak_door"),
-                role(ROLE_GATE, "oak_fence_gate"), role(ROLE_FENCE, "oak_fence"), role(ROLE_STAIRS, "oak_stairs"),
-                role(ROLE_RAMP, "stone"), role(ROLE_CATWALK, "iron_trapdoor"), role(ROLE_CHIMNEY, "bricks"),
-                role(ROLE_PATH, "gravel"), role(ROLE_PAD, "smooth_stone"), role(ROLE_MARKER, "yellow_concrete"),
-                role(ROLE_CARGO, "barrel"), role(ROLE_SIGN, "oak_wall_sign"), role(ROLE_PLANTER, "dirt"),
-                role(ROLE_PLANT, "poppy"));
+                role(Roles.WALL, STONE_BRICKS), role(Roles.FLOOR, OAK_PLANKS), role(Roles.ROOF, OAK_PLANKS),
+                role(Roles.FOUNDATION, "cobblestone"), role(Roles.PILLAR, STONE_BRICKS), role(Roles.BEAM, "oak_log"),
+                role(Roles.TRIM, STONE_BRICKS), role(Roles.GLASS, "glass_pane"), role(Roles.DOOR, "oak_door"),
+                role(Roles.GATE, "oak_fence_gate"), role(Roles.FENCE, "oak_fence"), role(Roles.STAIRS, "oak_stairs"),
+                role(Roles.RAMP, "stone"), role(Roles.CATWALK, "iron_trapdoor"), role(Roles.CHIMNEY, "bricks"),
+                role(Roles.PATH, "gravel"), role(Roles.PAD, "smooth_stone"), role(Roles.MARKER, "yellow_concrete"),
+                role(Roles.CARGO, "barrel"), role(Roles.SIGN, "oak_wall_sign"), role(Roles.PLANTER, "dirt"),
+                role(Roles.PLANT, "poppy"));
         // Sorted, so the hashed palette and any listing of it do not depend on Map.ofEntries' iteration order.
         return Collections.unmodifiableMap(new TreeMap<>(roles));
     }
@@ -166,100 +131,100 @@ public final class BuildingParts {
         return List.of(
                 part(STRUCTURE_NAME, PartCategory.STRUCTURE, BuildPhase.STRUCTURE, VerifyMode.EXACT,
                         "A building: a footprint with floors, the parent of its walls, floors and roof.",
-                        ParamSpec.integer(WIDTH, 3, MAX_SPAN, 7), ParamSpec.integer(DEPTH, 3, MAX_SPAN, 7),
-                        ParamSpec.integer("floors", 1, MAX_FLOORS, 1), ParamSpec.integer("floor_height", 3, 8, 4)),
+                        ParamSpec.integer(PartParams.WIDTH, 3, MAX_SPAN, 7), ParamSpec.integer(PartParams.DEPTH, 3, MAX_SPAN, 7),
+                        ParamSpec.integer(PartParams.FLOORS, 1, MAX_FLOORS, 1), ParamSpec.integer(PartParams.FLOOR_HEIGHT, 3, 8, 4)),
                 part(FOUNDATION_NAME, PartCategory.STRUCTURE, BuildPhase.STRUCTURE, VerifyMode.EXACT,
                         "A solid base under the building.",
-                        ParamSpec.integer("margin", 0, MAX_STRIP, 0), ParamSpec.integer(DEPTH, 1, MAX_STRIP, 1),
-                        material(ROLE_FOUNDATION)),
+                        ParamSpec.integer(PartParams.MARGIN, 0, MAX_STRIP, 0), ParamSpec.integer(PartParams.DEPTH, 1, MAX_STRIP, 1),
+                        material(Roles.FOUNDATION)),
                 part(FLOOR_NAME, PartCategory.STRUCTURE, BuildPhase.STRUCTURE, VerifyMode.STATE_SUBSET,
                         "A floor of blocks or slabs with optional holes for stairs.",
-                        ParamSpec.integer(LEVEL, 0, MAX_LEVEL, 0), blockOrSlab(KIND),
-                        ParamSpec.intList("holes", 0, MAX_INDEX, MAX_HOLE_VALUES), material(ROLE_FLOOR)),
+                        ParamSpec.integer(PartParams.LEVEL, 0, MAX_LEVEL, 0), blockOrSlab(PartParams.KIND),
+                        ParamSpec.intList(PartParams.HOLES, 0, MAX_INDEX, MAX_HOLE_VALUES), material(Roles.FLOOR)),
                 part(WALL_NAME, PartCategory.STRUCTURE, BuildPhase.ENVELOPE, VerifyMode.EXACT,
                         "A wall along one side of a building.",
-                        requiredDirection("side"), ParamSpec.integer(LEVEL, 0, MAX_LEVEL, 0),
-                        ParamSpec.integer(HEIGHT, 0, 16, 0), ParamSpec.integer("thickness", 1, 3, 1),
-                        ParamSpec.integer("from", 0, MAX_INDEX, 0), ParamSpec.integer(LENGTH, 0, MAX_SPAN, 0),
-                        firstIsDefault("part", "full", "half"), material(ROLE_WALL)),
+                        requiredDirection(PartParams.SIDE), ParamSpec.integer(PartParams.LEVEL, 0, MAX_LEVEL, 0),
+                        ParamSpec.integer(PartParams.HEIGHT, 0, 16, 0), ParamSpec.integer(PartParams.THICKNESS, 1, 3, 1),
+                        ParamSpec.integer(PartParams.FROM, 0, MAX_INDEX, 0), ParamSpec.integer(PartParams.LENGTH, 0, MAX_SPAN, 0),
+                        firstIsDefault(PartParams.PART, "full", "half"), material(Roles.WALL)),
                 part("pillar", PartCategory.STRUCTURE, BuildPhase.STRUCTURE, VerifyMode.EXACT,
                         "A column with an optional base and capital.",
-                        ParamSpec.integer(HEIGHT, 1, MAX_RUN, 4), ParamSpec.bool("base", true),
-                        ParamSpec.bool("capital", true), material(ROLE_PILLAR)),
+                        ParamSpec.integer(PartParams.HEIGHT, 1, MAX_RUN, 4), ParamSpec.bool(PartParams.BASE, true),
+                        ParamSpec.bool(PartParams.CAPITAL, true), material(Roles.PILLAR)),
                 part("beam", PartCategory.STRUCTURE, BuildPhase.STRUCTURE, VerifyMode.STATE_SUBSET,
                         "A straight horizontal or vertical beam.",
-                        firstIsDefault(AXIS, AXIS_U, AXIS_V, AXIS_W), ParamSpec.integer(LENGTH, 1, MAX_SPAN, 3),
-                        material(ROLE_BEAM)),
+                        firstIsDefault(PartParams.AXIS, PartParams.AXIS_U, PartParams.AXIS_V, PartParams.AXIS_W), ParamSpec.integer(PartParams.LENGTH, 1, MAX_SPAN, 3),
+                        material(Roles.BEAM)),
                 part(ROOF_NAME, PartCategory.ROOF, BuildPhase.ENVELOPE, VerifyMode.STATE_SUBSET,
                         "A roof of stairs and slabs: gable, hip, flat, shed, sawtooth or monitor.",
-                        firstIsDefault(KIND, "gable", "hip", "flat", "shed", "sawtooth", "monitor"),
-                        ParamSpec.integer("overhang", 0, 3, 1), firstIsDefault("ridge", "auto", AXIS_U, AXIS_W),
-                        direction("high_side", Facing.EAST), ParamSpec.bool("gable_fill", true),
-                        ParamSpec.integer("tooth", 2, 8, 3), ParamSpec.integer("monitor_width", 1, 5, 1),
-                        ParamSpec.integer("monitor_height", 1, 3, 1), material(ROLE_ROOF)),
+                        firstIsDefault(PartParams.KIND, "gable", "hip", "flat", "shed", "sawtooth", "monitor"),
+                        ParamSpec.integer(PartParams.OVERHANG, 0, 3, 1), firstIsDefault(PartParams.RIDGE, "auto", PartParams.AXIS_U, PartParams.AXIS_W),
+                        direction(PartParams.HIGH_SIDE, Facing.EAST), ParamSpec.bool(PartParams.GABLE_FILL, true),
+                        ParamSpec.integer(PartParams.TOOTH, 2, 8, 3), ParamSpec.integer(PartParams.MONITOR_WIDTH, 1, 5, 1),
+                        ParamSpec.integer(PartParams.MONITOR_HEIGHT, 1, 3, 1), material(Roles.ROOF)),
                 door(),
                 part(WINDOW_NAME, PartCategory.OPENING, BuildPhase.ENVELOPE, VerifyMode.BLOCK_ONLY,
                         "A window opening in a wall: pane, wide or arch.",
-                        firstIsDefault(KIND, "pane", "wide", "arch"), ParamSpec.bool("lattice", false),
-                        material(ROLE_GLASS)),
+                        firstIsDefault(PartParams.KIND, "pane", "wide", "arch"), ParamSpec.bool(PartParams.LATTICE, false),
+                        material(Roles.GLASS)),
                 part("stairs", PartCategory.STRUCTURE, BuildPhase.STRUCTURE, VerifyMode.STATE_SUBSET,
                         "A staircase rising in one direction.",
-                        ParamSpec.integer("steps", 1, MAX_RUN, 4), ParamSpec.integer(WIDTH, 1, MAX_STRIP, 1),
-                        defaultDirection(DIR), material(ROLE_STAIRS)),
+                        ParamSpec.integer(PartParams.STEPS, 1, MAX_RUN, 4), ParamSpec.integer(PartParams.WIDTH, 1, MAX_STRIP, 1),
+                        defaultDirection(PartParams.DIR), material(Roles.STAIRS)),
                 part("ladder", PartCategory.STRUCTURE, BuildPhase.DECORATION, VerifyMode.STATE_SUBSET,
                         "A ladder against a wall.",
-                        ParamSpec.integer(HEIGHT, 1, MAX_RUN, 3), defaultDirection("facing")),
+                        ParamSpec.integer(PartParams.HEIGHT, 1, MAX_RUN, 3), defaultDirection(PartParams.FACING)),
                 part("catwalk", PartCategory.STRUCTURE, BuildPhase.DECORATION, VerifyMode.BLOCK_ONLY,
                         "A walkway with optional railings.",
-                        ParamSpec.integer(LENGTH, 1, MAX_SPAN, 6), defaultDirection(DIR),
-                        ParamSpec.integer(WIDTH, 1, 5, 2), ParamSpec.bool(RAIL, true), material(ROLE_CATWALK)),
+                        ParamSpec.integer(PartParams.LENGTH, 1, MAX_SPAN, 6), defaultDirection(PartParams.DIR),
+                        ParamSpec.integer(PartParams.WIDTH, 1, 5, 2), ParamSpec.bool(PartParams.RAIL, true), material(Roles.CATWALK)),
                 part(BALCONY_NAME, PartCategory.STRUCTURE, BuildPhase.DECORATION, VerifyMode.BLOCK_ONLY,
                         "A balcony projecting from a wall, with railings.",
-                        ParamSpec.integer(WIDTH, 1, 16, 3), ParamSpec.integer(DEPTH, 1, MAX_STRIP, 2),
-                        ParamSpec.bool(RAIL, true), material(ROLE_FLOOR)),
+                        ParamSpec.integer(PartParams.WIDTH, 1, 16, 3), ParamSpec.integer(PartParams.DEPTH, 1, MAX_STRIP, 2),
+                        ParamSpec.bool(PartParams.RAIL, true), material(Roles.FLOOR)),
                 part("railing", PartCategory.DECOR, BuildPhase.DECORATION, VerifyMode.BLOCK_ONLY,
                         "A straight low railing.",
-                        ParamSpec.integer(LENGTH, 1, MAX_SPAN, 3), defaultDirection(DIR),
-                        ParamSpec.integer(HEIGHT, 1, 3, 1), material(ROLE_FENCE)),
+                        ParamSpec.integer(PartParams.LENGTH, 1, MAX_SPAN, 3), defaultDirection(PartParams.DIR),
+                        ParamSpec.integer(PartParams.HEIGHT, 1, 3, 1), material(Roles.FENCE)),
                 part("chimney", PartCategory.STRUCTURE, BuildPhase.STRUCTURE, VerifyMode.STATE_SUBSET,
                         "A chimney with an optional cap.",
-                        ParamSpec.integer(HEIGHT, 2, MAX_RUN, 6), ParamSpec.integer("size", 1, 3, 1),
-                        ParamSpec.bool("cap", true), material(ROLE_CHIMNEY)),
+                        ParamSpec.integer(PartParams.HEIGHT, 2, MAX_RUN, 6), ParamSpec.integer(PartParams.SIZE, 1, 3, 1),
+                        ParamSpec.bool(PartParams.CAP, true), material(Roles.CHIMNEY)),
                 part("ramp", PartCategory.STRUCTURE, BuildPhase.STRUCTURE, VerifyMode.STATE_SUBSET,
                         "A gentle ramp of alternating slabs.",
-                        ParamSpec.integer(LENGTH, 2, MAX_RUN, 6), defaultDirection(DIR),
-                        ParamSpec.integer(WIDTH, 1, MAX_STRIP, 2), material(ROLE_RAMP)),
+                        ParamSpec.integer(PartParams.LENGTH, 2, MAX_RUN, 6), defaultDirection(PartParams.DIR),
+                        ParamSpec.integer(PartParams.WIDTH, 1, MAX_STRIP, 2), material(Roles.RAMP)),
                 part("lamp", PartCategory.DECOR, BuildPhase.DECORATION, VerifyMode.STATE_SUBSET,
                         "A light: standing lantern, hanging lantern, lamp post or torch.",
-                        firstIsDefault(KIND, "lantern", "hanging", "post", "torch"),
-                        ParamSpec.integer(HEIGHT, 1, 6, 2)),
+                        firstIsDefault(PartParams.KIND, "lantern", "hanging", "post", "torch"),
+                        ParamSpec.integer(PartParams.HEIGHT, 1, 6, 2)),
                 part(SIGN_NAME, PartCategory.DECOR, BuildPhase.DECORATION, VerifyMode.STATE_SUBSET,
                         "A wall sign with up to four short lines of text.",
-                        ParamSpec.text("text", MAX_SIGN_TEXT, null), material(ROLE_SIGN)),
+                        ParamSpec.text(PartParams.TEXT, MAX_SIGN_TEXT, null), material(Roles.SIGN)),
                 part(PLANTER_NAME, PartCategory.DECOR, BuildPhase.DECORATION, VerifyMode.EXACT,
-                        "A flower bed along a wall.", ParamSpec.integer(WIDTH, 1, MAX_STRIP, 3)),
+                        "A flower bed along a wall.", ParamSpec.integer(PartParams.WIDTH, 1, MAX_STRIP, 3)),
                 part(TRIM_NAME, PartCategory.DECOR, BuildPhase.DECORATION, VerifyMode.STATE_SUBSET,
                         "A decorative course along a wall face.",
-                        ParamSpec.integer(LENGTH, 1, MAX_SPAN, 3), firstIsDefault(AXIS, "horizontal", "vertical"),
-                        blockOrSlab("shape"), material(ROLE_TRIM)),
+                        ParamSpec.integer(PartParams.LENGTH, 1, MAX_SPAN, 3), firstIsDefault(PartParams.AXIS, "horizontal", "vertical"),
+                        blockOrSlab(PartParams.SHAPE), material(Roles.TRIM)),
                 part("dock_pad", PartCategory.LOGISTICS, BuildPhase.LOGISTICS, VerifyMode.STATE_SUBSET,
                         "A flat landing pad for airships with a cargo spot and clear air above.",
-                        ParamSpec.integer(WIDTH, 5, MAX_SPAN, 9), ParamSpec.integer(DEPTH, 5, MAX_SPAN, 9),
-                        ParamSpec.integer("clearance", 4, MAX_SPAN, 16), ParamSpec.integer("cargo_u", 0, MAX_INDEX, 1),
-                        ParamSpec.integer("cargo_w", 0, MAX_INDEX, 1), ParamSpec.bool("marker", true),
-                        material(ROLE_PAD)),
+                        ParamSpec.integer(PartParams.WIDTH, 5, MAX_SPAN, 9), ParamSpec.integer(PartParams.DEPTH, 5, MAX_SPAN, 9),
+                        ParamSpec.integer(PartParams.CLEARANCE, 4, MAX_CLEARANCE, 16), ParamSpec.integer(PartParams.CARGO_U, 0, MAX_INDEX, 1),
+                        ParamSpec.integer(PartParams.CARGO_W, 0, MAX_INDEX, 1), ParamSpec.bool(PartParams.MARKER, true),
+                        material(Roles.PAD)),
                 part("road", PartCategory.LOGISTICS, BuildPhase.LOGISTICS, VerifyMode.EXACT,
                         "A straight path.",
-                        ParamSpec.integer(LENGTH, 1, 128, 8), defaultDirection(DIR),
-                        ParamSpec.integer(WIDTH, 1, MAX_STRIP, 2), material(ROLE_PATH)));
+                        ParamSpec.integer(PartParams.LENGTH, 1, MAX_ROAD_LENGTH, 8), defaultDirection(PartParams.DIR),
+                        ParamSpec.integer(PartParams.WIDTH, 1, MAX_STRIP, 2), material(Roles.PATH)));
     }
 
     /** The door is the one part with volatile block states, so it adds them to the common builder. */
     private static PartType door() {
         return builder(DOOR_NAME, PartCategory.OPENING, BuildPhase.ENVELOPE, VerifyMode.STATE_SUBSET,
                 "A door opening in a wall: single, double or a wide hangar door.",
-                firstIsDefault(KIND, "single", "double", "hangar"), ParamSpec.integer(WIDTH, 3, 9, 5),
-                ParamSpec.integer(HEIGHT, 3, 6, 4), firstIsDefault("hinge", "left", "right"), material(ROLE_DOOR))
+                firstIsDefault(PartParams.KIND, "single", "double", "hangar"), ParamSpec.integer(PartParams.WIDTH, 3, 9, 5),
+                ParamSpec.integer(PartParams.HEIGHT, 3, 6, 4), firstIsDefault(PartParams.HINGE, "left", "right"), material(Roles.DOOR))
                 .volatileProps(STATE_OPEN, STATE_POWERED).build();
     }
 
@@ -275,7 +240,7 @@ public final class BuildingParts {
     }
 
     private static ParamSpec material(String defaultRole) {
-        return ParamSpec.material(MATERIAL, defaultRole);
+        return ParamSpec.material(PartParams.MATERIAL, defaultRole);
     }
 
     /** An enum parameter whose first value is its default. */

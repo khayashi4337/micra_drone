@@ -6,21 +6,14 @@ import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.LocalPos;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.parts.Params;
+import io.github.khayashi4337.micradrone.build.parts.PartParams;
+import io.github.khayashi4337.micradrone.build.parts.Roles;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
 /** A landing pad with an optional marked edge, a cargo barrel on it, and clear air above. */
 final class DockPadGen implements PartGenerator {
-    private static final String P_WIDTH = "width";
-    private static final String P_DEPTH = "depth";
-    private static final String P_CLEARANCE = "clearance";
-    private static final String P_CARGO_U = "cargo_u";
-    private static final String P_CARGO_W = "cargo_w";
-    private static final String P_MARKER = "marker";
-    private static final String P_MATERIAL = "material";
-    private static final String ROLE_MARKER = "marker";
-    private static final String ROLE_CARGO = "cargo";
     /** How the extent that a cargo position must stay inside is named in the message. */
     private static final String EXTENT_WIDTH = "幅";
     private static final String EXTENT_DEPTH = "奥行";
@@ -34,16 +27,16 @@ final class DockPadGen implements PartGenerator {
 
     @Override
     public void generate(GenContext ctx, PlanNode node, Params p) {
-        int width = p.i(P_WIDTH);
-        int depth = p.i(P_DEPTH);
-        int cargoU = p.i(P_CARGO_U);
-        int cargoW = p.i(P_CARGO_W);
-        requireOnPad(ctx, node, P_CARGO_U, cargoU, EXTENT_WIDTH, width);
-        requireOnPad(ctx, node, P_CARGO_W, cargoW, EXTENT_DEPTH, depth);
-        BlockSpec pad = ctx.plainBlock(p.s(P_MATERIAL), node);
+        int width = p.i(PartParams.WIDTH);
+        int depth = p.i(PartParams.DEPTH);
+        int cargoU = p.i(PartParams.CARGO_U);
+        int cargoW = p.i(PartParams.CARGO_W);
+        requireOnPad(ctx, node, PartParams.CARGO_U, cargoU, EXTENT_WIDTH, width);
+        requireOnPad(ctx, node, PartParams.CARGO_W, cargoW, EXTENT_DEPTH, depth);
+        BlockSpec pad = ctx.plainBlock(p.s(PartParams.MATERIAL), node);
         // Without the marker the edge is pad too, and the marker role is not asked of the palette (so it is not checked).
-        BlockSpec edge = p.b(P_MARKER) ? ctx.plainBlock(ROLE_MARKER, node) : pad;
-        BlockSpec cargo = BlockSpec.of(ctx.palette().full(ROLE_CARGO, node), BlockForms.PROP_FACING, FACING_UP);
+        BlockSpec edge = p.b(PartParams.MARKER) ? ctx.plainBlock(Roles.MARKER, node) : pad;
+        BlockSpec cargo = BlockSpec.of(ctx.palette().full(Roles.CARGO, node), BlockForms.PROP_FACING, FACING_UP);
         for (int u = 0; u < width; u++) {
             for (int w = 0; w < depth; w++) {
                 ctx.emit(node, u, 0, w, isEdge(u, w, width, depth) ? edge : pad);
@@ -77,9 +70,9 @@ final class DockPadGen implements PartGenerator {
      */
     @Override
     public void afterAll(GenContext ctx, PlanNode node, Params p) {
-        int width = p.i(P_WIDTH);
-        int depth = p.i(P_DEPTH);
-        int clearance = p.i(P_CLEARANCE);
+        int width = p.i(PartParams.WIDTH);
+        int depth = p.i(PartParams.DEPTH);
+        int clearance = p.i(PartParams.CLEARANCE);
         long airCells = (long) width * depth * clearance;
         List<Canvas.Cell> intruders = airCells <= ctx.canvas().size()
                 ? occupiedAmongTheAirCells(ctx, node, width, depth, clearance)

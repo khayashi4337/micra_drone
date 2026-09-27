@@ -5,6 +5,7 @@ import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.model.Side;
 import io.github.khayashi4337.micradrone.build.parts.Params;
+import io.github.khayashi4337.micradrone.build.parts.PartParams;
 
 /**
  * A decorative course along a wall face: a run of blocks or bottom slabs, along the wall (horizontal) or up it
@@ -12,10 +13,6 @@ import io.github.khayashi4337.micradrone.build.parts.Params;
  * wall it is attached to: a length that runs past the wall's end or top is refused.
  */
 final class TrimGen implements PartGenerator {
-    private static final String P_LENGTH = "length";
-    private static final String P_AXIS = "axis";
-    private static final String P_SHAPE = "shape";
-    private static final String P_MATERIAL = "material";
     private static final String AXIS_HORIZONTAL = "horizontal";
     private static final String SHAPE_SLAB = "slab";
 
@@ -24,8 +21,8 @@ final class TrimGen implements PartGenerator {
         WallInfo wall = ctx.wallOfAnchor(node); // refuses anything but an OnSurface anchor on a wall, so the cast holds
         Anchor.OnSurface a = (Anchor.OnSurface) node.anchor();
         int layer = wall.faceLayer(a.side() == Side.OUTER);
-        int length = p.i(P_LENGTH);
-        boolean horizontal = p.s(P_AXIS).equals(AXIS_HORIZONTAL);
+        int length = p.i(PartParams.LENGTH);
+        boolean horizontal = p.s(PartParams.AXIS).equals(AXIS_HORIZONTAL);
         // The course lies on the wall it is attached to. Checked before anything is looked up or placed, so a refusal
         // leaves no cell behind.
         if (horizontal) {
@@ -35,9 +32,9 @@ final class TrimGen implements PartGenerator {
         }
         // Asked of the palette before the first cell goes down, and only the form that is placed: the slab form of
         // the material for a slab course, the full block for a block course.
-        BlockSpec block = p.s(P_SHAPE).equals(SHAPE_SLAB)
-                ? BlockForms.slab(ctx.palette().slab(p.s(P_MATERIAL), node), false)
-                : ctx.plainBlock(p.s(P_MATERIAL), node);
+        BlockSpec block = p.s(PartParams.SHAPE).equals(SHAPE_SLAB)
+                ? BlockForms.slab(ctx.palette().slab(p.s(PartParams.MATERIAL), node), false)
+                : ctx.plainBlock(p.s(PartParams.MATERIAL), node);
         for (int k = 0; k < length; k++) {
             ctx.emitAbs(node, wall.cell(horizontal ? a.u() + k : a.u(), layer, horizontal ? a.v() : a.v() + k), block);
         }

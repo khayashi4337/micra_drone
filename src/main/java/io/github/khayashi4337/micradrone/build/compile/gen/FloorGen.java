@@ -5,14 +5,11 @@ import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.LocalPos;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.parts.Params;
+import io.github.khayashi4337.micradrone.build.parts.PartParams;
 import java.util.List;
 
 /** The floor of one storey over the whole footprint, minus the rectangular holes (for stairs and ladders). */
 final class FloorGen implements PartGenerator {
-    private static final String P_LEVEL = "level";
-    private static final String P_HOLES = "holes";
-    private static final String P_KIND = "kind";
-    private static final String P_MATERIAL = "material";
     private static final String KIND_SLAB = "slab";
     /** A hole is written as four numbers: two opposite corners (u0, w0, u1, w1). */
     private static final int VALUES_PER_HOLE = 4;
@@ -24,15 +21,15 @@ final class FloorGen implements PartGenerator {
     @Override
     public void generate(GenContext ctx, PlanNode node, Params p) {
         StructureInfo st = ctx.structureOf(node);
-        int level = p.i(P_LEVEL);
+        int level = p.i(PartParams.LEVEL);
         ctx.checkLevel(node, st, level);
-        List<Integer> holes = p.ints(P_HOLES);
+        List<Integer> holes = p.ints(PartParams.HOLES);
         if (holes.size() % VALUES_PER_HOLE != 0) {
-            throw ctx.fail(node, IssueCode.E_PARAM_RANGE, P_HOLES, "holesは[u0,w0,u1,w1,…]の形で、" + VALUES_PER_HOLE
+            throw ctx.fail(node, IssueCode.E_PARAM_RANGE, PartParams.HOLES, "holesは[u0,w0,u1,w1,…]の形で、" + VALUES_PER_HOLE
                     + "つずつの組にしてください(" + holes.size() + "個あります)");
         }
-        boolean slab = p.s(P_KIND).equals(KIND_SLAB);
-        String id = slab ? ctx.palette().slab(p.s(P_MATERIAL), node) : ctx.palette().full(p.s(P_MATERIAL), node);
+        boolean slab = p.s(PartParams.KIND).equals(KIND_SLAB);
+        String id = slab ? ctx.palette().slab(p.s(PartParams.MATERIAL), node) : ctx.palette().full(p.s(PartParams.MATERIAL), node);
         BlockSpec block = slab ? BlockForms.slab(id, false) : BlockForms.plain(id);
         int v = st.origin().v() + level * st.floorHeight();
         for (int u = 0; u < st.width(); u++) {

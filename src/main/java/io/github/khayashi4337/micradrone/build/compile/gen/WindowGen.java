@@ -4,14 +4,14 @@ import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.parts.Params;
+import io.github.khayashi4337.micradrone.build.parts.PartParams;
+import io.github.khayashi4337.micradrone.build.parts.Roles;
 
 /** A window in a wall: one pane, a wide window of three, or an arch window with stairs at the top corners. */
 final class WindowGen implements PartGenerator {
-    private static final String P_LATTICE = "lattice";
     private static final String KIND_PANE = "pane";
     private static final String KIND_ARCH = "arch";
     /** The palette role of the arch's corner stairs and of a lattice's mullion. */
-    private static final String ROLE_TRIM = "trim";
     private static final int PANE_WIDTH = 1;
     private static final int PANE_HEIGHT = 2;
     /** Both the wide and the arch window are three wide. */
@@ -26,21 +26,21 @@ final class WindowGen implements PartGenerator {
 
     @Override
     public void generate(GenContext ctx, PlanNode node, Params p) {
-        String kind = p.s(OpeningSpot.P_KIND);
+        String kind = p.s(PartParams.KIND);
         boolean arch = kind.equals(KIND_ARCH);
-        boolean lattice = p.b(P_LATTICE);
+        boolean lattice = p.b(PartParams.LATTICE);
         int width = kind.equals(KIND_PANE) ? PANE_WIDTH : WIDE_WIDTH;
         int height = arch ? ARCH_HEIGHT : PANE_HEIGHT;
         if (lattice && width == PANE_WIDTH) {
-            throw ctx.fail(node, IssueCode.E_PARAM_RANGE, P_LATTICE, "格子(lattice)は、幅のある窓(wide・arch)だけで使えます");
+            throw ctx.fail(node, IssueCode.E_PARAM_RANGE, PartParams.LATTICE, "格子(lattice)は、幅のある窓(wide・arch)だけで使えます");
         }
         OpeningSpot spot = OpeningSpot.carved(ctx, node, width, height);
         // Every block that will be placed is asked of the palette before the first one goes down (a refused material
         // leaves no cell behind), and only those that will be placed: the trim is asked for by a lattice or an arch only.
-        BlockSpec glass = BlockForms.plain(ctx.palette().full(p.s(OpeningSpot.P_MATERIAL), node));
+        BlockSpec glass = BlockForms.plain(ctx.palette().full(p.s(PartParams.MATERIAL), node));
         // the block of every cell of the middle column: the trim with a lattice, else the glass like the rest
-        BlockSpec middleColumnBlock = lattice ? BlockForms.plain(ctx.palette().full(ROLE_TRIM, node)) : glass;
-        String stairs = arch ? ctx.palette().stairs(ROLE_TRIM, node) : null;
+        BlockSpec middleColumnBlock = lattice ? BlockForms.plain(ctx.palette().full(Roles.TRIM, node)) : glass;
+        String stairs = arch ? ctx.palette().stairs(Roles.TRIM, node) : null;
         int fullRows = arch ? ARCH_FULL_ROWS : height;
         for (int di = 0; di < width; di++) {
             for (int dr = 0; dr < fullRows; dr++) {
