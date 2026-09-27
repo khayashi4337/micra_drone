@@ -5,7 +5,7 @@
 ## 0. 共通の約束
 
 - **純Javaの核**(`io.github.khayashi4337.micradrone.build.*`)は、`net.minecraft.*`と`net.neoforged.*`を一切importしない(D-16)。座標は`int`3つ、ブロックは文字列の識別子とプロパティ表で持つ。MinecraftのBlockPos・BlockState・Levelとの変換は、サーバー側の薄いアダプタ(`construction`パッケージ)だけが行う。
-- **JSON**は、既存の`chat/MiniJson.java`(外部ライブラリなし)で読み書きする。ただし`MiniJson`は現状`chat`パッケージ限定の可視性で、`build.*`から使えないので、**公開(`public`)にする**(P3。挙動は変えない)。`MiniJson`は数をすべて`Double`で読むので、整数か小数かの区別は、`build.model`の`PlanJson`が部品のパラメータ仕様(`ParamSpec`)に照らして行う。ハッシュ用の**正規形**(`CanonicalJson`)は、キーを辞書順、整数はそのまま、小数は`BigDecimal.valueOf(d).stripTrailingZeros().toPlainString()`(`NaN`・無限大は拒否)、余計な空白なし、で書いたUTF-8のバイト列。ハッシュは正規形のSHA-256(小文字16進)。**`SemanticPlan.contentHash`の正規形では、`nodes`と`connections`を`id`の辞書順に、`Set`を辞書順に並べる**(並びが違うだけの同じ設計を、同じハッシュにするため。スクリプトの往復で、出力の並びが変わっても一致する)。
+- **JSON**は、既存の`chat/MiniJson.java`(外部ライブラリなし)で読み書きする。ただし`MiniJson`は現状`chat`パッケージ限定の可視性で、`build.*`から使えないので、**公開(`public`)にする**(P3。挙動は変えない)。`MiniJson`は数をすべて`Double`で読むので、整数か小数かの区別は、`build.model`の`PlanJson`が部品のパラメータ仕様(`ParamSpec`)に照らして行う。ハッシュ用の**正規形**(`CanonicalJson`)は、キーを辞書順、整数はそのまま、小数は`BigDecimal.valueOf(d).stripTrailingZeros().toPlainString()`(`NaN`・無限大は拒否)、余計な空白なし、で書いたUTF-8のバイト列。ハッシュは正規形のSHA-256(小文字16進)。**`SemanticPlan.contentHash`の正規形では、`nodes`と`connections`を`id`の辞書順に、`Set`を辞書順に並べる**(並びが違うだけの同じ設計を、同じハッシュにするため。スクリプトの往復で、出力の並びが変わっても一致する)。物流(`LogisticsPlan`)も同じ約束で、`docks`と`routes`は`id`の辞書順(`id`が無い物は先頭)、`flows`は(`itemId`,`fromDock`,`toDock`,`perMin`)の辞書順、`Constraints.allowedEntryDirs`のような`Set`はワイヤ名の辞書順に並べる。`Dock`・`Route`の中のリスト(経由点・結ぶポート・係留部品のID)は順序が意味を持つので、与えられた順のままにする。
 - **ID**は、AIにも人にも見える安定した文字列(例: `wall-north-1`、`press-station-2`)。AIが付け、決定論コードが重複と形式(`[a-z0-9-]{1,48}`)を検査する。問題の指摘(`Issue`)は、必ずこのIDで対象を指す。**画像から読み取る構造記述(`StructureDescription`)の建屋・物体・流れも、安定IDで指す**(一覧の添字では指さない)。
 - **座標系**(`BuildFrame`): `u`=右、`v`=上、`w`=前。`BuildFrame(origin, facing)`の`facing`が向いている方向が`w`、そこから時計回りに90度が`u`。変換は`world = origin + u*right + v*up + w*forward`。計画はすべて局所座標(u,v,w)で書き、向きに依存しない(P-4)。
 - **版**: **保存される型**(`SemanticPlan`、`PlacementManifest`、`ConstructionJob`、`MaterialLedger`、`PlacedRegistry`、`SiteClaim`、`CommissioningJournal`、`BuildProject`、`ImageArtifact`、`KnowledgeRecord`、`ModuleTemplate`)は、先頭の欄に`int schemaVersion`を持つ。保存は`PersistenceEnvelope(type, schemaVersion, payload)`で包み、読み込み時に、版の移行表(`Migrations`: 版→変換関数)で現在の版へ変換する。**新しい版のデータを古いコードが読んだ場合や、変換できない場合は、読み込みを拒否して理由を示す**(壊さない・黙って捨てない)。
@@ -76,7 +76,7 @@ sealed interface PlanOp {
 }
 ```
 
-- `PlanPatcher(registry, templates)`の`apply(plan, patch) → PatchResult(SemanticPlan plan, List<Issue> issues)`は決定論。`baseRevision`が現在の`revision`と違えば拒否(`E-PATCH-STALE`。古い前提で書かれた差分を混ぜない)。**`ERROR`が1つでもあれば、パッチ全体を拒否して`plan`は`null`**(半端に適用しない。元の計画は変わらない)。成功時は、`revision`=`baseRevision+1`、`parentRevision`=`baseRevision`。`RemoveNode`は、子または接続が残るノードには使えない(`E-ANCHOR`。残っている依存先を`FixHint`で示す)。IDは`[a-z0-9-]{1,48}`(違えば`E-ID-INVALID`)で、重複は`E-ID-DUPLICATE`。`nodes`の並びは追加順で、親は子より先に来る(親が無いノードは追加できない)。
+- `PlanPatcher(registry, templates)`の`apply(plan, patch) → PatchResult(SemanticPlan plan, List<Issue> issues)`は決定論。`baseRevision`が現在の`revision`と違えば拒否(`E-PATCH-STALE`。古い前提で書かれた差分を混ぜない)。**`ERROR`が1つでもあれば、パッチ全体を拒否して`plan`は`null`**(半端に適用しない。元の計画は変わらない)。成功時は、`revision`=`baseRevision+1`、`parentRevision`=`baseRevision`。`RemoveNode`は、子または接続が残るノードには使えない(`E-ANCHOR`。残っている依存先を`FixHint`で示す)。IDは`[a-z0-9-]{1,48}`(違えば`E-ID-INVALID`)で、重複は`E-ID-DUPLICATE`。`nodes`の並びは追加順で、親は子より先に来る(親が無いノードは追加できない)。存在しない親を指すノードは`E-ANCHOR`(対象はそのノードのIDに`#parent`を付けた物)。**親自身が別の理由で拒否されている場合は、その親の`Issue`が答えなので、子には改めて`E-ANCHOR`を出さない**(同じ原因を重ねて報告しない)。
 - 独自言語のスクリプトは、この`PlanPatch`の**プログラム表現**(1命令=1操作)。スクリプトを実行(記録)すると`PlanPatch`になり、`PlanScriptWriter`は`SemanticPlan`から等価なスクリプトを出す。往復しても`contentHash`が変わらないことをテストで保証する(D-2、`04_foundations.md` F-6)。`planId`・`revision`・`provenance`はスクリプトの外(メタ情報)。
 
 ### 2.1 展開済みの計画(`ExpandedPlan`)— サーバーが自分で作り直す物
@@ -85,7 +85,7 @@ sealed interface PlanOp {
 
 ```
 PlanExpander.expand(SemanticPlan plan, TemplateBundle templates, Router router) → ExpandedPlan
-record TemplateBundle(List<ModuleTemplate> templates)   // ModuleTemplate・TemplateBundleの型は`build.model`に置く(P3で作る。PlanExpanderが使う)   // 参照されるテンプレート。同梱の物はIDとハッシュで照合、プレイヤーが昇格した物は本体を含める
+record TemplateBundle(List<ModuleTemplate> templates)   // ModuleTemplate・TemplateBundleの型は`build.plan`に置く(P3で作る。PlanExpanderが使う)   // 参照されるテンプレート。同梱の物はIDとハッシュで照合、プレイヤーが昇格した物は本体を含める
 record ExpandedPlan(SemanticPlan source, List<PlanNode> primitiveNodes /*テンプレート展開後の部品*/,
                     List<RoutedConnection> routed, List<String> templateHashes)
 record RoutedConnection(String connectionId, List<PlanNode> intermediateNodes, List<LocalPos> path)
@@ -93,6 +93,7 @@ record RoutedConnection(String connectionId, List<PlanNode> intermediateNodes, L
 
 - **サーバーは、クライアントの展開結果を信用しない**。受け取るのは`SemanticPlan`・`ProcessGraph`・`TemplateBundle`だけで、展開・コンパイル・解析は、サーバーが自分の手持ちのコードで作り直す(04 F-3)。同梱テンプレートは、IDとハッシュがサーバーの手持ちと一致しなければ拒否。
 - **展開の規則(P3で確定)**: テンプレートのインスタンス(`type`が`mod:`で始まるノード)は、テンプレートの`nodes`・`internal`を、ID`<インスタンスID>/<元のID>`で展開する(`/`は利用者が書くIDの正規表現に含まれないので、衝突しない)。子の`Absolute`の位置と回転は、インスタンスの`anchor`(位置と`Rot`)を合成する。子の`OnSurface`・`parent`は、同じ接頭辞に付け替える。`Explicit`の接続は、経由するノードの存在を確かめ、経路をその位置の並びで記録する(端点や経由ノードが無ければ`E-CONN-INVALID`)。`Auto`の接続は、Routerが載るP11まで、`E-NO-ROUTE`(ルーター未搭載)で拒否する。
+- **展開の上限(P3で確定)**: 展開後の部品は20万個まで(`BuildLimits.MAX_CELLS`。コンパイルのセル予算と同じ)、展開後の接続は計画自身の分を含めて20万本まで(`MAX_EXPANDED_CONNECTIONS`)。超える計画は、展開を始める前に`E-OUT-OF-BOUNDS`(キー`parts`/`connections`)で拒否する(実際に組んでから止めるのではなく、個数の見通しで先に拒否する)。
 
 ## 3. 部品(`PartType`)
 
@@ -125,6 +126,7 @@ record AssemblySpec(AssemblyKind kind /*WINDMILL|BEARING|PHYSICS_ASSEMBLER*/, St
 - 部品登録簿(`PartTypeRegistry`)は、`PartType`の集合と**版ハッシュ**(登録内容から計算)を持つ。施工リスト・ジョブ・承認は、この版ハッシュを記録し、版が違うものは承認・実行を拒否する。
 - 登録簿から、次の3つを**自動生成**する(P-16): (a)AIの出力スキーマ(部品の選択肢はenum。`USER`のみ)、(b)画像生成の「使ってよい部品リスト」の文、(c)部品見本帳(`PartAtlas`)。
 - **`IMPLICIT`の部品**: `create:belt`(ブロック。アイテムは`create:belt_connector`)、`create:powered_shaft`(アイテムを持たず、蒸気機関などが内部で作る)のように、JEIに部品として出ない物。`USER`部品の設置処理が作るので、登録簿には載るが、AI・画像・見本帳には出ない。材料の対応(F-7)は、設置する側の`USER`部品(ベルトなら`belt_connector`)で数える。
+- 建築部品(`micra:*`)の`VolumeSpec`は`GENERATED`(生成器が決める。生成されたセルがそのまま占有体積)。占有体積はパラメータと親の箱(建屋の大きさ・壁の面)から決まり、生成器の外に独立して書ける式が無いので、宣言は生成器の写しになる。検査は宣言との一致ではなく、生成物が規則から手で導いた数と一致することで行う(`07` P3の完了条件10)。
 
 ## 4. 施工リスト(`PlacementManifest`)
 
@@ -390,9 +392,10 @@ record ProjectKey(String worldId, String projectId) implements ChatKey
 enum PartCategory { STRUCTURE, OPENING, ROOF, DECOR, POWER, TRANSMISSION, PROCESSING, LOGISTICS, STORAGE, FLUID, AERO, MODULE }
 enum PlacerId { SIMPLE, BELT, ARM, MULTIBLOCK, ASSEMBLY }                 // 設置戦略(05 1.2。部品ごとの割り当てはS-5で確定)
 record ModelRef(String modelId)                                            // KineticModel・PowerSourceModel内の挙動モデルの名前
-enum ParamType { INT, NUM, BOOL, STR, ENUM, MATERIAL }
+enum ParamType { INT, NUM, BOOL, STR, ENUM, MATERIAL, INT_LIST }
 record ParamSpec(String name, ParamType type, String unit, ParamValue min, ParamValue max,
-                 ParamValue defaultValue, List<String> enumValues)
+                 ParamValue defaultValue, List<String> enumValues,
+                 int maxItems /*INT_LISTの並びの長さの上限。リストでないパラメータは0*/)
 record VersionRange(String modId, String mavenRange /*例 [6.0.10,6.1.0)*/)
 sealed interface ReplacePolicy { AirOnly | Replaceable | Expect(String blockId) }
 record PhaseRange(BuildPhase phase, int fromIndex, int toIndexExclusive)
@@ -460,16 +463,21 @@ enum EffectKind { NONE, BREAK, FLUID, PROJECTILE, MOVE_STRUCTURE }
 
 | パッケージ | 中身 | Minecraft依存 |
 |---|---|---|
-| `build.model` | 1・2・4・5節の型、`PlanPatcher`、`PlanExpander` | なし |
-| `build.parts` | `PartType`、`PartTypeRegistry`、パラメータ検証、スキーマ生成 | なし |
-| `build.compile` | `PlanCompiler`、`ManifestDiff`、ハッシュ | なし |
+| `build.model` | 1・2・4・5節の型、正規JSON・ハッシュ(`CanonicalJson`・`Hashing`・`PlanJson`)、`BlockRotation` | なし |
+| `build.parts` | `PartType`、`PartTypeRegistry`、`VolumeSpec`、パラメータ検証(`ParamValidator`)、`BuildingParts`、`MaterialFamilies`、スキーマ生成(`SchemaGenerator`) | なし |
+| `build.plan` | `PlanPatcher`、`PlanExpander`、`ModuleTemplate`、`TemplateBundle`、`Origins`、`SlotResolver`、`Router`(IF)。`build.model`と`build.parts`の上の層(循環を避けるため) | なし |
+| `build.compile` | 4節の型、`PlanCompiler`、`ManifestDiffer`・`Conflicts`(`ManifestDiff`)、`PlaceableBlockPolicy`、ハッシュ | なし |
+| `build.compile.gen` | 建築部品(`micra:*`)の生成器と`Canvas` | なし |
 | `build.analyze` | `VoxelClassGrid`、`BlueprintAnalyzer`、`ZoningFixer`、`CapacityCalculator`、`PowerSourceModel`、`Router`、`KineticModel`、`FactoryAnalyzer`、`RecipeSource`(IF) | なし |
 | `build.process` | `ProcessGraph`、`Reconciler`の決定論部分 | なし |
 | `build.verify` | `SparseSnapshot`、`SnapshotDiff`、`RepairPlanner` | なし |
-| `build.script` | `PlanRecorder`、`PlanScriptWriter` | なし |
+| `build.script` | `PlanRecorder`、`PlanScriptWriter`、`PlanScriptProfile`、`PlanScriptRunner` | なし |
+| `lang`・`lang.ast`(既存) | 言語の字句・構文・`Interpreter`に、建設の橋(`PlanApi`・`PlanRunLimits`・`PlanCommandDispatcher`・`PlanModeDroneApi`)を足す | なし |
 | `build.knowledge` | `ModuleLibrary`、`KnowledgeStore`の型 | なし |
 | `build.ai` | `BuildOrchestrator`、`StageSpec`、`LoopBudget`、各段のプロンプトと検証 | なし(CLI呼び出しは`chat`側の橋渡し) |
 | `construction` | `ConstructionJob`、`ConstructionExecutor`、`PlacementApplier`、`SafetyEnvelope`、`PlaceableBlockPolicy`、`MaterialPolicy`、`SiteClaimStore`、`ServerStateReader`、`ServerWorkerPool`、`ConstructionBudget`、`DroneShow`、`Commissioning`、`RuntimeMonitor`、サーバー側の調査と`RecipeSource`実装 | **あり(サーバー)** |
 | `construction.net` | ペイロード群 | あり |
 | `client.build` | レビュー画面、ホログラム、`PartAtlasRenderer`、`InGameRenderer`、画像表示、`LoopEscalationScreen`、`RouteChooserScreen` | **あり(クライアント)** |
 | `chat`(既存) | `ClaudeCliBridge`に構造化出力・画像入力・予算指定を追加、`CodexCliBridge`を新設、`ChatKey`の導入 | なし |
+
+- **依存の向きは固定されている**: `lang.ast`と`build.model`は内部に何も見ない。`build.parts`は`build.model`、`build.compile.gen`は`build.model`と`build.parts`、`lang`は`lang.ast`・`build.model`・`build.parts`、`build.plan`は`build.model`・`build.parts`・`lang`、`build.compile`は`build.model`・`build.parts`・`build.plan`・`build.compile.gen`、`build.script`は`build.model`・`build.parts`・`lang`・`lang.ast`を見る。`BuildPurityTest`が、この向きと「Minecraft・NeoForge・Createをimportしない」を機械的に検査する(新しい向きを足すときは設計の変更として扱う)。P3の時点では、`build.*`を呼ぶMinecraft側のコードはまだ無い(P4の`construction`が載せる)。`lang`を呼ぶ既存の呼び出し側は、`drone`(畑の言語)と`client`(構文ハイライト)。

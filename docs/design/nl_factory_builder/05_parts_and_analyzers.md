@@ -42,7 +42,8 @@
 **素材**: `MaterialV`は、`:`を含めばブロックID、含まなければ役割名で、`StyleSpec.palette`から引く(無ければ既定のパレット)。階段・スラブが要る部品は、役割`R`の階段を`palette[R+"_stairs"]`、スラブを`palette[R+"_slab"]`、無ければ**族表**(`MaterialFamilies`。ゲーム標準の板材・石材などの族)から引く。族に無い素材(例: 赤いテラコッタは階段が無い)は、`E-PARAM-RANGE`と、族のある候補(`red_nether_bricks`など)を`FixHint`で返す。
 **既定のパレット**(すべて`minecraft:`。登録簿の版ハッシュに含める): `wall`=`stone_bricks`、`floor`=`oak_planks`、`roof`=`oak_planks`、`foundation`=`cobblestone`、`pillar`=`stone_bricks`、`beam`=`oak_log`、`trim`=`stone_bricks`、`glass`=`glass_pane`、`door`=`oak_door`、`gate`=`oak_fence_gate`、`fence`=`oak_fence`、`stairs`=`oak_stairs`、`ramp`=`stone`、`catwalk`=`iron_trapdoor`、`chimney`=`bricks`、`path`=`gravel`、`pad`=`smooth_stone`、`marker`=`yellow_concrete`、`cargo`=`barrel`、`sign`=`oak_wall_sign`、`planter`=`dirt`、`plant`=`poppy`。
 **フェーズ**: `foundation`・`floor`・`pillar`・`beam`・`chimney`・`stairs`・`ramp`=`STRUCTURE`、`wall`・`roof`・`door`・`window`=`ENVELOPE`、`ladder`・`catwalk`・`balcony`・`railing`・`lamp`・`sign`・`planter`・`trim`=`DECORATION`(壁や床に支えられて初めて残る物は、あとに置く)、`dock_pad`・`road`=`LOGISTICS`。`structure`はブロックを持たない。
-**重なり**: 同じ位置を2つの部品が使えば`E-OVERLAP`。**例外**: 同じ親の`wall`どうしの角で、ブロックが同じなら合流(角は1個)。開口部(`door`・`window`)は、壁のマスを**掘る**(壁のマスでなければ`E-OPENING-NO-WALL`)。開口部どうしの重なりは`E-OVERLAP`。
+**重なり**: 同じ位置を2つの部品が使えば`E-OVERLAP`。**例外**: 同じ親の`wall`どうしの角で、ブロックが同じなら合流(角は1個)。開口部(`door`・`window`)は、壁のマスを**掘る**(壁のマスでなければ`E-OPENING-NO-WALL`)。開口部どうしの重なりは`E-OVERLAP`。壁の端まで届く開口部は、壁どうしが合流した角の柱も掘る。2つの開口部が同じマスを掘るときは、両方の開口部を名指しする`E-OVERLAP`を1つだけ出す(重なりの種類は`carve`)。
+- **作業量の上限(P3で確定)**: 生成器が試す配置の回数は、占有セル1つあたり2回まで(`Canvas`の予算)。「検討したが空気のまま残したマス」(床の穴など)も1単位を使うので、何も置かない部品も仕事量に上限がある。発着場の上空の空きの確認は、他の部品が置かれたマスを調べた分だけ予算を使う(空きだったマスは使わない)。開口部が掘るマスは1マス1単位。前の検査で拒否された部品は、後の検査(発着場の上空の確認を含む)を受けない。
 **検証の既定**: 状態を持たない全ブロック=`EXACT`。階段・スラブ・扉・門・はしご・看板・ランタン・樽など=`STATE_SUBSET`(状態のうち、記した物だけ比べる)。ガラス板・柵など、隣で状態が変わる物=`BLOCK_ONLY`。稼働で変わる`open`・`powered`は`volatileProps`。置換の方針は、すべて`REPLACEABLE`(地形の切り盛りは、P4の整地が載せる)。
 
 | 部品 | パラメータ(型・範囲・既定) | 生成するもの |
@@ -58,21 +59,25 @@
 | `window` | `kind`(`pane`/`wide`/`arch`, `pane`)、`lattice`(真偽, 偽)、`material`(`glass`) | 壁の`OnSurface`。`pane`は幅1×高さ2、`wide`は幅3×高さ2、`arch`は幅3×高さ3(上の両端は、役割`trim`の階段を上下逆にして、外側を背にする)。`lattice`は、真ん中の列を役割`trim`にする |
 | `stairs` | `steps`(1〜32, 4)、`width`(1〜8, 1)、`dir`(4方向, `north`)、`material`(`stairs`) | 原点の段から、`dir`へ1段ごとに1つ上がる階段(向きは`dir`)。幅は`dir`の右手へ |
 | `ladder` | `height`(1〜32, 3)、`facing`(4方向, `north`) | 原点からv方向へ`height`個のはしご |
-| `catwalk` | `length`(1〜64, 6)、`dir`、`width`(1〜5, 2)、`rail`(真偽, 真)、`material`(`catwalk`) | v=0の格子床と、`rail`なら両端の外側の列のv=1に柵(役割`fence`) |
+| `catwalk` | `length`(1〜64, 6)、`dir`(4方向, `north`)、`width`(1〜5, 2)、`rail`(真偽, 真)、`material`(`catwalk`) | v=0の格子床と、`rail`なら両端の外側の列のv=1に柵(役割`fence`) |
 | `balcony` | `width`(1〜16, 3)、`depth`(1〜8, 2)、`rail`(真偽, 真)、`material`(`floor`) | 壁の`OnSurface`。壁の外に張り出す床(v=その階の床の高さ+`v`)と、外側の3辺の柵 |
-| `railing` | `length`(1〜64, 3)、`dir`、`height`(1〜3, 1)、`material`(`fence`) | 原点から`dir`へ`length`本の柵 |
+| `railing` | `length`(1〜64, 3)、`dir`(4方向, `north`)、`height`(1〜3, 1)、`material`(`fence`) | 原点から`dir`へ`length`本の柵 |
 | `chimney` | `height`(2〜32, 6)、`size`(1〜3, 1)、`cap`(真偽, 真)、`material`(`chimney`) | `size`×`size`の柱(3は中空)、`cap`はv=`height`に、一回り大きなスラブ |
-| `ramp` | `length`(2〜32, 6)、`dir`、`width`(1〜8, 2)、`material`(`ramp`) | スラブを交互(下付き・上付き)に並べ、1マスで半段上がる |
+| `ramp` | `length`(2〜32, 6)、`dir`(4方向, `north`)、`width`(1〜8, 2)、`material`(`ramp`) | スラブを交互(下付き・上付き)に並べ、1マスで半段上がる |
 | `lamp` | `kind`(`lantern`/`hanging`/`post`/`torch`, `lantern`)、`height`(1〜6, 2。`post`のみ) | `lantern`(置き)、`hanging`(吊り)、`post`(柵の柱+てっぺんにランタン)、`torch` |
 | `sign` | `text`(60字以内。縦線`\|`で改行、4行まで、1行15字まで)、`material`(`sign`) | 壁の外側に、壁掛けの看板(向きは外向き)。文字は`blockEntityConfig`の`line1`〜`line4` |
 | `planter` | `width`(1〜8, 3) | 壁の外側に、土の列(役割`planter`)とその上の草花(役割`plant`) |
 | `trim` | `length`(1〜64, 3)、`axis`(`horizontal`/`vertical`, `horizontal`)、`shape`(`block`/`slab`, `block`)、`material`(`trim`) | 壁の外側に沿う縁取りの列 |
 | `dock_pad` | `width`(5〜64, 9)、`depth`(5〜64, 9)、`clearance`(4〜64, 16)、`cargo_u`・`cargo_w`(0〜, 1)、`marker`(真偽, 真)、`material`(`pad`) | v=0の平らな台。`marker`は外周を役割`marker`にする。荷役口として、(`cargo_u`,1,`cargo_w`)に樽(役割`cargo`)。台の真上(v=1〜`clearance`)に他の部品があれば`E-OVERLAP`(荷役口の樽を除く) |
-| `road` | `length`(1〜128, 8)、`dir`、`width`(1〜8, 2)、`material`(`path`) | v=0の道 |
+| `road` | `length`(1〜128, 8)、`dir`(4方向, `north`)、`width`(1〜8, 2)、`material`(`path`) | v=0の道 |
 
 **屋根の作り方**: 幅`T`=`width+2*overhang`(奥行も同様)。勾配の向きに直角な断面で、段`k`(0から)のv=土台+`k`に、外側から`k`だけ内側の位置に階段(背を棟の側へ向ける)を置く。`gable`: 棟に直角な向きの両端の階段を、内側で出会うまで積む。`T`が奇数なら、棟の1列は、役割`roof`の全ブロック。`gable_fill`が真なら、棟の両端の面(構造の縁)の、屋根の下の三角を、役割`wall`で埋める。`hip`: 各段の外周に階段(角は東西の向きを優先)、外周が1列に潰れる段は全ブロック。`flat`: v=土台に、下付きのスラブを1面。`shed`: `high_side`へ1段ごとに1つ上がる階段を、全幅に。`gable_fill`が真なら両端の三角を埋める。`sawtooth`: `tooth`幅ごとに、棟と直角の向きへ`k`段上がる階段と、その最上段の1つ上に役割`glass`の全ブロック1個(採光の面)。`monitor`: `gable`を、中央の幅が`monitor_width`になる段で打ち切り(`T`と`monitor_width`の偶奇が違えば`E-PARAM-RANGE`)、中央の両縁に、役割`glass`のブロックを`monitor_height`段、その上に下付きのスラブで蓋をする。
 
 **位置指定の面(`OnSurface`)の補足**: 開口部・看板・植栽・縁取り・バルコニーは、壁の面上の位置`(u, v)`を持つ。`u`は壁の始点(`from`の位置)から数える。`v`は壁の最下段から数える(`balcony`は床の高さから)。
+
+**`axis`の状態を持つブロック(1.21.1で55個)**: IDの語尾(`_log`・`_wood`・`_hyphae`で終わる物。modの木材にも合う)と、語尾で掴めない物(ネザーの茎4種・干し草・骨・玄武岩・柱状態のクォーツなど)のIDの一覧で決める。`_stem`の語尾はメロン・カボチャ・キノコ・ドリップリーフの茎にも合い、それらは`axis`を持たないので、語尾では使わずIDで列挙する(一覧は`FreestandingPartsTest`が固定)。
+
+**実機で見た目を確かめる項目(P4の実機確認)**: 二枚扉の蝶番が中央で合うか(蝶番の左右の規則: 扉の向きに向かって歩く人から見て、各扉の葉の外側の縁に蝶番を付ける。壁の始点側の葉が右蝶番か左蝶番かは、壁が伸びる向きと扉の向きから決まる)、階段の角の形(隣のブロックの更新で決まる)、壁掛け看板の向き、屋根の階段の向き、はしごの向き。純Javaのテストでは、規則どおりの状態が出ることまでしか確かめられない。
 
 ### 1.2 Create部品(`create:`、**JEIで検索して出る名前**)
 
@@ -187,9 +192,9 @@
 | `E-SCHEMA` | AIの出力がスキーマに合わない | スキーマ検証 | (再試行) |
 | `E-UNKNOWN-PART` | 登録簿に無い部品 | `PlanPatcher` | 近い部品の候補 |
 | `E-PARAM-RANGE` | パラメータが範囲外・型違い | `PlanPatcher` | 許容範囲 |
-| `E-ANCHOR` | 位置指定が不正(存在しない壁・スロット) | `PlanPatcher` | 有効な候補 |
+| `E-ANCHOR` | 位置指定が不正(存在しない壁・スロット・親。存在しない親は対象IDに`#parent`。親自身が別の理由で拒否されている場合は親の`Issue`が答えなので、子には重ねて出さない) | `PlanPatcher` | 有効な候補 |
 | `E-OVERLAP` | 部品どうしの重なり | `PlanCompiler` | 移動量 |
-| `E-OUT-OF-BOUNDS` | 敷地・区画の外 | `PlanCompiler` | 範囲 |
+| `E-OUT-OF-BOUNDS` | 敷地・区画の外(展開後の接続の端点が区画の外でも同じ。対象は越えた側のノード) | `PlanCompiler` | 範囲 |
 | `E-NOT-SUPPORTED` | 支えの無い部品(宙に浮く構造) | `BlueprintAnalyzer` | 柱・壁の追加 |
 | `E-OPENING-NO-WALL` | 壁の無い所の窓・扉 | `PlanCompiler` | 壁ID |
 | `E-ENCLOSURE-LEAK` | 屋内が閉じていない(壁・屋根の穴) | `BlueprintAnalyzer` | 穴の位置 |
