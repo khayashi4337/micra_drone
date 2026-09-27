@@ -268,16 +268,25 @@ class PlanInterpreterTest {
     }
 
     @Test
-    void anIllegalArgumentFromThePlanApiIsTheScriptsBadValueAndNamesTheCommandAndTheLine() {
-        // By contract a PlanApi reports a value it cannot accept as an IllegalArgumentException: PlanRecorder relies on this
-        // for what the model records refuse (for example a site box whose minimum exceeds its maximum), so the dispatcher
-        // blames the script for it. A limit is a PlanBudgetException (a subclass) and stays a limit.
+    void aPlanArgumentExceptionFromThePlanApiIsTheScriptsBadValueAndNamesTheCommandAndTheLine() {
+        // By contract a PlanApi reports a value it cannot accept as a PlanArgumentException: PlanRecorder relies on this
+        // for what the model records refuse (for example a site box whose minimum exceeds its maximum, rethrown typed),
+        // so the dispatcher blames the script for it. A limit is a PlanBudgetException (a sibling) and stays a limit.
         MicraLangException bad = assertThrows(MicraLangException.class, () -> runWith(
-                partFailingPlanApi(new IllegalArgumentException("not acceptable")), "x = 1\nwall(\"w\", None, [0, 0, 0], {})\n"));
+                partFailingPlanApi(new PlanArgumentException("not acceptable")), "x = 1\nwall(\"w\", None, [0, 0, 0], {})\n"));
         assertEquals("line 2: wall(): not acceptable", bad.getMessage());
         PlanLimitException limit = assertThrows(PlanLimitException.class, () -> runWith(
                 partFailingPlanApi(new PlanBudgetException("too big")), "wall(\"w\", None, [0, 0, 0], {})\n"));
         assertEquals("line 1: wall(): too big", limit.getMessage());
+    }
+
+    @Test
+    void anUntypedIllegalArgumentFromThePlanApiIsAnImplementationBugAndPropagatesUnchanged() {
+        // the dispatcher catches ONLY PlanArgumentException: a plain IllegalArgumentException is a defect inside
+        // the implementation (the script runner reports it as an internal: issue, not the script's error at a line)
+        IllegalArgumentException bug = assertThrows(IllegalArgumentException.class, () -> runWith(
+                partFailingPlanApi(new IllegalArgumentException("not acceptable")), "x = 1\nwall(\"w\", None, [0, 0, 0], {})\n"));
+        assertEquals("not acceptable", bug.getMessage());
     }
 
     @Test

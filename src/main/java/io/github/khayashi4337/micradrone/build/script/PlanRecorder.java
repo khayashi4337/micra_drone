@@ -24,6 +24,7 @@ import io.github.khayashi4337.micradrone.build.model.StyleSpec;
 import io.github.khayashi4337.micradrone.lang.MicraNone;
 import io.github.khayashi4337.micradrone.lang.PlanAnchorArgs;
 import io.github.khayashi4337.micradrone.lang.PlanApi;
+import io.github.khayashi4337.micradrone.lang.PlanArgumentException;
 import io.github.khayashi4337.micradrone.lang.PlanBudgetException;
 import io.github.khayashi4337.micradrone.lang.PlanValueText;
 import java.util.ArrayList;
@@ -38,12 +39,14 @@ import java.util.function.Function;
 /**
  * Records what a construction script says as a {@link PlanPatch}: one command, one operation. Style and mood calls
  * are gathered into a single SetStyle placed where the first of them was called. Malformed values are
- * IllegalArgumentExceptions; the interpreter turns them into script errors with the line.
+ * {@link PlanArgumentException}s; the interpreter turns them into script errors with the line.
  *
  * <p>The arguments are the script's live values, so every list/dict is read eagerly into the plan's own immutable
  * types at call time - a script that keeps mutating the value it passed can never change the recorded patch. Values
- * that are not data (functions, None inside params/logistics, sets) are IllegalArgumentExceptions too; the message
- * names the offending argument.
+ * that are not data (functions, None inside params/logistics, sets) are PlanArgumentExceptions too; the message
+ * names the offending argument. A plan record's own plain {@link IllegalArgumentException} (an inverted {@link Box},
+ * a value {@link ParamValue#fromTree} refuses) is rethrown typed where the script's value crosses into the model,
+ * so the dispatcher can still tell it from an implementation bug.
  *
  * <p>Three cumulative budgets bound what ONE recorder retains across every script of a run - the interpreter's
  * allocation counter is per script and cannot see what earlier scripts already recorded: {@link
@@ -128,9 +131,9 @@ public final class PlanRecorder implements PlanApi {
     @Override
     public void site(String dimension, int x, int y, int z, String facing, int[] bounds, String terrainDigest, String claimId) {
         if (bounds.length != SITE_BOUNDS_SIZE) {
-            throw new IllegalArgumentException("範囲は整数6個 [minU,minV,minW,maxU,maxV,maxW] です");
+            throw new PlanArgumentException("範囲は整数6個 [minU,minV,minW,maxU,maxV,maxW] です");
         }
-        Box box = new Box(bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5]);
+        Box box = boxOf(bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5]);
         chargeRecordedElements(1);
         chargeRecordedChars(textChars(dimension) + textChars(facing) + textChars(terrainDigest) + textChars(claimId));
         ops.add(new PlanOp.SetSite(new Site(dimension,
@@ -239,7 +242,7 @@ public final class PlanRecorder implements PlanApi {
             for (Object p : waypointSpecs) {
                 List<Object> c = list(p, PlanScriptKeys.ROUTE_WAYPOINTS);
                 if (c.size() != LOCAL_POS_SIZE) {
-                    throw new IllegalArgumentException("経由点は [u, v, w] です");
+                    throw new PlanArgumentException("経由点は [u, v, w] です");
                 }
                 pts.add(new LocalPos(integer(c.get(0)), integer(c.get(1)), integer(c.get(2))));
             }
@@ -256,7 +259,7 @@ public final class PlanRecorder implements PlanApi {
             Map<String, Object> f = dict(o, "流れ");
             checkKeys(f, "流れ", PlanScriptKeys.FLOW_KEYS);
             if (!(f.get(PlanScriptKeys.FLOW_PER_MIN) instanceof Double perMin) || !Double.isFinite(perMin)) {
-                throw new IllegalArgumentException("流れの " + PlanScriptKeys.FLOW_PER_MIN + " は数が必要です");
+                throw new PlanArgumentException("流れの " + PlanScriptKeys.FLOW_PER_MIN + " は数が必要です");
             }
             chargeRecordedElements(1);
             String item = text(f.get(PlanScriptKeys.FLOW_ITEM), PlanScriptKeys.FLOW_ITEM);
@@ -331,7 +334,7 @@ public final class PlanRecorder implements PlanApi {
             case SURFACE -> {
                 Side side = parseEnum("面の側", a.side(), SURFACE_SIDES, Side::parse);
                 if (side != Side.OUTER && side != Side.INNER) {
-                    throw new IllegalArgumentException("面の側は \"outer\" か \"inner\" です(" + PlanValueText.describe(a.side()) + ")");
+                    throw new PlanArgumentException("面の側は \"outer\" か \"inner\" です(" + PlanValueText.describe(a.side()) + ")");
                 }
                 yield new Anchor.OnSurface(a.target(), side, a.u(), a.v());
             }
@@ -355,8 +358,8 @@ public final class PlanRecorder implements PlanApi {
             try {
                 out.put(e.getKey(), ParamValue.fromTree(value));
             } catch (IllegalArgumentException bad) {
-                throw new IllegalArgumentException("params の「" + PlanValueText.describe(e.getKey())
-                        + "」はデータの値にしてください: " + bad.getMessage());
+                throw new PlanArgumentException("params の「" + PlanValueText.describe(e.getKey())
+                        + "」はデータの値にしてください: " + bad.getMessage(), bad);
             }
         }
         return out;
@@ -401,8 +404,8 @@ public final class PlanRecorder implements PlanApi {
         return copy;
     }
 
-    private static IllegalArgumentException tooDeep(String key) {
-        return new IllegalArgumentException("params の「" + PlanValueText.describe(key) + "」は、深さ "
+    private static PlanArgumentException tooDeep(String key) {
+        return new PlanArgumentException("params の「" + PlanValueText.describe(key) + "」は、深さ "
                 + MAX_PARAM_DEPTH + " 段・合計 " + MAX_PARAM_NODES + " 要素までです");
     }
 
@@ -417,19 +420,21 @@ public final class PlanRecorder implements PlanApi {
             Function<String, E> parse) {
         try {
             return parse.apply(text);
+        } catch (PlanArgumentException typed) {
+            throw typed;
         } catch (IllegalArgumentException e) {
             List<String> names = new ArrayList<>(allowed.length);
             for (E value : allowed) {
                 names.add("\"" + value.name().toLowerCase(Locale.ROOT) + "\"");
             }
-            throw new IllegalArgumentException(field + "は " + String.join(KEY_LIST_SEPARATOR, names) + " のどれかです");
+            throw new PlanArgumentException(field + "は " + String.join(KEY_LIST_SEPARATOR, names) + " のどれかです", e);
         }
     }
 
     private static PortRef port(String text) {
         int dot = text.indexOf(NODE_PORT_SEPARATOR);
         if (dot <= 0 || dot == text.length() - 1) {
-            throw new IllegalArgumentException("\"ノードID.ポート名\" の形にしてください: " + PlanValueText.describe(text));
+            throw new PlanArgumentException("\"ノードID.ポート名\" の形にしてください: " + PlanValueText.describe(text));
         }
         return new PortRef(text.substring(0, dot), text.substring(dot + 1));
     }
@@ -460,7 +465,7 @@ public final class PlanRecorder implements PlanApi {
                         dirs.add(parseEnum(PlanScriptKeys.CONSTRAINT_ENTRY_DIRS, d, Dir6.values(), Dir6::parse));
                     }
                 }
-                default -> throw new IllegalArgumentException("constraints に「" + PlanValueText.describe(e.getKey())
+                default -> throw new PlanArgumentException("constraints に「" + PlanValueText.describe(e.getKey())
                         + "」はありません(" + String.join(KEY_LIST_SEPARATOR, PlanScriptKeys.CONSTRAINT_KEYS) + ")");
             }
         }
@@ -471,7 +476,7 @@ public final class PlanRecorder implements PlanApi {
     private static void checkKeys(Map<String, Object> dict, String what, List<String> allowedKeys) {
         for (Object key : dict.keySet()) {
             if (!(key instanceof String) || !allowedKeys.contains(key)) {
-                throw new IllegalArgumentException(what + "に「" + PlanValueText.describe(key)
+                throw new PlanArgumentException(what + "に「" + PlanValueText.describe(key)
                         + "」はありません(" + String.join(KEY_LIST_SEPARATOR, allowedKeys) + ")");
             }
         }
@@ -482,7 +487,7 @@ public final class PlanRecorder implements PlanApi {
         if (o instanceof Map<?, ?> m) {
             return (Map<String, Object>) m;
         }
-        throw new IllegalArgumentException(what + "は辞書({…})で書いてください");
+        throw new PlanArgumentException(what + "は辞書({…})で書いてください");
     }
 
     @SuppressWarnings("unchecked")
@@ -490,14 +495,14 @@ public final class PlanRecorder implements PlanApi {
         if (o instanceof List<?> l) {
             return (List<Object>) l;
         }
-        throw new IllegalArgumentException(what + "はリストで書いてください");
+        throw new PlanArgumentException(what + "はリストで書いてください");
     }
 
     private static String text(Object o, String what) {
         if (o instanceof String s) {
             return s;
         }
-        throw new IllegalArgumentException(what + "は文字列が必要です");
+        throw new PlanArgumentException(what + "は文字列が必要です");
     }
 
     private static List<String> strings(Object o, String what) {
@@ -512,14 +517,26 @@ public final class PlanRecorder implements PlanApi {
         if (o instanceof Double d && d == Math.rint(d) && d >= Integer.MIN_VALUE && d <= Integer.MAX_VALUE) {
             return (int) (double) d;
         }
-        throw new IllegalArgumentException("整数が必要です(" + PlanValueText.describe(o) + ")");
+        throw new PlanArgumentException("整数が必要です(" + PlanValueText.describe(o) + ")");
     }
 
     private static Box box(Object o, String what) {
         List<Object> l = list(o, what);
         if (l.size() != SITE_BOUNDS_SIZE) {
-            throw new IllegalArgumentException(what + "は整数6個です");
+            throw new PlanArgumentException(what + "は整数6個です");
         }
-        return new Box(integer(l.get(0)), integer(l.get(1)), integer(l.get(2)), integer(l.get(3)), integer(l.get(4)), integer(l.get(5)));
+        return boxOf(integer(l.get(0)), integer(l.get(1)), integer(l.get(2)), integer(l.get(3)), integer(l.get(4)), integer(l.get(5)));
+    }
+
+    /**
+     * Builds a plan box from the script's integers. {@link Box} itself refuses an inverted range with a plain
+     * {@link IllegalArgumentException}; here that refusal is the script's bad value, so it is rethrown typed.
+     */
+    private static Box boxOf(int minA, int minB, int minC, int maxA, int maxB, int maxC) {
+        try {
+            return new Box(minA, minB, minC, maxA, maxB, maxC);
+        } catch (IllegalArgumentException bad) {
+            throw new PlanArgumentException(bad.getMessage(), bad);
+        }
     }
 }

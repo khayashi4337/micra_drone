@@ -14,6 +14,10 @@ import java.util.stream.Collectors;
  * {@link MicraLangException}s that name the command and the line. Arguments are read in order through an
  * {@link ArgReader}, so a type error names the argument's position without each command repeating it.
  * An optional argument may be left out or written as None, with the same meaning.
+ *
+ * <p>The boundary between "the script's fault" and "our bug" is the exception type: the readers below and a
+ * {@link PlanApi} implementation both signal a malformed argument with {@link PlanArgumentException}, and only
+ * that type becomes a script error - an untyped exception propagates to the caller as the defect it is.
  */
 final class PlanCommandDispatcher {
     /** How many arguments a command takes (inclusive range). */
@@ -69,9 +73,9 @@ final class PlanCommandDispatcher {
         } catch (PlanBudgetException e) {
             // a recorder budget refusal is a limit (E-SCRIPT-LIMIT), not a malformed value
             throw new PlanLimitException(line, name + "(): " + e.getMessage());
-        } catch (IllegalArgumentException e) {
-            // a bad argument: one of the readers below, or the PlanApi refusing a value (see PlanApi); any other
-            // exception, which would be a bug in the implementation, is not caught here
+        } catch (PlanArgumentException e) {
+            // a bad argument: one of the readers below, or the PlanApi refusing a value (see PlanApi); an untyped
+            // IllegalArgumentException or any other exception is a bug in the implementation and is not caught here
             throw new MicraLangException(line, name + "(): " + e.getMessage());
         }
     }
@@ -182,7 +186,7 @@ final class PlanCommandDispatcher {
             if (next() instanceof String s) {
                 return s;
             }
-            throw new IllegalArgumentException(position + "番目の引数は文字列が必要です");
+            throw new PlanArgumentException(position + "番目の引数は文字列が必要です");
         }
 
         String stringOrNone() {
@@ -219,20 +223,20 @@ final class PlanCommandDispatcher {
         if (v instanceof Double d && d == Math.rint(d) && d >= Integer.MIN_VALUE && d <= Integer.MAX_VALUE) {
             return (int) (double) d;
         }
-        throw new IllegalArgumentException("整数が必要です(" + PlanValueText.describe(v) + ")");
+        throw new PlanArgumentException("整数が必要です(" + PlanValueText.describe(v) + ")");
     }
 
     private static boolean bool(Object v) {
         if (v instanceof Boolean b) {
             return b;
         }
-        throw new IllegalArgumentException("True か False が必要です(" + PlanValueText.describe(v) + ")");
+        throw new PlanArgumentException("True か False が必要です(" + PlanValueText.describe(v) + ")");
     }
 
     private static int[] ints(Object v, int size) {
         List<Object> list = list(v);
         if (list.size() != size) {
-            throw new IllegalArgumentException("整数が" + size + "個並んだリストが必要です");
+            throw new PlanArgumentException("整数が" + size + "個並んだリストが必要です");
         }
         int[] out = new int[size];
         for (int i = 0; i < size; i++) {
@@ -246,14 +250,14 @@ final class PlanCommandDispatcher {
         if (v instanceof List<?> l) {
             return (List<Object>) l;
         }
-        throw new IllegalArgumentException("リストが必要です");
+        throw new PlanArgumentException("リストが必要です");
     }
 
     private static List<String> strings(Object v) {
         List<String> out = new ArrayList<>();
         for (Object o : list(v)) {
             if (!(o instanceof String s)) {
-                throw new IllegalArgumentException("文字列のリストが必要です");
+                throw new PlanArgumentException("文字列のリストが必要です");
             }
             out.add(s);
         }
@@ -266,12 +270,12 @@ final class PlanCommandDispatcher {
             return new LinkedHashMap<>();
         }
         if (!(v instanceof Map<?, ?> m)) {
-            throw new IllegalArgumentException("辞書({\"名前\": 値})が必要です");
+            throw new PlanArgumentException("辞書({\"名前\": 値})が必要です");
         }
         Map<String, Object> out = new LinkedHashMap<>();
         for (Map.Entry<?, ?> e : m.entrySet()) {
             if (!(e.getKey() instanceof String key)) {
-                throw new IllegalArgumentException("辞書のキーは文字列にしてください");
+                throw new PlanArgumentException("辞書のキーは文字列にしてください");
             }
             out.put(key, e.getValue());
         }
@@ -280,7 +284,7 @@ final class PlanCommandDispatcher {
 
     private static String facing(String f) {
         if (!FACINGS.contains(f)) {
-            throw new IllegalArgumentException("向きは " + FACINGS_QUOTED + " のどれかです(" + PlanValueText.describe(f) + ")");
+            throw new PlanArgumentException("向きは " + FACINGS_QUOTED + " のどれかです(" + PlanValueText.describe(f) + ")");
         }
         return f;
     }
@@ -289,7 +293,7 @@ final class PlanCommandDispatcher {
     private static String nodePort(String s) {
         int dot = s.indexOf(PlanApi.NODE_PORT_SEPARATOR);
         if (dot <= 0 || dot == s.length() - 1) {
-            throw new IllegalArgumentException("\"ノードID.ポート名\" の形にしてください(" + PlanValueText.describe(s) + ")");
+            throw new PlanArgumentException("\"ノードID.ポート名\" の形にしてください(" + PlanValueText.describe(s) + ")");
         }
         return s;
     }
@@ -297,7 +301,7 @@ final class PlanCommandDispatcher {
     private static int turns(Object v) {
         int n = integer(v);
         if (n < 0 || n > MAX_TURNS) {
-            throw new IllegalArgumentException("回転数は0〜" + MAX_TURNS + "です(" + n + ")");
+            throw new PlanArgumentException("回転数は0〜" + MAX_TURNS + "です(" + n + ")");
         }
         return n;
     }
@@ -312,26 +316,26 @@ final class PlanCommandDispatcher {
             switch (kind) {
                 case ANCHOR_SURFACE -> {
                     if (a.size() != SURFACE_ANCHOR_SIZE || !(a.get(1) instanceof String target) || !(a.get(2) instanceof String side)) {
-                        throw new IllegalArgumentException("[\"" + ANCHOR_SURFACE + "\", 壁ID, \"" + SIDE_OUTER + "\"か\"" + SIDE_INNER
+                        throw new PlanArgumentException("[\"" + ANCHOR_SURFACE + "\", 壁ID, \"" + SIDE_OUTER + "\"か\"" + SIDE_INNER
                                 + "\", u, v] の形にしてください");
                     }
                     if (!side.equals(SIDE_OUTER) && !side.equals(SIDE_INNER)) {
-                        throw new IllegalArgumentException("面の側は \"" + SIDE_OUTER + "\" か \"" + SIDE_INNER
+                        throw new PlanArgumentException("面の側は \"" + SIDE_OUTER + "\" か \"" + SIDE_INNER
                                 + "\" です(" + PlanValueText.describe(side) + ")");
                     }
                     return PlanAnchorArgs.surface(target, side, integer(a.get(3)), integer(a.get(4)));
                 }
                 case ANCHOR_SLOT -> {
                     if (a.size() < SLOT_ANCHOR_MIN_SIZE || a.size() > SLOT_ANCHOR_MAX_SIZE || !(a.get(1) instanceof String slot)) {
-                        throw new IllegalArgumentException("[\"" + ANCHOR_SLOT + "\", スロットID, 回転数, 鏡像] の形にしてください");
+                        throw new PlanArgumentException("[\"" + ANCHOR_SLOT + "\", スロットID, 回転数, 鏡像] の形にしてください");
                     }
                     return PlanAnchorArgs.slot(slot, a.size() > 2 ? turns(a.get(2)) : 0, a.size() > 3 && bool(a.get(3)));
                 }
-                default -> throw new IllegalArgumentException("位置指定の種類が不明です: " + PlanValueText.describe(kind));
+                default -> throw new PlanArgumentException("位置指定の種類が不明です: " + PlanValueText.describe(kind));
             }
         }
         if (a.size() < ABSOLUTE_ANCHOR_MIN_SIZE || a.size() > ABSOLUTE_ANCHOR_MAX_SIZE) {
-            throw new IllegalArgumentException("[u, v, w] か [u, v, w, 回転数, 鏡像] の形にしてください");
+            throw new PlanArgumentException("[u, v, w] か [u, v, w, 回転数, 鏡像] の形にしてください");
         }
         return PlanAnchorArgs.absolute(integer(a.get(0)), integer(a.get(1)), integer(a.get(2)),
                 a.size() > 3 ? turns(a.get(3)) : 0, a.size() > 4 && bool(a.get(4)));

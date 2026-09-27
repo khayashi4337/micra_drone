@@ -23,6 +23,7 @@ import io.github.khayashi4337.micradrone.build.model.Side;
 import io.github.khayashi4337.micradrone.lang.MicraFunction;
 import io.github.khayashi4337.micradrone.lang.MicraNone;
 import io.github.khayashi4337.micradrone.lang.PlanAnchorArgs;
+import io.github.khayashi4337.micradrone.lang.PlanArgumentException;
 import io.github.khayashi4337.micradrone.lang.PlanBudgetException;
 import io.github.khayashi4337.micradrone.lang.PlanRunLimits;
 import java.util.ArrayList;
@@ -125,21 +126,21 @@ class PlanRecorderTest {
     @Test
     void badValuesAreIllegalArgumentsWithAMessage() {
         PlanRecorder r = new PlanRecorder();
-        assertThrows(IllegalArgumentException.class, () -> r.site("d", 0, 0, 0, "up", new int[]{0, 0, 0, 1, 1, 1}, "", ""));
-        assertThrows(IllegalArgumentException.class, () -> r.site("d", 0, 0, 0, "north", new int[]{5, 0, 0, 1, 1, 1}, "", ""));
-        assertThrows(IllegalArgumentException.class, () -> r.part("a", "micra:pillar", null, PlanAnchorArgs.absolute(0, 0, 0, 0, false),
+        assertThrows(PlanArgumentException.class, () -> r.site("d", 0, 0, 0, "up", new int[]{0, 0, 0, 1, 1, 1}, "", ""));
+        assertThrows(PlanArgumentException.class, () -> r.site("d", 0, 0, 0, "north", new int[]{5, 0, 0, 1, 1, 1}, "", ""));
+        assertThrows(PlanArgumentException.class, () -> r.part("a", "micra:pillar", null, PlanAnchorArgs.absolute(0, 0, 0, 0, false),
                 params("k", params("nested", 1.0)), List.of(), ""));
-        assertThrows(IllegalArgumentException.class, () -> r.connect("c", "nodot", "b.in", "item", null, null));
-        assertThrows(IllegalArgumentException.class, () -> r.connect("c", "a.o", "b.i", "steam", null, null));
-        assertThrows(IllegalArgumentException.class, () -> r.connect("c", "a.o", "b.i", "item", null, params("bogus", 1.0)));
-        assertThrows(IllegalArgumentException.class, () -> r.part("a", "micra:pillar", null, PlanAnchorArgs.surface("w", "top", 0, 0), params(), List.of(), ""));
+        assertThrows(PlanArgumentException.class, () -> r.connect("c", "nodot", "b.in", "item", null, null));
+        assertThrows(PlanArgumentException.class, () -> r.connect("c", "a.o", "b.i", "steam", null, null));
+        assertThrows(PlanArgumentException.class, () -> r.connect("c", "a.o", "b.i", "item", null, params("bogus", 1.0)));
+        assertThrows(PlanArgumentException.class, () -> r.part("a", "micra:pillar", null, PlanAnchorArgs.surface("w", "top", 0, 0), params(), List.of(), ""));
     }
 
     /** Long enough that leaking it into a message would prove the raw script text is quoted. */
     private static final String RAW_ENUM_TEXT = "q".repeat(300);
 
     private static void assertEnumRefusal(String field, List<String> allowed,
-            IllegalArgumentException e) {
+            PlanArgumentException e) {
         assertTrue(e.getMessage().contains(field), field + ": " + e.getMessage());
         for (String name : allowed) {
             assertTrue(e.getMessage().contains(name), name + " missing from: " + e.getMessage());
@@ -154,21 +155,21 @@ class PlanRecorderTest {
         // allowed lowercase names only - a 300-character input must not reach the message.
         PlanRecorder r = new PlanRecorder();
         assertEnumRefusal("向き", List.of("\"north\"", "\"east\"", "\"south\"", "\"west\""),
-                assertThrows(IllegalArgumentException.class,
+                assertThrows(PlanArgumentException.class,
                         () -> r.site("d", 0, 0, 0, RAW_ENUM_TEXT, new int[]{0, 0, 0, 1, 1, 1}, "", "")));
         assertEnumRefusal("kind", List.of("\"rotation\"", "\"item\"", "\"fluid\"", "\"redstone\"", "\"heat\"", "\"dock\""),
-                assertThrows(IllegalArgumentException.class,
+                assertThrows(PlanArgumentException.class,
                         () -> r.connect("c", "a.o", "b.i", RAW_ENUM_TEXT, null, null)));
         assertEnumRefusal("approach", List.of("\"north\"", "\"east\"", "\"south\"", "\"west\""),
-                assertThrows(IllegalArgumentException.class,
+                assertThrows(PlanArgumentException.class,
                         () -> r.logistics(List.of(params("id", "d", "pad", BOX6, "clearance", BOX6,
                                 "approach", RAW_ENUM_TEXT)), List.of(), List.of())));
         assertEnumRefusal("面の側", List.of("\"outer\"", "\"inner\""),
-                assertThrows(IllegalArgumentException.class,
+                assertThrows(PlanArgumentException.class,
                         () -> r.part("d", "t", null, PlanAnchorArgs.surface("w", RAW_ENUM_TEXT, 0, 0),
                                 params(), List.of(), "")));
         assertEnumRefusal("entry_dirs", List.of("\"up\"", "\"down\"", "\"north\"", "\"east\"", "\"south\"", "\"west\""),
-                assertThrows(IllegalArgumentException.class,
+                assertThrows(PlanArgumentException.class,
                         () -> r.connect("c", "a.o", "b.i", "item", null,
                                 params("entry_dirs", List.of(RAW_ENUM_TEXT)))));
     }
@@ -177,20 +178,20 @@ class PlanRecorderTest {
     void nonDataValuesAreRejectedWithTheArgumentNamed() {
         PlanRecorder r = new PlanRecorder();
         // a function, None and a set are not data the plan can hold - the message names the offending argument
-        IllegalArgumentException fn = assertThrows(IllegalArgumentException.class, () -> r.part("a", "micra:pillar", null,
+        PlanArgumentException fn = assertThrows(PlanArgumentException.class, () -> r.part("a", "micra:pillar", null,
                 PlanAnchorArgs.absolute(0, 0, 0, 0, false), params("cb", new MicraFunction("f", List.of(), List.of())), List.of(), ""));
         assertTrue(fn.getMessage().contains("cb"), fn.getMessage());
         assertTrue(fn.getMessage().contains("params"), fn.getMessage());
-        IllegalArgumentException none = assertThrows(IllegalArgumentException.class, () -> r.part("a", "micra:pillar", null,
+        PlanArgumentException none = assertThrows(PlanArgumentException.class, () -> r.part("a", "micra:pillar", null,
                 PlanAnchorArgs.absolute(0, 0, 0, 0, false), params("x", MicraNone.INSTANCE), List.of(), ""));
         assertTrue(none.getMessage().contains("x"), none.getMessage());
-        IllegalArgumentException set = assertThrows(IllegalArgumentException.class, () -> r.updateParams("a",
+        PlanArgumentException set = assertThrows(PlanArgumentException.class, () -> r.updateParams("a",
                 params("s", Set.of(1.0))));
         assertTrue(set.getMessage().contains("s"), set.getMessage());
         // the same rule inside the logistics lists
-        assertThrows(IllegalArgumentException.class, () -> r.logistics(List.of(MicraNone.INSTANCE), List.of(), List.of()));
-        assertThrows(IllegalArgumentException.class, () -> r.logistics(List.of(params("id", "d", "pad", Set.of(1.0))), List.of(), List.of()));
-        assertThrows(IllegalArgumentException.class, () -> r.connect("c", "a.o", "b.i", "item", null, params("avoid", Set.of("x"))));
+        assertThrows(PlanArgumentException.class, () -> r.logistics(List.of(MicraNone.INSTANCE), List.of(), List.of()));
+        assertThrows(PlanArgumentException.class, () -> r.logistics(List.of(params("id", "d", "pad", Set.of(1.0))), List.of(), List.of()));
+        assertThrows(PlanArgumentException.class, () -> r.connect("c", "a.o", "b.i", "item", null, params("avoid", Set.of("x"))));
     }
 
     @Test
@@ -235,17 +236,17 @@ class PlanRecorderTest {
     void unknownKeysInTheLogisticsDictsAreRejectedWithTheAllowedKeysNamed() {
         PlanRecorder r = new PlanRecorder();
         List<Object> box = List.of(0.0, 0.0, 0.0, 8.0, 0.0, 8.0);
-        IllegalArgumentException dock = assertThrows(IllegalArgumentException.class, () -> r.logistics(
+        PlanArgumentException dock = assertThrows(PlanArgumentException.class, () -> r.logistics(
                 List.of(params("id", "d", "pad", box, "clearance", box, "approach", "north", "port", List.of("a.b"))),
                 List.of(), List.of()));
         // the offending key is quoted (「port」), not a bare substring of the allowed "ports"
         assertTrue(dock.getMessage().contains("「port」"), dock.getMessage());
         assertTrue(dock.getMessage().contains("ports"), dock.getMessage());
-        IllegalArgumentException route = assertThrows(IllegalArgumentException.class, () -> r.logistics(List.of(),
+        PlanArgumentException route = assertThrows(PlanArgumentException.class, () -> r.logistics(List.of(),
                 List.of(params("id", "r", "from", "a", "to", "b", "waypoint", List.of())), List.of()));
         assertTrue(route.getMessage().contains("「waypoint」"), route.getMessage());
         assertTrue(route.getMessage().contains("waypoints"), route.getMessage());
-        IllegalArgumentException flow = assertThrows(IllegalArgumentException.class, () -> r.logistics(List.of(),
+        PlanArgumentException flow = assertThrows(PlanArgumentException.class, () -> r.logistics(List.of(),
                 List.of(), List.of(params("item", "i", "per_min", 1.0, "from", "a", "to", "b", "rate", 2.0))));
         assertTrue(flow.getMessage().contains("rate"), flow.getMessage());
         assertTrue(flow.getMessage().contains("per_min"), flow.getMessage());
@@ -273,11 +274,11 @@ class PlanRecorderTest {
     @Test
     void aNonNumberPerMinAndAWaypointThatIsNotThreeNumbersAreRejected() {
         PlanRecorder r = new PlanRecorder();
-        assertThrows(IllegalArgumentException.class, () -> r.logistics(List.of(), List.of(),
+        assertThrows(PlanArgumentException.class, () -> r.logistics(List.of(), List.of(),
                 List.of(params("item", "i", "per_min", "fast", "from", "a", "to", "b"))));
-        assertThrows(IllegalArgumentException.class, () -> r.logistics(List.of(),
+        assertThrows(PlanArgumentException.class, () -> r.logistics(List.of(),
                 List.of(params("id", "r", "from", "a", "to", "b", "waypoints", List.of(List.of(0.0, 5.0)))), List.of()));
-        assertThrows(IllegalArgumentException.class, () -> r.logistics(List.of(),
+        assertThrows(PlanArgumentException.class, () -> r.logistics(List.of(),
                 List.of(params("id", "r", "from", "a", "to", "b", "waypoints", List.of(List.of(0.0, "x", 0.0)))), List.of()));
     }
 
@@ -309,7 +310,7 @@ class PlanRecorderTest {
         for (int i = 0; i < 22; i++) {
             r.part("p" + i, "micra:pillar", null, PlanAnchorArgs.absolute(0, 0, 0, 0, false), params, List.of(), "");
         }
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> r.part("p22",
+        PlanBudgetException e = assertThrows(PlanBudgetException.class, () -> r.part("p22",
                 "micra:pillar", null, PlanAnchorArgs.absolute(0, 0, 0, 0, false), params, List.of(), ""));
         assertTrue(e.getMessage().contains("200000"), e.getMessage());
     }
@@ -328,7 +329,7 @@ class PlanRecorderTest {
         for (int i = 0; i < 6; i++) {
             r.part("p" + i, "micra:pillar", null, PlanAnchorArgs.absolute(0, 0, 0, 0, false), params(), tags, "");
         }
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> r.part("p6",
+        PlanBudgetException e = assertThrows(PlanBudgetException.class, () -> r.part("p6",
                 "micra:pillar", null, PlanAnchorArgs.absolute(0, 0, 0, 0, false), params(), tags, ""));
         assertTrue(e.getMessage().contains("200000"), e.getMessage());
     }
@@ -346,7 +347,7 @@ class PlanRecorderTest {
         for (int i = 0; i < 6; i++) {
             r.connect("c" + i, "a.out", "b.in", "item", via, null);
         }
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+        PlanBudgetException e = assertThrows(PlanBudgetException.class,
                 () -> r.connect("c6", "a.out", "b.in", "item", via, null));
         assertTrue(e.getMessage().contains("200000"), e.getMessage());
     }
@@ -376,7 +377,7 @@ class PlanRecorderTest {
         for (int i = 0; i < 19_000; i++) {
             manyDocks.add(dock);
         }
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+        PlanBudgetException e = assertThrows(PlanBudgetException.class,
                 () -> r.logistics(manyDocks, List.of(), List.of()));
         assertTrue(e.getMessage().contains("200000"), e.getMessage());
     }
@@ -388,13 +389,13 @@ class PlanRecorderTest {
         PlanRecorder r = new PlanRecorder();
         String text = "x".repeat(524_288);
         r.print(text);
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> r.print(text));
+        PlanBudgetException e = assertThrows(PlanBudgetException.class, () -> r.print(text));
         assertTrue(e.getMessage().contains("1000000"), e.getMessage());
         assertEquals(1, r.printed().size(), "a refused print is not retained");
         // exactly 1,000,000 characters in total still fit (the check is ">", not ">="); one more is refused
         PlanRecorder exact = new PlanRecorder();
         exact.print("x".repeat(1_000_000));
-        assertThrows(IllegalArgumentException.class, () -> exact.print("x"));
+        assertThrows(PlanBudgetException.class, () -> exact.print("x"));
     }
 
     @Test
@@ -444,7 +445,7 @@ class PlanRecorderTest {
         PlanRecorder r = new PlanRecorder();
         List<Object> elevenDocks = new ArrayList<>(tenDocks);
         elevenDocks.add(dock);
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+        PlanBudgetException e = assertThrows(PlanBudgetException.class,
                 () -> r.logistics(elevenDocks, List.of(), List.of()));
         assertTrue(e.getMessage().contains("200000"), e.getMessage());
     }
@@ -471,7 +472,7 @@ class PlanRecorderTest {
         PlanRecorder r = new PlanRecorder();
         List<Object> elevenRoutes = new ArrayList<>(tenRoutes);
         elevenRoutes.add(route);
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+        PlanBudgetException e = assertThrows(PlanBudgetException.class,
                 () -> r.logistics(List.of(), elevenRoutes, List.of()));
         assertTrue(e.getMessage().contains("200000"), e.getMessage());
     }
@@ -492,7 +493,7 @@ class PlanRecorderTest {
         for (int i = 0; i < 6; i++) {
             r.connect("c" + i, "a.out", "b.in", "item", null, constraints);
         }
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+        PlanBudgetException e = assertThrows(PlanBudgetException.class,
                 () -> r.connect("c6", "a.out", "b.in", "item", null, constraints));
         assertTrue(e.getMessage().contains("200000"), e.getMessage());
     }
@@ -512,7 +513,7 @@ class PlanRecorderTest {
         for (int i = 0; i < 6; i++) {
             r.connect("c" + i, "a.out", "b.in", "item", null, constraints);
         }
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+        PlanBudgetException e = assertThrows(PlanBudgetException.class,
                 () -> r.connect("c6", "a.out", "b.in", "item", null, constraints));
         assertTrue(e.getMessage().contains("200000"), e.getMessage());
     }
@@ -533,7 +534,7 @@ class PlanRecorderTest {
         PlanRecorder r = new PlanRecorder();
         List<Object> tooMany = new ArrayList<>(maxFlows);
         tooMany.add(flow);
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+        PlanBudgetException e = assertThrows(PlanBudgetException.class,
                 () -> r.logistics(List.of(), List.of(), tooMany));
         assertTrue(e.getMessage().contains("200000"), e.getMessage());
     }
@@ -546,7 +547,7 @@ class PlanRecorderTest {
         for (int i = 0; i < 200_000; i++) {
             r.logistics(List.of(), List.of(), List.of());
         }
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+        PlanBudgetException e = assertThrows(PlanBudgetException.class,
                 () -> r.logistics(List.of(), List.of(), List.of()));
         assertTrue(e.getMessage().contains("200000"), e.getMessage());
     }
@@ -559,13 +560,13 @@ class PlanRecorderTest {
         for (int i = 0; i < 200_000; i++) {
             r.style("r", "m");
         }
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> r.style("r", "m"));
+        PlanBudgetException e = assertThrows(PlanBudgetException.class, () -> r.style("r", "m"));
         assertTrue(e.getMessage().contains("200000"), e.getMessage());
         PlanRecorder moods = new PlanRecorder();
         for (int i = 0; i < 200_000; i++) {
             moods.mood("t");
         }
-        IllegalArgumentException e2 = assertThrows(IllegalArgumentException.class, () -> moods.mood("t"));
+        PlanBudgetException e2 = assertThrows(PlanBudgetException.class, () -> moods.mood("t"));
         assertTrue(e2.getMessage().contains("200000"), e2.getMessage());
     }
 
@@ -593,7 +594,7 @@ class PlanRecorderTest {
                 r.removePart("");
             }
             testCase.getValue().accept(r);
-            IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+            PlanBudgetException e = assertThrows(PlanBudgetException.class,
                     () -> testCase.getValue().accept(r), testCase.getKey());
             assertTrue(e.getMessage().contains("200000"), testCase.getKey() + ": " + e.getMessage());
         }
@@ -757,3 +758,4 @@ class PlanRecorderTest {
         assertTrue(new PlanBudgetException("x") instanceof IllegalArgumentException);
     }
 }
+
