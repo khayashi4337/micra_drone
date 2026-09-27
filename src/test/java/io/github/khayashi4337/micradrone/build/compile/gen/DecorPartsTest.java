@@ -41,6 +41,7 @@ class DecorPartsTest {
     private static final String SIGN = "micra:sign";
     private static final String PLANTER = "micra:planter";
     private static final String TRIM = "micra:trim";
+    private static final String BALCONY = "micra:balcony";
     private static final String STRUCTURE = "micra:structure";
     private static final String WALL = "micra:wall";
     private static final String STRUCTURE_ID = "s";
@@ -61,6 +62,7 @@ class DecorPartsTest {
 
     // Palette roles the tests override.
     private static final String ROLE_FENCE = "fence";
+    private static final String ROLE_FLOOR = "floor";
     private static final String ROLE_PLANT = "plant";
     private static final String ROLE_SIGN = "sign";
     private static final String ROLE_TRIM = "trim";
@@ -101,6 +103,7 @@ class DecorPartsTest {
     private static final String SIGN_ID = "sg";
     private static final String PLANTER_ID = "pl";
     private static final String TRIM_ID = "tr";
+    private static final String BALCONY_ID = "b";
     private static final String LAMP_ID = "l";
     private static final String SIGN_BAD_TEXT_ID = "E-PARAM-RANGE:" + SIGN_ID + "#text";
     private static final String SIGN_OFF_WALL_ID = "E-OPENING-NO-WALL:" + SIGN_ID + "#anchor";
@@ -108,6 +111,8 @@ class DecorPartsTest {
     private static final String PLANTER_EXTENT_ID = "E-ANCHOR:" + PLANTER_ID + "#extent";
     private static final String PLANTER_OFF_WALL_ID = "E-OPENING-NO-WALL:" + PLANTER_ID + "#anchor";
     private static final String TRIM_EXTENT_ID = "E-ANCHOR:" + TRIM_ID + "#extent";
+    private static final String BALCONY_EXTENT_ID = "E-ANCHOR:" + BALCONY_ID + "#extent";
+    private static final String BALCONY_INNER_ID = "E-ANCHOR:" + BALCONY_ID + "#anchor";
     private static final String TRIM_OFF_WALL_ID = "E-OPENING-NO-WALL:" + TRIM_ID + "#anchor";
 
     /** The hall: 7 x 7, one floor, floor height 4: walls are 3 rows high (v = 1..3, the floor takes v = 0), 7 long. */
@@ -514,6 +519,12 @@ class DecorPartsTest {
                         Map.of(ROLE_SIGN, BEDROCK), SIGN_BAD_TEXT_ID),
                 new Refusal(onNorthWall(SIGN_ID, SIGN, Side.OUTER, 3, 1, params(P_TEXT, "0123456789abcdef")),
                         Map.of(ROLE_SIGN, BEDROCK), SIGN_BAD_TEXT_ID),
+                // a balcony has two blocks to look up (the floor's material and the fence role); neither may be asked
+                // for before it is refused, on the inner face or past the wall's end
+                new Refusal(onNorthWall(BALCONY_ID, BALCONY, Side.INNER, 1, 0, Map.of()),
+                        Map.of(ROLE_FLOOR, BEDROCK, ROLE_FENCE, BEDROCK), BALCONY_INNER_ID),
+                new Refusal(onNorthWall(BALCONY_ID, BALCONY, Side.OUTER, 5, 0, params(P_WIDTH, 3)),
+                        Map.of(ROLE_FLOOR, BEDROCK, ROLE_FENCE, BEDROCK), BALCONY_EXTENT_ID),
                 // a target that is not a wall (the patcher refuses it at plan level, so this calls the generator
                 // directly): the anchor check of wallOfAnchor
                 new Refusal(onWall(PLANTER_ID, PLANTER, STRUCTURE_ID, STRUCTURE_ID, Side.OUTER, 0, 0, Map.of()),

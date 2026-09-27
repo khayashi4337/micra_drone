@@ -75,6 +75,9 @@ public final class PlanExpander {
         Map<String, ModuleTemplate> moduleInstances = new HashMap<>();
         List<Connection> connections = new ArrayList<>(plan.connections());
         TreeSet<String> hashes = new TreeSet<>();
+        // Nodes left out because they were refused (their issue is reported): the parts that hang from one are not also
+        // reported as having a missing parent.
+        Set<String> refused = new HashSet<>();
 
         Set<String> moduleIds = new HashSet<>();
         for (PlanNode n : plan.nodes()) {
@@ -86,27 +89,33 @@ public final class PlanExpander {
             if (node.parent() != null && moduleIds.contains(node.parent())) {
                 issues.add(Issue.of(IssueCode.E_ANCHOR, Origins.KEY_PARENT, List.of(node.id()),
                         "モジュール(" + node.parent() + ")の中に部品は入れられません。テンプレートの部品として書いてください"));
+                refused.add(node.id());
                 continue;
             }
             if (!isModule(node)) {
                 PlanNode placed = placeOnSlot(node, issues);
                 if (placed != null) {
                     primitive.add(placed);
+                } else {
+                    refused.add(node.id());
                 }
                 continue;
             }
             ModuleTemplate template = templates.find(node.type()).orElse(null);
             if (template == null) {
                 issues.add(Issue.of(IssueCode.E_UNKNOWN_PART, List.of(node.id()), "テンプレートがありません: " + node.type()));
+                refused.add(node.id());
                 continue;
             }
             if (instantiate(node, template, primitive, connections, issues)) {
                 moduleInstances.put(node.id(), template);
                 hashes.add(template.hash());
+            } else {
+                refused.add(node.id());
             }
         }
 
-        Map<String, LocalPos> origins = Origins.resolve(primitive, slots, issues);
+        Map<String, LocalPos> origins = Origins.resolve(primitive, slots, issues, refused);
         Map<String, PlanNode> primitiveById = new HashMap<>();
         for (PlanNode n : primitive) {
             primitiveById.put(n.id(), n);

@@ -39,7 +39,15 @@ public final class Origins {
      * a node, or when an issue was added for it (or for an ancestor); each problem is reported once.
      */
     public static Map<String, LocalPos> resolve(List<PlanNode> nodes, SlotResolver slots, List<Issue> issues) {
-        Walk walk = new Walk(nodes, slots, issues);
+        return resolve(nodes, slots, issues, Set.of());
+    }
+
+    /**
+     * As above, for a caller that already refused (and reported) the nodes in {@code refusedIds} and left them out of
+     * {@code nodes}: a node whose parent is one of them has no origin and is not reported as having a missing parent.
+     */
+    public static Map<String, LocalPos> resolve(List<PlanNode> nodes, SlotResolver slots, List<Issue> issues, Set<String> refusedIds) {
+        Walk walk = new Walk(nodes, slots, issues, refusedIds);
         for (PlanNode n : nodes) {
             walk.resolve(walk.node(n.id()));
         }
@@ -79,13 +87,16 @@ public final class Origins {
         private final List<Issue> issues;
         final Map<String, LocalPos> origins = new HashMap<>();
         private final Set<String> unresolved = new HashSet<>();
+        /** Ids of nodes the caller refused and reported: a parent named here is not "missing". */
+        private final Set<String> refused;
 
-        Walk(List<PlanNode> nodes, SlotResolver slots, List<Issue> issues) {
+        Walk(List<PlanNode> nodes, SlotResolver slots, List<Issue> issues, Set<String> refused) {
             for (PlanNode n : nodes) {
                 byId.put(n.id(), n);
             }
             this.slots = slots;
             this.issues = issues;
+            this.refused = refused;
         }
 
         PlanNode node(String id) {
@@ -114,8 +125,9 @@ public final class Origins {
                 }
                 PlanNode parent = byId.get(parentId);
                 if (parent == null) {
-                    abandon(chain, Issue.of(IssueCode.E_ANCHOR, KEY_PARENT, List.of(current.id()),
-                            "親のノードがありません: " + parentId));
+                    // a parent that was refused is already reported; only one that is simply not there is a new problem
+                    abandon(chain, refused.contains(parentId) ? null : Issue.of(IssueCode.E_ANCHOR, KEY_PARENT,
+                            List.of(current.id()), "親のノードがありません: " + parentId));
                     return;
                 }
                 LocalPos parentOrigin = origins.get(parentId);

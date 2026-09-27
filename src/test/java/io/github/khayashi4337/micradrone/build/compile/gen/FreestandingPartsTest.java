@@ -10,6 +10,7 @@ import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.pa
 import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.ruled;
 import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.shell;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -28,7 +29,11 @@ import io.github.khayashi4337.micradrone.build.model.Rot;
 import io.github.khayashi4337.micradrone.build.model.SemanticPlan;
 import io.github.khayashi4337.micradrone.build.model.Side;
 import io.github.khayashi4337.micradrone.build.model.StyleSpec;
+import io.github.khayashi4337.micradrone.build.parts.BuildPhase;
+import io.github.khayashi4337.micradrone.build.parts.Params;
+import io.github.khayashi4337.micradrone.build.parts.VerifyMode;
 import io.github.khayashi4337.micradrone.build.plan.ExpandResult;
+import io.github.khayashi4337.micradrone.build.plan.Origins;
 import io.github.khayashi4337.micradrone.build.plan.PlanExpander;
 import io.github.khayashi4337.micradrone.build.plan.Router;
 import io.github.khayashi4337.micradrone.build.plan.SlotResolver;
@@ -85,6 +90,11 @@ class FreestandingPartsTest {
     /** The part in a test that builds one part alone. */
     private static final String PART_ID = "p";
     private static final String PAD_ID = "d";
+    /** A second part beside PART_ID, that sorts after it. */
+    private static final String SECOND_ID = "q";
+    /** A material that names no palette role, and a block that has no slab form. */
+    private static final String BAD_ROLE = "no_such_role";
+    private static final String RED_TERRACOTTA = "minecraft:red_terracotta";
     /** Stands in the pad's air space: it sorts after the pad's id, so an overlap names the pad first. */
     private static final String OBSTACLE_ID = "l";
     private static final String REASON_KEY = "reason";
@@ -105,6 +115,24 @@ class FreestandingPartsTest {
     /** Cell budgets small enough for the arithmetic in the two work-budget tests (the attempt budget is twice this). */
     private static final int PADS_BUDGET_CELLS = 10_000;
     private static final int CHIMNEYS_BUDGET_CELLS = 16;
+    /** The largest pad the spec allows, and the most clearance. */
+    private static final int LARGEST_PAD = 64;
+    private static final int LARGEST_CLEARANCE = 64;
+    /** Room for the largest pad's cells in a canvas that is used directly. */
+    private static final int PAD_CANVAS_CELLS = 10_000;
+    /** Unrelated cells that make the canvas larger than a small pad's air, so that the air is what gets walked. */
+    private static final int FILLER_CELLS = 1_000;
+    private static final String FILLER_ID = "x";
+    private static final int FILLER_FIRST_U = 100;
+    /** Beams that run through and beside a pad's air space: 17 rows of 17 cells at v = 2, from u = 4, w = 14. */
+    private static final int BEAM_FIELD_ROWS = 17;
+    private static final int BEAM_FIELD_U = 4;
+    private static final int BEAM_FIELD_V = 2;
+    private static final int BEAM_FIELD_W = 14;
+    /** A road of 64 x 8 = 512 cells at v = 0, far from the pad and the beams. */
+    private static final int ROAD_U = 80;
+    private static final int ROAD_LENGTH = 64;
+    private static final int ROAD_WIDTH = 8;
     private static final Duration BUDGET_TIMEOUT = Duration.ofSeconds(10);
 
     private static PlanNode at(String id, String type, int u, int v, int w, Map<String, ParamValue> params) {
@@ -470,9 +498,11 @@ class FreestandingPartsTest {
     // ------------------------------------------------------------------ work budget
 
     @Test
-    void aPadsAirSpaceCountsAsWorkAgainstTheBudget() {
-        // 20 separate 5 x 5 pads with 64 rows of air: 20 x 26 = 520 placements, but 20 x 5 x 5 x 64 = 32,000 cells looked at
-        // in the air. PlanCompiler(10_000) allows 2 x 10,000 attempts, so the looking alone must be counted to stop it.
+    void manyPadsWithTallAirAreNotStoppedByTheAirTheyOwn() {
+        // 20 separate 5 x 5 pads with 64 rows of air: 20 x 26 = 520 placements and 20 x 5 x 5 x 64 = 32,000 cells of air.
+        // PlanCompiler(10_000) allows 2 x 10,000 attempts. The air is not counted (it is empty): each pad's check looks
+        // at the 520 occupied cells of the canvas (fewer than its 1,600 cells of air), 20 x 520 = 10,400 attempts, and
+        // with the 520 placements 10,920 in all. Counted per cell of air the plan would need 32,520 and be stopped.
         int padsPerRow = 10;
         int spacing = 6;
         List<PlanNode> pads = new ArrayList<>();
@@ -481,10 +511,140 @@ class FreestandingPartsTest {
                     params(P_WIDTH, SMALLEST_PAD, P_DEPTH, SMALLEST_PAD, P_CLEARANCE, 64)));
         }
         SemanticPlan plan = CompileFixtures.plan(CompileFixtures.site(Facing.NORTH), STYLE, pads);
-        assertTrue(compile(plan).issues().isEmpty(), "with the default budget the same plan compiles");
         CompileResult small = assertTimeoutPreemptively(BUDGET_TIMEOUT, () -> compile(plan, new PlanCompiler(PADS_BUDGET_CELLS)));
-        assertNull(small.manifest());
-        assertEquals(List.of(BUDGET_ISSUE_ID), ids(small));
+        assertTrue(small.issues().isEmpty(), small.issues().toString());
+        assertNotNull(small.manifest());
+    }
+
+    @Test
+    void twoPadsOfTheLargestSizeFitTheDefaultWorkBudget() {
+        // 64 x 64 with 64 rows of clearance is the most air the spec allows: 262,144 cells each. Looked at cell by cell the
+        // two need 524,288 attempts against the 400,000 the default budget allows, so a plan the spec permits failed. Only
+        // the occupied cells are looked at: each pad's check goes through the 2 x 4,097 cells of the canvas (fewer than
+        // its air), 8,194 attempts, and with the 8,194 placements 24,582 in all. The second pad stands just above the
+        // first one's air (v = 65), inside the test site.
+        Map<String, ParamValue> largest = params(P_WIDTH, LARGEST_PAD, P_DEPTH, LARGEST_PAD, P_CLEARANCE, LARGEST_CLEARANCE);
+        List<PlanNode> pads = List.of(at("d1", DOCK_PAD, 0, 0, 0, largest),
+                at("d2", DOCK_PAD, 0, LARGEST_CLEARANCE + 1, 0, largest));
+        CompileResult r = assertTimeoutPreemptively(BUDGET_TIMEOUT, () -> compile(STYLE, pads));
+        assertTrue(r.issues().isEmpty(), r.issues().toString());
+        // each pad places its 64 x 64 cells and one barrel
+        assertEquals(2 * (LARGEST_PAD * LARGEST_PAD + 1), r.manifest().placements().size());
+    }
+
+    /**
+     * The attempts that one pad's air check adds, in a fresh context: the pad at the origin is generated first, then
+     * {@code filler} unrelated cells are put on the canvas, and only the check itself is counted.
+     */
+    private static long airCheckAttempts(Map<String, ParamValue> padParams, int filler) {
+        PlanNode pad = at(PAD_ID, DOCK_PAD, 0, 0, 0, padParams);
+        List<Issue> issues = new ArrayList<>();
+        Map<String, LocalPos> origins = Origins.resolve(List.of(pad), SlotResolver.NONE, issues);
+        GenContext ctx = new GenContext(CompileFixtures.REGISTRY, new Palette(CompileFixtures.REGISTRY.defaultPalette(), Map.of()),
+                new Canvas(PAD_CANVAS_CELLS), issues, Map.of(PAD_ID, pad), origins);
+        PartGenerator generator = PartGenerators.find(DOCK_PAD).orElseThrow().generator();
+        Params resolved = Params.resolve(CompileFixtures.REGISTRY.get(DOCK_PAD), pad.params());
+        generator.generate(ctx, pad, resolved);
+        for (int k = 0; k < filler; k++) {
+            ctx.canvas().put(new Canvas.Cell(new LocalPos(FILLER_FIRST_U + k, 0, 0), BlockSpec.of(STONE), VerifyMode.EXACT,
+                    BuildPhase.STRUCTURE, Map.of(), FILLER_ID, null, null));
+        }
+        long before = ctx.canvas().attempts();
+        generator.afterAll(ctx, pad, resolved);
+        assertTrue(issues.isEmpty(), issues.toString());
+        assertTrue(ctx.canvas().overlapIssues().isEmpty(), "nothing else stands in the air");
+        return ctx.canvas().attempts() - before;
+    }
+
+    @Test
+    void aPadsAirCheckCostsTheOccupiedCellsItLooksAtAndNeverTheAir() {
+        // A 5 x 5 pad has 25 cells and a barrel: 26 occupied cells, and 5 x 5 x 16 = 400 cells of air. The canvas is the
+        // smaller, so its 26 cells are walked and counted (25 pad cells, one barrel): 26 attempts.
+        assertEquals(26, airCheckAttempts(params(P_WIDTH, SMALLEST_PAD, P_DEPTH, SMALLEST_PAD, P_CLEARANCE, 16), 0));
+        // twice as much air costs nothing more
+        assertEquals(26, airCheckAttempts(params(P_WIDTH, SMALLEST_PAD, P_DEPTH, SMALLEST_PAD, P_CLEARANCE, 32), 0));
+        // With 1,000 other cells on the canvas the pad's own 5 x 5 x 4 = 100 cells of air are the smaller: they are asked
+        // for one by one, and of them only the barrel stands there (v = 1), so one attempt; the 99 empty ones are free.
+        assertEquals(1, airCheckAttempts(params(P_WIDTH, SMALLEST_PAD, P_DEPTH, SMALLEST_PAD, P_CLEARANCE, 4), FILLER_CELLS));
+        // exactly as many cells of air as cells on the canvas is the air's turn: 5 x 5 x 4 = 100 = 26 + 74
+        assertEquals(1, airCheckAttempts(params(P_WIDTH, SMALLEST_PAD, P_DEPTH, SMALLEST_PAD, P_CLEARANCE, 4), 74));
+        // one cell fewer on the canvas, and the canvas is the smaller: 26 + 73 = 99 cells walked
+        assertEquals(99, airCheckAttempts(params(P_WIDTH, SMALLEST_PAD, P_DEPTH, SMALLEST_PAD, P_CLEARANCE, 4), 73));
+    }
+
+    @Test
+    void aPadRefusedWhileBeingMadeHasNoAirSpaceToCheck() {
+        // Both pads are refused before anything is placed: the cargo lies off the pad, or the material is no palette role.
+        // A pillar stands where the pad's air would be. It is not reported as overlapping a pad that was never made.
+        PlanNode inTheAir = at(OBSTACLE_ID, PILLAR, 2, 2, 2, params(P_HEIGHT, 1));
+        assertEquals(List.of("E-PARAM-RANGE:d#cargo_u"), ids(compile(STYLE, List.of(
+                at(PAD_ID, DOCK_PAD, 0, 0, 0, params(P_WIDTH, SMALLEST_PAD, P_DEPTH, SMALLEST_PAD, P_CARGO_U, 5)), inTheAir))));
+        assertEquals(List.of("E-PARAM-RANGE:d#material"), ids(compile(STYLE, List.of(
+                at(PAD_ID, DOCK_PAD, 0, 0, 0, params(P_WIDTH, SMALLEST_PAD, P_DEPTH, SMALLEST_PAD, P_MATERIAL, BAD_ROLE)), inTheAir))));
+    }
+
+    // ------------------------------------------------------------------ a refused part leaves nothing behind
+
+    @Test
+    void aPillarWhoseShaftMaterialIsRefusedLeavesNoBaseBehind() {
+        // p's base is trim (a role that exists) and its shaft is not, so the refusal comes after the first row could have
+        // been placed. Nothing of p may stay on the canvas: q stands on the same spot and must not be reported as
+        // overlapping a part that was refused.
+        CompileResult r = compile(STYLE, List.of(
+                at(PART_ID, PILLAR, 0, 0, 0, params(P_MATERIAL, BAD_ROLE)),
+                at(SECOND_ID, PILLAR, 0, 0, 0, Map.of())));
+        assertNull(r.manifest());
+        assertEquals(List.of("E-PARAM-RANGE:" + PART_ID + "#material"), ids(r));
+    }
+
+    @Test
+    void aChimneyWhoseCapCannotBeMadeLeavesNoShaftBehind() {
+        // red terracotta has no slab in vanilla, so the cap is refused only after the shaft's block was found
+        CompileResult r = compile(STYLE, List.of(
+                at(PART_ID, CHIMNEY, 0, 0, 0, params(P_MATERIAL, RED_TERRACOTTA)),
+                at(SECOND_ID, CHIMNEY, 0, 0, 0, Map.of())));
+        assertNull(r.manifest());
+        assertEquals(List.of("E-PARAM-RANGE:" + PART_ID + "#material"), ids(r));
+    }
+
+    @Test
+    void anOverlapOfAPairKeepsTheClearanceReasonWhenItsFirstCellIsNotInTheAir() {
+        // The pillar stands on the pad's own first cell (v = 0) and in its air (v = 1..3): four cells, one of them a plain
+        // overlap and three in the air. The pair is one issue, and it says "clearance" whichever kind was seen first.
+        CompileResult r = compile(STYLE, List.of(
+                at(PAD_ID, DOCK_PAD, 0, 0, 0, params(P_WIDTH, SMALLEST_PAD, P_DEPTH, SMALLEST_PAD, P_CLEARANCE, 4)),
+                at(OBSTACLE_ID, PILLAR, 0, 0, 0, params(P_HEIGHT, 4, P_BASE, false, P_CAPITAL, false))));
+        assertNull(r.manifest());
+        assertEquals(List.of(OVERLAP_ID_PREFIX + PAD_ID + "," + OBSTACLE_ID), ids(r));
+        assertEquals("4", r.issues().get(0).data().get(COUNT_KEY));
+        assertEquals(REASON_CLEARANCE, r.issues().get(0).data().get(REASON_KEY));
+    }
+
+    @Test
+    void theSameOverlapsAreReportedWhicheverWayTheAirIsChecked() {
+        // A 5 x 7 pad with 16 rows of air (560 cells) at (10, 0, 20), in each of the eight turns and mirrors, and 17 beams
+        // (17 cells each, 289 in all) at v = 2 that run through and beside where the air is. With the pad's 36 cells the
+        // canvas holds 325, fewer than the air, so the canvas is walked. A road of 512 cells far away makes it 837, and the
+        // air is walked instead. The issues must be the same, first cell and all.
+        List<PlanNode> field = new ArrayList<>();
+        for (int k = 0; k < BEAM_FIELD_ROWS; k++) {
+            field.add(at("b" + k, BEAM, BEAM_FIELD_U, BEAM_FIELD_V, BEAM_FIELD_W + k, params(P_AXIS, "u", P_LENGTH, BEAM_FIELD_ROWS)));
+        }
+        PlanNode road = at("zz", ROAD, ROAD_U, 0, 0, params(P_LENGTH, ROAD_LENGTH, P_WIDTH, ROAD_WIDTH, P_DIR, "west"));
+        for (int turns = 0; turns < 4; turns++) {
+            for (boolean mirror : new boolean[]{false, true}) {
+                Map<String, ParamValue> padParams = params(P_WIDTH, SMALLEST_PAD, P_DEPTH, 7, P_CLEARANCE, 16);
+                List<PlanNode> nodes = new ArrayList<>(field);
+                nodes.add(ruled(PAD_ID, DOCK_PAD, null, new Rot(turns, mirror), 10, 0, 20, padParams));
+                List<Issue> byCanvas = compile(STYLE, nodes).issues();
+                nodes.add(road);
+                List<Issue> byAir = compile(STYLE, nodes).issues();
+                String turn = turns + (mirror ? " mirrored" : "");
+                assertTrue(byCanvas.size() > 1, turn + ": some beams stand in the air, " + byCanvas);
+                assertEquals(byCanvas, byAir, "turned " + turn);
+                assertTrue(byCanvas.stream().allMatch(x -> REASON_CLEARANCE.equals(x.data().get(REASON_KEY))), turn);
+            }
+        }
     }
 
     @Test

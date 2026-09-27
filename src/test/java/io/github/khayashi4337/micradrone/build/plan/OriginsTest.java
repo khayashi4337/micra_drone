@@ -100,6 +100,18 @@ class OriginsTest {
     }
 
     @Test
+    void aParentTheCallerRefusedIsNeitherMissingNorReportedAgain() {
+        // "m" is not in the list because the caller refused it and reported that; c and d below it have no origin, no issue
+        Map<String, LocalPos> o = Origins.resolve(List.of(
+                TestParts.at("c", "micra:pillar", "m", 1, 0, 0),
+                TestParts.at("d", "micra:pillar", "c", 1, 0, 0),
+                TestParts.at("x", "micra:pillar", "ghost", 1, 0, 0),
+                TestParts.at("ok", "micra:structure", null, 4, 0, 0)), SlotResolver.NONE, issues, Set.of("m"));
+        assertEquals(List.of("E-ANCHOR:x#parent"), issueIds(), "a parent that is simply not there is still reported");
+        assertEquals(Set.of("ok"), o.keySet());
+    }
+
+    @Test
     void surfaceNodesAndTheirChildrenHaveNoOriginAndNoIssue() {
         Map<String, LocalPos> o = resolve(List.of(
                 TestParts.at("wall", "micra:wall", null, 4, 0, 4),

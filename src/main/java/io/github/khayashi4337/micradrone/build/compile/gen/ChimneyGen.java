@@ -22,6 +22,9 @@ final class ChimneyGen implements PartGenerator {
         int height = p.i(P_HEIGHT);
         int size = p.i(P_SIZE);
         BlockSpec shaft = ctx.plainBlock(p.s(P_MATERIAL), node);
+        // The cap's block is asked of the palette before the first cell of the shaft is placed: a cap that cannot be made
+        // (a material with no slab form) must not leave the shaft behind. A chimney without a cap asks for no slab.
+        BlockSpec cap = p.b(P_CAP) ? BlockForms.slab(ctx.palette().slab(p.s(P_MATERIAL), node), false) : null;
         for (int dv = 0; dv < height; dv++) {
             for (int u = 0; u < size; u++) {
                 for (int w = 0; w < size; w++) {
@@ -33,8 +36,7 @@ final class ChimneyGen implements PartGenerator {
                 }
             }
         }
-        if (p.b(P_CAP)) {
-            BlockSpec cap = BlockForms.slab(ctx.palette().slab(p.s(P_MATERIAL), node), false);
+        if (cap != null) {
             for (int u = -CAP_OVERHANG; u < size + CAP_OVERHANG; u++) {
                 for (int w = -CAP_OVERHANG; w < size + CAP_OVERHANG; w++) {
                     ctx.emit(node, u, height, w, cap);

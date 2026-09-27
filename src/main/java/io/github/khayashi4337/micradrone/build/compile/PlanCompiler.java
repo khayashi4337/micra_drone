@@ -247,6 +247,9 @@ public final class PlanCompiler {
         if (!afterAll && entry.stage() != stage) {
             return;
         }
+        if (afterAll && ctx.isRefused(node.id())) {
+            return; // refused while being generated: it is reported once, and has nothing on the canvas to check
+        }
         try {
             // Checked on the part itself, not only on a module instance: a template part can carry its own turn.
             if (!afterAll && node.anchor() instanceof Anchor.Absolute a && !a.rot().equals(Rot.NONE)
@@ -263,8 +266,10 @@ public final class PlanCompiler {
             if (abort.fatal()) {
                 throw abort;
             }
+            ctx.markRefused(node.id());
             issues.add(abort.issue());
         } catch (RuntimeException unexpected) {
+            ctx.markRefused(node.id());
             // A generator must report problems as GenAbort; anything else (a malformed hand-built parameter, a bug) is
             // turned into an ERROR on the node so that one part cannot take the whole compile down or pass silently.
             issues.add(Issue.of(IssueCode.E_UNKNOWN_PART, KEY_GENERATOR, List.of(node.id()),

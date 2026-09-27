@@ -153,15 +153,67 @@ class GenContextTest {
     }
 
     @Test
-    void carvingACellTwiceIsAnOverlapOfTheTwoOpenings() {
+    void carvingACellTwiceIsOneOverlapIssueNamingBothOpenings() {
         GenContext ctx = generated(List.of());
         WallInfo north = ctx.wallInfo(NORTH_WALL).orElseThrow();
         LocalPos cell = north.cell(2, 0, 1);
         ctx.carve(door(NORTH_WALL, Side.OUTER, 2, 0), north, List.of(cell));
         GenAbort again = assertThrows(GenAbort.class, () -> ctx.carve(onWall("w", "micra:window", "s", NORTH_WALL, Side.OUTER, 2, 1,
                 Map.of()), north, List.of(cell)));
-        assertEquals("E-OVERLAP:w#carve", again.issue().id());
-        assertEquals(1, ctx.canvas().overlapIssues().size());
-        assertEquals(List.of("d", "w"), ctx.canvas().overlapIssues().get(0).subjects());
+        // the refusal is the one report: both openings, how many cells and the first; the canvas has no second one for the pair
+        assertEquals("E-OVERLAP:d,w#carve", again.issue().id());
+        assertEquals(List.of("d", "w"), again.issue().subjects());
+        assertEquals("1", again.issue().data().get(Canvas.DATA_COUNT));
+        assertEquals(Canvas.posText(cell), again.issue().data().get(Canvas.DATA_FIRST_POS));
+        assertEquals(List.of(), ctx.canvas().overlapIssues());
+    }
+
+    @Test
+    void aCarveThatOverlapsSeveralCellsAndSeveralOpeningsIsStillOneIssue() {
+        GenContext ctx = generated(List.of());
+        WallInfo north = ctx.wallInfo(NORTH_WALL).orElseThrow();
+        LocalPos first = north.cell(1, 0, 0);
+        LocalPos second = north.cell(2, 0, 0);
+        LocalPos free = north.cell(3, 0, 0);
+        ctx.carve(door(NORTH_WALL, Side.OUTER, 1, 0), north, List.of(first));
+        ctx.carve(onWall("c", DOOR, "s", NORTH_WALL, Side.OUTER, 2, 0, Map.of()), north, List.of(second));
+        // w takes the cell of d (listed first), the cell of c and a free cell: two cells overlap, and two other openings own them
+        GenAbort again = assertThrows(GenAbort.class, () -> ctx.carve(onWall("w", "micra:window", "s", NORTH_WALL, Side.OUTER, 1, 1,
+                Map.of()), north, List.of(free, first, second)));
+        assertEquals("E-OVERLAP:c,d,w#carve", again.issue().id());
+        assertEquals("2", again.issue().data().get(Canvas.DATA_COUNT));
+        assertEquals(Canvas.posText(first), again.issue().data().get(Canvas.DATA_FIRST_POS), "the first cell in the list that overlaps");
+        assertNotNull(ctx.canvas().get(free), "a refused carve removes nothing");
+    }
+
+    @Test
+    void aCellListedTwiceInOneCarveIsCountedAndRemovedOnce() {
+        GenContext ctx = generated(List.of());
+        WallInfo north = ctx.wallInfo(NORTH_WALL).orElseThrow();
+        LocalPos wallCell = north.cell(1, 0, 0);
+        LocalPos floorCell = north.cell(1, 0, -1);
+        // the floor cell is listed twice but is one cell that is not the wall's
+        GenAbort abort = assertThrows(GenAbort.class, () -> ctx.carve(door(NORTH_WALL, Side.OUTER, 1, 0), north,
+                List.of(wallCell, floorCell, floorCell)));
+        assertEquals("1", abort.issue().data().get(Canvas.DATA_COUNT));
+        // a wall cell listed twice is one carve, one unit of work, and not an overlap with itself
+        long before = ctx.canvas().attempts();
+        ctx.carve(door(NORTH_WALL, Side.OUTER, 1, 0), north, List.of(wallCell, wallCell));
+        assertNull(ctx.canvas().get(wallCell));
+        assertEquals(1, ctx.canvas().attempts() - before);
+    }
+
+    @Test
+    void everyCellACarveLooksAtCountsAsWork() {
+        GenContext ctx = generated(List.of());
+        WallInfo north = ctx.wallInfo(NORTH_WALL).orElseThrow();
+        long before = ctx.canvas().attempts();
+        ctx.carve(door(NORTH_WALL, Side.OUTER, 1, 0), north, List.of(north.cell(1, 0, 0), north.cell(1, 0, 1), north.cell(1, 0, 2)));
+        assertEquals(3, ctx.canvas().attempts() - before);
+        // a refused carve counts the cells it looked at too (the bad cell is the second of three)
+        long beforeRefusal = ctx.canvas().attempts();
+        assertThrows(GenAbort.class, () -> ctx.carve(door(NORTH_WALL, Side.OUTER, 2, 0), north,
+                List.of(north.cell(2, 0, 0), north.cell(2, 0, -1), north.cell(2, 0, 1))));
+        assertEquals(3, ctx.canvas().attempts() - beforeRefusal);
     }
 }

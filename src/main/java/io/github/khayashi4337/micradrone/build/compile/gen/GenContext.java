@@ -16,10 +16,12 @@ import io.github.khayashi4337.micradrone.build.parts.PartType;
 import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 
 /** What a generator may use: the palette, the canvas, node geometry, and the ways to report a problem. */
 public final class GenContext {
@@ -67,6 +69,7 @@ public final class GenContext {
     private final Map<String, Optional<WallInfo>> walls = new HashMap<>();
     private final Map<LocalPos, String> carvedBy = new HashMap<>();
     private final Set<String> reportedWalls = new HashSet<>();
+    private final Set<String> refused = new HashSet<>();
 
     public GenContext(PartTypeRegistry registry, Palette palette, Canvas canvas, List<Issue> issues,
                       Map<String, PlanNode> nodes, Map<String, LocalPos> origins) {
@@ -88,6 +91,15 @@ public final class GenContext {
 
     public PlanNode node(String id) {
         return nodes.get(id);
+    }
+
+    /** Records that the node's generator refused it (its issue is reported), so that no later pass works on it. */
+    public void markRefused(String nodeId) {
+        refused.add(nodeId);
+    }
+
+    public boolean isRefused(String nodeId) {
+        return refused.contains(nodeId);
     }
 
     /** The block a material (a role name or a block id) names, without block states. */
@@ -262,16 +274,26 @@ public final class GenContext {
      * Removes the cells an opening replaces. Refuses (and changes nothing) if any is not a wall cell of this building or
      * was already carved. Every wall of a building shares one merge group, so a cell of another wall segment or storey of
      * the same building passes too: an opening that must stay on its own wall checks its extent first (OpeningSpot.carved).
+     * A wall's extent includes its end columns, which the neighbouring wall shares (the building's corner), so an opening
+     * that reaches a wall's end removes that corner column too, and the neighbouring wall ends in the opening as well.
+     * A cell listed twice counts as one. Every cell looked at is one unit of work, refused or not.
      */
     public void carve(PlanNode opener, WallInfo wall, List<LocalPos> cells) {
         int notWall = 0;
         LocalPos firstBad = null;
-        boolean overlapped = false;
-        for (LocalPos pos : cells) {
+        int overlapping = 0;
+        LocalPos firstOverlap = null;
+        Set<String> earlierOpeners = new TreeSet<>();
+        Set<LocalPos> distinct = new LinkedHashSet<>(cells);
+        for (LocalPos pos : distinct) {
+            canvas.charge();
             String earlier = carvedBy.get(pos);
             if (earlier != null) {
-                canvas.recordOverlap(earlier, opener.id(), pos);
-                overlapped = true;
+                earlierOpeners.add(earlier);
+                overlapping++;
+                if (firstOverlap == null) {
+                    firstOverlap = pos;
+                }
                 continue;
             }
             Canvas.Cell c = canvas.get(pos);
@@ -284,9 +306,16 @@ public final class GenContext {
                 }
             }
         }
-        if (overlapped) {
-            throw new GenAbort(Issue.of(IssueCode.E_OVERLAP, KEY_CARVE, List.of(opener.id()),
-                    opener.id() + "の開口部が、別の開口部と重なっています", Map.of(), List.of()), false);
+        if (overlapping > 0) {
+            // The one report of this overlap: it names every opening involved (in dictionary order, as the canvas names a
+            // pair of overlapping parts), the number of cells and the first one.
+            Set<String> involved = new TreeSet<>(earlierOpeners);
+            involved.add(opener.id());
+            throw new GenAbort(Issue.of(IssueCode.E_OVERLAP, KEY_CARVE, List.copyOf(involved),
+                    opener.id() + "の開口部が、別の開口部(" + String.join(",", earlierOpeners) + ")と重なっています(" + overlapping
+                            + "マス。最初は " + Canvas.posText(firstOverlap) + ")",
+                    Map.of(Canvas.DATA_COUNT, String.valueOf(overlapping), Canvas.DATA_FIRST_POS, Canvas.posText(firstOverlap)),
+                    List.of()), false);
         }
         if (notWall > 0) {
             throw new GenAbort(Issue.of(IssueCode.E_OPENING_NO_WALL, "", List.of(opener.id()),
@@ -294,7 +323,7 @@ public final class GenContext {
                             + Canvas.posText(firstBad) + ")",
                     Map.of(Canvas.DATA_COUNT, String.valueOf(notWall)), List.of()), false);
         }
-        for (LocalPos pos : cells) {
+        for (LocalPos pos : distinct) {
             canvas.remove(pos);
             carvedBy.put(pos, opener.id());
         }

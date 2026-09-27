@@ -7,7 +7,10 @@ import io.github.khayashi4337.micradrone.build.parts.Params;
 public interface PartGenerator {
     void generate(GenContext ctx, PlanNode node, Params p);
 
-    /** Runs after every part has been generated (for checks that need the whole canvas). */
+    /**
+     * Runs after every part has been generated (for checks that need the whole canvas). Only for a part whose
+     * {@link #generate} was not refused: a refused part is reported once, and has nothing on the canvas to check.
+     */
     default void afterAll(GenContext ctx, PlanNode node, Params p) {
     }
 }

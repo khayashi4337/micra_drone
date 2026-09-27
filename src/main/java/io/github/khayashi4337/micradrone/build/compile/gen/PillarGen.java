@@ -1,5 +1,6 @@
 package io.github.khayashi4337.micradrone.build.compile.gen;
 
+import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.parts.Params;
 
@@ -19,10 +20,15 @@ final class PillarGen implements PartGenerator {
         boolean hasEnds = height > SHAFT_ONLY_HEIGHT;
         boolean hasBase = hasEnds && p.b(P_BASE);
         boolean hasCapital = hasEnds && p.b(P_CAPITAL);
+        // Every row's block is asked of the palette before the first row is placed, so a refused material leaves no row
+        // behind. Each row asks for its own material, so only a block that is placed is asked for and checked.
+        BlockSpec[] rows = new BlockSpec[height];
         for (int dv = 0; dv < height; dv++) {
             boolean trim = (hasBase && dv == 0) || (hasCapital && dv == height - 1);
-            // The material is resolved per row, so only a block that is placed is asked of the palette and checked.
-            ctx.emit(node, 0, dv, 0, ctx.plainBlock(trim ? ROLE_TRIM : p.s(P_MATERIAL), node));
+            rows[dv] = ctx.plainBlock(trim ? ROLE_TRIM : p.s(P_MATERIAL), node);
+        }
+        for (int dv = 0; dv < height; dv++) {
+            ctx.emit(node, 0, dv, 0, rows[dv]);
         }
     }
 }

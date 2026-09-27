@@ -605,6 +605,20 @@ class PlanExpanderTest {
     }
 
     @Test
+    void aPartUnderARefusedNodeIsNotAlsoReportedAsHavingAMissingParent() {
+        // m sits on a slot that cannot be used (E-ANCHOR#slot) and is refused; c hangs from m and d from c. Their parent is
+        // not missing: it was refused, and that is already reported. z hangs from an id that is not in the plan at all.
+        SemanticPlan plan = handBuilt(List.of(
+                new PlanNode("m", "test:motor", null, new Anchor.InSlot("slot-a", Rot.NONE), Map.of(), Set.of(), ""),
+                TestParts.at("c", "micra:pillar", "m", 0, 0, 0),
+                TestParts.at("d", "micra:pillar", "c", 0, 0, 0),
+                TestParts.at("z", "micra:pillar", "ghost", 0, 0, 0)), List.of());
+        ExpandResult r = expander.expand(plan, TemplateBundle.EMPTY, Router.NONE);
+        assertNull(r.plan());
+        assertEquals(List.of("E-ANCHOR:m#slot", "E-ANCHOR:z#parent"), ids(r));
+    }
+
+    @Test
     void originsResolveThroughParents() {
         List<PlanNode> nodes = new ArrayList<>(List.of(
                 TestParts.at("a", "micra:structure", null, 2, 0, 3),

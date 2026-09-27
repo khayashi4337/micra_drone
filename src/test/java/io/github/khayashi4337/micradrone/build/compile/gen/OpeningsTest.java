@@ -550,6 +550,10 @@ class OpeningsTest {
         assertEquals(4, countOf(c, OAK_DOOR));
         assertEquals(doorBlock(NORTH, LOWER, LEFT), c.get(new LocalPos(5, 1, 0)));
         assertEquals(doorBlock(NORTH, LOWER, RIGHT), c.get(new LocalPos(6, 1, 0)));
+        // u = 6 is the corner column that the south and the east wall share. An opening that reaches a wall's end takes that
+        // column too, so the east wall ends in the door as well. This is the rule: a wall's extent includes its end columns
+        // (refusing it would forbid a hangar door across a whole side). The east wall's next cell is untouched.
+        assertEquals(stoneBricks(), c.get(new LocalPos(6, 1, 1)));
         assertEquals(7, countOf(c, GLASS_PANE));
         assertEquals(archStair(WEST), c.get(new LocalPos(4, 3, 6)));
         assertEquals(archStair(EAST), c.get(new LocalPos(6, 3, 6)));
@@ -565,9 +569,8 @@ class OpeningsTest {
         CompileResult clash = compile(twice);
         assertNull(clash.manifest());
         assertTrue(codes(clash).contains("E-OVERLAP"), clash.issues().toString());
-        // the carve of the second opening reports it, and the canvas reports the pair (both are E-OVERLAP)
-        assertEquals(Set.of("E-OVERLAP:d2#carve", "E-OVERLAP:d1,d2"), Set.copyOf(ids(clash)), clash.issues().toString());
-        assertEquals(2, clash.issues().size());
+        // the carve of the second opening is the one report of it, and it names both openings
+        assertEquals(List.of("E-OVERLAP:d1,d2#carve"), ids(clash), clash.issues().toString());
     }
 
     @Test

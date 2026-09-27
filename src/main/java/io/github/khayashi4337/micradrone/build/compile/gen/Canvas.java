@@ -67,6 +67,11 @@ public final class Canvas {
         return cells.size();
     }
 
+    /** How many units of work were counted against the attempt budget so far (see {@link #charge}). */
+    public long attempts() {
+        return attempts;
+    }
+
     /** A read-only view; cells change only through {@link #put} and {@link #remove}. */
     public Collection<Cell> all() {
         return Collections.unmodifiableCollection(cells.values());
@@ -112,14 +117,18 @@ public final class Canvas {
         recordOverlap(ownerA, ownerB, pos, "");
     }
 
-    /** {@code reason} says why the two claim the same cell when it is not plain overlap (e.g. "clearance"). */
+    /**
+     * {@code reason} says why the two claim the same cell when it is not plain overlap (e.g. "clearance"). A pair is one
+     * issue, so once any of its overlaps has a reason the pair keeps it, whichever kind was seen first.
+     */
     public void recordOverlap(String ownerA, String ownerB, LocalPos pos, String reason) {
         boolean inOrder = ownerA.compareTo(ownerB) <= 0;
         String a = inOrder ? ownerA : ownerB;
         String b = inOrder ? ownerB : ownerA;
         String key = a + OWNER_PAIR_SEPARATOR + b;
         Overlap prev = overlaps.get(key);
-        overlaps.put(key, prev == null ? new Overlap(a, b, 1, pos, reason) : new Overlap(a, b, prev.count() + 1, prev.first(), prev.reason()));
+        overlaps.put(key, prev == null ? new Overlap(a, b, 1, pos, reason)
+                : new Overlap(a, b, prev.count() + 1, prev.first(), prev.reason().isEmpty() ? reason : prev.reason()));
     }
 
     private static Map<String, String> overlapData(Overlap o) {
