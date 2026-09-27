@@ -1,13 +1,13 @@
 package io.github.khayashi4337.micradrone.build.compile;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.build.compile.gen.PartGenerators;
 import io.github.khayashi4337.micradrone.build.parts.BuildingParts;
 import io.github.khayashi4337.micradrone.build.parts.PartType;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
 class GeneratorRegistryTest {
@@ -16,18 +16,10 @@ class GeneratorRegistryTest {
 
     @Test
     void everyBuildingPartHasAGeneratorAndNothingElseDoes() {
-        Set<String> parts = new TreeSet<>();
-        for (PartType t : BuildingParts.registry().userParts()) {
-            parts.add(t.id());
-        }
+        Set<String> parts = BuildingParts.registry().userParts().stream()
+                .map(PartType::id)
+                .collect(Collectors.toCollection(TreeSet::new));
         assertEquals(parts, new TreeSet<>(PartGenerators.ids()));
         assertEquals(EXPECTED_PART_COUNT, parts.size());
-    }
-
-    @Test
-    void rotationUnsupportedPartsAreRealParts() {
-        for (String id : BuildingParts.ROTATION_UNSUPPORTED) {
-            assertTrue(BuildingParts.registry().contains(id), id);
-        }
     }
 }

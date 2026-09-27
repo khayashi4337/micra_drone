@@ -35,6 +35,10 @@ class BlockSpecTest {
     void propertiesAreImmutable() {
         BlockSpec a = BlockSpec.of("minecraft:stone", "k", "v");
         assertThrows(UnsupportedOperationException.class, () -> a.properties().put("x", "y"));
+    }
+
+    @Test
+    void airIsTheAirBlock() {
         assertEquals("minecraft:air", BlockSpec.AIR.blockId());
     }
 }

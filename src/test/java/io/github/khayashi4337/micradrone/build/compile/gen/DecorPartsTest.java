@@ -6,6 +6,7 @@ import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.co
 import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.node;
 import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.onWall;
 import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.params;
+import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.replaceWall;
 import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.shell;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -138,21 +139,12 @@ class DecorPartsTest {
 
     /** The hall whose north wall covers only u = SEGMENT_FROM.. (SEGMENT_LENGTH cells), with the part given. */
     private static List<PlanNode> hallWithNorthSegment(PlanNode decor) {
-        List<PlanNode> nodes = hallWith(decor);
-        nodes.replaceAll(n -> n.id().equals(WALL_N)
-                ? node(WALL_N, WALL, STRUCTURE_ID, 0, 0, 0,
-                        params(P_SIDE, NORTH, P_FROM, SEGMENT_FROM, P_LENGTH, SEGMENT_LENGTH))
-                : n);
-        return nodes;
+        return replaceWall(hallWith(decor), WALL_N, params(P_SIDE, NORTH, P_FROM, SEGMENT_FROM, P_LENGTH, SEGMENT_LENGTH));
     }
 
     /** The hall whose north wall is {@code thickness} cells thick, with the part given. */
     private static List<PlanNode> hallWithNorthWallThickness(int thickness, PlanNode decor) {
-        List<PlanNode> nodes = hallWith(decor);
-        nodes.replaceAll(n -> n.id().equals(WALL_N)
-                ? node(WALL_N, WALL, STRUCTURE_ID, 0, 0, 0, params(P_SIDE, NORTH, P_THICKNESS, thickness))
-                : n);
-        return nodes;
+        return replaceWall(hallWith(decor), WALL_N, params(P_SIDE, NORTH, P_THICKNESS, thickness));
     }
 
     /** The hall's walls moved so the building stands at (u, v, w), with the decoration nodes given. */

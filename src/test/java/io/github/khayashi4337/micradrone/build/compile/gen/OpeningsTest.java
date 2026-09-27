@@ -26,10 +26,7 @@ import io.github.khayashi4337.micradrone.build.model.Side;
 import io.github.khayashi4337.micradrone.build.model.StyleSpec;
 import io.github.khayashi4337.micradrone.build.parts.Params;
 import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
-import io.github.khayashi4337.micradrone.build.plan.Origins;
-import io.github.khayashi4337.micradrone.build.plan.SlotResolver;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -641,7 +638,6 @@ class OpeningsTest {
         List<PlanNode> nodes = hallWith(List.of());
         nodes.add(node(DOOR_ID, DOOR, STRUCTURE_ID, 0, 0, 0, Map.of()));
         assertEquals(List.of("E-ANCHOR"), codes(compile(nodes)));
-        assertTrue(CompileFixtures.REGISTRY.contains(DOOR));
     }
 
     @Test
@@ -671,20 +667,7 @@ class OpeningsTest {
 
     /** The given nodes (structure and walls) generated into a context whose palette is the default plus {@code palette}. */
     private static GenContext generatedIn(List<PlanNode> nodes, Map<String, String> palette) {
-        List<Issue> issues = new ArrayList<>();
-        Map<String, PlanNode> byId = new HashMap<>();
-        for (PlanNode n : nodes) {
-            byId.put(n.id(), n);
-        }
-        Map<String, LocalPos> origins = Origins.resolve(nodes, SlotResolver.NONE, issues);
-        GenContext ctx = new GenContext(REGISTRY, new Palette(REGISTRY.defaultPalette(), palette), new Canvas(MAX_CELLS), issues,
-                byId, origins);
-        for (PlanNode n : nodes) {
-            PartGenerators.Entry entry = PartGenerators.find(n.type()).orElseThrow();
-            entry.generator().generate(ctx, n, resolved(n));
-        }
-        assertTrue(issues.isEmpty(), issues.toString());
-        return ctx;
+        return CompileFixtures.generate(nodes, palette);
     }
 
     private static PartGenerator generatorOf(String partId) {

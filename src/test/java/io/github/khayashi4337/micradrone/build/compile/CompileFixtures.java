@@ -14,6 +14,11 @@ import io.github.khayashi4337.micradrone.build.model.ParamValue;
 import io.github.khayashi4337.micradrone.build.model.ParamValue.BoolV;
 import io.github.khayashi4337.micradrone.build.model.ParamValue.IntV;
 import io.github.khayashi4337.micradrone.build.model.ParamValue.StrV;
+import io.github.khayashi4337.micradrone.build.compile.gen.Canvas;
+import io.github.khayashi4337.micradrone.build.compile.gen.GenContext;
+import io.github.khayashi4337.micradrone.build.compile.gen.Palette;
+import io.github.khayashi4337.micradrone.build.compile.gen.PartGenerators;
+import io.github.khayashi4337.micradrone.build.model.Issue;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.model.PlanOp;
 import io.github.khayashi4337.micradrone.build.model.PlanPatch;
@@ -22,8 +27,10 @@ import io.github.khayashi4337.micradrone.build.model.SemanticPlan;
 import io.github.khayashi4337.micradrone.build.model.Side;
 import io.github.khayashi4337.micradrone.build.model.Site;
 import io.github.khayashi4337.micradrone.build.model.StyleSpec;
+import io.github.khayashi4337.micradrone.build.parts.Params;
 import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
 import io.github.khayashi4337.micradrone.build.plan.ExpandResult;
+import io.github.khayashi4337.micradrone.build.plan.Origins;
 import io.github.khayashi4337.micradrone.build.plan.PatchResult;
 import io.github.khayashi4337.micradrone.build.plan.PlanExpander;
 import io.github.khayashi4337.micradrone.build.plan.PlanPatcher;
@@ -32,6 +39,7 @@ import io.github.khayashi4337.micradrone.build.plan.SlotResolver;
 import io.github.khayashi4337.micradrone.build.plan.TemplateBundle;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -94,6 +102,33 @@ public final class CompileFixtures {
             nodes.add(node(WALL_ID_PREFIX + side.charAt(0), WALL, STRUCTURE_ID, 0, 0, 0, Map.of("side", s(side))));
         }
         return nodes;
+    }
+
+    /** {@code nodes} with wall {@code wallId} rebuilt from {@code wallParams} (a segment wall, a thicker wall...). */
+    public static List<PlanNode> replaceWall(List<PlanNode> nodes, String wallId, Map<String, ParamValue> wallParams) {
+        nodes.replaceAll(n -> n.id().equals(wallId) ? node(wallId, WALL, STRUCTURE_ID, 0, 0, 0, wallParams) : n);
+        return nodes;
+    }
+
+    /** A scratch canvas size for a direct {@link GenContext} drive: far above any fixture's footprint. */
+    private static final int CONTEXT_CELLS = 1_000;
+
+    /** {@code nodes} generated into a fresh context with {@code palette} layered over the registry default. */
+    public static GenContext generate(List<PlanNode> nodes, Map<String, String> palette) {
+        List<Issue> issues = new ArrayList<>();
+        Map<String, PlanNode> byId = new HashMap<>();
+        for (PlanNode n : nodes) {
+            byId.put(n.id(), n);
+        }
+        Map<String, LocalPos> origins = Origins.resolve(nodes, SlotResolver.NONE, issues);
+        GenContext ctx = new GenContext(REGISTRY, new Palette(REGISTRY.defaultPalette(), palette),
+                new Canvas(CONTEXT_CELLS), issues, byId, origins);
+        for (PlanNode n : nodes) {
+            PartGenerators.Entry entry = PartGenerators.find(n.type()).orElseThrow();
+            entry.generator().generate(ctx, n, Params.resolve(REGISTRY.get(n.type()), n.params()));
+        }
+        assertTrue(issues.isEmpty(), issues.toString());
+        return ctx;
     }
 
     public static SemanticPlan plan(Site site, StyleSpec style, List<PlanNode> nodes) {

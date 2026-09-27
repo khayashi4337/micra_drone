@@ -13,6 +13,7 @@ import io.github.khayashi4337.micradrone.build.model.Anchor;
 import io.github.khayashi4337.micradrone.build.model.ConnKind;
 import io.github.khayashi4337.micradrone.build.model.Connection;
 import io.github.khayashi4337.micradrone.build.model.Constraints;
+import io.github.khayashi4337.micradrone.build.model.Dir6;
 import io.github.khayashi4337.micradrone.build.model.Issue;
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.LocalPos;
@@ -31,6 +32,8 @@ import io.github.khayashi4337.micradrone.build.model.Side;
 import io.github.khayashi4337.micradrone.build.model.StyleSpec;
 import io.github.khayashi4337.micradrone.build.parts.BuildingParts;
 import io.github.khayashi4337.micradrone.build.parts.PartCategory;
+import io.github.khayashi4337.micradrone.build.parts.PortKind;
+import io.github.khayashi4337.micradrone.build.parts.PortSpec;
 import io.github.khayashi4337.micradrone.build.parts.VersionRange;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -96,6 +99,10 @@ class PlanExpanderTest {
         return plan.primitiveNodes().stream().filter(n -> n.id().equals(id)).findFirst().orElseThrow();
     }
 
+    /**
+     * Issue ids (code:subject#key) are the checked contract between the expander and its callers; message wording is
+     * for the person reading the plan and is pinned only where a test asserts {@link Issue#message()} directly.
+     */
     private static List<String> ids(ExpandResult r) {
         return r.issues().stream().map(Issue::id).toList();
     }
@@ -496,6 +503,40 @@ class PlanExpanderTest {
         assertEquals(List.of("E-ID-DUPLICATE:t1/x#template"), ids(r),
                 "one issue for the id; the instance is skipped, so the part that would be E-UNKNOWN-PART is never looked at");
         assertEquals(List.of("t1/x"), r.issues().get(0).subjects());
+    }
+
+    @Test
+    void aConnectionNamingASkippedInstanceIsRefusedWithThatInstance() {
+        // t1's template has the same part id twice, so the instance is skipped; the plan's connection to the skipped
+        // instance's port is then refused too: the expander cannot pretend the port exists
+        ModuleTemplate badWithPort = new ModuleTemplate(1, "mod:bad-port", "k", PartCategory.MODULE, VersionRange.ALWAYS,
+                null, List.of(new PortSpec("out", PortKind.ROTATION_OUT, new LocalPos(0, 0, 0), Dir6.EAST, Set.of())),
+                List.of(TestParts.at("x", "test:motor", null, 0, 0, 0), TestParts.at("x", "test:motor", null, 1, 0, 0)),
+                List.of(), null, null, Set.of());
+        TemplateBundle bundle = new TemplateBundle(List.of(badWithPort));
+        SemanticPlan plan = planWith(bundle, List.of(
+                new PlanOp.AddNode(instanceOf("mod:bad-port", "t1", null, abs(0, 0, 0, 0))),
+                new PlanOp.AddNode(TestParts.at("s", "test:shaft", null, 3, 0, 0)),
+                new PlanOp.AddConnection(new Connection("c-1", new PortRef("t1", "out"), new PortRef("s", "in"),
+                        ConnKind.ROTATION, Routing.AUTO, Constraints.NONE))));
+        ExpandResult r = expander.expand(plan, bundle, Router.NONE);
+        assertNull(r.plan());
+        assertEquals(List.of("E-ID-DUPLICATE:t1/x#template", "E-CONN-INVALID:c-1#t1.out"), ids(r));
+        assertEquals("つなぎ口がありません: t1.out", r.issues().get(1).message());
+    }
+
+    @Test
+    void twoInstancesOfOneBadTemplateAreEachRefusedInTheirOwnNamespace() {
+        ModuleTemplate twin = template("mod:twin2", List.of(
+                TestParts.at("x", "test:motor", null, 0, 0, 0),
+                TestParts.at("x", "test:motor", null, 5, 0, 0)), List.of());
+        TemplateBundle bundle = new TemplateBundle(List.of(twin));
+        SemanticPlan plan = planWith(bundle, List.of(
+                new PlanOp.AddNode(instanceOf("mod:twin2", "t1", null, abs(0, 0, 0, 0))),
+                new PlanOp.AddNode(instanceOf("mod:twin2", "t2", null, abs(10, 0, 0, 0)))));
+        ExpandResult r = expander.expand(plan, bundle, Router.NONE);
+        assertNull(r.plan());
+        assertEquals(List.of("E-ID-DUPLICATE:t1/x#template", "E-ID-DUPLICATE:t2/x#template"), ids(r));
     }
 
     @Test

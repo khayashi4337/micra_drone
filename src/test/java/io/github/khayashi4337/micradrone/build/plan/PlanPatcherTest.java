@@ -211,7 +211,10 @@ class PlanPatcherTest {
         assertTrue(ok.ok());
         assertEquals(new Anchor.Absolute(new LocalPos(1, 0, 1), Rot.NONE), ok.plan().node("wall-n").orElseThrow().anchor());
         assertEquals(List.of("E-ANCHOR"), codes(patcher.apply(plan, patch(1, new PlanOp.MoveNode("ghost", new Anchor.Absolute(new LocalPos(0, 0, 0), Rot.NONE))))));
-        assertEquals(List.of("E-ANCHOR"), codes(patcher.apply(plan, patch(1, new PlanOp.MoveNode("wall-n", new Anchor.OnSurface("wall-n", Side.OUTER, 0, 0))))));
+        // a node cannot rest on its own face: the anchor check fires before the loop check, so the key is #anchor
+        PatchResult self = patcher.apply(plan, patch(1, new PlanOp.MoveNode("wall-n", new Anchor.OnSurface("wall-n", Side.OUTER, 0, 0))));
+        assertSingleIssue(self, IssueCode.E_ANCHOR, "E-ANCHOR:wall-n#anchor", List.of("wall-n"));
+        assertEquals("自分自身の面には付けられません", self.issues().get(0).message());
     }
 
     @Test

@@ -24,6 +24,10 @@ class ManifestDifferTest {
     private static final String HASH_TO = "h2";
     private static final BlockSpec STONE = BlockSpec.of("minecraft:stone");
     private static final BlockSpec BRICKS = BlockSpec.of("minecraft:bricks");
+    private static final String OAK_STAIRS = "minecraft:oak_stairs";
+    private static final String FACING = "facing";
+    private static final String NORTH = "north";
+    private static final String SOUTH = "south";
 
     private static Placement at(int index, int x, int y, int z, BlockSpec block) {
         return new Placement(index, new IntPos(x, y, z), block, Map.of(), "n", BuildPhase.STRUCTURE, PlacerId.SIMPLE,
@@ -116,8 +120,8 @@ class ManifestDifferTest {
 
     @Test
     void theSameBlockIdWithDifferentPropertiesIsAChange() {
-        Placement before = at(0, 0, 0, 0, BlockSpec.of("minecraft:oak_stairs", "facing", "north"));
-        Placement after = at(0, 0, 0, 0, BlockSpec.of("minecraft:oak_stairs", "facing", "south"));
+        Placement before = at(0, 0, 0, 0, BlockSpec.of(OAK_STAIRS, FACING, NORTH));
+        Placement after = at(0, 0, 0, 0, BlockSpec.of(OAK_STAIRS, FACING, SOUTH));
         ManifestDiff d = ManifestDiffer.diff(manifest(OVERWORLD, HASH_FROM, before),
                 manifest(OVERWORLD, HASH_TO, after), p -> BlockSpec.AIR);
         assertTrue(d.removals().isEmpty() && d.additions().isEmpty());
@@ -189,6 +193,13 @@ class ManifestDifferTest {
         changes.add(new PlacementChange(p, p, STONE));
         assertTrue(d.removals().isEmpty() && d.changes().isEmpty());
         assertEquals(List.of(p), d.additions());
+    }
+
+    @Test
+    void aPlacementWhoseIndexIsNotItsListPositionIsRejected() {
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> manifest(OVERWORLD, HASH_FROM,
+                at(7, 0, 0, 0, STONE), at(1, 1, 0, 0, STONE)));
+        assertTrue(ex.getMessage().contains("index"), "the message must name the field");
     }
 
     @Test

@@ -1,6 +1,8 @@
 package io.github.khayashi4337.micradrone.build.compile;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.build.compile.gen.PartGenerators;
@@ -72,7 +74,7 @@ class RotationInvarianceTest {
         }
         for (Placement p : north.placements()) {
             Placement other = byPos.get(turn(p.pos(), q, center));
-            assertTrue(other != null, label + ": no cell at the turned position of " + p.pos());
+            assertNotNull(other, label + ": no cell at the turned position of " + p.pos());
             assertEquals(BlockRotation.rotate(p.block(), q), other.block(), label + " at " + p.pos());
             assertEquals(p.blockEntityConfig(), other.blockEntityConfig(), label);
             assertEquals(p.verify(), other.verify(), label);
@@ -84,10 +86,10 @@ class RotationInvarianceTest {
     @Test
     void theHutTurnedInFourWaysIsTheSameHutTurned() throws IOException {
         SemanticPlan hut = GoldenHutTest.hut();
-        PlacementManifest north = CompileFixtures.compile(planAt(hut, Facing.NORTH)).manifest();
+        PlacementManifest north = GoldenHutTest.compileHut(planAt(hut, Facing.NORTH)).manifest();
         for (int q = 1; q < QUARTER_TURNS; q++) {
-            Facing f = Facing.values()[q];
-            assertRotationOf(north, CompileFixtures.compile(planAt(hut, f)).manifest(), q, north.frame().origin(),
+            Facing f = Facing.NORTH.rotate(q);
+            assertRotationOf(north, GoldenHutTest.compileHut(planAt(hut, f)).manifest(), q, north.frame().origin(),
                     "hut " + f);
         }
     }
@@ -105,7 +107,7 @@ class RotationInvarianceTest {
             CompileResult north = CompileFixtures.compile(ShowcasePlans.showcase(roof, Facing.NORTH));
             assertTrue(north.issues().isEmpty(), roof + ": " + north.issues());
             for (int q = 1; q < QUARTER_TURNS; q++) {
-                Facing f = Facing.values()[q];
+                Facing f = Facing.NORTH.rotate(q);
                 CompileResult turned = CompileFixtures.compile(ShowcasePlans.showcase(roof, f));
                 assertTrue(turned.issues().isEmpty(), roof + " " + f + ": " + turned.issues());
                 assertRotationOf(north.manifest(), turned.manifest(), q, CompileFixtures.ORIGIN, roof + " " + f);
@@ -127,10 +129,11 @@ class RotationInvarianceTest {
         for (long seed = FIRST_SEED; seed <= LAST_SEED; seed++) {
             List<PlanNode> nodes = RandomParts.nodes(seed);
             PlacementManifest north = compileFacing(nodes, Facing.NORTH, WIDE);
-            assertTrue(north.placements().size() > 0);
+            assertFalse(north.placements().isEmpty());
             for (int q = 1; q < QUARTER_TURNS; q++) {
-                assertRotationOf(north, compileFacing(nodes, Facing.values()[q], WIDE), q, ORIGIN,
-                        "seed " + seed + " facing " + Facing.values()[q]);
+                Facing f = Facing.NORTH.rotate(q);
+                assertRotationOf(north, compileFacing(nodes, f, WIDE), q, ORIGIN,
+                        "seed " + seed + " facing " + f);
             }
         }
     }
@@ -150,6 +153,7 @@ class RotationInvarianceTest {
         for (long seed = FIRST_SEED; seed <= LAST_SEED; seed++) {
             for (PlanNode n : RandomParts.nodes(seed)) {
                 PlacementManifest plain = compileFacing(List.of(alone(n, Rot.NONE)), Facing.NORTH, WIDE);
+                assertFalse(plain.placements().isEmpty(), n.type() + " alone places nothing");
                 for (int turns = 0; turns < QUARTER_TURNS; turns++) {
                     for (boolean mirror : MIRROR) {
                         Rot rot = new Rot(turns, mirror);
@@ -224,7 +228,7 @@ class RotationInvarianceTest {
             }
             pos = turn(pos, rot.quarterTurns(), anchor);
             Placement other = byPos.get(pos);
-            assertTrue(other != null, label + ": no cell at the mirrored/turned position of " + p.pos());
+            assertNotNull(other, label + ": no cell at the mirrored/turned position of " + p.pos());
             assertEquals(BlockRotation.transform(p.block(), rot), other.block(), label + " at " + p.pos());
             assertEquals(p.blockEntityConfig(), other.blockEntityConfig(), label);
             assertEquals(p.verify(), other.verify(), label);

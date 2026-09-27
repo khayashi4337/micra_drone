@@ -3,12 +3,19 @@ package io.github.khayashi4337.micradrone.build.compile;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import io.github.khayashi4337.micradrone.build.model.PlanJson;
 import io.github.khayashi4337.micradrone.build.model.SemanticPlan;
 import io.github.khayashi4337.micradrone.build.parts.BuildPhase;
+import io.github.khayashi4337.micradrone.build.parts.BuildingParts;
+import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
+import io.github.khayashi4337.micradrone.build.plan.ExpandResult;
 import io.github.khayashi4337.micradrone.build.plan.PatchResult;
+import io.github.khayashi4337.micradrone.build.plan.PlanExpander;
 import io.github.khayashi4337.micradrone.build.plan.PlanPatcher;
+import io.github.khayashi4337.micradrone.build.plan.Router;
+import io.github.khayashi4337.micradrone.build.plan.SlotResolver;
 import io.github.khayashi4337.micradrone.build.plan.TemplateBundle;
 import io.github.khayashi4337.micradrone.chat.MiniJson;
 import java.io.IOException;
@@ -25,6 +32,12 @@ class GoldenHutTest {
     private static final String GOLDEN_DIR = "/build/golden/";
     private static final String HUT_PATCH = "hut.patch.json";
     static final String HUT_MANIFEST = "hut.manifest.txt";
+    /**
+     * The hut is pinned against the real parts registry: {@link CompileFixtures#REGISTRY} adds three test-only
+     * parts, and the registry version goes into the manifest hash, so compiling the hut through it would pin a
+     * number no production plan can produce.
+     */
+    static final PartTypeRegistry HUT_REGISTRY = BuildingParts.registry();
     /** The manifest line that carries the hash, both in the golden file and in a fresh manifest text. */
     static final String HASH_PREFIX = "hash ";
     /** Where the candidate manifest is written for review when the golden file is still missing. */
@@ -53,10 +66,19 @@ class GoldenHutTest {
     }
 
     static SemanticPlan hut() throws IOException {
-        PatchResult r = new PlanPatcher(CompileFixtures.REGISTRY, TemplateBundle.EMPTY)
+        PatchResult r = new PlanPatcher(HUT_REGISTRY, TemplateBundle.EMPTY)
                 .apply(SemanticPlan.empty("hut"), PlanJson.patchFromTree(MiniJson.parse(resource(HUT_PATCH))));
         assertTrue(r.ok(), r.issues().toString());
         return r.plan();
+    }
+
+    /** The hut's own compile path: everything {@link #hut} builds is checked against {@link #HUT_REGISTRY}. */
+    static CompileResult compileHut(SemanticPlan plan) {
+        ExpandResult expanded = new PlanExpander(HUT_REGISTRY, SlotResolver.NONE)
+                .expand(plan, TemplateBundle.EMPTY, Router.NONE);
+        assertTrue(expanded.issues().isEmpty(), expanded.issues().toString());
+        return new PlanCompiler().compile(expanded.plan(), HUT_REGISTRY, PlaceableBlockPolicy.builtin(),
+                CompileFixtures.survey());
     }
 
     /** One line per placement: index x y z block verify phase (properties are part of the block text). */
@@ -71,7 +93,7 @@ class GoldenHutTest {
 
     @Test
     void theHandWrittenPatchBuildsTheHutWithTheDerivedNumbers() throws IOException {
-        CompileResult r = CompileFixtures.compile(hut());
+        CompileResult r = compileHut(hut());
         assertTrue(r.issues().isEmpty(), r.issues().toString());
         PlacementManifest m = r.manifest();
         assertEquals(EXPECTED_PLACEMENTS, m.placements().size());
@@ -81,7 +103,7 @@ class GoldenHutTest {
 
     @Test
     void theManifestMatchesTheGoldenFile() throws IOException {
-        PlacementManifest m = CompileFixtures.compile(hut()).manifest();
+        PlacementManifest m = compileHut(hut()).manifest();
         List<String> actual = new ArrayList<>();
         actual.add(HASH_PREFIX + m.hash());
         actual.addAll(lines(m));
@@ -89,7 +111,7 @@ class GoldenHutTest {
             if (in == null) {
                 Files.createDirectories(CANDIDATE.getParent());
                 Files.writeString(CANDIDATE, String.join("\n", actual) + "\n", StandardCharsets.UTF_8);
-                org.junit.jupiter.api.Assertions.fail("there is no golden file yet; a candidate was written to "
+                fail("there is no golden file yet; a candidate was written to "
                         + CANDIDATE.toAbsolutePath()
                         + " - check it against the derived numbers, then copy it to src/test/resources" + GOLDEN_DIR
                         + HUT_MANIFEST);

@@ -7,6 +7,7 @@ import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.co
 import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.node;
 import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.onWall;
 import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.params;
+import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.replaceWall;
 import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.ruled;
 import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.shell;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -405,10 +406,8 @@ class StairwayPartsTest {
 
     /** The hall whose north wall covers only u = SEGMENT_FROM.. (SEGMENT_LENGTH cells), with the balconies given. */
     private static List<PlanNode> hallWithNorthSegment(PlanNode... balconies) {
-        List<PlanNode> nodes = hallWith(balconies);
-        nodes.replaceAll(n -> n.id().equals(WALL_N)
-                ? node(WALL_N, WALL, STRUCTURE_ID, 0, 0, 0, params(P_SIDE, NORTH, P_FROM, SEGMENT_FROM, P_LENGTH, SEGMENT_LENGTH)) : n);
-        return nodes;
+        return replaceWall(hallWith(balconies), WALL_N,
+                params(P_SIDE, NORTH, P_FROM, SEGMENT_FROM, P_LENGTH, SEGMENT_LENGTH));
     }
 
     private static PlanNode balcony(String wall, Side side, int u, int v, Map<String, ParamValue> params) {

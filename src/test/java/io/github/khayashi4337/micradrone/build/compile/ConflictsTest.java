@@ -18,6 +18,8 @@ class ConflictsTest {
     private static final String OPEN = "open";
     private static final String NORTH = "north";
     private static final String SOUTH = "south";
+    private static final String BLAZE_BURNER = "create:blaze_burner";
+    private static final String BLAZE = "blaze";
     private static final BlockSpec STONE = BlockSpec.of("minecraft:stone");
     private static final BlockSpec DIRT = BlockSpec.of("minecraft:dirt");
 
@@ -56,10 +58,10 @@ class ConflictsTest {
 
     @Test
     void volatileStatesAreIgnoredSoRunningMachinesAreNotConflicts() {
-        BlockSpec expected = BlockSpec.of("create:blaze_burner", "blaze", "smouldering");
-        ObservedBlock running = new ObservedBlock(BlockSpec.of("create:blaze_burner", "blaze", "kindled"));
+        BlockSpec expected = BlockSpec.of(BLAZE_BURNER, BLAZE, "smouldering");
+        ObservedBlock running = new ObservedBlock(BlockSpec.of(BLAZE_BURNER, BLAZE, "kindled"));
         assertEquals(ConflictKind.PLAYER_MODIFIED, Conflicts.detect(POS, expected, running, Set.of()).orElseThrow().kind());
-        assertTrue(Conflicts.detect(POS, expected, running, Set.of("blaze")).isEmpty());
+        assertTrue(Conflicts.detect(POS, expected, running, Set.of(BLAZE)).isEmpty());
         BlockSpec door = BlockSpec.of(DOOR_ID, FACING, NORTH, OPEN, "false");
         assertTrue(Conflicts.detect(POS, door, new ObservedBlock(door.with(OPEN, "true")), Set.of(OPEN, "powered")).isEmpty());
     }

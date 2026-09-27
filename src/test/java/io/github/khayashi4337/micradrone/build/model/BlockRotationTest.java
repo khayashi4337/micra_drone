@@ -52,9 +52,33 @@ class BlockRotationTest {
     }
 
     @Test
+    void mirrorSwapsTheEastWestKeysAndNegatesTheRotationProperty() {
+        BlockSpec fence = BlockSpec.of("minecraft:oak_fence", "east", "true", "west", "false");
+        BlockSpec m = BlockRotation.mirrorU(fence);
+        assertEquals("false", m.get("east")); // the old west value moved east
+        assertEquals("true", m.get("west"));  // the old east value moved west
+        BlockSpec sign = BlockSpec.of("minecraft:oak_sign", "rotation", "6");
+        assertEquals("10", BlockRotation.mirrorU(sign).get("rotation")); // -6 mod 16
+    }
+
+    @Test
     void transformMirrorsFirstThenRotates() {
         BlockSpec s = BlockSpec.of("minecraft:oak_stairs", "facing", "east");
         // mirror: east -> west, then one quarter turn: west -> north
         assertEquals("north", BlockRotation.transform(s, new Rot(1, true)).get("facing"));
+    }
+
+    @Test
+    void transformFacingAgreesWithRotApply() {
+        for (int q = 0; q < Rot.QUARTER_TURNS_PER_CIRCLE; q++) {
+            for (boolean mirror : new boolean[]{false, true}) {
+                Rot rot = new Rot(q, mirror);
+                for (Facing f : Facing.values()) {
+                    BlockSpec spec = BlockSpec.of("minecraft:oak_stairs", "facing", f.lower());
+                    assertEquals(rot.apply(f).lower(), BlockRotation.transform(spec, rot).get("facing"),
+                            rot + " on " + f);
+                }
+            }
+        }
     }
 }

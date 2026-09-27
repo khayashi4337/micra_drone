@@ -14,6 +14,13 @@ public record PlacementManifest(int manifestVersion, String planId, int planRevi
 
     public PlacementManifest {
         placements = List.copyOf(placements);
+        // the index is the construction order: a placement's index must be its position in the list
+        for (int i = 0; i < placements.size(); i++) {
+            Placement p = placements.get(i);
+            if (p.index() != i) {
+                throw new IllegalArgumentException("placements[" + i + "] has index " + p.index());
+            }
+        }
         assemblies = List.copyOf(assemblies);
         bom = SortedCopies.map(bom);
         phases = List.copyOf(phases);

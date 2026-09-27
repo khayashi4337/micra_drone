@@ -31,12 +31,12 @@ class DeterminismTest {
     @Test
     void theSameInputGivesTheSameHashOneThousandTimes() throws IOException {
         var plan = GoldenHutTest.hut();
-        String first = CompileFixtures.compile(plan).manifest().hash();
+        String first = GoldenHutTest.compileHut(plan).manifest().hash();
         // The golden file pins the value itself: a silent change in any generator moves the hash.
         assertEquals(goldenHash(), first);
         Set<String> seen = new HashSet<>();
         for (int i = 0; i < COMPILE_RUNS; i++) {
-            seen.add(CompileFixtures.compile(plan).manifest().hash());
+            seen.add(GoldenHutTest.compileHut(plan).manifest().hash());
         }
         assertEquals(Set.of(first), seen);
     }
@@ -44,10 +44,11 @@ class DeterminismTest {
     @Test
     void shufflingTheHutsNodeOrderKeepsTheHash() throws IOException {
         SemanticPlan hut = GoldenHutTest.hut();
-        String hash = CompileFixtures.compile(hut).manifest().hash();
+        PlacementManifest baseline = GoldenHutTest.compileHut(hut).manifest();
         for (long seed = 0; seed < HUT_SHUFFLES; seed++) {
-            assertEquals(hash, CompileFixtures.compile(withShuffledNodes(hut, seed)).manifest().hash(),
-                    "hut shuffle seed " + seed);
+            PlacementManifest shuffled = GoldenHutTest.compileHut(withShuffledNodes(hut, seed)).manifest();
+            assertEquals(baseline.hash(), shuffled.hash(), "hut shuffle seed " + seed);
+            assertEquals(baseline.placements(), shuffled.placements(), "hut shuffle seed " + seed);
         }
     }
 
@@ -55,10 +56,13 @@ class DeterminismTest {
     void shufflingTheShowcaseNodeOrderKeepsTheHashInEveryFacing() {
         for (Facing facing : Facing.values()) {
             SemanticPlan showcase = ShowcasePlans.showcase(SHOWCASE_ROOF, facing);
-            String hash = CompileFixtures.compile(showcase).manifest().hash();
+            PlacementManifest baseline = CompileFixtures.compile(showcase).manifest();
             for (long seed = 0; seed < SHOWCASE_SHUFFLES; seed++) {
-                assertEquals(hash, CompileFixtures.compile(withShuffledNodes(showcase, seed)).manifest().hash(),
-                        facing + " shuffle seed " + seed);
+                PlacementManifest shuffled = CompileFixtures.compile(withShuffledNodes(showcase, seed)).manifest();
+                // the hash alone would also pass for a mutant that swaps same-depth node ids; compare the full
+                // placement list, which carries partNodeId
+                assertEquals(baseline.hash(), shuffled.hash(), facing + " shuffle seed " + seed);
+                assertEquals(baseline.placements(), shuffled.placements(), facing + " shuffle seed " + seed);
             }
         }
     }

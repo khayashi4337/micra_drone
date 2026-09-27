@@ -10,7 +10,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -84,9 +83,10 @@ class IssueTest {
         ArrayList<String> mutableSubjects = new ArrayList<>();
         mutableSubjects.add("a");
 
-        HashMap<String, String> mutableData = new LinkedHashMap<>();
-        mutableData.put("c", "3");
-        mutableData.put("b", "2");
+        // Keys picked so that insertion order, HashMap bucket order, and sorted order are all different.
+        LinkedHashMap<String, String> mutableData = new LinkedHashMap<>();
+        mutableData.put("p", "3");
+        mutableData.put("o", "2");
         mutableData.put("a", "1");
 
         ArrayList<FixHint> mutableHints = new ArrayList<>();
@@ -104,7 +104,7 @@ class IssueTest {
 
         // Issue must be unchanged
         assertEquals(List.of("a"), issue.subjects());
-        assertEquals(Map.of("a", "1", "b", "2", "c", "3"), issue.data());
+        assertEquals(Map.of("a", "1", "o", "2", "p", "3"), issue.data());
         assertEquals(1, issue.hints().size());
         assertEquals("USE", issue.hints().get(0).kind());
         assertEquals("1", issue.hints().get(0).args().get("x"));
@@ -114,26 +114,37 @@ class IssueTest {
         assertThrows(UnsupportedOperationException.class, () -> issue.data().put("new", "value"));
         assertThrows(UnsupportedOperationException.class, () -> issue.hints().add(new FixHint("X", Map.of())));
 
-        // Data keys must be sorted even though input was reverse-ordered
-        assertEquals(List.of("a", "b", "c"), new ArrayList<>(issue.data().keySet()));
+        // Data keys must be sorted: insertion was p,o,a and HashMap buckets give p,a,o, neither matches a,o,p
+        assertEquals(List.of("a", "o", "p"), new ArrayList<>(issue.data().keySet()));
 
-        // Test FixHint with mutable args
+        // Test FixHint with mutable args; insertion order z,p,a and bucket order p,a,z both differ from sorted a,p,z
         LinkedHashMap<String, String> mutableFixArgs = new LinkedHashMap<>();
         mutableFixArgs.put("z", "z");
-        mutableFixArgs.put("y", "y");
-        mutableFixArgs.put("x", "x");
+        mutableFixArgs.put("p", "p");
+        mutableFixArgs.put("a", "a");
 
         FixHint hint = new FixHint("TEST", mutableFixArgs);
         mutableFixArgs.put("w", "w");
 
         // FixHint.args must be unchanged
-        assertEquals(Map.of("x", "x", "y", "y", "z", "z"), hint.args());
+        assertEquals(Map.of("a", "a", "p", "p", "z", "z"), hint.args());
 
         // FixHint.args must be unmodifiable
         assertThrows(UnsupportedOperationException.class, () -> hint.args().put("new", "val"));
 
         // Args keys must be sorted
-        assertEquals(List.of("x", "y", "z"), new ArrayList<>(hint.args().keySet()));
+        assertEquals(List.of("a", "p", "z"), new ArrayList<>(hint.args().keySet()));
+    }
+
+    @Test
+    void nullDataAndNullHintArgsFallBackToEmptyCopies() {
+        Issue issue = Issue.of(IssueCode.E_ANCHOR, "", List.of("a"), "m", null, List.of());
+        assertEquals(Map.of(), issue.data());
+        assertThrows(UnsupportedOperationException.class, () -> issue.data().put("k", "v"));
+
+        FixHint hint = new FixHint("USE", null);
+        assertEquals(Map.of(), hint.args());
+        assertThrows(UnsupportedOperationException.class, () -> hint.args().put("k", "v"));
     }
 
     /** The enum and the design document's table (05, section 4.1) must list exactly the same codes. */

@@ -283,16 +283,16 @@ class PlanJsonTest {
     void decodingErrorsCarryAJsonPath() {
         PlanJsonException missing = assertThrows(PlanJsonException.class,
                 () -> PlanJson.planFromTree(MiniJson.parse("{\"schemaVersion\":1}")));
-        assertTrue(missing.getMessage().contains("$"), missing.getMessage());
+        assertEquals("$: missing \"planId\"", missing.getMessage());
 
         String badPos = MiniJson.write(PlanJson.toTree(loosePlan())).replace("\"pos\":[0,0,0]", "\"pos\":[0,0]");
         PlanJsonException e = assertThrows(PlanJsonException.class, () -> PlanJson.planFromTree(MiniJson.parse(badPos)));
-        assertTrue(e.getMessage().contains("$.nodes["), e.getMessage());
-        assertTrue(e.getMessage().contains("pos"), e.getMessage());
+        assertEquals("$.nodes[0].anchor.pos: expected [u, v, w]", e.getMessage());
 
         String wrongVersion = MiniJson.write(PlanJson.toTree(loosePlan())).replace("\"schemaVersion\":1", "\"schemaVersion\":2");
         PlanJsonException v = assertThrows(PlanJsonException.class, () -> PlanJson.planFromTree(MiniJson.parse(wrongVersion)));
-        assertTrue(v.getMessage().contains("schemaVersion"), v.getMessage());
+        assertEquals("$.schemaVersion: unsupported schemaVersion 2 (this build reads 1); the data is refused, not converted",
+                v.getMessage());
     }
 
     @Test
@@ -331,6 +331,6 @@ class PlanJsonTest {
     void unknownOperationIsRejectedWithItsPath() {
         String json = "{\"patchId\":\"p\",\"baseRevision\":0,\"stageId\":\"s\",\"ops\":[{\"op\":\"explode\"}]}";
         PlanJsonException e = assertThrows(PlanJsonException.class, () -> PlanJson.patchFromTree(MiniJson.parse(json)));
-        assertTrue(e.getMessage().contains("$.ops[0]"), e.getMessage());
+        assertEquals("$.ops[0].op: unknown operation \"explode\"", e.getMessage());
     }
 }

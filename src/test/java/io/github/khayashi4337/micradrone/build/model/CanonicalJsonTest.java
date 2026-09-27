@@ -31,6 +31,11 @@ class CanonicalJsonTest {
         assertEquals("-7", CanonicalJson.write(-7));
         assertEquals("12.5", CanonicalJson.write(new BigDecimal("12.500")));
         assertEquals("3", CanonicalJson.write(3L));
+        assertEquals("5", CanonicalJson.write((short) 5));
+        assertEquals("6", CanonicalJson.write((byte) 6));
+        // a Float keeps its own decimal value instead of widening to the nearest double
+        assertEquals("0.1", CanonicalJson.write(0.1f));
+        assertEquals("1.25", CanonicalJson.write(1.25f));
     }
 
     @Test
@@ -42,7 +47,11 @@ class CanonicalJsonTest {
     @Test
     void stringsAreEscapedAndUnicodeIsKept() {
         assertEquals("\"a\\\"b\\\\c\\n\\t\"", CanonicalJson.write("a\"b\\c\n\t"));
+        assertEquals("\"a\\bb\\fc\"", CanonicalJson.write("a\bb\fc"));
         assertEquals("\"\\u0001\"", CanonicalJson.write("\u0001"));
+        // a lone surrogate is escaped so it cannot hash identically to '?'
+        assertEquals("\"\\ud800\"", CanonicalJson.write("\uD800"));
+        assertEquals("\"x\\udc00\"", CanonicalJson.write("x\uDC00"));
         assertEquals("\"屋根🏠\"", CanonicalJson.write("屋根🏠"));
     }
 
@@ -68,6 +77,8 @@ class CanonicalJsonTest {
         Map<Object, Object> badKey = new LinkedHashMap<>();
         badKey.put(1, "x");
         assertThrows(IllegalArgumentException.class, () -> CanonicalJson.write(badKey));
+        // a collection that is neither List nor Set has no defined wire order
+        assertThrows(IllegalArgumentException.class, () -> CanonicalJson.write(new java.util.ArrayDeque<>(List.of(1))));
     }
 
     @Test

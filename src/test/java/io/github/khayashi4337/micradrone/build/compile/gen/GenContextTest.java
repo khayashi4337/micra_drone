@@ -7,20 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.build.compile.CompileFixtures;
-import io.github.khayashi4337.micradrone.build.model.Issue;
 import io.github.khayashi4337.micradrone.build.model.LocalPos;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.model.Side;
-import io.github.khayashi4337.micradrone.build.parts.Params;
-import io.github.khayashi4337.micradrone.build.parts.PartType;
-import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
-import io.github.khayashi4337.micradrone.build.plan.Origins;
-import io.github.khayashi4337.micradrone.build.plan.SlotResolver;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -30,8 +22,6 @@ import org.junit.jupiter.api.Test;
  * through the expander unchecked, so these checks are the first ones such an anchor meets.
  */
 class GenContextTest {
-    private static final PartTypeRegistry REGISTRY = CompileFixtures.REGISTRY;
-    private static final int MAX_CELLS = 1_000;
     private static final String DOOR = "micra:door";
     private static final String FLOOR = "micra:floor";
     private static final String NORTH_WALL = "wall-n";
@@ -45,23 +35,7 @@ class GenContextTest {
         List<PlanNode> nodes = new ArrayList<>(shell(WALL_LENGTH, WALL_LENGTH, 1, WALL_HEIGHT + 1));
         nodes.add(node("f", FLOOR, "s", 0, 0, 0, Map.of()));
         nodes.addAll(extra);
-        List<Issue> issues = new ArrayList<>();
-        Map<String, PlanNode> byId = new HashMap<>();
-        for (PlanNode n : nodes) {
-            byId.put(n.id(), n);
-        }
-        Map<String, LocalPos> origins = Origins.resolve(nodes, SlotResolver.NONE, issues);
-        GenContext ctx = new GenContext(REGISTRY, new Palette(REGISTRY.defaultPalette(), Map.of()), new Canvas(MAX_CELLS), issues,
-                byId, origins);
-        for (PlanNode n : nodes) {
-            PartGenerators.Entry entry = PartGenerators.find(n.type()).orElse(null);
-            if (entry != null) {
-                PartType type = REGISTRY.get(n.type());
-                entry.generator().generate(ctx, n, Params.resolve(type, n.params()));
-            }
-        }
-        assertTrue(issues.isEmpty(), issues.toString());
-        return ctx;
+        return CompileFixtures.generate(nodes, Map.of());
     }
 
     private static PlanNode door(String wall, Side side, int u, int v) {

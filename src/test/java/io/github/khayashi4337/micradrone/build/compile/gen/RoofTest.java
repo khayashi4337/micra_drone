@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.khayashi4337.micradrone.build.compile.CompileFixtures;
 import io.github.khayashi4337.micradrone.build.compile.CompileResult;
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.Issue;
@@ -17,12 +18,19 @@ import io.github.khayashi4337.micradrone.build.model.LocalPos;
 import io.github.khayashi4337.micradrone.build.model.ParamValue;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.model.StyleSpec;
+import io.github.khayashi4337.micradrone.build.parts.Params;
+import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
+import io.github.khayashi4337.micradrone.build.plan.Origins;
+import io.github.khayashi4337.micradrone.build.plan.SlotResolver;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class RoofTest {
+    private static final PartTypeRegistry REGISTRY = CompileFixtures.REGISTRY;
     private static final String STAIRS = "minecraft:oak_stairs";
     private static final String PLANKS = "minecraft:oak_planks";
     private static final String OAK_SLAB = "minecraft:oak_slab";
@@ -132,10 +140,29 @@ class RoofTest {
         // ridge along u, slopes across w (T=5): two layers of two stair rows, nine cells long, ridge row of nine blocks
         assertEquals(36, countOf(c, STAIRS));
         assertEquals(9, countOf(c, PLANKS));
+        // the ends of the u-ridge sit on w: heights min(w, 4-w) = 0,1,2,1,0 -> four wall blocks per end
+        assertEquals(8, countOf(c, STONE_BRICKS), "gable ends at u=0 and u=8: 0+1+2+1+0 = 4 per end");
+        assertEquals(53, c.size());
+        assertEquals(BlockSpec.of(STONE_BRICKS), c.get(new LocalPos(0, 4, 1)));
+        assertEquals(BlockSpec.of(STONE_BRICKS), c.get(new LocalPos(0, 5, 2)), "the peak of the u=0 end");
+        assertEquals(BlockSpec.of(STONE_BRICKS), c.get(new LocalPos(8, 4, 3)));
+        assertEquals(BlockSpec.of(STONE_BRICKS), c.get(new LocalPos(8, 5, 2)), "the peak of the u=8 end");
         assertEquals(NORTH, c.get(new LocalPos(4, 4, 0)).get(FACING), "the w=0 side leans toward +w");
         assertEquals(SOUTH, c.get(new LocalPos(4, 4, 4)).get(FACING));
+        // ridge forced to w: the slopes now span u (T=9): four layers of two stair rows, five cells long, ridge of five;
+        // the gable ends move to w=0 and w=4: heights min(u, 8-u) = 0,1,2,3,4,3,2,1,0 -> 16 blocks per end
         Map<LocalPos, BlockSpec> forced = roof(9, 5, params(P_OVERHANG, 0, P_RIDGE, "w"));
-        assertTrue(countOf(forced, STAIRS) != 36, "an explicit ridge overrides the automatic one");
+        assertEquals(40, countOf(forced, STAIRS));
+        assertEquals(5, countOf(forced, PLANKS));
+        assertEquals(32, countOf(forced, STONE_BRICKS));
+        assertEquals(77, forced.size());
+        assertEquals(BlockSpec.of(STONE_BRICKS), forced.get(new LocalPos(4, 7, 0)), "the peak of the w=0 end");
+        // the mirror image: ridge=u on a 5x9 building spans w (T=9) for the same counts
+        Map<LocalPos, BlockSpec> forcedU = roof(5, 9, params(P_OVERHANG, 0, P_RIDGE, "u"));
+        assertEquals(40, countOf(forcedU, STAIRS));
+        assertEquals(5, countOf(forcedU, PLANKS));
+        assertEquals(32, countOf(forcedU, STONE_BRICKS));
+        assertEquals(77, forcedU.size());
     }
 
     @Test
@@ -301,6 +328,21 @@ class RoofTest {
     }
 
     @Test
+    void aHipOnAWidthShorterThanDepthEndsInALineAlongTheLongerAxis() {
+        // 5x7: rings of 20 (5x7) and 12 (3x5) stairs; at k=2 the ring has collapsed to the line u=2, w=2..4.
+        // The shorter side is even (4), so the line is full blocks: three of them, read once through the uR!=uL guard.
+        Map<LocalPos, BlockSpec> c = roof(5, 7, params(P_KIND, HIP, P_OVERHANG, 0));
+        assertEquals(32, countOf(c, STAIRS));
+        assertEquals(3, countOf(c, PLANKS));
+        assertEquals(35, c.size());
+        assertEquals(BlockSpec.of(PLANKS), c.get(new LocalPos(2, 6, 2)));
+        assertEquals(BlockSpec.of(PLANKS), c.get(new LocalPos(2, 6, 4)));
+        assertEquals(EAST, c.get(new LocalPos(0, 4, 3)).get(FACING), "the u=0 edge leans east");
+        assertEquals(NORTH, c.get(new LocalPos(3, 4, 0)).get(FACING), "the w=0 edge leans north");
+        assertEquals(EAST, c.get(new LocalPos(1, 5, 1)).get(FACING), "the inner ring's west edge leans east");
+    }
+
+    @Test
     void aShedToTheSouthRisesTowardSmallW() {
         // high side south: a=w, rise = a1 - w, so w=0 is the top row at v=4+6
         Map<LocalPos, BlockSpec> c = roof(7, 7, params(P_KIND, SHED, P_OVERHANG, 0, P_HIGH_SIDE, SOUTH, P_GABLE_FILL, false));
@@ -340,6 +382,49 @@ class RoofTest {
         assertEquals(BlockSpec.of(GLASS), c.get(new LocalPos(3, 6, 0)), "the end of the clerestory is glazed");
         assertNull(c.get(new LocalPos(3, 6, 3)), "the clerestory is open inside");
         assertEquals(BlockSpec.of(STONE_BRICKS), c.get(new LocalPos(3, 5, 6)));
+    }
+
+    @Test
+    void anEvenSpanMonitorIsAccepted() {
+        // 6x6, monitor 2 wide and 1 high: K=(6-2)/2=2 gable layers (2x6x2=24 stairs); the gap is a=2..3
+        // the two clerestory sides are glazed wall-to-wall at v=6 (2x6=12 glass); the cap is a=2..3 at v=7 (12 slabs)
+        // gable ends: u=1..4 at v=4 and u=2,3 at v=5 = 6 wall blocks per end = 12
+        Map<LocalPos, BlockSpec> c = roof(GLASS_STYLE, 6, 6,
+                params(P_KIND, MONITOR, P_OVERHANG, 0, P_MONITOR_WIDTH, 2, P_MONITOR_HEIGHT, 1));
+        assertEquals(24, countOf(c, STAIRS));
+        assertEquals(12, countOf(c, GLASS));
+        assertEquals(12, countOf(c, OAK_SLAB));
+        assertEquals(12, countOf(c, STONE_BRICKS));
+        assertEquals(60, c.size());
+        assertEquals(BlockSpec.of(GLASS), c.get(new LocalPos(2, 6, 3)), "the near edge of the clerestory");
+        assertEquals(BlockSpec.of(GLASS), c.get(new LocalPos(3, 6, 3)), "the far edge: two-wide has no interior column");
+        assertEquals(BlockSpec.of(OAK_SLAB, TYPE, BOTTOM), c.get(new LocalPos(2, 7, 3)), "the cap above it");
+        assertNull(c.get(new LocalPos(2, 5, 2)), "the clerestory is open inside at slope level");
+    }
+
+    @Test
+    void theEavesColumnsLeftEmptyStillCountTowardTheWorkBudget() {
+        // fillEnds looks at every column of the footprint's end faces, even the ones whose slope height is zero:
+        // the a0 and a1 columns of each end are charged one unit of work but place nothing. A 7x7 gable therefore
+        // places 67 cells yet is charged 67 + 4 = 71 attempts. (The canvas also bounds cells, and 67 cells fit a
+        // PlanCompiler(67) exactly, so the empty-column charge can only be read straight off the canvas.)
+        PlanNode structure = node(STRUCTURE_ID, STRUCTURE, null, 0, 0, 0, params(P_WIDTH, 7, P_DEPTH, 7));
+        PlanNode roofNode = node(ROOF_ID, ROOF, STRUCTURE_ID, 0, 0, 0, params(P_OVERHANG, 0));
+        List<PlanNode> nodes = List.of(structure, roofNode);
+        List<Issue> issues = new ArrayList<>();
+        Map<String, PlanNode> byId = new HashMap<>();
+        for (PlanNode n : nodes) {
+            byId.put(n.id(), n);
+        }
+        Map<String, LocalPos> origins = Origins.resolve(nodes, SlotResolver.NONE, issues);
+        assertTrue(issues.isEmpty(), issues.toString());
+        GenContext ctx = new GenContext(REGISTRY, new Palette(REGISTRY.defaultPalette(), Map.of()), new Canvas(1024),
+                issues, byId, origins);
+        PartGenerators.find(ROOF).orElseThrow().generator()
+                .generate(ctx, roofNode, Params.resolve(REGISTRY.get(ROOF), roofNode.params()));
+        assertEquals(67, ctx.canvas().size());
+        assertEquals(71, ctx.canvas().attempts(), "the four zero-height eaves columns are charged, not free");
+        assertTrue(issues.isEmpty(), issues.toString());
     }
 
     @Test

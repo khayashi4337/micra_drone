@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.khayashi4337.micradrone.build.compile.CompileFixtures;
 import io.github.khayashi4337.micradrone.build.compile.CompileResult;
 import io.github.khayashi4337.micradrone.build.compile.PlaceableBlockPolicy;
+import io.github.khayashi4337.micradrone.build.compile.Placement;
 import io.github.khayashi4337.micradrone.build.compile.PlanCompiler;
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.Facing;
@@ -31,6 +32,8 @@ import io.github.khayashi4337.micradrone.build.model.Side;
 import io.github.khayashi4337.micradrone.build.model.StyleSpec;
 import io.github.khayashi4337.micradrone.build.parts.BuildPhase;
 import io.github.khayashi4337.micradrone.build.parts.Params;
+import io.github.khayashi4337.micradrone.build.parts.PartParams;
+import io.github.khayashi4337.micradrone.build.parts.Roles;
 import io.github.khayashi4337.micradrone.build.parts.VerifyMode;
 import io.github.khayashi4337.micradrone.build.plan.ExpandResult;
 import io.github.khayashi4337.micradrone.build.plan.Origins;
@@ -71,21 +74,21 @@ class FreestandingPartsTest {
     private static final String FACING_UP = "up";
 
     // Parameter names of the parts under test.
-    private static final String P_HEIGHT = "height";
-    private static final String P_BASE = "base";
-    private static final String P_CAPITAL = "capital";
-    private static final String P_AXIS = "axis";
-    private static final String P_LENGTH = "length";
-    private static final String P_MATERIAL = "material";
-    private static final String P_SIZE = "size";
-    private static final String P_CAP = "cap";
-    private static final String P_DIR = "dir";
-    private static final String P_WIDTH = "width";
-    private static final String P_DEPTH = "depth";
-    private static final String P_CLEARANCE = "clearance";
-    private static final String P_CARGO_U = "cargo_u";
-    private static final String P_CARGO_W = "cargo_w";
-    private static final String P_MARKER = "marker";
+    private static final String P_HEIGHT = PartParams.HEIGHT;
+    private static final String P_BASE = PartParams.BASE;
+    private static final String P_CAPITAL = PartParams.CAPITAL;
+    private static final String P_AXIS = PartParams.AXIS;
+    private static final String P_LENGTH = PartParams.LENGTH;
+    private static final String P_MATERIAL = PartParams.MATERIAL;
+    private static final String P_SIZE = PartParams.SIZE;
+    private static final String P_CAP = PartParams.CAP;
+    private static final String P_DIR = PartParams.DIR;
+    private static final String P_WIDTH = PartParams.WIDTH;
+    private static final String P_DEPTH = PartParams.DEPTH;
+    private static final String P_CLEARANCE = PartParams.CLEARANCE;
+    private static final String P_CARGO_U = PartParams.CARGO_U;
+    private static final String P_CARGO_W = PartParams.CARGO_W;
+    private static final String P_MARKER = PartParams.MARKER;
 
     /** The part in a test that builds one part alone. */
     private static final String PART_ID = "p";
@@ -104,9 +107,9 @@ class FreestandingPartsTest {
     private static final String BUDGET_ISSUE_ID = "E-OUT-OF-BOUNDS:#cells";
 
     // Palette roles the style overrides.
-    private static final String ROLE_PILLAR = "pillar";
-    private static final String ROLE_TRIM = "trim";
-    private static final String ROLE_MARKER = "marker";
+    private static final String ROLE_PILLAR = Roles.PILLAR;
+    private static final String ROLE_TRIM = Roles.TRIM;
+    private static final String ROLE_MARKER = Roles.MARKER;
 
     private static final StyleSpec STYLE = new StyleSpec(Map.of(ROLE_PILLAR, QUARTZ, ROLE_TRIM, SMOOTH_STONE), Set.of());
 
@@ -459,6 +462,24 @@ class FreestandingPartsTest {
         CompileResult r = compile(STYLE, nodes);
         assertNull(r.manifest());
         assertEquals(List.of("E-ANCHOR:" + PAD_ID + "#anchor"), ids(r));
+    }
+
+    // ------------------------------------------------------------------ build stage
+
+    @Test
+    void eachPartRegistersItsPlacementsUnderItsOwnStage() {
+        Map<String, BuildPhase> stages = Map.of(
+                PILLAR, BuildPhase.STRUCTURE, BEAM, BuildPhase.STRUCTURE, CHIMNEY, BuildPhase.STRUCTURE,
+                ROAD, BuildPhase.LOGISTICS, DOCK_PAD, BuildPhase.LOGISTICS);
+        for (Map.Entry<String, BuildPhase> e : stages.entrySet()) {
+            CompileResult r = compile(STYLE, List.of(at(PART_ID, e.getKey(), 0, 0, 0, Map.of())));
+            assertTrue(r.issues().isEmpty(), e.getKey() + ": " + r.issues());
+            Set<BuildPhase> seen = new HashSet<>();
+            for (Placement p : r.manifest().placements()) {
+                seen.add(p.phase());
+            }
+            assertEquals(Set.of(e.getValue()), seen, e.getKey() + " places only under " + e.getValue());
+        }
     }
 
     // ------------------------------------------------------------------ block policy
