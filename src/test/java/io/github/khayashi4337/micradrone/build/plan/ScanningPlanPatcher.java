@@ -25,6 +25,7 @@ import io.github.khayashi4337.micradrone.build.parts.PartType;
 import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
 import io.github.khayashi4337.micradrone.lang.PlanApi;
 import io.github.khayashi4337.micradrone.lang.PlanValueText;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -33,13 +34,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 /**
- * Applies a {@link PlanPatch} to a {@link SemanticPlan}, deterministically. Operations apply in order; any ERROR
- * refuses the whole patch (no half-applied plans). Everything that arrives from outside (AI output, hand-written
- * JSON, scripts) passes through here, so the checks here are the first line of defence.
+ * TEST-ONLY REFERENCE: a verbatim copy of {@code PlanPatcher} as it was before the dependency index (commit deddee0),
+ * answering "does this move close a loop?" ({@code dependsOn}) and "who still depends on this node?"
+ * ({@code dependentsOf}) by scanning the plan. The differential test compares the real patcher against it op by op.
+ * Only the class name and the visibility of {@code State} and {@code applyOp} (so the test can apply one op at a time)
+ * differ from that commit; do not change its behaviour.
+ *
+ * <p>Original javadoc: Applies a {@link PlanPatch} to a {@link SemanticPlan}, deterministically. Operations apply in
+ * order; any ERROR refuses the whole patch (no half-applied plans). Everything that arrives from outside (AI output,
+ * hand-written JSON, scripts) passes through here, so the checks here are the first line of defence.
  */
-public final class PlanPatcher {
+final class ScanningPlanPatcher {
     /** Positions stay far inside int range so sums along a parent chain cannot wrap around. */
     public static final int MAX_COORD = 30_000_000;
 
@@ -93,25 +101,18 @@ public final class PlanPatcher {
     private final PartTypeRegistry registry;
     private final TemplateBundle templates;
 
-    public PlanPatcher(PartTypeRegistry registry, TemplateBundle templates) {
+    ScanningPlanPatcher(PartTypeRegistry registry, TemplateBundle templates) {
         this.registry = registry;
         this.templates = templates;
     }
 
-    /**
-     * The plan being edited: mutable copies of what the operations change, in insertion order, plus the
-     * {@link DependencyIndex} once a question needs it. Package-private so tests can apply one op at a time.
-     */
+    /** The plan being edited: mutable copies of what the operations change, in insertion order. */
     static final class State {
         final LinkedHashMap<String, PlanNode> nodes = new LinkedHashMap<>();
         final LinkedHashMap<String, Connection> connections = new LinkedHashMap<>();
         Site site;
         StyleSpec style;
         LogisticsPlan logistics;
-        /** Null until the first question that needs it; from then on every op keeps it up to date. */
-        private DependencyIndex index;
-        /** Nodes visited by the loop walks made before the index was built (see {@code checkNoDependencyLoop}). */
-        private long walkedBeforeIndex;
 
         State(SemanticPlan plan) {
             for (PlanNode n : plan.nodes()) {
@@ -124,27 +125,13 @@ public final class PlanPatcher {
             style = plan.style();
             logistics = plan.logistics();
         }
-
-        /** The index, built now (O(nodes + references)) if no op needed it before. */
-        DependencyIndex index() {
-            if (index == null) {
-                index = new DependencyIndex(nodes, connections, logistics);
-            }
-            return index;
-        }
-
-        /** The index if it has been built, else null (nothing to keep up to date yet). */
-        DependencyIndex builtIndex() {
-            return index;
-        }
     }
 
     /**
      * Applies the patch to the plan: the new plan, or every issue found. The base plan is assumed to come from this
      * patcher or from {@link #normalize}, so no node refers to a parent or a wall that is not in the plan (no dangling
      * references); that is why only a MoveNode is checked for a dependency loop ({@link #checkNoDependencyLoop}). A
-     * plan built by hand with dangling references or loops is outside that guarantee, but it is still answered in
-     * bounded time and exactly as a walk over the plan would answer (see {@link DependencyIndex}).
+     * plan built by hand with dangling references or loops is outside that guarantee.
      */
     public PatchResult apply(SemanticPlan plan, PlanPatch patch) {
         if (patch.baseRevision() != plan.revision()) {
@@ -291,11 +278,7 @@ public final class PlanPatcher {
         ok &= checkAnchor(st, node.id(), node.anchor(), issues);
         ok &= checkText(node, issues);
         if (ok) {
-            PlanNode added = withParams(node, typed);
-            st.nodes.put(node.id(), added);
-            if (st.builtIndex() != null) {
-                st.builtIndex().nodeAdded(added);
-            }
+            st.nodes.put(node.id(), withParams(node, typed));
         }
     }
 
@@ -375,29 +358,46 @@ public final class PlanPatcher {
      * kinds cannot be written by any script (its statements would have to come in an order where each one needs the
      * other first) and would never end for anything that walks the chain. Only a move can close one: a node that is
      * being added is not yet the parent or the wall of anything (given a base plan without dangling references, see
-     * {@link #apply}), so adding is not checked and stays constant-time.
-     *
-     * <p>The first moves of a patch walk the wall's dependencies (each node once, {@link DependencyIndex#walk}), which
-     * is cheapest for a few moves on a large plan. Once those walks together have visited as many nodes as the plan
-     * holds, the {@link DependencyIndex} is built (O(nodes), the price of one more walk) and answers every later move
-     * from its order labels, usually in O(1). So a patch never pays more than about twice the cheaper of the two, and a
-     * long chain built by many relocations is no longer quadratic.
+     * {@link #apply}), so adding is not checked and stays constant-time. A move costs O(nodes) in the worst case
+     * (the walk visits each node once), so a long chain built by many relocations is quadratic overall.
      */
     private static boolean checkNoDependencyLoop(State st, String ownerId, Anchor anchor, List<Issue> issues) {
-        if (anchor instanceof Anchor.OnSurface s && !mayRestOn(st, ownerId, s.nodeId())) {
+        if (anchor instanceof Anchor.OnSurface s && dependsOn(st, s.nodeId(), ownerId)) {
             issues.add(Issue.of(IssueCode.E_ANCHOR, KEY_CYCLE, List.of(ownerId), MESSAGE_DEPENDENCY_LOOP));
             return false;
         }
         return true;
     }
 
-    private static boolean mayRestOn(State st, String ownerId, String wallId) {
-        if (st.builtIndex() == null && st.walkedBeforeIndex < st.nodes.size()) {
-            DependencyIndex.Walk walk = DependencyIndex.walk(st.nodes, wallId, ownerId);
-            st.walkedBeforeIndex += walk.visited();
-            return !walk.found();
+    /**
+     * Whether {@code targetId} is met by following, from {@code startId}, every node's parent and every node's
+     * surface target. Each node is visited once (a set of the visited ids, an explicit stack, no recursion), so the
+     * walk is bounded by the number of nodes however long the chains are and even when the plan already holds a loop.
+     */
+    private static boolean dependsOn(State st, String startId, String targetId) {
+        Set<String> visited = new HashSet<>();
+        ArrayDeque<String> pending = new ArrayDeque<>();
+        pending.push(startId);
+        while (!pending.isEmpty()) {
+            String id = pending.pop();
+            if (id.equals(targetId)) {
+                return true;
+            }
+            if (!visited.add(id)) {
+                continue;
+            }
+            PlanNode node = st.nodes.get(id);
+            if (node == null) {
+                continue;
+            }
+            if (node.parent() != null) {
+                pending.push(node.parent());
+            }
+            if (node.anchor() instanceof Anchor.OnSurface surface) {
+                pending.push(surface.nodeId());
+            }
         }
-        return st.index().allowsResting(ownerId, wallId);
+        return false;
     }
 
     /** Why the anchor cannot sit on that wall face, or null when it can. */
@@ -444,25 +444,15 @@ public final class PlanPatcher {
         PlanNode existing = existingNode(st, op.id(), issues);
         if (existing != null && checkAnchor(st, op.id(), op.anchor(), issues)
                 && checkNoDependencyLoop(st, op.id(), op.anchor(), issues)) {
-            PlanNode moved = withAnchor(existing, op.anchor());
-            st.nodes.put(op.id(), moved);
-            if (st.builtIndex() != null) {
-                st.builtIndex().dependenciesChanged(existing, moved);
-            }
+            st.nodes.put(op.id(), withAnchor(existing, op.anchor()));
         }
     }
 
-    /**
-     * Removes a node that nothing refers to any more. The first removal of a patch builds the {@link DependencyIndex}
-     * (O(nodes + references), the price of the one scan the question used to cost); every removal then finds the
-     * referring nodes, connections and docks in O(answer) instead of scanning the plan.
-     */
     private void removeNode(State st, String id, List<Issue> issues) {
-        PlanNode existing = existingNode(st, id, issues);
-        if (existing == null) {
+        if (existingNode(st, id, issues) == null) {
             return;
         }
-        Set<String> dependents = st.index().dependents(id);
+        Set<String> dependents = dependentsOf(st, id);
         if (!dependents.isEmpty()) {
             String list = String.join(ID_LIST_SEPARATOR, dependents);
             issues.add(Issue.of(IssueCode.E_ANCHOR, KEY_REMOVE, List.of(id),
@@ -471,7 +461,40 @@ public final class PlanPatcher {
             return;
         }
         st.nodes.remove(id);
-        st.index().nodeRemoved(existing);
+    }
+
+    /** The nodes, connections and docks that still refer to the node, by id in dictionary order. */
+    private static Set<String> dependentsOf(State st, String id) {
+        Set<String> dependents = new TreeSet<>();
+        for (PlanNode n : st.nodes.values()) {
+            if (id.equals(n.parent()) || (n.anchor() instanceof Anchor.OnSurface s && s.nodeId().equals(id))) {
+                dependents.add(n.id());
+            }
+        }
+        for (Connection c : st.connections.values()) {
+            if (usesNode(c, id)) {
+                dependents.add(c.id());
+            }
+        }
+        if (st.logistics != null) {
+            for (LogisticsPlan.Dock d : st.logistics.docks()) {
+                if (usesNode(d, id)) {
+                    dependents.add(d.id());
+                }
+            }
+        }
+        return dependents;
+    }
+
+    private static boolean usesNode(Connection c, String nodeId) {
+        return c.from().nodeId().equals(nodeId) || c.to().nodeId().equals(nodeId)
+                || c.constraints().avoidNodeIds().contains(nodeId)
+                || (c.routing() instanceof Routing.Explicit e && e.viaNodeIds().contains(nodeId));
+    }
+
+    private static boolean usesNode(LogisticsPlan.Dock d, String nodeId) {
+        return d.dockingConnectorNodeIds().contains(nodeId)
+                || d.linkedPorts().stream().anyMatch(p -> p.nodeId().equals(nodeId));
     }
 
     // ------------------------------------------------------------------ connections
@@ -510,18 +533,12 @@ public final class PlanPatcher {
         }
         if (ok) {
             st.connections.put(c.id(), c);
-            if (st.builtIndex() != null) {
-                st.builtIndex().connectionAdded(c);
-            }
         }
     }
 
     private static void removeConnection(State st, String id, List<Issue> issues) {
-        Connection removed = st.connections.remove(id);
-        if (removed == null) {
+        if (st.connections.remove(id) == null) {
             issues.add(Issue.of(IssueCode.E_CONN_INVALID, List.of(id), "接続" + id + "はありません"));
-        } else if (st.builtIndex() != null) {
-            st.builtIndex().connectionRemoved(removed);
         }
     }
 
@@ -559,7 +576,7 @@ public final class PlanPatcher {
 
     private static void setLogistics(State st, LogisticsPlan logistics, List<Issue> issues) {
         if (logistics == null) {
-            replaceLogistics(st, null);
+            st.logistics = null;
             return;
         }
         boolean ok = true;
@@ -577,14 +594,7 @@ public final class PlanPatcher {
             ok &= docksExist(dockIds, f.itemId(), f.fromDock(), f.toDock(), issues);
         }
         if (ok) {
-            replaceLogistics(st, logistics);
-        }
-    }
-
-    private static void replaceLogistics(State st, LogisticsPlan logistics) {
-        st.logistics = logistics;
-        if (st.builtIndex() != null) {
-            st.builtIndex().logisticsSet(logistics);
+            st.logistics = logistics;
         }
     }
 
