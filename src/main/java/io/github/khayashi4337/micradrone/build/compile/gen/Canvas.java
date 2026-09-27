@@ -1,6 +1,7 @@
 package io.github.khayashi4337.micradrone.build.compile.gen;
 
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
+import io.github.khayashi4337.micradrone.build.model.BuildLimits;
 import io.github.khayashi4337.micradrone.build.model.Issue;
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.LocalPos;
@@ -20,8 +21,6 @@ public final class Canvas {
     /** Names in Issue.data shared by the overlap and the out-of-bounds issues: how many cells, and the first one. */
     public static final String DATA_COUNT = "count";
     public static final String DATA_FIRST_POS = "firstPos";
-    /** The Issue key and data name of the cell-budget refusal. */
-    public static final String KEY_CELLS = "cells";
     private static final String DATA_REASON = "reason";
     private static final String OWNER_PAIR_SEPARATOR = "|";
     private static final String POS_SEPARATOR = ",";
@@ -109,8 +108,8 @@ public final class Canvas {
 
     /** Fatal: the whole compile stops, since every further part would only add to the work. */
     private GenAbort budgetExceeded(String message) {
-        return new GenAbort(Issue.of(IssueCode.E_OUT_OF_BOUNDS, KEY_CELLS, List.of(), message,
-                Map.of(KEY_CELLS, String.valueOf(maxCells)), List.of()), true);
+        return new GenAbort(Issue.of(IssueCode.E_OUT_OF_BOUNDS, BuildLimits.KEY_CELLS, List.of(), message,
+                Map.of(BuildLimits.KEY_CELLS, String.valueOf(maxCells)), List.of()), true);
     }
 
     public void recordOverlap(String ownerA, String ownerB, LocalPos pos) {

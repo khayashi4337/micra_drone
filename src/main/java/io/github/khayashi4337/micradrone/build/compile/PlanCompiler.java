@@ -10,6 +10,7 @@ import io.github.khayashi4337.micradrone.build.model.BlockRotation;
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.Box;
 import io.github.khayashi4337.micradrone.build.model.BuildFrame;
+import io.github.khayashi4337.micradrone.build.model.BuildLimits;
 import io.github.khayashi4337.micradrone.build.model.IntPos;
 import io.github.khayashi4337.micradrone.build.model.Issue;
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
@@ -44,7 +45,8 @@ import java.util.TreeSet;
  * problem ends as an Issue, never as an exception or a loop.
  */
 public final class PlanCompiler {
-    public static final int DEFAULT_MAX_CELLS = 200_000;
+    /** The cells one compile places by default: the limit the expander also refuses a bigger plan at (see BuildLimits). */
+    public static final int DEFAULT_MAX_CELLS = BuildLimits.MAX_CELLS;
 
     // Issue keys and subjects.
     private static final String KEY_ROT = "rot";

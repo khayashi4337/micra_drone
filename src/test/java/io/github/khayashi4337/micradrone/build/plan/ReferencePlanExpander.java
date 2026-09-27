@@ -1,7 +1,7 @@
 package io.github.khayashi4337.micradrone.build.plan;
 
+import io.github.khayashi4337.micradrone.build.model.PlanIds;
 import io.github.khayashi4337.micradrone.build.model.Anchor;
-import io.github.khayashi4337.micradrone.build.model.BuildLimits;
 import io.github.khayashi4337.micradrone.build.model.Connection;
 import io.github.khayashi4337.micradrone.build.model.Constraints;
 import io.github.khayashi4337.micradrone.build.model.Issue;
@@ -29,22 +29,28 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * Expands a plan into parts only: module instances become their template's parts, connections are resolved.
- * The server runs this itself on what the client sent; the client's own expansion is never trusted (D-3).
+ * The reference for {@link PlanExpander}: the expander as it was before its module work was moved from every instance to
+ * every distinct template (HEAD c3e789e, copied verbatim). Only the class name, the visibility and the template lookup
+ * changed: the lookup scans the bundle's list, so this class does not depend on the bundle's index. The tests compare
+ * {@link PlanExpander} with it on random plans and templates: the results must be equal, issue by issue.
  */
-public final class PlanExpander {
-    public static final String MODULE_PREFIX = "mod:";
+final class ReferencePlanExpander {
+    private static final String MODULE_PREFIX = PlanExpander.MODULE_PREFIX;
     /** Separates an instance id from a template-internal id; not allowed in user ids, so it cannot collide. */
-    public static final String ID_SEPARATOR = "/";
+    private static final String ID_SEPARATOR = PlanExpander.ID_SEPARATOR;
 
     // Keys that tell apart several issues of one code on one subject (see also Origins).
     private static final String KEY_ROT = "rot";
+    private static final String KEY_TEMPLATE = "template";
     private static final String KEY_VIA_PREFIX = "via:";
+    // What a template's ids name, for the start of the messages about them.
+    private static final String PART_LABEL = "部品";
+    private static final String CONNECTION_LABEL = "接続";
 
     private final PartTypeRegistry registry;
     private final SlotResolver slots;
 
-    public PlanExpander(PartTypeRegistry registry, SlotResolver slots) {
+    ReferencePlanExpander(PartTypeRegistry registry, SlotResolver slots) {
         this.registry = registry;
         this.slots = slots;
     }
@@ -65,26 +71,12 @@ public final class PlanExpander {
         return node.type().startsWith(MODULE_PREFIX);
     }
 
-    public ExpandResult expand(SemanticPlan plan, TemplateBundle templates, Router router) {
-        return expand(plan, templates, router, new TemplateWork());
-    }
-
-    /**
-     * As above, and {@code work} counts what was done once per distinct template (read by the tests).
-     * <p>
-     * A plan that would expand to more parts than {@link BuildLimits#MAX_CELLS} is refused first, before any part is
-     * built. Everything that depends on a template alone is worked out once per distinct template
-     * ({@link CheckedTemplate}), so the work per module instance is the parts it produces and nothing else. All of this is
-     * in memory; nothing here reaches outside the process except {@code slots} and {@code router}, which the caller
-     * supplies.
-     */
-    ExpandResult expand(SemanticPlan plan, TemplateBundle templates, Router router, TemplateWork work) {
+    ExpandResult expand(SemanticPlan plan, TemplateBundle templates, Router router) {
         List<Issue> issues = new ArrayList<>();
         List<PlanNode> primitive = new ArrayList<>();
         Map<String, ModuleTemplate> moduleInstances = new HashMap<>();
         List<Connection> connections = new ArrayList<>(plan.connections());
         TreeSet<String> hashes = new TreeSet<>();
-        Map<String, CheckedTemplate> checkedTemplates = new HashMap<>();
         // Nodes left out because they were refused (their issue is reported): the parts that hang from one are not also
         // reported as having a missing parent.
         Set<String> refused = new HashSet<>();
@@ -94,11 +86,6 @@ public final class PlanExpander {
             if (isModule(n)) {
                 moduleIds.add(n.id());
             }
-        }
-        Issue tooBig = firstNodeOverLimit(plan, moduleIds, templates);
-        if (tooBig != null) {
-            issues.add(tooBig);
-            return new ExpandResult(null, issues);
         }
         for (PlanNode node : plan.nodes()) {
             if (node.parent() != null && moduleIds.contains(node.parent())) {
@@ -116,20 +103,15 @@ public final class PlanExpander {
                 }
                 continue;
             }
-            CheckedTemplate checked = checkedTemplates.get(node.type());
-            if (checked == null) {
-                ModuleTemplate template = templates.find(node.type()).orElse(null);
-                if (template == null) {
-                    issues.add(Issue.of(IssueCode.E_UNKNOWN_PART, List.of(node.id()), "テンプレートがありません: " + node.type()));
-                    refused.add(node.id());
-                    continue;
-                }
-                checked = new CheckedTemplate(template, registry, work);
-                checkedTemplates.put(node.type(), checked);
+            ModuleTemplate template = templates.templates().stream().filter(t -> t.id().equals(node.type())).findFirst().orElse(null);
+            if (template == null) {
+                issues.add(Issue.of(IssueCode.E_UNKNOWN_PART, List.of(node.id()), "テンプレートがありません: " + node.type()));
+                refused.add(node.id());
+                continue;
             }
-            if (instantiate(node, checked, primitive, connections, issues)) {
-                moduleInstances.put(node.id(), checked.template());
-                hashes.add(checked.hash());
+            if (instantiate(node, template, primitive, connections, issues)) {
+                moduleInstances.put(node.id(), template);
+                hashes.add(template.hash());
             } else {
                 refused.add(node.id());
             }
@@ -196,77 +178,65 @@ public final class PlanExpander {
     }
 
     /**
-     * The number of parts the node adds to the expanded plan: 1 for a part, as many as the template has for a module
-     * instance, 0 for a node that the expansion will refuse (inside a module instance, or a template the bundle lacks).
-     * A node that is refused later for another reason (a slot that does not resolve, a bad template) is still counted, so
-     * the count is an upper bound, and it is exact for a plan that expands.
-     */
-    private static int partsAddedBy(PlanNode node, Set<String> moduleIds, TemplateBundle templates) {
-        if (node.parent() != null && moduleIds.contains(node.parent())) {
-            return 0;
-        }
-        if (!isModule(node)) {
-            return 1;
-        }
-        return templates.find(node.type()).map(t -> t.nodes().size()).orElse(0);
-    }
-
-    /**
-     * E-OUT-OF-BOUNDS on the first node whose parts take the expanded plan past {@link BuildLimits#MAX_CELLS}, or null when
-     * the plan stays within it. A part places at least one cell, and the compiler refuses more cells than that, so a plan
-     * with more parts could not be built; this is the compiler's own work-budget refusal (same code, key and data), raised
-     * before any part is built. The parts are only counted, so a plan of 100,000 instances of a large template is
-     * refused without building a single node. The message names no id: the node is the subject of the issue.
-     */
-    private static Issue firstNodeOverLimit(SemanticPlan plan, Set<String> moduleIds, TemplateBundle templates) {
-        long parts = 0;
-        for (PlanNode node : plan.nodes()) {
-            parts += partsAddedBy(node, moduleIds, templates);
-            if (parts > BuildLimits.MAX_CELLS) {
-                return Issue.of(IssueCode.E_OUT_OF_BOUNDS, BuildLimits.KEY_CELLS, List.of(node.id()),
-                        "展開した部品が、施工の大きさの上限(" + BuildLimits.MAX_CELLS + "マス)を超えます。部品は1つにつき1マス以上を使うため、"
-                                + "これより多い部品は施工できません。モジュールの数か、テンプレートの部品の数を減らしてください",
-                        Map.of(BuildLimits.KEY_CELLS, String.valueOf(BuildLimits.MAX_CELLS)), List.of());
-            }
-        }
-        return null;
-    }
-
-    /**
      * Adds the template's parts and connections under the instance's id. False (nothing added) after reporting an
      * issue. Every problem of the ids and of the placement is reported; a bad part stops at the first one.
      */
-    private boolean instantiate(PlanNode instance, CheckedTemplate template, List<PlanNode> out, List<Connection> connections,
+    private boolean instantiate(PlanNode instance, ModuleTemplate template, List<PlanNode> out, List<Connection> connections,
                                 List<Issue> issues) {
         String prefix = instance.id() + ID_SEPARATOR;
-        template.reportIdProblems(prefix, issues);
+        List<String> nodeIds = template.nodes().stream().map(PlanNode::id).toList();
+        List<String> connectionIds = template.internal().stream().map(Connection::id).toList();
+        boolean nodeIdsOk = idsAreValid(template, prefix, nodeIds, PART_LABEL, issues);
+        boolean connectionIdsOk = idsAreValid(template, prefix, connectionIds, CONNECTION_LABEL, issues);
         Placement at = placementOf(instance, issues);
-        if (!template.idsAreValid() || at == null) {
+        if (!nodeIdsOk || !connectionIdsOk || at == null) {
             return false;
         }
         List<PlanNode> produced = new ArrayList<>();
-        for (int i = 0; i < template.partCount(); i++) {
-            PlanNode part = instantiatePart(template, i, instance, at, prefix, issues);
+        for (PlanNode t : template.nodes()) {
+            PlanNode part = instantiatePart(t, instance, at, prefix, issues);
             if (part == null) {
                 return false;
             }
             produced.add(part);
         }
         out.addAll(produced);
-        for (Connection c : template.template().internal()) {
+        for (Connection c : template.internal()) {
             connections.add(prefixed(c, prefix));
         }
         return true;
     }
 
     /**
-     * The template part at {@code index} inside the instance, or null after reporting an issue. What the registry and the
-     * validator say about the part is worked out once for the template, and only when an instance gets this far; what
-     * depends on the instance is decided here, in the order it always was: the turn, the anchor, then the part itself.
+     * Whether the ids of a template's parts (or of its connections) are well formed and unique. Each bad id is
+     * reported once, as E-ID-INVALID or E-ID-DUPLICATE on {@code <instance>/<id>}. The template may come from a
+     * client, and with a repeated id every lookup by id (parent, via, ports) would pick one of the parts arbitrarily;
+     * a "/" in an id could also name another instance's part.
      */
-    private PlanNode instantiatePart(CheckedTemplate template, int index, PlanNode instance, Placement at, String prefix,
-                                     List<Issue> issues) {
-        PlanNode t = template.template().nodes().get(index);
+    private static boolean idsAreValid(ModuleTemplate template, String prefix, List<String> ids, String label, List<Issue> issues) {
+        boolean ok = true;
+        Set<String> seen = new HashSet<>();
+        Set<String> reported = new HashSet<>();
+        for (String id : ids) {
+            if (!PlanIds.isValid(id)) {
+                ok = false;
+                if (reported.add(id)) {
+                    issues.add(Issue.of(IssueCode.E_ID_INVALID, KEY_TEMPLATE, List.of(prefix + id),
+                            "テンプレート" + template.id() + "の" + label + "の" + PlanIds.invalidMessage(id)));
+                }
+            } else if (!seen.add(id)) {
+                ok = false;
+                if (reported.add(id)) {
+                    issues.add(Issue.of(IssueCode.E_ID_DUPLICATE, KEY_TEMPLATE, List.of(prefix + id),
+                            "テンプレート" + template.id() + "の" + label + "のIDが重複しています: " + id));
+                }
+            }
+        }
+        return ok;
+    }
+
+    /** One template part inside the instance, or null after reporting an issue. */
+    private PlanNode instantiatePart(PlanNode t, PlanNode instance, Placement at, String prefix, List<Issue> issues) {
         String id = prefix + t.id();
         if (at.turned() && BuildingParts.ROTATION_UNSUPPORTED.contains(t.type())) {
             issues.add(Issue.of(IssueCode.E_ANCHOR, KEY_ROT, List.of(instance.id()),
@@ -277,21 +247,20 @@ public final class PlanExpander {
         if (anchor == null) {
             return null;
         }
-        CheckedTemplate.PartCheck check = template.part(index);
-        if (!check.known()) {
+        PartType partType = registry.find(t.type()).orElse(null);
+        if (partType == null) {
             issues.add(Issue.of(IssueCode.E_UNKNOWN_PART, List.of(id), "テンプレートの部品" + t.type()
                     + "は、登録簿にありません(テンプレートの中にテンプレートは入れられません)"));
             return null;
         }
-        if (!check.valid()) {
-            // a template that arrives from a client is not trusted: its parts are checked like any other part. The
-            // verdict is the template's, but the issues name this instance's part, so they are worded here (only for
-            // an instance that is refused, so this is never repeated for the instances that expand)
-            issues.addAll(ParamValidator.validate(id, check.type(), t.params()).issues());
+        // a template that arrives from a client is not trusted: its parts are checked like any other part
+        ParamValidator.Result checked = ParamValidator.validate(id, partType, t.params());
+        if (!checked.issues().isEmpty()) {
+            issues.addAll(checked.issues());
             return null;
         }
         String parent = t.parent() == null ? instance.parent() : prefix + t.parent();
-        return new PlanNode(id, t.type(), parent, anchor, check.typed(), t.tags(), t.label());
+        return new PlanNode(id, t.type(), parent, anchor, checked.typed(), t.tags(), t.label());
     }
 
     /**
