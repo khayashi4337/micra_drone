@@ -69,10 +69,18 @@ public final class BuildingParts {
     private static final int MAX_SIGN_TEXT = SIGN_MAX_LINES * SIGN_MAX_LINE_CHARS + (SIGN_MAX_LINES - 1);
     /** A floor hole is a rectangle written as four numbers (u0, w0, u1, w1). */
     private static final int VALUES_PER_HOLE = 4;
+    /**
+     * A sanity cap, not a derived bound: sixteen rectangles per floor is already far past anything a player
+     * would write by hand, and the JSON size limits keep a longer list from ever arriving.
+     */
     private static final int MAX_HOLES = 16;
     private static final int MAX_HOLE_VALUES = MAX_HOLES * VALUES_PER_HOLE;
 
-    /** The four horizontal directions as parameter values, in {@link Facing} order. */
+    /**
+     * The four horizontal directions as parameter values, in {@link Facing} order. Field order is load-bearing:
+     * DIRECTIONS is read while {@code PARTS} is built, and {@code PARTS} feeds {@code NAMES} and
+     * {@code REGISTRY}, so the declarations must stay in this textual order.
+     */
     private static final String[] DIRECTIONS = Arrays.stream(Facing.values()).map(Facing::lower)
             .toArray(String[]::new);
 
@@ -127,6 +135,13 @@ public final class BuildingParts {
         return registry.build();
     }
 
+    /**
+     * The parameter table of design doc 05 section 1.1.1 plus the choices the table does not spell out: a wall's
+     * {@code from} is 0..{@link #MAX_INDEX} and {@code length} 0..{@link #MAX_SPAN}, a dock pad's
+     * {@code cargo_u}/{@code cargo_w} are 0..{@link #MAX_INDEX}, a floor's {@code holes} take at most
+     * {@link #MAX_HOLES} rectangles of values 0..{@link #MAX_INDEX}, and {@code dir}/{@code facing} default to
+     * north.
+     */
     private static List<PartType> buildParts() {
         return List.of(
                 part(STRUCTURE_NAME, PartCategory.STRUCTURE, BuildPhase.STRUCTURE, VerifyMode.EXACT,

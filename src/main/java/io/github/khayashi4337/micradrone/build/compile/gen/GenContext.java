@@ -92,7 +92,10 @@ public final class GenContext {
         return refused.contains(nodeId);
     }
 
-    /** The block a material (a role name or a block id) names, without block states. */
+    /**
+     * The block a material (a role name or a block id) names, without block states. The block is recorded as
+     * used by the node, so a block the policy forbids fails it later with E-BLOCK-FORBIDDEN.
+     */
     public BlockSpec plainBlock(String material, PlanNode node) {
         return BlockForms.plain(palette.full(material, node));
     }

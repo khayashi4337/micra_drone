@@ -5,7 +5,9 @@ import java.util.Map;
 
 /**
  * A problem found by a deterministic check. It always points at design nodes or connections by their stable
- * ids. {@code acceptable} is fixed per code: whether the user may accept the risk and go on.
+ * ids. {@code acceptable} is fixed per code: whether the user may accept the risk and go on. Null policy:
+ * {@code subjects} and {@code hints} are required ({@code null} fails), while a {@code null} {@code data} map
+ * reads as empty.
  */
 public record Issue(String id, IssueCode code, Severity severity, boolean acceptable, List<String> subjects,
                     String message, Map<String, String> data, List<FixHint> hints) {

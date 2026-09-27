@@ -88,7 +88,8 @@ public final class PlanCompiler {
         if (site.frame().origin() == null || site.frame().facing() == null) {
             // BuildFrame does not check its fields; the other nulls (style, site.frame, Absolute.rot) are normalised
             // or refused by their records' constructors.
-            issues.add(Issue.of(IssueCode.E_SCHEMA, KEY_SITE_FRAME, List.of(SITE_SUBJECT), "site.frame needs an origin and a facing"));
+            issues.add(Issue.of(IssueCode.E_SCHEMA, KEY_SITE_FRAME, List.of(SITE_SUBJECT),
+                    "site.frameには、原点(origin)と向き(facing)が必要です"));
             return new CompileResult(null, issues);
         }
         if (!siteFitsTheWorld(site)) {

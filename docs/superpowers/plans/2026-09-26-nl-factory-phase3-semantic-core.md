@@ -4360,7 +4360,7 @@ public final class BuildingParts {
                         ParamSpec.integer("height", 1, 6, 2)),
                 part("sign", PartCategory.DECOR, BuildPhase.DECORATION, VerifyMode.STATE_SUBSET,
                         "A wall sign with up to four short lines of text.",
-                        ParamSpec.text("text", 60, null), ParamSpec.material("material", "sign")),
+                        ParamSpec.text("text", 60, null), ParamSpec.material("material", "sign")), // superseded: the implementation uses 63 (4 lines x 15 chars + 3 separators)
                 part("planter", PartCategory.DECOR, BuildPhase.DECORATION, VerifyMode.EXACT,
                         "A flower bed along a wall.", ParamSpec.integer("width", 1, 8, 3)),
                 part("trim", PartCategory.DECOR, BuildPhase.DECORATION, VerifyMode.STATE_SUBSET,

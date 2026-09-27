@@ -45,7 +45,11 @@ public final class CommandNames {
     public static final List<String> PLAN_GENERAL = List.of(SITE, STYLE, MOOD, PART, UPDATE_PARAMS, RELOCATE,
             REMOVE_PART, CONNECT, DISCONNECT, LOGISTICS);
 
-    /** One command per building part (micra:*), named by the part id without the prefix; a test keeps it equal to the registry. */
+    /**
+     * One command per building part (micra:*), named by the part id without the prefix; a test keeps it equal to
+     * the registry. It stays a literal list on purpose: reading the parts registry here would initialise the
+     * build domain in a farm-only interpreter, which must be able to run without it.
+     */
     public static final List<String> PLAN_PART_COMMANDS = List.of("balcony", "beam", "catwalk", "chimney", "dock_pad", "door",
             "floor", "foundation", "ladder", "lamp", "pillar", "planter", "railing", "ramp", "road", "roof", "sign", "stairs",
             "structure", "trim", "wall", "window");

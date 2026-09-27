@@ -33,6 +33,8 @@ final class SignGen implements PartGenerator {
         }
         Map<String, String> config = new TreeMap<>();
         for (int k = 0; k < lines.length; k++) {
+            // Per line the limit counts code points — what a player reads as characters. The registry's total
+            // bound (ParamValidator) counts UTF-16 units instead; the two differ only for astral characters.
             if (lines[k].codePointCount(0, lines[k].length()) > BuildingParts.SIGN_MAX_LINE_CHARS) {
                 throw ctx.fail(node, IssueCode.E_PARAM_RANGE, PartParams.TEXT,
                         (k + 1) + "行目が" + BuildingParts.SIGN_MAX_LINE_CHARS + "字を超えています");

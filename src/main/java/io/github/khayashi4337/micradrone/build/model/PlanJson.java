@@ -13,9 +13,9 @@ import java.util.TreeSet;
 import java.util.function.Function;
 
 /**
- * JSON tree conversion of plans and patches, and the content hash. Trees are plain Map/List/String/Long/Double/
- * Boolean/null values, so they work with {@code MiniJson} and {@code CanonicalJson}. Reading is strict about
- * structure and reports the path of the bad value.
+ * JSON tree conversion of plans and patches, and the content hash. Trees are plain Map/List/String/Integer/
+ * Long/Double/Boolean/null values, so they work with {@code MiniJson} and {@code CanonicalJson}. Reading is
+ * strict about structure and reports the path of the bad value.
  */
 public final class PlanJson {
     // Keys of the JSON form. The same names are used for writing and reading, and they are hashed.

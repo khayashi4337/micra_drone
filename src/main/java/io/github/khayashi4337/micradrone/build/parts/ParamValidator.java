@@ -169,7 +169,10 @@ public final class ParamValidator {
         }
     }
 
-    /** Names the bounds that exist: a range when both do, otherwise only the one that is there. */
+    /**
+     * Names the bounds that exist: a range when both do, otherwise only the one that is there. The callers only
+     * reach this after a bound failed, so at least one bound exists — a spec with neither would end in an NPE.
+     */
     private static String rangeText(ParamSpec spec) {
         if (spec.min() != null && spec.max() != null) {
             return bound(spec.min()) + "〜" + bound(spec.max()) + "の範囲にしてください";

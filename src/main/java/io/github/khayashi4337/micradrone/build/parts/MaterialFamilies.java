@@ -7,9 +7,10 @@ import java.util.Optional;
 import java.util.TreeMap;
 
 /**
- * Vanilla block families that have both stairs and slabs, keyed by the full block. Roofs, ramps and trims need the
- * stairs or slab form of a material; a material outside this table (e.g. terracotta, which has no stairs in
- * vanilla) can only be used as a full block. The names were checked against the 1.21.1 client jar's blockstates.
+ * Vanilla block families with a slab form, keyed by the full block. Roofs, ramps and trims need the stairs or
+ * slab form of a material; a material outside this table (e.g. terracotta, which has no stairs in vanilla) can
+ * only be used as a full block. {@link Family#stairs()} is nullable: smooth_stone has a slab but no stairs.
+ * The names were checked against the 1.21.1 client jar's blockstates.
  */
 public final class MaterialFamilies {
     public record Family(String full, String stairs, String slab) {
