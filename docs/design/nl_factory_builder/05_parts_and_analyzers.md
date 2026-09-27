@@ -23,7 +23,7 @@
 | `micra:stairs` | 階段 | 始点、方向、段数、幅 | 階段ブロック |
 | `micra:ladder` | はしご | 位置、高さ | はしご |
 | `micra:catwalk` | キャットウォーク(歩廊) | 経路、幅、高さ、手すり | 格子床+手すり(素材は、鉄骨(`create:metal_girder`)などをパレットで選べる) |
-| `micra:balcony` | バルコニー | 壁ID、位置、張り出し | スラブ+手すり |
+| `micra:balcony` | バルコニー | 壁ID、位置、張り出し | 床+柵 |
 | `micra:railing` | 手すり・柵 | 経路、高さ | 柵ブロック |
 | `micra:chimney` | 煙突 | 位置、高さ、太さ、笠 | 積み上げ+笠 |
 | `micra:ramp` | 斜路 | 始点、終点、幅 | 階段・スラブ |
@@ -50,13 +50,13 @@
 |---|---|---|
 | `structure` | `width`(3〜64, 7)、`depth`(3〜64, 7)、`floors`(1〜8, 1)、`floor_height`(3〜8, 4) | (ブロックなし。子の基準の箱 u∈[0,width-1]、w∈[0,depth-1]) |
 | `foundation` | `margin`(0〜8, 0)、`depth`(1〜8, 1)、`material`(役割`foundation`) | u∈[-margin,width-1+margin]、w∈[-margin,depth-1+margin]、v∈[-depth,-1]の全ブロック |
-| `floor` | `level`(0〜7, 0)、`kind`(`block`/`slab`, `block`)、`holes`(整数の並び`[u0,w0,u1,w1,…]`。長さは4の倍数)、`material`(`floor`) | v=`level*fh`、u∈[0,width-1]、w∈[0,depth-1]から穴を除いた面。`slab`は下付きのスラブ |
-| `wall` | `side`(`north`/`east`/`south`/`west`)、`level`(0〜7, 0)、`height`(0〜16, 0=`fh-1`)、`thickness`(1〜3, 1)、`from`(0〜, 0)、`length`(0〜, 0=端まで)、`part`(`full`/`half`, `full`。`half`は高さの半分(切り上げ))、`material`(`wall`) | `north`は`w=depth-1`、`south`は`w=0`、`east`は`u=width-1`、`west`は`u=0`の側。始点から`length`個、内側へ`thickness`層。始点が側の長さ以上、または端を越えれば`E-PARAM-RANGE` |
+| `floor` | `level`(0〜7, 0)、`kind`(`block`/`slab`, `block`)、`holes`(整数の並び`[u0,w0,u1,w1,…]`。値は0〜63、長さは4の倍数で64値(16個の穴)まで)、`material`(`floor`) | v=`level*fh`、u∈[0,width-1]、w∈[0,depth-1]から穴を除いた面。`slab`は下付きのスラブ |
+| `wall` | `side`(`north`/`east`/`south`/`west`)、`level`(0〜7, 0)、`height`(0〜16, 0=`fh-1`)、`thickness`(1〜3, 1)、`from`(0〜63, 0)、`length`(0〜64, 0=端まで)、`part`(`full`/`half`, `full`。`half`は高さの半分(切り上げ))、`material`(`wall`) | `north`は`w=depth-1`、`south`は`w=0`、`east`は`u=width-1`、`west`は`u=0`の側。始点から`length`個、内側へ`thickness`層。始点が側の長さ以上、または端を越えれば`E-PARAM-RANGE` |
 | `pillar` | `height`(1〜32, 4)、`base`(真偽, 真)、`capital`(真偽, 真)、`material`(`pillar`) | 高さ`height`の柱。`base`はv=0、`capital`はv=`height-1`を、役割`trim`のブロックにする(`height`が1なら柱身だけ) |
 | `beam` | `axis`(`u`/`v`/`w`, `u`)、`length`(1〜64, 3)、`material`(`beam`) | 原点から`axis`の向きに`length`個。丸太・柱状のブロックは、向き(`axis`の状態)を付ける |
 | `roof` | `kind`(`gable`/`hip`/`flat`/`shed`/`sawtooth`/`monitor`, `gable`)、`overhang`(0〜3, 1)、`ridge`(`auto`/`u`/`w`, `auto`=長い側に沿う。同じなら`w`)、`high_side`(`shed`の高い側, `east`)、`gable_fill`(真偽, 真)、`tooth`(2〜8, 3)、`monitor_width`(1〜5, 1)、`monitor_height`(1〜3, 1)、`material`(`roof`) | 屋根の土台v=`floors*fh`。勾配は1:1(階段)だけ。下記 |
 | `door` | `kind`(`single`/`double`/`hangar`, `single`)、`width`(3〜9, 5。`hangar`のみ)、`height`(3〜6, 4。`hangar`のみ)、`hinge`(`left`/`right`, `left`)、`material`(`door`) | 壁の`OnSurface`。`single`は幅1×高さ2、`double`は幅2×高さ2(2枚の蝶番は外側)、`hangar`は幅×高さを掘って空け、下の2段に門(役割`gate`)を並べる。扉・門の向きは室内向き(`INNER`なら室外向き) |
-| `window` | `kind`(`pane`/`wide`/`arch`, `pane`)、`lattice`(真偽, 偽)、`material`(`glass`) | 壁の`OnSurface`。`pane`は幅1×高さ2、`wide`は幅3×高さ2、`arch`は幅3×高さ3(上の両端は、役割`trim`の階段を上下逆にして、外側を背にする)。`lattice`は、真ん中の列を役割`trim`にする |
+| `window` | `kind`(`pane`/`wide`/`arch`, `pane`)、`lattice`(真偽, 偽)、`material`(`glass`) | 壁の`OnSurface`。`pane`は幅1×高さ2、`wide`は幅3×高さ2、`arch`は幅3×高さ3(上の両端は、役割`trim`の階段を上下逆にして、外側を背にする)。`lattice`は、真ん中の列を役割`trim`にする(`wide`と`arch`だけ。`pane`では`E-PARAM-RANGE`) |
 | `stairs` | `steps`(1〜32, 4)、`width`(1〜8, 1)、`dir`(4方向, `north`)、`material`(`stairs`) | 原点の段から、`dir`へ1段ごとに1つ上がる階段(向きは`dir`)。幅は`dir`の右手へ |
 | `ladder` | `height`(1〜32, 3)、`facing`(4方向, `north`) | 原点からv方向へ`height`個のはしご |
 | `catwalk` | `length`(1〜64, 6)、`dir`(4方向, `north`)、`width`(1〜5, 2)、`rail`(真偽, 真)、`material`(`catwalk`) | v=0の格子床と、`rail`なら両端の外側の列のv=1に柵(役割`fence`) |
@@ -65,15 +65,15 @@
 | `chimney` | `height`(2〜32, 6)、`size`(1〜3, 1)、`cap`(真偽, 真)、`material`(`chimney`) | `size`×`size`の柱(3は中空)、`cap`はv=`height`に、一回り大きなスラブ |
 | `ramp` | `length`(2〜32, 6)、`dir`(4方向, `north`)、`width`(1〜8, 2)、`material`(`ramp`) | スラブを交互(下付き・上付き)に並べ、1マスで半段上がる |
 | `lamp` | `kind`(`lantern`/`hanging`/`post`/`torch`, `lantern`)、`height`(1〜6, 2。`post`のみ) | `lantern`(置き)、`hanging`(吊り)、`post`(柵の柱+てっぺんにランタン)、`torch` |
-| `sign` | `text`(60字以内。縦線`\|`で改行、4行まで、1行15字まで)、`material`(`sign`) | 壁の外側に、壁掛けの看板(向きは外向き)。文字は`blockEntityConfig`の`line1`〜`line4` |
-| `planter` | `width`(1〜8, 3) | 壁の外側に、土の列(役割`planter`)とその上の草花(役割`plant`) |
+| `sign` | `text`(63字以内=4行×15字+縦線3個。縦線`\|`で改行、4行まで、1行15字まで)、`material`(`sign`) | 壁の外側に、壁掛けの看板(向きは外向き)。文字は`blockEntityConfig`の`line1`〜`line4` |
+| `planter` | `width`(1〜8, 3) | 壁の外側に、土の列(役割`planter`、v=`v`)とその上の草花(役割`plant`、v=`v`+1)。`v`が壁の最上段なら草花は壁の高さを1段超える(拒否しない) |
 | `trim` | `length`(1〜64, 3)、`axis`(`horizontal`/`vertical`, `horizontal`)、`shape`(`block`/`slab`, `block`)、`material`(`trim`) | 壁の外側に沿う縁取りの列 |
-| `dock_pad` | `width`(5〜64, 9)、`depth`(5〜64, 9)、`clearance`(4〜64, 16)、`cargo_u`・`cargo_w`(0〜, 1)、`marker`(真偽, 真)、`material`(`pad`) | v=0の平らな台。`marker`は外周を役割`marker`にする。荷役口として、(`cargo_u`,1,`cargo_w`)に樽(役割`cargo`)。台の真上(v=1〜`clearance`)に他の部品があれば`E-OVERLAP`(荷役口の樽を除く) |
+| `dock_pad` | `width`(5〜64, 9)、`depth`(5〜64, 9)、`clearance`(4〜64, 16)、`cargo_u`・`cargo_w`(0〜63, 1)、`marker`(真偽, 真)、`material`(`pad`) | v=0の平らな台。`marker`は外周を役割`marker`にする。荷役口として、(`cargo_u`,1,`cargo_w`)に樽(役割`cargo`)。台の真上(v=1〜`clearance`)に他の部品があれば`E-OVERLAP`(荷役口の樽を除く) |
 | `road` | `length`(1〜128, 8)、`dir`(4方向, `north`)、`width`(1〜8, 2)、`material`(`path`) | v=0の道 |
 
-**屋根の作り方**: 幅`T`=`width+2*overhang`(奥行も同様)。勾配の向きに直角な断面で、段`k`(0から)のv=土台+`k`に、外側から`k`だけ内側の位置に階段(背を棟の側へ向ける)を置く。`gable`: 棟に直角な向きの両端の階段を、内側で出会うまで積む。`T`が奇数なら、棟の1列は、役割`roof`の全ブロック。`gable_fill`が真なら、棟の両端の面(構造の縁)の、屋根の下の三角を、役割`wall`で埋める。`hip`: 各段の外周に階段(角は東西の向きを優先)、外周が1列に潰れる段は全ブロック。`flat`: v=土台に、下付きのスラブを1面。`shed`: `high_side`へ1段ごとに1つ上がる階段を、全幅に。`gable_fill`が真なら両端の三角を埋める。`sawtooth`: `tooth`幅ごとに、棟と直角の向きへ`k`段上がる階段と、その最上段の1つ上に役割`glass`の全ブロック1個(採光の面)。`monitor`: `gable`を、中央の幅が`monitor_width`になる段で打ち切り(`T`と`monitor_width`の偶奇が違えば`E-PARAM-RANGE`)、中央の両縁に、役割`glass`のブロックを`monitor_height`段、その上に下付きのスラブで蓋をする。
+**屋根の作り方**: 幅`T`=`width+2*overhang`(奥行も同様)。勾配の向きに直角な断面で、段`k`(0から)のv=土台+`k`に、外側から`k`だけ内側の位置に階段(背を棟の側へ向ける)を置く。`gable`: 棟に直角な向きの両端の階段を、内側で出会うまで積む。`T`が奇数なら、棟の1列は、役割`roof`の全ブロック。`gable_fill`が真なら、棟の両端の面(構造の縁)の、屋根の下の三角を、役割`wall`で埋める。`hip`: 各段の外周に階段(角は東西の向きを優先)、外周が1列に潰れる段は全ブロック。`flat`: v=土台に、下付きのスラブを1面。`shed`: `high_side`へ1段ごとに1つ上がる階段を、全幅に。`gable_fill`が真なら両端の三角を埋める。`sawtooth`: `tooth`幅ごとに、棟と直角の向き(`a`の大きい側)へ`k`段上がる階段と、その最上段の1つ上に役割`glass`の全ブロック1個(採光の面。最後の歯が`tooth`幅に満たなくても、その最上段の上にも置く)。`monitor`: `gable`を、中央の幅が`monitor_width`になる段で打ち切り(`T`≦`monitor_width`、または`T`と`monitor_width`の偶奇が違えば`E-PARAM-RANGE`)、中央の両縁に、役割`glass`のブロックを`monitor_height`段、その上に下付きのスラブで蓋をする。`gable_fill`が真なら両端の三角を役割`wall`で埋め(勾配の段数で打ち止め)、その内側の越屋根の下の両端の面を役割`glass`で`monitor_height`段覆う。
 
-**位置指定の面(`OnSurface`)の補足**: 開口部・看板・植栽・縁取り・バルコニーは、壁の面上の位置`(u, v)`を持つ。`u`は壁の始点(`from`の位置)から数える。`v`は壁の最下段から数える(`balcony`は床の高さから)。
+**位置指定の面(`OnSurface`)の補足**: 開口部・看板・植栽・縁取り・バルコニーは、壁の面上の位置`(u, v)`を持つ。`u`は壁の始点(`from`の位置)から数える。`v`は壁の最下段から数える(`balcony`は床の高さから)。壁の面に付く部品(バルコニー・看板・植栽・縁取り)は壁の長さ・高さの内側に収まること。はみ出せば`E-ANCHOR`(キー`extent`)。開口部(`door`・`window`)のはみ出しは`E-OPENING-NO-WALL`。
 
 **`axis`の状態を持つブロック(1.21.1で55個)**: IDの語尾(`_log`・`_wood`・`_hyphae`で終わる物。modの木材にも合う)と、語尾で掴めない物(ネザーの茎4種・干し草・骨・玄武岩・柱状態のクォーツなど)のIDの一覧で決める。`_stem`の語尾はメロン・カボチャ・キノコ・ドリップリーフの茎にも合い、それらは`axis`を持たないので、語尾では使わずIDで列挙する(一覧は`FreestandingPartsTest`が固定)。
 
@@ -190,9 +190,9 @@
 | コード | 意味 | 検出する所 | `FixHint`の例 |
 |---|---|---|---|
 | `E-SCHEMA` | AIの出力がスキーマに合わない | スキーマ検証 | (再試行) |
-| `E-UNKNOWN-PART` | 登録簿に無い部品 | `PlanPatcher` | 近い部品の候補 |
+| `E-UNKNOWN-PART` | 登録簿に無い部品 / 置き方(生成器)が未登録の部品 / 生成器の内部エラー(キー`generator`) | `PlanPatcher` / `PlanCompiler` | 近い部品の候補 |
 | `E-PARAM-RANGE` | パラメータが範囲外・型違い | `PlanPatcher` | 許容範囲 |
-| `E-ANCHOR` | 位置指定が不正(存在しない壁・スロット・親。存在しない親は対象IDに`#parent`。親自身が別の理由で拒否されている場合は親の`Issue`が答えなので、子には重ねて出さない) | `PlanPatcher` | 有効な候補 |
+| `E-ANCHOR` | 位置指定が不正(存在しない壁・スロット・親。存在しない親は対象IDに`#parent`。親自身が別の理由で拒否されている場合は親の`Issue`が答えなので、子には重ねて出さない。生成側でも、面に付く部品が壁からはみ出すときはキー`extent`、回転・鏡像を付けられない部品につけたときはキー`rot`) | `PlanPatcher` / `PlanCompiler` | 有効な候補 |
 | `E-OVERLAP` | 部品どうしの重なり | `PlanCompiler` | 移動量 |
 | `E-OUT-OF-BOUNDS` | 敷地・区画の外(展開後の接続の端点が区画の外でも同じ。対象は越えた側のノード) | `PlanCompiler` | 範囲 |
 | `E-NOT-SUPPORTED` | 支えの無い部品(宙に浮く構造) | `BlueprintAnalyzer` | 柱・壁の追加 |

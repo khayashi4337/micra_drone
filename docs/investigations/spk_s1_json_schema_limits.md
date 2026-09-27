@@ -334,3 +334,18 @@ B1(以降は全て X 付き。`json` は `--output-format json`、`stream-json` 
 - **C5 Java 17**(`ProcessBuilder`、単一ファイル実行): (a) `"` をそのまま/`\"` にして、`$ref` 反響で届き方を比較。空白の有無・`&` の有無・exe直接と `cmd.exe /c claude` の組み合わせ(16通り)。
   (b) n を二分探索して境界を確認(exe直接は 32,581文字で成功・32,582文字で `CreateProcess error=206`、cmd経由は 8,001文字で成功・8,002文字で終了コード255)。
 - オフライン計算のみ: 密スキーマ・enumについて、`subprocess.list2cmdline` の長さを計算し、cmd経路の最大(6,710文字 / enum 564個)を予測してから実API呼び出しで確認。
+
+## 追補(2026-09-26、Task 18の本番スキーマでの再スモーク)
+
+Task 18 で生成した本番のスキーマ(`SchemaGenerator`、全22部品入り)を、本書の手順どおり実CLIで再度通した結果。
+
+- 呼び出し: `claude.exe -p "<prompt>" --output-format json --setting-sources "" --json-schema <schema> --strict-mcp-config --tools ""`(exe直接)。
+  FLAT は `cmd.exe /c claude` 経由でも実施。
+- 本番スキーマの大きさ: TYPED 19,007文字(直接起動の上限20,000に収まる)、FLAT 4,844文字(cmd経由の上限5,000に収まる)。
+- 結果: TYPED rc=0・構造化出力一致、FLAT rc=0(paramsをpairs形式で返却)、FLAT cmd経由 rc=0。費用はそれぞれ $0.134 / $0.078 / $0.0056 程度。
+- §6「検証器が未確認のキーワード」から2件が解消:
+  - `additionalProperties` にスキーマを値に取る形: **受理された**(rc=0)。
+  - `type` に `"number"`: **受理された**(rc=0)。
+- null非許容の `type` 配列(例 `["integer","string"]`): 受理されるが、ajv の strictTypes 警告("use allowUnionTypes")が stderr に出る(本番スキーマの旧版で観測)。
+  Task 18 の裁定で該当箇所は無制約の `{}` に置き換え済み(null許容の配列はそのまま)。新版の再スモークでは stderr 0行(警告なし)。
+- 教訓: 警告は今のCLIでは拒否ではないが、将来のCLIがエラー化しうるため、null非許容の `type` 配列はスキーマに書かない。
