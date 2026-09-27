@@ -95,17 +95,17 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 ### N-10 Site Planner(区画割り)
 - 種別: AI-構造化。
 - 役割: 敷地全体に、建屋・発着場・道の配置(`ZoningPlan`)を作る。Bananacraftの城下町の区画割りに当たる。
-- 入力: `ConceptBrief`、`StructureDescription`、`SiteSurvey`(サーバーの地形調査)、`CapacityReport`の床面積。
-- 出力: `ZoningPlan`。
-- 実装: **新規** `build/ai/stages/SitePlannerStage`。敷地は既存`chat/RegionSelectionState`(領域ポインタの2隅)で指定する。
-- フェーズ: P7(小屋1棟の敷地)、P12(複数建屋・発着場を含む)。同じクラスで完成させる(段階で作り直さない)。
-- 完了条件: 指定した領域内に、建屋の足跡と道が収まる`ZoningPlan`が出る。
+- 入力: `ConceptBrief`、`StructureDescription`、`SiteSurvey`(サーバーの地形調査。水深を含む)、`CapacityReport`の床面積、有効な`TransportProfile`(輸送手段の空間要求)、`ExistingStructureProfile`(既存建築があるとき)。
+- 出力: `ZoningPlan`(**空きの予約`ReservedSpace`を足跡より先に含む**)、ゾーン案(`Zone`の一覧と`Window`、F-31)。
+- 実装: **新規** `build/ai/stages/SitePlannerStage`。敷地は既存`chat/RegionSelectionState`(領域ポインタの2隅)で指定する。**動線・輸送の通り道の空きを先に予約してから建屋を置く**。敷地が手段の空間要求に足りない場合は`E-MODE-UNFIT`と代替の手段を返す(F-29)。
+- フェーズ: P7(小屋1棟の敷地)、P12(複数建屋・発着場を含む)、P18(空きの予約と動線)、P19(輸送手段の選択)、P21(ゾーンの階層)。同じクラスで完成させる(段階で作り直さない)。
+- 完了条件: 指定した領域内に、建屋の足跡と道が収まる`ZoningPlan`が出る。予約した空きに部品が置けないことを検査で確かめる(P18)。小さな敷地では滑走路を提案せず車両か船を提案する(P19)。
 
 ### N-11 Zoning Fixer(衝突検出・地形適合)
 - 種別: 決定論。
-- 役割: `ZoningPlan`の重なり・敷地外・最小間隔違反・傾斜と水と木を、決定論で直す。動かした内容を`Adjustment`として説明する。整地(切り盛り)が要る場合は、施工リストの`SITE_PREP`の置換として出す。
+- 役割: `ZoningPlan`の重なり・敷地外・最小間隔違反・傾斜と水と木を、決定論で直す。動かした内容を`Adjustment`として説明する。整地(切り盛り)が要る場合は、施工リストの`SITE_PREP`の置換として出す。**`ReservedSpace`は足跡と同じく「侵入させない」対象として扱う**(空きを削って建屋を置かない)。
 - 実装: **新規** `build/analyze/ZoningFixer`。
-- フェーズ: P6。完了条件: 重なる2棟の入力が、間隔を守って離れた結果になる。傾斜地の入力に整地案が付く(単体テストと、実機の地形での確認)。
+- フェーズ: P6、P18(空きの予約の扱い)。完了条件: 重なる2棟の入力が、間隔を守って離れた結果になる。傾斜地の入力に整地案が付く(単体テストと、実機の地形での確認)。予約された空きをまたぐ案を出さない(P18)。
 
 ### N-12 DesignGen(建屋画像生成)
 - 種別: 画像生成。
@@ -138,10 +138,10 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 ### N-16 Module Planner(モジュール配置・接続)
 - 種別: AI-構造化。
 - 役割: `SemanticMap`のスロットに、モジュールライブラリのテンプレートを置き(`place_module`)、ポートをつなぐ(`connect`)。**座標や経路は決めない**(P-5)。絵の配置(`StructureDescription`)と内部断面図の雰囲気(2階建て・キャットウォーク)を参考にする。
-- 入力: `SemanticMap`、`ProcessGraph`+`CapacityReport`、`ModuleLibrary`(候補一覧と仕様)、`StructureDescription`と内部断面図、`Issue`(L4・L8)。
-- 出力: `PlanPatch`(`AddNode`のモジュール、`AddConnection`)。
+- 入力: `SemanticMap`、`ProcessGraph`+`CapacityReport`、`ModuleLibrary`(候補一覧と仕様)、`StructureDescription`と内部断面図、`Issue`(L4・L8)、`CirculationReq`(建屋内の動線の要求)。
+- 出力: `PlanPatch`(`AddNode`のモジュール、`AddConnection`)。**モジュールは`CirculationReq`の通り道を塞がない**(塞ぐと`E-CIRCULATION-BROKEN`で戻る)。
 - 実装: **新規** `build/ai/stages/ModulePlannerStage`。
-- フェーズ: P12。完了条件: 鉄板ラインと真鍮ラインが、スロットに置かれ、必要な接続(動力・材料の搬入・製品の搬出)が張られる。
+- フェーズ: P12、P18(`CirculationReq`を塞がない配置)。完了条件: 鉄板ラインと真鍮ラインが、スロットに置かれ、必要な接続(動力・材料の搬入・製品の搬出)が張られる。(P18)動線の要求を塞ぐ配置が`E-CIRCULATION-BROKEN`で戻る。
 
 ### N-17 Module Library(検証済みテンプレート)
 - 種別: 決定論(データ+検証)。
@@ -152,9 +152,9 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 
 ### N-18 Router(経路探索)
 - 種別: 決定論。
-- 役割: `AUTO`の接続について、シャフト・ベルト・シュート・パイプの経路を3D格子上で探索して、中間部品を作る。既存物・壁・スロットの余白を避け、長さと曲がりを最小化する。見つからなければ`E-NO-ROUTE`(邪魔している対象つき)。
+- 役割: `AUTO`の接続について、シャフト・ベルト・シュート・パイプの経路を3D格子上で探索して、中間部品を作る。既存物・壁・スロットの余白を避け、長さと曲がりを最小化する。見つからなければ`E-NO-ROUTE`(邪魔している対象つき)。**`ReservedSpace`の扱い**: 用途の合う予約(`TRANSPORT_PATH`でその輸送手段に合うプロファイル)の中はペナルティ無しで通せるが、用途の合わない予約・建屋は障害物として避ける(F-28)。
 - 実装: **新規** `build/analyze/Router`。
-- フェーズ: P11。完了条件: 障害物のある小さな3D迷路(単体テスト)で最短経路が出る。実機で、Routerが作ったシャフト・ベルトが実際に回り、品物が流れる。
+- フェーズ: P11、P18(予約の中の経路)。完了条件: 障害物のある小さな3D迷路(単体テスト)で最短経路が出る。実機で、Routerが作ったシャフト・ベルトが実際に回り、品物が流れる。(P18)用途の合う`TRANSPORT_PATH`の予約の中を通り、合わない予約は避ける。
 
 ### N-19 Factory Analyzer(応力・回転・物流・詰まり)
 - 種別: 決定論(静的)+計測(動的、N-30の試運転)。
@@ -169,12 +169,12 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 - 実装: **新規** `build/ai/stages/DecoratorStage`。装飾は`DECOR`部品(ランプ、トリム、プランター、看板、煙突の笠など)。
 - フェーズ: P9。完了条件: 壁の向きを変えても、同じ装飾が同じ相対位置に付く。
 
-### N-21 Logistics Planner(発着場・飛行ルート)
+### N-21 Logistics Planner(発着場・輸送ルート)
 - 種別: AI-構造化。
-- 役割: 発着場(`Dock`)と飛行ルートの計画(`LogisticsPlan`)。搬入・搬出口と発着場を物流でつなぐ。
-- 入力: `SemanticPlan`(建屋・搬出口の位置)、`ProcessGraph`の搬入出、敷地(`SiteSurvey`)。出力: `PlanPatch`(発着場・係留部・飛行船のモジュールの`AddNode`・`AddConnection`と、`SetLogistics(LogisticsPlan)`)。`LogisticsPlan`(`Dock`・`Route`・`CargoFlow`、`01` 10節)は`SemanticPlan.logistics`に入り、サーバーへ送られる計画の一部として、承認のハッシュに含まれる。失敗時: 発着場の空間(上空の余白)が確保できなければ`E-SPACE-SHORT`で建屋・区画の見直しへ。
+- 役割: 発着場(`Dock`)と輸送ルートの計画(`LogisticsPlan`)。搬入・搬出口と発着場を物流でつなぐ。**Task 26で飛行船専用から全輸送手段へ一般化**(D-34): `TransportProfile`の一覧(有効なpack由来)を資料に、歩行・ベルト・地上車両・飛行機・気球・船・潜水艇の端点(パッド・泊位・滑走路・車両庫)と経路を計画する。手段の選定は`TransportProfile`と敷地の比較で決定論側が候補を出し、合わない手段は`E-MODE-UNFIT`でSite Plannerへ戻す。船・潜水艇は水深(`SiteSurvey.waterDepth`)と水密(`E-HULL-LEAK`)の条件を持つ。
+- 入力: `SemanticPlan`(建屋・搬出口の位置)、`ProcessGraph`の搬入出、敷地(`SiteSurvey`)、有効な`TransportProfile`。出力: `PlanPatch`(発着場・係留部・飛行船のモジュールの`AddNode`・`AddConnection`と、`SetLogistics(LogisticsPlan)`)。`LogisticsPlan`(`Dock`・`Route`・`CargoFlow`、`01` 10節)は`SemanticPlan.logistics`に入り、サーバーへ送られる計画の一部として、承認のハッシュに含まれる。失敗時: 発着場の空間(上空の余白)が確保できなければ`E-SPACE-SHORT`で建屋・区画の見直しへ。
 - 実装: **新規** `build/ai/stages/LogisticsPlannerStage`。飛行船の組み立て・操縦・係留は`simulated`の部品(`05` 1.3節)。仕組みはスパイクS-8で確定してから設計を固める(`07`)。
-- フェーズ: P13。完了条件: 発着場が建ち、搬出口から発着場の荷積み位置まで品物が流れ、飛行船が係留でき、荷積み位置から荷を運べる。運航の自動化はS-8で可能と分かった方式で完成させる(`07` P13の規則)。
+- フェーズ: P13(飛行船)、P19(他の輸送手段への一般化)。完了条件: 発着場が建ち、搬出口から発着場の荷積み位置まで品物が流れ、飛行船が係留でき、荷積み位置から荷を運べる。運航の自動化はS-8で可能と分かった方式で完成させる(`07` P13の規則)。P19: 港の泊位が水深の条件を満たす敷地にだけ計画される。
 
 ---
 
@@ -293,6 +293,34 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 
 ---
 
+## 動線・既存建築・ゾーン(Task 26で追加)
+
+### N-35 Space Keeper(空きの予約と動線の検査)
+- 種別: 決定論。
+- 役割: `ReservedSpace`(予約された空き)と`CirculationReq`(建屋内の動線の要求)を検査する。(a)部品・足跡が予約に侵入していれば`E-RESERVED-CONFLICT`。(b)`CirculationReq`が`VoxelClassGrid`上で、出入口から各端点まで要求された断面の空気の連なりとして実在するかを洪水塗りで確かめ、通れなければ`E-CIRCULATION-BROKEN`(塞いでいる位置つき)。
+- 入力: `SemanticPlan`・`ZoningPlan`の`ReservedSpace`一覧、`SemanticMap`、`VoxelClassGrid`。
+- 出力: `Issue`の一覧。
+- 実装: **新規** `build/analyze/SpaceKeeper`。
+- フェーズ: **P18**。完了条件: 予約した空きに部品を置く計画が`E-RESERVED-CONFLICT`で拒否される。出入口から各部屋へ歩ける建屋は通り、壁で分断した建屋は`E-CIRCULATION-BROKEN`になる。
+
+### N-36 Existing-Structure Surveyor(既存建築の計測)
+- 種別: 決定論(サーバー側の読み取り)。
+- 役割: 区画の内側の既存の建物を測り、`ExistingStructureProfile`を作る(D-35)。(a)このmodが建てた建屋は`PlacedRegistry`と保存済み計画から**正確に**。(b)手造りの建物は`ServerStateReader`→`VoxelClassGrid`から**認識**し、通路・壁の幅・高さ・材質の分布を`PassageProfile`/`StyleObservation`にまとめ、`confidence`と「分からなかった所」を必ず付ける。
+- 入力: `SiteClaim`の範囲、`PlacedRegistry`、サーバーの観測(`ServerStateReader`経由)。
+- 出力: `ExistingStructureProfile`の一覧。
+- 実装: **新規** `build/analyze/StructureSurveyor`(`VoxelClassGrid`経路をN-15と共用)。
+- フェーズ: **P20**。完了条件: 自前で建てた小屋の`StructureSource.OWN_PLAN`のプロファイルが計画と一致。手造りの小屋を認識し、幅・高さ・材質の読み取り結果に信頼度が付く。認識の精度はS-18の実測で確かめてから約束する。
+
+### N-37 Zone Layer(ゾーンの階層・窓・ゾーン別予算)
+- 種別: 決定論。
+- 役割: 計画を4層(SITE→ZONE→COMPONENT→PART)で扱う層。(a)Site Plannerが出したゾーン案(`Zone`+`Window`)の整合: 接続の両側の窓が一致しないと`E-WINDOW-MISMATCH`。(b)ゾーンごとの`ZoneBudget`でコンパイル・アナライザの作業量を分け、超えたゾーンは`E-ZONE-BUDGET`でそのゾーンだけ戻す。(c)AIの文脈になる`ZoneSummary`を生成する。(d)ゾーン内の変更は、そのゾーンの窓への照合だけで再検証する。
+- 入力: ゾーン案、`SemanticPlan`、各ゾーンの`ZoneBudget`。
+- 出力: `ZoneSummary`の一覧、`Issue`(`E-WINDOW-MISMATCH`・`E-ZONE-BUDGET`)。
+- 実装: **新規** `build/analyze/ZoneLayer`(窓の照合・予算の配分)と、`PlanCompiler`/`AnalysisPipeline`のゾーン別実行モード。ゾーン案そのものはN-10(Site Planner)が作る。
+- フェーズ: **P21**。完了条件: 64×64×64の発着場2つを含む計画で、全体の予算ではなくゾーンの予算で評価され、超えたゾーンだけが`E-ZONE-BUDGET`になる。窓の不一致が`E-WINDOW-MISMATCH`で検出される。AIの資料に計画全体ではなく`ZoneSummary`が入る。
+
+---
+
 ## 横断部品(v3のノード外だが必須)
 
 | 部品 | 役割 | 実装 | フェーズ |
@@ -311,4 +339,4 @@ v3の**全ノード**を、種別・役割・入出力・実装場所(既存の�
 | `ManifestExporter` | 施工リストを標準のストラクチャーNBT(`.nbt`)に書き出す(D-21) | `client/build`・`construction` | P5 |
 | `PlacedRegistry` | このプロジェクトが置いたブロックと、組み立てた個体(`AssemblyResult`)の記録(D-25)。区画が解放されるまで保持 | `construction` | P4 |
 | `MachineSetupRegistry` | レシピ種別(と加熱条件)→検証済みの機械の組み立て(`MachineSetup`)の対応表。Createのレシピは機械の並びを持たないので、私たちの正本 | `build.knowledge`(同梱) | P10(作成)・P11(テンプレートと同じ検証) |
-| `AnalysisPipeline` | 展開・コンパイル・アナライザを順に走らせる登録式の検証列。P4=展開・コンパイル・安全枠、P6=+Blueprint Analyzer、P11=+Factory Analyzer | `build.analyze` | P4〜P11 |
+| `AnalysisPipeline` | 展開・コンパイル・アナライザを順に走らせる登録式の検証列。P4=展開・コンパイル・安全枠、P6=+Blueprint Analyzer、P11=+Factory Analyzer、P18=+Space Keeper、P21=+ゾーン別実行モード(N-37) | `build.analyze` | P4〜P21 |

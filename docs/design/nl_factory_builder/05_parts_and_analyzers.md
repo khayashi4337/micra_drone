@@ -250,6 +250,13 @@
 | `E-ESTOP` | 緊急停止の発動中の機器への書き込み | `DeviceGate` | 所有者/OPによる明示の解除 |
 | `W-DEVICE-CLAMPED` | 機器への指示を、宣言の範囲に丸めた(`CLAMP`) | `DeviceGate` | (確認) |
 | `W-UNKNOWN-MOD` | 未知のmodが導入されている(情報の提供だけ。部品にはならない) | `ModScan` | (説明を読む) |
+| `E-RESERVED-CONFLICT` | 部品・足跡が`ReservedSpace`(予約した空き)に侵入している | `SpaceKeeper`/`ZoningFixer` | 侵入した対象の移動・予約の引き直し |
+| `E-CIRCULATION-BROKEN` | `CirculationReq`(建屋内の動線)が、要求の断面で通れない(塞がれている) | `SpaceKeeper` | 塞いでいる部品の移動・建屋の拡張 |
+| `E-MODE-UNFIT` | 敷地が、その輸送手段の`TransportProfile`の空間要求(滑走路の長さ・泊位の水深など)に足りない | `SitePlanner`/`LogisticsPlanner` | 別の輸送手段の提案(候補つき) |
+| `E-HULL-LEAK` | 水密が要る輸送手段(船・潜水艇)の船体・収容空間に水が浸入しうる | `FactoryAnalyzer`/`SpaceKeeper` | 漏れている位置・壁の追加 |
+| `W-STRUCTURE-UNCERTAIN` | 手造り建物の認識由来の値(幅・材質)を計画が使っている(確かさはS-18の実測どおり) | `StructureSurveyor`/承認時 | 実測で確認・上書きの記録 |
+| `E-WINDOW-MISMATCH` | 接続の両側のゾーンが宣言する`Window`が合わない(種類・位置・輸送手段が違う) | `ZoneLayer` | 窓の宣言の整合 |
+| `E-ZONE-BUDGET` | ゾーンが`ZoneBudget`(そのゾーンの試行・部品・セルの上限)を超えた | `PlanCompiler`/`AnalysisPipeline`(ゾーン別実行) | そのゾーンの簡素化・ゾーンの分割 |
 
 **受け入れ可能(`acceptable=true`)なのは、`W-*`と`E-CLOG-RISK`だけ**。それ以外の`E-*`は受け入れ不可で、残っていれば承認できない(`01` 5節、`03` 0.2節)。
 
@@ -285,6 +292,7 @@
 - **接続の種類ごとの動かし方の規則**(S-5bで実機に合わせて確定): シャフトは直線(曲がるには歯車かギアボックス)、ベルトは直線と斜め(段差)で、曲がりは別のベルトへの受け渡し、シュートは縦、パイプは3方向。
 - 障害物: 壁・床・既存部品・スロットの余白。見つからなければ`NoRoute(blockers=[…])`で、邪魔している部品のIDを返す。
 - 結果: 中間部品(`PlanNode`)の一覧と、接続ごとの経路。AIは書かない(P-5)。
+- **`ReservedSpace`との関係(F-28)**: 経路探索の格子では、用途の合う`ReservedSpace`(`TRANSPORT_PATH`で同じ`transportProfileId`)の中は既存物と見なさず(ペナルティ無し)、用途の合わない予約・`CIRCULATION`の予約・建屋は障害物として避ける。「先に空きを確保し、経路はその中を探す」順序で、`E-NO-ROUTE`を減らす。
 
 ### 4.7 Factory Analyzer(N-19)と挙動モデル
 
@@ -305,3 +313,9 @@
 
 - **試運転**(建て終わった直後、承認済みの施工が`VERIFIED`になったあと): (1)回転ネットワークの状態を読む(回転数、過負荷の有無)。(2)`ProcessGraph`の各入力口へ、テスト用の品物を入れる(入力口のアイテム容量に挿入。`IItemHandler`のブロック機能を使う。**Createの`BlockEntity`のアクセス方法はS-5cで確認**(`KineticBlockEntity`の公開メソッド`getSpeed()`・`isOverStressed()`・`calculateStressApplied()`の存在は`javap`で確認済み))。**投入品はサバイバルでは所有者から実際に消費し、製品は所有者へ返す**(無料で品物を生み出さない。`04` F-24)。(3)出力口に、期待する製品が期待の時間内に出るかを観測する。(4)結果を`CommissioningReport`(通過/失敗、実測値)にし、失敗は`Issue`にする。(5)テスト品物の残りを回収して所有者へ返す(途中で落ちた場合も、記録から回収する。冪等)。**熱源の燃料の有無を試運転の前に確認**し、無ければ`W-FUEL-SUPPLY`を出す。組み立てで作られた構造物(風車・飛行船)は、`AssemblyExpectation`を満たすかも検査する。
 - **運転中の観測**(`RuntimeMonitor`、ユーザーが有効にした時だけ): **出力口の在庫を1秒ごとに標本抽出し、増えた分(正の差分)だけを生産として数える**(取り出しで減った分は数えない。標本の間に出し入れが重なる場合は過小になるので、`RateEstimate`の**下限推定**として扱う)。プレイヤーが外から入れた物が過大に数えられないよう、`mod:output_dock`は**工場の側からしか入らない専用の計測用の保管庫**(プレイヤーは入れられず、取り出し口は別)を持つ設計とし、その保管庫の差分だけを数える。機械の停止(回転数0、過負荷)、ベルトの滞留、出力の満杯を検出。計画値との差から、ボトルネックの候補を順位づけして`RuntimeReport`を出す。観測はチャンクが読み込まれている間だけ。
+
+### 4.10 Space Keeper(N-35)・既存建築の計測(N-36)・Zone Layer(N-37)(Task 26で追加)
+
+- **Space Keeper(N-35)**: 2つの検査。(a)**予約の侵入**: `ReservedSpace`の体積に部品・足跡が重なれば`E-RESERVED-CONFLICT`(侵入した対象のID・重なりの体積つき)。比較は`E-OVERLAP`と同じく体積の交差で、`ZoningPlan`(敷地レベル)と`SemanticPlan`(建屋内レベル)の両方の予約を対象にする。(b)**動線の実在**: `CirculationReq`ごとに、`VoxelClassGrid`上で、出入口から各端点へ`TransportProfile`の断面(`minWidth`×`minHeight`)の**空気の連なり**が実在するかを洪水塗りで確かめる(4.2節の部屋の検出と同じ手法)。通れなければ`E-CIRCULATION-BROKEN`(塞いでいる位置つき)。**部品が置かれる前の段(Site Planner・Module Plannerの出力)で先に検査する**ので、「置いてから失敗」にならない。
+- **既存建築の計測(N-36)**: 区画内の既存の建物を`ExistingStructureProfile`にする。(a)`OWN_PLAN`は`PlacedRegistry`・保存済み計画から正確に。(b)`RECOGNIZED`は`ServerStateReader`→`VoxelClassGrid`から: 通路の幅・高さは空気の連なりの断面を測り(4.2節と同じ)、材質はブロックIDの分布(`materialHistogram`)、様式の手がかり(柱のリズム・屋根の形)は決定論の規則で拾う。**不確かな所は推測で埋めず「不明」とし、`confidence`と`basis`を必ず付ける**。認識がどこまで可能かはS-18で実測してから約束する。
+- **Zone Layer(N-37)**: (a)**窓の照合**: 接続・物流・動力がゾーンをまたぐとき、両側の`Window`の種類・位置(`span`)・`transportProfileId`が一致することを検査し、合わなければ`E-WINDOW-MISMATCH`。(b)**ゾーン別の予算**: `PlanCompiler`・`AnalysisPipeline`をゾーン単位で呼び、各ゾーンの`ZoneBudget`を超えたら`E-ZONE-BUDGET`でそのゾーンだけ戻す(L10)。全体の上限(台帳T11-3の400,000回)は残すが、1つの巨大ゾーンが全体を使い切る形にはしない。(c)**`ZoneSummary`の生成**: AIの文脈用に、役割・範囲・窓・指標・日本語の要約を出す(`01` 14.4節)。

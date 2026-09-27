@@ -29,6 +29,10 @@
 | **P15** | 仕上げ | マルチプレイの総合確認、性能の合格線、設定と表示言語、ドキュメント(README・CurseForge・ゲーム内ヘルプ)、評価セットの全実行、リリース点検 | F-15〜F-19、F-21、F-22の総点検 |
 | **P16** | 追加modの能力パック | `CapabilityPack`・`EnabledRegistry`、`ModScan`と`ModScanReport`・`UnknownModNote`、pack無効時の検査(`E-PACK-DISABLED`・`E-UNKNOWN-CAPABILITY`・`W-UNKNOWN-MOD`)、新しい3mod(`create_submarine`・`powergrid`・`create_copper_and_zinc`)のpack | N-32、F-25、F-27、D-30、D-31 |
 | **P17** | 機器の安全モデル・学びの層 | `DeviceDescriptor`・`DeviceGate`(実行前検査)、`DeviceEvent`の割り込み面、`MonitorRecord`、`ReferenceSheet`、畑ドローンの制御ブロックを包む最初の機器 | N-33、F-26、D-32、P-17 |
+| **P18** | 動線と空きの予約 | `ReservedSpace`・`CirculationReq`、Space Keeper(N-35)、Site Plannerの「空きを先に予約」、Zoning Fixerの予約の扱い、Routerの予約内経路、`E-RESERVED-CONFLICT`・`E-CIRCULATION-BROKEN` | N-35、N-10・N-11・N-16・N-18の拡張、F-28、D-33 |
+| **P19** | 輸送手段と空間要求 | `TransportProfile`・`TransportMode`、`LogisticsPlan`の一般化(`Dock.mode`・`Route.mode`)、`SiteSurvey.waterDepth`、手段の敷地適合の判定(`E-MODE-UNFIT`と代替の提案)、水密の検査(`E-HULL-LEAK`)、`get_transport_profiles` | N-21の一般化、F-29、D-34、S-17 |
+| **P20** | 既存建築の計測 | `ExistingStructureProfile`・`PassageProfile`・`StyleObservation`、Structure Surveyor(N-36)、`StyleSpec.matchExisting`、`W-STRUCTURE-UNCERTAIN`、`get_structure_profiles`、L11 | N-36、F-30、D-35、L11、S-18 |
+| **P21** | ゾーンの階層(C4風) | `Zone`・`Window`・`ZoneBudget`・`ZoneSummary`、Zone Layer(N-37)、窓の照合(`E-WINDOW-MISMATCH`)、ゾーン別の予算(`E-ZONE-BUDGET`)、ゾーンだけの再検証(L10)、`get_zone_summary` | N-37、F-31、D-36、L10、S-19 |
 
 ---
 
@@ -148,6 +152,30 @@
 - **先に必要なスパイク**: S-15(実物のレッドストーン立ち上がり→割り込みの面への配線)。
 - **完了の実測条件(実機)**: (1)範囲外の書き込みが`E-DEVICE-RANGE`(または`W-DEVICE-CLAMPED`で丸め)で止まる。(2)`ESTOP`発動→全書き込みが`E-ESTOP`→所有者/OPの明示解除で復帰、発動と解除が記録に残る。(3)機器の出来事(例: 収穫可能)が`attach_isr`で付けたISRを起こす。(4)`ReferenceSheet`が宣言どおりに生成され、画面とAIの資料(`get_device_reference`)に同じ文が出る。(5)操作・出来事・拒否が`MonitorRecord`に残る。(6)学んだ(実測の)値が、明示の昇格のゲート(試運転+承認)を通るまで計画のモデルを書き換えない(観測≠検証済み、`08`)。
 
+### P18 動線と空きの予約
+
+- **作る物**: `ReservedSpace`・`SpacePurpose`・`CirculationReq`(`01` 14.1節)、Space Keeper(N-35)、Site Planner(N-10)の「動線・輸送の空きを足跡より先に予約」への変更、Zoning Fixer(N-11)の予約の扱い(侵入させない)、Router(N-18)の予約内経路の規則、`E-RESERVED-CONFLICT`・`E-CIRCULATION-BROKEN`。
+- **依存**: P6(`VoxelClassGrid`・`SemanticMap`)、P7(Site Planner)。**先に必要なスパイク**: S-16(歩行・ドローン・荷物の通り道の断面と曲がりの実測)。
+- **完了の実測条件**: (1)予約した空き(`ReservedSpace`)に部品を置く計画が、施工の前に`E-RESERVED-CONFLICT`で拒否される。(2)出入口から各部屋・スロットまで`CirculationReq`の断面で歩ける建屋は通り、壁で分断した建屋は`E-CIRCULATION-BROKEN`(塞いでいる位置つき)になる。(3)「子供が建物の中をまっすぐ歩ける」小屋で、実機で入口から奥の部屋まで障害物なく歩ける(林さんに見てもらう)。(4)用途の合わない予約をRouterが避け、合う`TRANSPORT_PATH`の予約の中を通す。(5)廊下の断面の数値はS-16の実測値であり、推測で書いた値は無い。
+
+### P19 輸送手段と空間要求
+
+- **作る物**: `TransportMode`・`TransportProfile`(`01` 14.2節。packの`transportProfileIds`として各packの知識に属する)、`LogisticsPlan`の一般化(`Dock.mode`・`minWaterDepth`、`Route.mode`・`transportProfileId`)、`SiteSurvey.waterDepth`、Site Planner/Logistics Plannerの手段の敷地適合の判定(`E-MODE-UNFIT`と代替の提案)、水密の検査(`E-HULL-LEAK`)、`get_transport_profiles`ツール。
+- **依存**: P13(発着場・飛行船)、P16(`TransportProfile`をpackの知識として載せる仕組み)。**先に必要なスパイク**: S-17(各輸送手段の空間要求: チェーンドライブ・車両・滑走路・パッド・泊位・水深・水密の実測)。
+- **完了の実測条件(実機)**: (1)滑走路の要求に足りない小さな敷地で、滑走路を計画せず`E-MODE-UNFIT`と代替(車両・船)が出る。(2)水深の足りない岸に泊位を計画しない。(3)水密が要る手段で、船体に穴のある計画が`E-HULL-LEAK`になる(浸水の規則はS-11・S-17の実測どおり)。(4)全手段の`TransportProfile`の数値に、出処(スパイクか計測記録)が付いている。
+
+### P20 既存建築の計測
+
+- **作る物**: `StructureSource`・`ExistingStructureProfile`・`PassageProfile`・`StyleObservation`(`01` 14.3節)、Structure Surveyor(N-36)、`StyleSpec.matchExisting`、`W-STRUCTURE-UNCERTAIN`、`get_structure_profiles`ツール、L11。
+- **依存**: P2(`ServerBlockSnapshotReader`)、P6(`VoxelClassGrid`・`SemanticMap`)、P7(Site Planner)。**先に必要なスパイク**: S-18(手造り建物の認識が実際にどこまでできるか)。
+- **完了の実測条件(実機)**: (1)このmodが建てた小屋の`OWN_PLAN`プロファイルが、保存済み計画と一致する。(2)手造りの小屋を認識し、通路の幅・高さ・材質の分布が`confidence`つきで出る。認識できなかった部分は「不明」として残る。(3)`matchExisting`が立った計画で、新しい建屋の材質・通路の断面が既存に揃い、認識由来の値には`W-STRUCTURE-UNCERTAIN`が付く。(4)`ServerBlockSnapshotReader`の既存の契約(ツール側)は無変更(F-30)。
+
+### P21 ゾーンの階層(C4風)
+
+- **作る物**: `ZoneLevel`・`ZoneRole`・`Zone`・`Window`・`ZoneBudget`・`ZoneSummary`(`01` 14.4節)、Zone Layer(N-37。窓の照合`E-WINDOW-MISMATCH`・ゾーン別の予算`E-ZONE-BUDGET`・`ZoneSummary`の生成・ゾーンだけの再検証)、`PlanCompiler`/`AnalysisPipeline`のゾーン別実行モード、`get_zone_summary`ツール、L10。
+- **依存**: P6(`ZoningPlan`)、P11(`PlanCompiler`・アナライザ)、P18(空きの予約と窓の関係)、P19(輸送の窓)。**先に必要なスパイク**: S-19(ゾーン別の予算の大きさと、窓の照合・部分再検証の性能)。
+- **完了の実測条件**: (1)64×64×64の発着場2つを含む計画(台帳T11-3の問題)で、全体の予算ではなくゾーンごとの予算で評価され、超えたゾーンだけが`E-ZONE-BUDGET`になる。(2)接続の両側で窓が違う計画が`E-WINDOW-MISMATCH`で拒否される。(3)ゾーン内の変更で、そのゾーンの窓への照合だけが走り、他のゾーン・全体のコンパイルが再実行されない(計測で確認)。(4)Module PlannerのAIの資料に、計画全体ではなく`ZoneSummary`が入っている。(5)`ZoneBudget`の数値はS-19の実測値であり、推測で書いた値は無い。
+
 ---
 
 ## 3. スパイク(先に事実を確かめる調査)
@@ -175,6 +203,10 @@
 | S-13 | `create_copper_and_zinc`(銅と亜鉛のmod)の中身: mod ID・版範囲、追加されるレシピ(銅・亜鉛の再生産)、真鍮の経済への影響 | jarのレシピjson・言語ファイル・実機 | P16の前 | `create_copper_and_zinc`packのレシピ源 |
 | S-14 | 未知のmodの走査の実現可能性: `ModList`/`mods.toml`に加えて、ゲームのレジストリ(ブロック・品物・ブロック状態のプロパティ・ブロックエンティティ・タグ)・`RecipeManager`・言語ファイル・汎用の能力(品物/液体/エネルギーのハンドラ、レッドストーンの振る舞い)を、modのコードを実行せずに読めるか。`UNKNOWN_COMPATIBLE`/`UNKNOWN_UNSAFE`の分類の規則、子供向け説明文に使える情報 | NeoForgeのAPIと実機で試す | P16の前 | `ModScan`の分類規則・`ModCatalog`の項目・`UnknownModNote`の項目 |
 | S-15 | 実物のレッドストーンの立ち上がりを、機器の出来事→`attach_isr`の面名に配線する方法(既知の未着手項目: 現在は`raise_interrupt`をプログラムから呼ぶだけ) | 実機で回路を組んで確認 | P17の前 | `DeviceEvent`の面への配線の方式 |
+| S-16 | 動線(空き)の断面の実測: プレイヤー(子供)の歩行に要る幅・高さ・曲がり、畑ドローンの通り道、ベルト・シュートの荷物の通り道、ドッキングする飛行船の進入余白。各対象が実際に通れる最小の空気の断面 | 実機で、断面を変えた通路を通して確認(歩行は実際に歩く・ドローンは実際に走らせる) | P18の前 | `TransportProfile`の`minWidth`/`minHeight`/`minTurn`のうち歩行・ドローン・荷物の分、`CirculationReq`の検査の断面 |
+| S-17 | 輸送手段ごとの空間要求: チェーンドライブ・シャフトの通り道、`offroad:wheel_mount`の車両の幅・高さ・旋回、飛行機の滑走路の長さと幅、気球・飛行船のパッド(`dock_pad`)の大きさと上空の余白、船・潜水艇の泊位の大きさと水深、**水密(水が浸入する条件。`create_submarine`無しの実際の挙動を含む)** | 各modの実機で組み立て・計測(車両は組み立てて走らせる、潜水艇は沈めて浸水を確認) | P19の前 | 各`TransportMode`の`TransportProfile`の数値、`SiteSurvey.waterDepth`の取り方、`E-HULL-LEAK`の検査の規則 |
+| S-18 | 手造り建物の認識の実現可能性: `VoxelClassGrid`から、通路の幅・高さ、壁の厚さ・高さ、材質の分布、扉・窓・開口部、つながった空間を実際にどこまで検出できるか。認識できない構造の例 | 手造りの建物を数種建てて計測し、正解(実測)と突き合わせる | P20の前 | `ExistingStructureProfile`の項目の精度、`confidence`の付け方、「分からない」に倒す条件 |
+| S-19 | ゾーン別の予算と部分再検証の大きさ: ゾーンごとの`ZoneBudget`(試行・部品・セル)を全体の上限に対してどう分けるか、窓の照合だけの再検証が全体再コンパイルより実際に軽いか | 台帳T11-3のケース(64×64×64の発着場×2)を含む計画で計測 | P21の前 | `ZoneBudget`の既定値、L10の再検証の境界 |
 
 ---
 
@@ -202,29 +234,32 @@
 | ノード | フェーズ | | ノード | フェーズ |
 |---|---|---|---|---|
 | N-01 User/DroneUI | P5・P7 | | N-17 Module Library | P11・P14 |
-| N-02 Refiner | P7(工場用はP12) | | N-18 Router | P11 |
+| N-02 Refiner | P7(工場用はP12) | | N-18 Router | P11・P18 |
 | N-03 ConceptImg | P8(建築部品)・P12(Create部品) | | N-19 Factory Analyzer | P11 |
 | N-04 Approve0 | P8 | | N-20 Decorator | P9 |
-| N-05 Vision Reader | P8(Create部品はP12) | | N-21 Logistics Planner | P13 |
+| N-05 Vision Reader | P8(Create部品はP12) | | N-21 Logistics Planner | P13・P19 |
 | N-06 Process Planner | P12 | | N-22 In-game Renderer | P9 |
 | N-07 Recipe Resolver | P7・P10 | | N-23 Vision Critic | P9 |
 | N-08 Capacity Calculator | P11 | | N-24 Preview | P5・P9・P11 |
 | N-09 Reconciler | P12 | | N-25 Critique Router | P14 |
-| N-10 Site Planner | P7・P12 | | N-26 Builder | P4 |
-| N-11 Zoning Fixer | P6 | | N-27 Drone | P4 |
+| N-10 Site Planner | P7・P12・P18・P19・P21 | | N-26 Builder | P4 |
+| N-11 Zoning Fixer | P6・P18 | | N-27 Drone | P4 |
 | N-12 DesignGen | P8(L5'はP9) | | N-28 Aero | P13 |
 | N-13 Architect | P7・P8 | | N-29 MC(ワールド) | P4 |
 | N-14 Carpenter | P3 | | N-30 Runtime Monitor | 試運転=P11、観測=P13 |
 | N-15 Blueprint Analyzer | P6 | | N-31 Knowledge Store | 記録=P7、昇格・検索=P14 |
-| N-16 Module Planner | P12 | | N-32 ModScan | P16 |
+| N-16 Module Planner | P12・P18 | | N-32 ModScan | P16 |
 | | | | N-33 機器層 | P17 |
 | | | | N-34 Mod Interpreter | P16 |
+| | | | N-35 Space Keeper | P18 |
+| | | | N-36 Structure Surveyor | P20 |
+| | | | N-37 Zone Layer | P21 |
 
-**ループ × フェーズ**(`03_loops.md`): L1=P8、L2=P12、L3=P12、L4=P12、L4'=P12、L5=P9(建築)・P12(工場)、L5'=P9、L6=P14、L7=P4(単純なブロック)・P10(風車の組み立て)・P13(飛行船の組み立て)、L8=P13、L9=P7(書き込み)・P14(昇格・検索・整理)。機器層(N-33、P17)の`MonitorRecord`はL8の実測とL9の終端イベントの材料になる。
+**ループ × フェーズ**(`03_loops.md`): L1=P8、L2=P12、L3=P12、L4=P12(空き・動線の新トリガはP18・P19・P21で有効化)、L4'=P12(同上)、L5=P9(建築)・P12(工場)、L5'=P9、L6=P14、L7=P4(単純なブロック)・P10(風車の組み立て)・P13(飛行船の組み立て)、L8=P13、L9=P7(書き込み)・P14(昇格・検索・整理)、L10=P21、L11=P20。機器層(N-33、P17)の`MonitorRecord`はL8の実測とL9の終端イベントの材料になる。
 
-**横断基盤 × フェーズ**(`04_foundations.md`): F-1・F-2・F-3・F-4・F-5・F-7・F-8・F-13・F-14・F-21=P4(F-3の画面側=P5)、F-6=P3、F-9・F-15・F-18=P7、F-10=P8、F-11・F-12=P10(組み立ての空輸側=P13)、F-16=P4(専用サーバーでの確認)とP15(総合確認)、F-17=P4(ジョブのログ・コマンド)とP7(段の`journal`)、F-19・F-22=各フェーズの完了条件+P15、F-20=全フェーズ(既存テストの緑)、F-23=P7、F-24=P11、F-25・F-27=P16、F-26=P17。
+**横断基盤 × フェーズ**(`04_foundations.md`): F-1・F-2・F-3・F-4・F-5・F-7・F-8・F-13・F-14・F-21=P4(F-3の画面側=P5)、F-6=P3、F-9・F-15・F-18=P7、F-10=P8、F-11・F-12=P10(組み立ての空輸側=P13)、F-16=P4(専用サーバーでの確認)とP15(総合確認)、F-17=P4(ジョブのログ・コマンド)とP7(段の`journal`)、F-19・F-22=各フェーズの完了条件+P15、F-20=全フェーズ(既存テストの緑)、F-23=P7、F-24=P11、F-25・F-27=P16、F-26=P17、F-28=P18、F-29=P19、F-30=P20、F-31=P21。
 
-**決定事項 × 確かめる場所**: D-1=P4(書き込み経路が1本)、D-2=P3(往復)、D-3=P4(偽のハッシュの拒否、サーバーの再展開)、D-4=P4、D-5=P7(再生テスト)、D-6=P4・P5(ハッシュ一致)、D-7=P10、D-8=P8(実測済みを実機で再確認)、D-9=P10、D-10=P7・P8・P9・P12(3種の上限線)、D-11=P4、D-12=P4、D-13=P10・P13、D-14=P4(`MODIFY`・`Conflict`)・P9・P13、D-15=P3、D-16=P3、D-17=P8・P10、D-18=P8、D-19=P8(合格ゲート)、D-20=この文書のフェーズ順(引き継ぎ文のMVP候補との違いを林さんに確認してもらう)、D-21=P4(`.nbt`ではなく施工リスト)、D-22=P3(判定)・P4(承認時の検査)、D-23=P4(区画の存続)、D-24=P10・P13(作用範囲の検査)、D-25=P4(`PlacedRegistry`)、D-26=P8(画像の合格ゲート)、D-27=P4(ディメンションの拘束)、D-30・D-31=P16、D-32=P17。
+**決定事項 × 確かめる場所**: D-1=P4(書き込み経路が1本)、D-2=P3(往復)、D-3=P4(偽のハッシュの拒否、サーバーの再展開)、D-4=P4、D-5=P7(再生テスト)、D-6=P4・P5(ハッシュ一致)、D-7=P10、D-8=P8(実測済みを実機で再確認)、D-9=P10、D-10=P7・P8・P9・P12(3種の上限線)、D-11=P4、D-12=P4、D-13=P10・P13、D-14=P4(`MODIFY`・`Conflict`)・P9・P13、D-15=P3、D-16=P3、D-17=P8・P10、D-18=P8、D-19=P8(合格ゲート)、D-20=この文書のフェーズ順(引き継ぎ文のMVP候補との違いを林さんに確認してもらう)、D-21=P4(`.nbt`ではなく施工リスト)、D-22=P3(判定)・P4(承認時の検査)、D-23=P4(区画の存続)、D-24=P10・P13(作用範囲の検査)、D-25=P4(`PlacedRegistry`)、D-26=P8(画像の合格ゲート)、D-27=P4(ディメンションの拘束)、D-30・D-31=P16、D-32=P17、D-33=P18、D-34=P19、D-35=P20、D-36=P21。
 
 **原則 × 強制する仕組み**: P-9=書き込みツールが存在しないことの構造検査(MCPの登録一覧のテスト)+P4、P-12=D-16のテスト、P-13=P10の忠実度テスト、P-15=既存テストの緑+P4・P15の農場の実機確認、P-16=登録簿からの自動生成のテスト(スキーマ・指示文・見本帳が登録簿と一致。`IMPLICIT`は含まない)+P16(有効なpackの和集合との一致)、P-17=P17の実機確認(範囲外の書き込みの拒否、`ESTOP`の強制)。
 
@@ -259,6 +294,11 @@
 | 未知のmodの誤検出・敵対的なメタデータ | 誤った案内・プロンプトへの混入 | メタデータは信用しないデータ(F-27)。`Dossier`にはIDと版と分類だけを入れる。分からなければ`UNKNOWN_UNSAFE`側へ倒す。部品としては登録しない(D-31) |
 | 機器の安全限界の迂回(AI・スクリプトからの書き込み) | 機器・世界の破壊 | `DeviceGate`の実行前検査は全経路で必須(P-17)。`hard`の限界は拒否、`ESTOP`の解除は所有者/OPのみ |
 | 実測(学んだ)値の誤りが計画に混ざる | 予測の信頼が落ちる | 観測と検証済みを分け、昇格には明示のゲート(試運転+承認)を置く(`08`)。計画に使う値は版つきで保存 |
+| 予約した空きが多すぎて建屋が入らない | 敷地が無駄になる | `ReservedSpace`はSite Plannerが最小限だけ宣言し、残りは使える空き。予約の衝突は`E-RESERVED-CONFLICT`で見える(L4') |
+| 動線の断面を大きく取りすぎる | 建屋が過剰に広くなる | 断面はS-16の実測値だけを使う。`CirculationReq`は必要な経路だけ |
+| 手造り建物の認識の誤りが新しい建屋の様式を歪める | ちぐはぐな建築(要件Eの逆) | `confidence`と`basis`を必ず付け、認識由来の値には`W-STRUCTURE-UNCERTAIN`。確かさはS-18の実測まで約束しない |
+| 窓を粗い層で固定しすぎて、ゾーン内の正当な変更が全部上位へ戻る | ループが進まない | 窓の種類を必要な通路だけに絞る(D-36)。窓が要る変更だけ`E-WINDOW-MISMATCH`で上へ |
+| ゾーン別の予算の分け方が実態に合わない | 小さなゾーンでも`E-ZONE-BUDGET`が出る・全体を再コンパイルしてしまう | S-19で実測してから既定値を凍結。全体の上限も残す(使い切りの防止) |
 
 ---
 

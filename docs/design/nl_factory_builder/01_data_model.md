@@ -468,7 +468,7 @@ enum EffectKind { NONE, BREAK, FLUID, PROJECTILE, MOVE_STRUCTURE }
 | `build.plan` | `PlanPatcher`、`PlanExpander`、`ModuleTemplate`、`TemplateBundle`、`Origins`、`SlotResolver`、`Router`(IF)。`build.model`と`build.parts`の上の層(循環を避けるため) | なし |
 | `build.compile` | 4節の型、`PlanCompiler`、`ManifestDiffer`・`Conflicts`(`ManifestDiff`)、`PlaceableBlockPolicy`、ハッシュ | なし |
 | `build.compile.gen` | 建築部品(`micra:*`)の生成器と`Canvas` | なし |
-| `build.analyze` | `VoxelClassGrid`、`BlueprintAnalyzer`、`ZoningFixer`、`CapacityCalculator`、`PowerSourceModel`、`Router`、`KineticModel`、`FactoryAnalyzer`、`RecipeSource`(IF) | なし |
+| `build.analyze` | `VoxelClassGrid`、`BlueprintAnalyzer`、`ZoningFixer`、`CapacityCalculator`、`PowerSourceModel`、`Router`、`KineticModel`、`FactoryAnalyzer`、`SpaceKeeper`(N-35)、`StructureSurveyor`(N-36)、`ZoneLayer`(N-37)、`RecipeSource`(IF) | なし |
 | `build.process` | `ProcessGraph`、`Reconciler`の決定論部分 | なし |
 | `build.verify` | `SparseSnapshot`、`SnapshotDiff`、`RepairPlanner` | なし |
 | `build.script` | `PlanRecorder`、`PlanScriptWriter`、`PlanScriptProfile`、`PlanScriptRunner` | なし |
@@ -584,3 +584,91 @@ enum DraftStatus { DRAFT /*作られただけ*/, SANDBOX_TESTED /*試験区画�
 - `ModScanReport`は起動のたびに作られ、`digest`が版ハッシュ(`registryVersion`)に含まれる。**同じmod構成からは必ず同じレポートが出る**(決定論)。
 - `childExplanation`は、「このmodは私たちが知らないので、工場の部品としては使いません。自分でブロックとして置くことはできます」といった、**子供に向けた説明文**を生成する(F-27)。
 - **AIに渡すのは`ModCatalog`の事実だけ**(jar・modの説明文などの自由文は渡さない)。`DraftClaim`は全部`evidenceFactId`を持ち、根拠の無い主張は検証で落とす。**施工に使えるのは`PROMOTED`になったpackだけ**(草案→サンドボックス→承認→昇格の流れはF-27)。
+
+## 14. 動線と空き・輸送手段・既存建築・ゾーン階層(D-33〜D-36)
+
+林さんの要件C(動線と空き)・D(輸送手段)・E(既存建築の計測)・G(ゾーンの階層)の型。**寸法・数値はこの節に書かない**(ゲームやmodの事実はスパイクS-16〜S-19で実測してから書く)。
+
+### 14.1 空きの予約と動線(F-28)
+
+```
+// 「空き」を部品と同じく計画の中の物にする。部品を置く前に先に予約し、侵入は重なりと同じく拒否する
+record ReservedSpace(String id, Box box, SpacePurpose purpose,
+                     String transportProfileId /*TRANSPORT_PATHのとき、どの輸送手段のための空きか*/,
+                     String ownerId /*この空きを要る対象(ゾーン・建屋・発着場のID)*/,
+                     String reason /*日本語の説明。子供に読める文*/)
+enum SpacePurpose { CIRCULATION /*人・荷物・ドローンの通り道(「空いていること」自体が要件)*/,
+                    TRANSPORT_PATH /*輸送手段の通り道(歩道・車道・航路・動力の通り道)*/,
+                    APPROACH /*発着場・港・滑走路への進入余白*/,
+                    CLEARANCE /*操作・整備のための余白*/ }
+
+// 建屋の内部の動線(廊下)。「在る物」ではなく「通れること」への要求として宣言する
+record CirculationReq(String id, String structureId,
+                      List<String> endpoints /*つなぐ出入口・部屋・スロットのID*/,
+                      SpacePurpose purpose, String transportProfileId)
+```
+
+- `ReservedSpace`は`ZoningPlan`(敷地レベル)と`SemanticPlan`/`SemanticMap`(建屋の内部レベル)の両方に出る。Site Planner(N-10)が敷地の動線・輸送の通り道を**足跡より先に**予約し、Architect(N-13)・Module Planner(N-16)が建屋内の廊下を`CirculationReq`として宣言する。
+- 検査は決定論: (a)部品・足跡が`ReservedSpace`に侵入→`E-RESERVED-CONFLICT`。(b)`CirculationReq`が、出入口から各端点まで、`transportProfileId`の指す`TransportProfile`の`minWidth`×`minHeight`(14.2節)以上の断面の空気の連なりとして実在するかを、`SemanticMap`の`VoxelClassGrid`上で洪水塗り(決定論)で確かめる。通れなければ`E-CIRCULATION-BROKEN`(塞いでいる位置つき)→L4(配置の見直し)かL4'(建屋の拡張)の戻し先。
+- **「歩けること」は数値で決めるが、数値はスパイクS-16で実測してから書く**(子供の歩行・畑ドローン・荷物の通り道の最小断面)。`CirculationReq`は`SpacePurpose.CIRCULATION`が既定で、歩く人を最優先・荷物とドローンも全部対象(林さんの要件)。
+
+### 14.2 輸送手段のモデル(F-29)
+
+```
+enum TransportMode { ON_FOOT /*歩行*/, BELT /*ベルト等の品物の通り道*/, SHAFT /*チェーンドライブ等、動力の通り道*/,
+                     PIPE /*液体*/, GROUND_VEHICLE /*地上車両(offroad:wheel_mountなど)*/,
+                     AIRCRAFT /*飛行機(滑走路が要る)*/, AIRSHIP /*気球・飛行船(既存)*/,
+                     SHIP /*船(港・水深が要る)*/, SUBMARINE /*潜水艇(港・水深・水密が要る)*/ }
+record TransportProfile(String id, TransportMode mode, String packId /*どのpackの知識か*/,
+                        int minWidth, int minHeight, int minTurn /*通り道の最小断面と最小旋回(ブロック)*/,
+                        int minRunLength /*滑走路など*/, int minWaterDepth /*港・泊位の水深*/,
+                        boolean needsWatertight /*船体の水密が要るか*/,
+                        Map<String,String> extra, String source /*数値の出処(スパイクIDまたは計測記録)*/)
+```
+
+- `LogisticsPlan`を飛行船専用から輸送手段一般へ拡張する(フィールドの追加のみ、既存の読み方を壊さない): `Dock`に`TransportMode mode`(既定`AIRSHIP`で現行と同じ意味)と水上用の条件(`minWaterDepth`)を、`Route`に`mode`と`transportProfileId`を足す。`CargoFlow`は不変。
+- `SiteSurvey`は列ごとの`water`(boolean)に加えて**水深**(`int[][] waterDepth`)を持つ。港・泊位の可否は`minWaterDepth`との比較で決まる。
+- **敷地のサイズで手段を選ぶ**: `E-MODE-UNFIT`(敷地がその手段の空間要求に足りない。例: 滑走路が置けない)のときは、別の手段を提案してSite Plannerへ戻す(空輸が無理なら車両や船)。提案は`TransportProfile`の比較で決定論側が候補を出し、AIは選ぶだけ。
+- **船・潜水艇の水密**: `needsWatertight=true`の輸送手段の船体・収容空間は、水が浸入しないかを検査する(浸水の規則はS-11/S-17で実測)。検査に漏れがあれば`E-HULL-LEAK`。
+- **バッテリー(`powergrid`)**: 回転ネットワーク(`KineticModel`)とは別の電気の蓄えとして扱う。設計での位置づけ(発電・蓄電・消費のモデルに入るか)はS-12の確定まで保留し、`TransportProfile`/`PowerSourceModel`のどちらにも仮の数値は書かない。
+
+### 14.3 既存建築の計測(F-30)
+
+```
+enum StructureSource { OWN_PLAN /*このmodが建てた: 保存済み計画から正確に*/,
+                       RECOGNIZED /*プレイヤーが手で建てた物: 観測からの認識。不確かさつき*/ }
+record ExistingStructureProfile(String id, StructureSource source, Box extent,
+                                List<PassageProfile> passages /*通路・出入口の幅・高さ・材質*/,
+                                StyleObservation style, Confidence confidence,
+                                String basis /*根拠(どの保存計画/どの観測範囲か)*/)
+record PassageProfile(Box span, int width, int height, String materialHint)
+record StyleObservation(Map<String,Integer> materialHistogram /*材質→セル数の分布*/,
+                        List<String> motifs /*認識した様式の手がかり(柱のリズム・破風など)。日本語*/)
+```
+
+- 2つの経路を決定として分ける(D-35): (a)このmodが建てた建屋は`PlacedRegistry`・保存済み計画から**正確に**、(b)手造りの建物は`ServerStateReader`→`VoxelClassGrid`から**認識**し、`confidence`と「分からなかった所」を明示する。認識がどこまで可能かはスパイクS-18で先に測る(正確さの約束は測ってから)。
+- `StyleSpec`に「既存に合わせる」モードを足す(`matchExisting=true`のとき、Refiner・Site Planner・Architectの資料に`ExistingStructureProfile`が入り、配色・材質・通路の寸法を既存に揃える)。認識由来の値を使った計画は`W-STRUCTURE-UNCERTAIN`を出す。
+- 範囲は区画(`SiteClaim`)の内側だけ、サーバー側だけで読み、量は`VoxelClassGrid`の作法(F-21。範囲を複数tickに分ける)に従う。
+
+### 14.4 ゾーンの階層(C4風。F-31)
+
+```
+enum ZoneLevel { SITE /*文脈: 敷地*/, ZONE /*コンテナ: 建屋・庭・港・滑走路*/,
+                 COMPONENT /*部屋・モジュール・スロット*/, PART /*部品とセル*/ }
+enum ZoneRole { BUILDING, YARD, PORT, RUNWAY, ROAD, UTILITY }
+enum WindowKind { DOOR /*出入口*/, LOGISTICS_PATH /*物流の通路*/, POWER_PATH /*動力の通路*/,
+                  DOCK_END /*発着場の端*/, WATER_PASSAGE /*水の通路*/ }
+record Zone(String id, ZoneRole role, Box extent, String parentZoneId,
+            List<Window> windows /*ゾーンの外と接する「窓」=インターフェースだけを上に見せる*/,
+            ZoneBudget budget)
+record Window(String id, String zoneA, String zoneB, WindowKind kind, Box span,
+              String transportProfileId /*通路・動力の窓のとき*/)
+record ZoneBudget(int maxAttempts /*ゾーン内のコンパイルの試行上限*/, int maxParts, int maxCells)
+record ZoneSummary(String zoneId, ZoneRole role, Box extent, List<Window> windows,
+                   Map<String,String> metrics /*床面積・部品数など*/, String textJa /*日本語の要約*/)
+```
+
+- **上位の層が知るのは、役割・範囲・窓だけ**(中身は見ない)。窓は粗い層(Site Plannerが出すゾーン案)で先に固定し、ゾーン内部の細かい作業は窓を動かせない。接続の両側のゾーンの窓は一致が要る→合わなければ`E-WINDOW-MISMATCH`。
+- **ゾーンごとの予算**: コンパイル・アナライザの作業量はゾーン単位の`ZoneBudget`に分ける(1つの巨大なゾーンが全体の上限を使い切る事故=台帳T11-3の対策)。上限の数値はS-19で測ってから書く。ゾーンが予算を超えれば`E-ZONE-BUDGET`でそのゾーンだけ戻る。
+- **AIの文脈は`ZoneSummary`**(役割・範囲・窓・指標・日本語の要約)。AIは計画全体ではなく要約を読む。ゾーン内の変更は、そのゾーンの窓への照合だけで再検証できる(全体を再コンパイルしない)。
+- 既存の型との関係: `ZoningPlan`は「ゾーン層の計画」に相当し、`Zone`はその上位の構造。`BuildingFootprint`/`Corridor`は`ZoneRole.BUILDING`/`ROAD`の中身になる。`SemanticMap`/`Slot`はCOMPONENT層、部品とセルはPART層。`Dock`/`LogisticsPlan`の発着場は`PORT`・`RUNWAY`ゾーンの窓(`DOCK_END`)とつなぐ。要件Cの`ReservedSpace`・要件Dの`TransportProfile`は、窓とゾーン内の空きの両方に効く。

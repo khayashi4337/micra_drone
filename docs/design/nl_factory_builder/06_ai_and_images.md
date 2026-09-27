@@ -58,11 +58,11 @@
 | Refiner N-02 | 会話、`ChatContext`、`KnowledgeStore`の好み・失敗例 | `ConceptBrief` | 生産物がレシピ解決できる、必須項目が埋まる | `query_recipes`(P7から)、`query_module_library`(ライブラリに工場用のテンプレートが載るP11から。それまでは空を返す) |
 | Vision Reader N-05 | 承認画像、`PartAtlas`(絞り込み版)、`ConceptBrief` | `StructureDescription` | 部品名が登録簿のenum内、`region`が0〜1の範囲 | なし |
 | Process Planner N-06 | `ConceptBrief`、`RecipeOption`候補、L3の`Issue` | `ProcessGraph` | 各工程が実在レシピ、流量の保存 | `query_recipes` |
-| Site Planner N-10 | `ConceptBrief`、`StructureDescription`、`SiteSurvey`、床面積 | `ZoningPlan` | 敷地内、重なり(→Zoning Fixerに渡す) | `get_site_survey` |
-| Architect N-13 | 建屋の画像3種、足跡、`SemanticPlan`、`Issue`/`CritiqueReport` | `PlanPatch` | `PlanPatcher`、`PlanCompiler` | `query_part_types`、`get_block_snapshot` |
-| Module Planner N-16 | `SemanticMap`、`ProcessGraph`+`CapacityReport`、`ModuleLibrary`、`StructureDescription`、`Issue` | `PlanPatch` | 同上+ポート整合 | `query_module_library`、`get_semantic_map` |
+| Site Planner N-10 | `ConceptBrief`、`StructureDescription`、`SiteSurvey`、床面積、有効な`TransportProfile`の一覧、`ExistingStructureProfile`(既存建築があるとき) | `ZoningPlan`(**`ReservedSpace`とゾーン案(`Zone`+`Window`)を含む**) | 敷地内、重なり(→Zoning Fixerに渡す)、予約の整合、手段が敷地に収まるか(`E-MODE-UNFIT`の候補つき) | `get_site_survey`、`get_transport_profiles`、`get_structure_profiles` |
+| Architect N-13 | 建屋の画像3種、足跡、`SemanticPlan`、`Issue`/`CritiqueReport`、`CirculationReq`(建屋内の動線の要求)、`ExistingStructureProfile`(様式の一致時) | `PlanPatch` | `PlanPatcher`、`PlanCompiler`、`SpaceKeeper`(予約・動線) | `query_part_types`、`get_block_snapshot` |
+| Module Planner N-16 | `SemanticMap`、`ProcessGraph`+`CapacityReport`、`ModuleLibrary`、`StructureDescription`、`Issue`、`CirculationReq`、そのゾーンの`ZoneSummary`(P21から、全体の計画ではなくゾーンの要約を渡す) | `PlanPatch` | 同上+ポート整合+予約・動線(`SpaceKeeper`) | `query_module_library`、`get_semantic_map`、`get_zone_summary` |
 | Decorator N-20 | 完成予想図、`SemanticMap`、`SemanticPlan` | `PlanPatch`(`DECOR`部品) | 同上 | `query_part_types` |
-| Logistics Planner N-21 | `SemanticPlan`、`ProcessGraph`(搬入搬出)、敷地 | `LogisticsPlan` | 発着場の空間・余白 | `get_site_survey` |
+| Logistics Planner N-21 | `SemanticPlan`、`ProcessGraph`(搬入搬出)、敷地、有効な`TransportProfile`の一覧、ゾーンの`Window`の一覧(発着場の端・港の出入口) | `LogisticsPlan`(全輸送手段) | 発着場・泊位・滑走路の空間・余白、`TransportProfile`との照合(`E-MODE-UNFIT`)、水深(`minWaterDepth`)、水密(`E-HULL-LEAK`) | `get_site_survey`、`get_transport_profiles` |
 | Vision Critic N-23 | 参考画像、スクリーンショット、`CameraPreset` | `CritiqueReport` | スコアが0〜1、差分の種類がenum | なし |
 | Critique Router N-25 | ユーザーのダメ出し文、現在の状態の要約 | `RouteDecision` | 分類がenum | なし |
 | Reconciler(AI部分) N-09 | 決定論の突き合わせ結果 | 提案(`絵を優先`/`工程を優先`+制約) | 制約が数値として妥当 | なし |
@@ -72,6 +72,8 @@
 - **書き込みツールは1つも無い**(D-1)。AIの成果物は、必ず`PlanPatch`などのデータで、決定論の検証器を通ってからでないと次へ進まない。
 - 「許可ツール」は、その段の`--mcp-config`と`--allowedTools`で許可するツール名を絞る(既存の`ClaudeCliBridge.MCP_ALLOWED_TOOL`を、リストに拡張)。
 - **各段の資料には、有効な能力パックの一覧**(`ModScanReport`のpack状態の抜粋。「今使える能力はこれだけ」)**を入れる**(D-30)。Refinerのシステムプロンプトにも同じ一覧を明記する。スキーマの部品名のenum・`query_part_types`の結果は、無効なpackの物を含まないので、通常AIは無効な部品を「書けない」。それでも来た場合は`E-PACK-DISABLED`/`E-UNKNOWN-CAPABILITY`で拒否する。
+- **AIに計画全体は渡さない**(P21から、D-36): ゾーン内の作業をする段(Module Planner・Logistics Plannerのゾーン部分)の資料は、そのゾーンの`ZoneSummary`(役割・範囲・`Window`の一覧・指標・日本語の要約)と、接続相手のゾーンの窓だけ。Site PlannerだけがSITE層(全ゾーンの要約の一覧)を見る。**AIが選ぶのは手段と配置で、空間の寸法は`TransportProfile`の実測値から決定論側が判定する**(AIが寸法を推測しない)。
+- **`ExistingStructureProfile`の扱い**: `RECOGNIZED`(手造りの認識)由来の値は`confidence`つきで資料に入れ、AIの出力のうち認識由来の値に依存した部分には`W-STRUCTURE-UNCERTAIN`が付く。`basis`(根拠の計画か観測範囲か)も資料に含める(F-30)。
 
 ---
 
@@ -91,6 +93,9 @@
 | `list_open_issues` | 未解決の`Issue` | 現在の解析結果 |
 | `get_mod_scan_report` | `ModScanReport`(導入modの分類・各packの状態と理由・`digest`) | `ModScan`(起動時の走査。サーバー) |
 | `get_device_reference` | 機器の`ReferenceSheet`(できること・できないこと・絶対に止まる条件) | `DeviceGate`(宣言からの自動生成。P17) |
+| `get_transport_profiles` | 有効な`TransportProfile`の一覧(手段・必要な断面・水深・水密の要否・出処) | `EnabledRegistry`(packの知識。P19) |
+| `get_structure_profiles` | 区画内の`ExistingStructureProfile`の一覧(通路の断面・材質の分布・`confidence`・`basis`) | `StructureSurveyor`(サーバー側の観測。P20) |
+| `get_zone_summary` | `ZoneSummary`(ゾーンの役割・範囲・窓・指標・日本語の要約) | `ZoneLayer`(P21) |
 
 - **`query_part_types`・`query_module_library`・`query_recipes`は、有効な登録簿(`EnabledRegistry`)の物だけを返す**(F-25)。modを入れ替えた環境では、返る語彙が自動で変わる。
 - サーバーが答えるツールは、`QueryRequestPayload(id, kind, args)`(クライアント→サーバー)と`QueryResponsePayload(id, json)`(サーバー→クライアント)で往復する。MCPの呼び出しスレッドは、応答の`Future`を待つ(既存の`ClientMainThreadDispatch`と同じ作法。タイムアウトあり)。

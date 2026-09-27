@@ -1,4 +1,4 @@
-# 03 ループ(L1〜L9、L4'、L5')全仕様
+# 03 ループ(L1〜L11、L4'、L5')全仕様
 
 v3の点線(フィードバックループ)の全部。各ループに、**きっかけ・戻す先と中身・反復の上限・終了条件・上限を超えたときの返し方・費用・記録・フェーズ・完了の実測条件**を決める。上限と閾値の数値は**既定値**(設定で変更可)。評価セット(`06` 6節)で調整し、緩める場合は理由を記録して林さんに報告する。
 
@@ -18,7 +18,8 @@ v3の点線(フィードバックループ)の全部。各ループに、**き�
 | L5・L5' | `matchScore`(0〜1、大きいほど良い) | 0.03 |
 | L7 | `Deviation`の件数(小さいほど良い) | 1(直らなければ頭打ち) |
 | L8 | 目標に対する実測の生産比(0〜1、大きいほど良い) | 0.05 |
-| L1・L6 | (自動の反復が無い。回数のみ) | — |
+| L10 | そのゾーンの`Issue`件数(小さいほど良い) | 1(直らなければ頭打ち) |
+| L11・L1・L6 | (自動の反復が無い。回数のみ) | — |
 
 **カウンタの単位(`LoopCounter`の`scopeId`と`epoch`)**: 上限は、**ループごとに決まった対象**で数える。L1=コンセプト(`ConceptBrief`の版ごと)、L2=コンセプト、L3=プロジェクト(工程グラフの版ごと)、L4・L4'=建屋(`structureId`)、L5・L5'=建屋(またはコンセプト画像)、L7=ジョブ、L8=プロジェクト、L6=プロジェクト。**上流の成果物が作り直される(`epoch`が上がる)と、その下流のカウンタは新しい対象として数え直す**。無関係な建屋の回数は混ざらない。
 
@@ -113,7 +114,7 @@ v3では、見た目の照合(Stage 3)が、承認(Stage 4)と施工(Stage 5)よ
 
 | 項目 | 内容 |
 |---|---|
-| きっかけ | 解析パイプライン(`AnalysisPipeline`。`PlanExpander`のRouter・`PlanCompiler`・`FactoryAnalyzer`)が集約して出す`ERROR`: `E-ROT-CONFLICT`、`E-STRESS-OVER`、`E-PORT-UNCONNECTED`、`E-PORT-MISMATCH`、`E-NO-ROUTE`、`E-ITEM-DEADEND`、`E-CLOG-RISK`、`E-OVERLAP`、`E-HEAT-NONE`、`E-DOCK-MISALIGN`など(`E-SPACE-SHORT`はL4'へ) |
+| きっかけ | 解析パイプライン(`AnalysisPipeline`。`PlanExpander`のRouter・`PlanCompiler`・`FactoryAnalyzer`・N-35 Space Keeper)が集約して出す`ERROR`: `E-ROT-CONFLICT`、`E-STRESS-OVER`、`E-PORT-UNCONNECTED`、`E-PORT-MISMATCH`、`E-NO-ROUTE`、`E-ITEM-DEADEND`、`E-CLOG-RISK`、`E-OVERLAP`、`E-HEAT-NONE`、`E-DOCK-MISALIGN`、`E-CIRCULATION-BROKEN`(建屋内の動線が塞がれた。Module Plannerが配置を直す)、`E-HULL-LEAK`(水密の破れ)、`E-ZONE-BUDGET`(そのゾーンだけのやり直し。L10)など(`E-SPACE-SHORT`・`E-RESERVED-CONFLICT`・`E-MODE-UNFIT`・`E-WINDOW-MISMATCH`はL4'へ) |
 | 戻す先と中身 | Module Planner(N-16)へ。**対象のID(ノード・接続)と`FixHint`つきの`Issue`一覧**(番号ではなくID)。修正は`PlanPatch`で返させる |
 | 上限 | **5回** |
 | 終了条件 | 受け入れ不可の`ERROR`が0件。**かつ、`W-UNMODELED`の部品がある場合は、その部品を試運転(Commissioning)の検査項目に入れた状態**(モデルが無い部品を、解析だけで通さない。解析OKは「未検証の部品を含む」と表示し、施工後の試運転が通って`COMMISSIONED`になるまで、工場は「試運転待ち(未検証)」と表示する。ジョブの`VERIFIED`(施工が施工リストどおり)とは別の状態、`01` 8節)。受け入れ可能な問題(例: `E-CLOG-RISK`)は、ユーザーが`ACCEPTED_RISK`にしたものだけ残せる |
@@ -123,18 +124,18 @@ v3では、見た目の照合(Stage 3)が、承認(Stage 4)と施工(Stage 5)よ
 | フェーズ | P12 |
 | 完了の実測条件 | 意図的に回転方向が衝突する配置で`E-ROT-CONFLICT`が出て、Module Plannerの修正で解消する。決定論の解析なので、同じ入力なら同じ`Issue`が出る(単体テスト)。上限に達したとき、受け入れ不可の`ERROR`が残ると、承認ボタンが無効のままで、「進む」が出ない |
 
-## L4': Factory Analyzer → Architect(空間が足りない → 建屋拡張)
+## L4': Factory Analyzer → Architect / Site Planner(空間が足りない・空きや輸送の衝突 → 建屋拡張・区画見直し)
 
 | 項目 | 内容 |
 |---|---|
-| きっかけ | `E-SPACE-SHORT`(スロットの不足、通路の不足、天井高の不足) |
-| 戻す先と中身 | Architect(N-13)へ。`SpaceRequest`(建屋ID、必要な床面積・高さ・階) |
+| きっかけ | `E-SPACE-SHORT`(スロットの不足、通路の不足、天井高の不足)、`E-RESERVED-CONFLICT`(予約した空きへの侵入。足跡を動かすか予約を引き直す)、`E-MODE-UNFIT`(敷地が輸送手段の`TransportProfile`に合わない。別の手段を選ぶ)、`E-WINDOW-MISMATCH`(接続の両側のゾーンの窓が合わない) |
+| 戻す先と中身 | `E-SPACE-SHORT`・`E-RESERVED-CONFLICT`はArchitect(N-13)へ。`SpaceRequest`(建屋ID、必要な床面積・高さ・階)。**`E-MODE-UNFIT`・`E-WINDOW-MISMATCH`はSite Planner(N-10)へ**(ゾーン案・手段の選択・予約の引き直し。AIの資料には`TransportProfile`の比較結果と窓の一覧が入る) |
 | 上限 | **2回** |
 | 終了条件 | 空間不足が解消 |
 | 波及 | 建屋が変わるので、`Invalidation`により、`SemanticMap`以降が「古い」になる。決定論の部分は即再計算、AIの段は資料が変わったものだけ再実行 |
 | 上限超過時 | `LoopEscalationScreen`。「モジュールを減らす/敷地を広げる/前の段に戻る」(**空間不足の`ERROR`が残るなら「進む」は出さない**) |
 | フェーズ | P12 |
-| 完了の実測条件 | 狭すぎる建屋で発動し、建屋が広がり、下流が自動で再計算されて通る |
+| 完了の実測条件 | 狭すぎる建屋で発動し、建屋が広がり、下流が自動で再計算されて通る。(P18)予約の空きに侵入する計画で`E-RESERVED-CONFLICT`が出て修正される。(P19)滑走路が入らない敷地で`E-MODE-UNFIT`が出て別の手段が選ばれる。(P21)窓の不一致で`E-WINDOW-MISMATCH`が出てゾーン案が直る |
 
 ## L5: Vision Critic → Architect / Decorator(コンセプト画像と同じ角度のスクショと比較)
 
@@ -215,6 +216,30 @@ v3では、見た目の照合(Stage 3)が、承認(Stage 4)と施工(Stage 5)よ
 | フェーズ | 書き込み=P7、昇格・検索・整理=P14 |
 | 完了の実測条件 | P7: 終端イベントの記録が保存される。P14: 成功した施工の後、テンプレート候補が昇格の条件を満たして登録され、次のプロジェクトのModule Plannerが選択肢として参照できる。過去の好みがRefinerの資料に入る。上限に達すると、自動で消さずに画面が出る |
 
+## L10: Zone Layer → そのゾーンだけの再検証(ゾーン内の変更を全体の再コンパイルに広げない)
+
+| 項目 | 内容 |
+|---|---|
+| きっかけ | ゾーン(`Zone`)の内側の変更(部屋・モジュール・部品の配置の修正、AIの`PlanPatch`による部分修正)が起きる。またはゾーンの`ZoneBudget`の超過(`E-ZONE-BUDGET`) |
+| 戻す先と中身 | **そのゾーンのModule Planner(N-16)だけ**へ。資料はそのゾーンの`ZoneSummary`と`Window`の一覧(全体の計画は渡さない)。N-37が、変更後のゾーンの窓が宣言どおりかだけを照合する。窓が変わらなければ、隣のゾーン・全体は再計算しない(0.3節の`Invalidation`はゾーンを単位にする) |
+| 上限 | ゾーンごとに**3回** |
+| 終了条件 | そのゾーンの`Issue`が0件、かつ窓が宣言どおり |
+| 上限超過時 | そのゾーンだけ`LoopEscalationScreen`へ(他のゾーンは保留のまま。ゾーン案自体を直す必要があるなら`E-WINDOW-MISMATCH`でL4'→Site Plannerへ) |
+| 費用 | Claudeの構造化出力1回/回(小さい。資料がゾーンの要約だけなので) |
+| フェーズ | P21 |
+| 完了の実測条件 | 2つの発着場を含む計画で、片方のゾーンの修正が他方のコンパイルを再実行しない。窓が変わる変更だけが上位の層へ戻る |
+
+## L11: 既存建築の計測 → 様式・動線への反映(計画の前の観測。反復ループではない)
+
+| 項目 | 内容 |
+|---|---|
+| きっかけ | Site Planner(N-10)が動く前、または敷地に既存の建物があることが分かったとき |
+| 中身 | N-36(既存建築の計測)が区画内を測り、`ExistingStructureProfile`を出す。`StyleSpec.matchExisting`が立つとき、`StyleObservation`(材質の分布・様式の手がかり)と`PassageProfile`(通路の断面)がAIの資料に入り、新しい建屋は既存に揃う。新しい足跡が既存の建物と重なれば、従来どおり`E-OVERLAP`でL4'へ |
+| 反復の上限と終了 | 反復ループではない。計測1回→プロファイル1件で終わる。計画の中で認識由来の値を使った部分は`W-STRUCTURE-UNCERTAIN`を必ず付ける(推測を黙って使わない) |
+| 記録 | 認識の結果と「分からなかった所」を`KnowledgeStore`に保存(同じ区画ではdigestで再利用) |
+| フェーズ | P20 |
+| 完了の実測条件 | 手造りの小屋がある敷地で、プロファイルが出て様式の手がかりがAIの資料に入り、新しい建屋の材質が既存と揃う。認識できなかった部分はプロファイルに「不明」と残る |
+
 ---
 
 ## 一覧(上限の既定値)
@@ -232,3 +257,5 @@ v3では、見た目の照合(Stage 3)が、承認(Stage 4)と施工(Stage 5)よ
 | L7 | 3ラウンド | Deviation件数 | 修復(承認済みの再適用) | なし(AI不使用) | P4・P10・P13 |
 | L8 | 3 | 生産比 | MODIFY(要承認) | 中 | P13 |
 | L9 | 蓄積(1イベント=有限の作業。件数の上限で停止) | なし | 変えない | なし | P7・P14 |
+| L10 | ゾーンごと3 | そのゾーンのIssue件数 | 変えない | 小 | P21 |
+| L11 | 反復なし(計測1回) | なし | 変えない | なし(AI不使用) | P20 |
