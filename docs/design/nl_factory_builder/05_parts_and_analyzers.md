@@ -242,23 +242,25 @@
 | `E-SITE-MISSING` | 敷地(`site`)が未設定 | `PlanCompiler` | `site(...)`を足す |
 | `E-SCRIPT-FORBIDDEN` | 建設のスクリプトで許可されていない命令(乱数・時刻・畑の命令・`create_task`等)を使った | 静的検査(`PlanScriptProfile`) | 許可された命令 |
 | `E-SCRIPT-LIMIT` | 建設のスクリプトが、実行の回数・時間の上限を超えた | 実行時 | 処理を減らす |
-| `E-PACK-DISABLED` | 無効な能力パック(要求するmodが無い・版が範囲外)の部品・テンプレート・能力を計画が使っている | `PlanPatcher`/`PlanCompiler`/承認時 | 有効なpackの部品に替える・そのmodを入れる |
-| `E-UNKNOWN-CAPABILITY` | 未知のmod由来らしい部品ID・能力を計画が使っている(推測で受けない) | `ModScan`/承認時 | 有効なpackの物を使う |
-| `E-DEVICE-RANGE` | 機器への書き込みが、宣言した型・範囲に合わない | `DeviceGate` | 許容範囲 |
-| `E-DEVICE-PRECOND` | 機器の事前条件(`requires`)が満たされていない | `DeviceGate` | 先に満たす操作 |
-| `E-DEVICE-LIMIT` | 機器の安全限界(`hard=true`)を超える指示 | `DeviceGate` | 範囲内の値 |
-| `E-ESTOP` | 緊急停止の発動中の機器への書き込み | `DeviceGate` | 所有者/OPによる明示の解除 |
-| `W-DEVICE-CLAMPED` | 機器への指示を、宣言の範囲に丸めた(`CLAMP`) | `DeviceGate` | (確認) |
-| `W-UNKNOWN-MOD` | 未知のmodが導入されている(情報の提供だけ。部品にはならない) | `ModScan` | (説明を読む) |
-| `E-RESERVED-CONFLICT` | 部品・足跡が`ReservedSpace`(予約した空き)に侵入している | `SpaceKeeper`/`ZoningFixer` | 侵入した対象の移動・予約の引き直し |
-| `E-CIRCULATION-BROKEN` | `CirculationReq`(建屋内の動線)が、要求の断面で通れない(塞がれている) | `SpaceKeeper` | 塞いでいる部品の移動・建屋の拡張 |
-| `E-MODE-UNFIT` | 敷地が、その輸送手段の`TransportProfile`の空間要求(滑走路の長さ・泊位の水深など)に足りない | `SitePlanner`/`LogisticsPlanner` | 別の輸送手段の提案(候補つき) |
-| `E-HULL-LEAK` | 水密が要る輸送手段(船・潜水艇)の船体・収容空間に水が浸入しうる | `FactoryAnalyzer`/`SpaceKeeper` | 漏れている位置・壁の追加 |
-| `W-STRUCTURE-UNCERTAIN` | 手造り建物の認識由来の値(幅・材質)を計画が使っている(確かさはS-18の実測どおり) | `StructureSurveyor`/承認時 | 実測で確認・上書きの記録 |
-| `E-WINDOW-MISMATCH` | 接続の両側のゾーンが宣言する`Window`が合わない(種類・位置・輸送手段が違う) | `ZoneLayer` | 窓の宣言の整合 |
-| `E-ZONE-BUDGET` | ゾーンが`ZoneBudget`(そのゾーンの試行・部品・セルの上限)を超えた | `PlanCompiler`/`AnalysisPipeline`(ゾーン別実行) | そのゾーンの簡素化・ゾーンの分割 |
-
 **受け入れ可能(`acceptable=true`)なのは、`W-*`と`E-CLOG-RISK`だけ**。それ以外の`E-*`は受け入れ不可で、残っていれば承認できない(`01` 5節、`03` 0.2節)。
+
+将来のフェーズ(P16〜P21)向けに意味だけ先に確定したコード。enumへの追加と上の表への移動は、それぞれのフェーズで実装するときに行う：
+
+- `E-PACK-DISABLED`：無効な能力パック(要求するmodが無い・版が範囲外)の部品・テンプレート・能力を計画が使っている — `PlanPatcher`/`PlanCompiler`/承認時 — 有効なpackの部品に替える・そのmodを入れる
+- `E-UNKNOWN-CAPABILITY`：未知のmod由来らしい部品ID・能力を計画が使っている(推測で受けない) — `ModScan`/承認時 — 有効なpackの物を使う
+- `E-DEVICE-RANGE`：機器への書き込みが、宣言した型・範囲に合わない — `DeviceGate` — 許容範囲
+- `E-DEVICE-PRECOND`：機器の事前条件(`requires`)が満たされていない — `DeviceGate` — 先に満たす操作
+- `E-DEVICE-LIMIT`：機器の安全限界(`hard=true`)を超える指示 — `DeviceGate` — 範囲内の値
+- `E-ESTOP`：緊急停止の発動中の機器への書き込み — `DeviceGate` — 所有者/OPによる明示の解除
+- `W-DEVICE-CLAMPED`：機器への指示を、宣言の範囲に丸めた(`CLAMP`) — `DeviceGate` — (確認)
+- `W-UNKNOWN-MOD`：未知のmodが導入されている(情報の提供だけ。部品にはならない) — `ModScan` — (説明を読む)
+- `E-RESERVED-CONFLICT`：部品・足跡が`ReservedSpace`(予約した空き)に侵入している — `SpaceKeeper`/`ZoningFixer` — 侵入した対象の移動・予約の引き直し
+- `E-CIRCULATION-BROKEN`：`CirculationReq`(建屋内の動線)が、要求の断面で通れない(塞がれている) — `SpaceKeeper` — 塞いでいる部品の移動・建屋の拡張
+- `E-MODE-UNFIT`：敷地が、その輸送手段の`TransportProfile`の空間要求(滑走路の長さ・泊位の水深など)に足りない — `SitePlanner`/`LogisticsPlanner` — 別の輸送手段の提案(候補つき)
+- `E-HULL-LEAK`：水密が要る輸送手段(船・潜水艇)の船体・収容空間に水が浸入しうる — `FactoryAnalyzer`/`SpaceKeeper` — 漏れている位置・壁の追加
+- `W-STRUCTURE-UNCERTAIN`：手造り建物の認識由来の値(幅・材質)を計画が使っている(確かさはS-18の実測どおり) — `StructureSurveyor`/承認時 — 実測で確認・上書きの記録
+- `E-WINDOW-MISMATCH`：接続の両側のゾーンが宣言する`Window`が合わない(種類・位置・輸送手段が違う) — `ZoneLayer` — 窓の宣言の整合
+- `E-ZONE-BUDGET`：ゾーンが`ZoneBudget`(そのゾーンの試行・部品・セルの上限)を超えた — `PlanCompiler`/`AnalysisPipeline`(ゾーン別実行) — そのゾーンの簡素化・ゾーンの分割
 
 ### 4.2 Blueprint Analyzer(N-15)
 
