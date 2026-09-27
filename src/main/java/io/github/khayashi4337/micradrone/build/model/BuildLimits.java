@@ -13,6 +13,21 @@ public final class BuildLimits {
     /** The Issue key and the Issue data name of a refusal because the build is too big (E-OUT-OF-BOUNDS). */
     public static final String KEY_CELLS = "cells";
 
+    /**
+     * The most connections an expanded plan may hold: the plan's own plus the internal connections of every module
+     * instance's template. This is a ruling, not a derivation. A connection places no cell, and neither the design (a
+     * port may take any number of connections: 05 section 2 gives no arity rule) nor the code (the patcher checks that a
+     * connection's ports exist, not how many connections a port already has) ties the connections to the parts, and no
+     * registered part declares a port yet, so there is no largest port count to derive a number from. The number is the
+     * cell limit, the size of the largest plan that can be built. If it is too low, a plan that really needs more
+     * connections is refused with a clear issue and the constant is raised; if it is too high, the cost of an instances
+     * times connections blow-up stays bounded (200,000 expanded connections held about 30 MB when measured).
+     */
+    public static final int MAX_EXPANDED_CONNECTIONS = MAX_CELLS;
+
+    /** The Issue key and the Issue data name of a refusal because the expanded plan would hold too many connections. */
+    public static final String KEY_CONNECTIONS = "connections";
+
     private BuildLimits() {
     }
 }

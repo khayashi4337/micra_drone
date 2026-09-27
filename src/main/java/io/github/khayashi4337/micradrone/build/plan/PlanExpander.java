@@ -40,6 +40,11 @@ public final class PlanExpander {
     // Keys that tell apart several issues of one code on one subject (see also Origins).
     private static final String KEY_ROT = "rot";
     private static final String KEY_VIA_PREFIX = "via:";
+    private static final String TOO_MANY_PARTS = "展開した部品が、施工の大きさの上限(" + BuildLimits.MAX_CELLS
+            + "マス)を超えます。部品は1つにつき1マス以上を使うため、これより多い部品は施工できません。"
+            + "モジュールの数か、テンプレートの部品の数を減らしてください";
+    private static final String TOO_MANY_CONNECTIONS = "展開した接続が、上限(" + BuildLimits.MAX_EXPANDED_CONNECTIONS
+            + "本)を超えます。モジュールの数か、テンプレートの内部の接続の数を減らしてください";
 
     private final PartTypeRegistry registry;
     private final SlotResolver slots;
@@ -72,9 +77,10 @@ public final class PlanExpander {
     /**
      * As above, and {@code work} counts what was done once per distinct template (read by the tests).
      * <p>
-     * A plan that would expand to more parts than {@link BuildLimits#MAX_CELLS} is refused first, before any part is
-     * built. Everything that depends on a template alone is worked out once per distinct template
-     * ({@link CheckedTemplate}), so the work per module instance is the parts it produces and nothing else. All of this is
+     * A plan that would expand to more parts than {@link BuildLimits#MAX_CELLS}, or to more connections than
+     * {@link BuildLimits#MAX_EXPANDED_CONNECTIONS}, is refused first, before any part or connection is built. Everything
+     * that depends on a template alone is worked out once per distinct template
+     * ({@link CheckedTemplate}), so the work per module instance is the parts and connections it produces and nothing else. All of this is
      * in memory; nothing here reaches outside the process except {@code slots} and {@code router}, which the caller
      * supplies.
      */
@@ -95,7 +101,7 @@ public final class PlanExpander {
                 moduleIds.add(n.id());
             }
         }
-        Issue tooBig = firstNodeOverLimit(plan, moduleIds, templates);
+        Issue tooBig = firstOverLimit(plan, moduleIds, templates);
         if (tooBig != null) {
             issues.add(tooBig);
             return new ExpandResult(null, issues);
@@ -196,40 +202,57 @@ public final class PlanExpander {
     }
 
     /**
-     * The number of parts the node adds to the expanded plan: 1 for a part, as many as the template has for a module
-     * instance, 0 for a node that the expansion will refuse (inside a module instance, or a template the bundle lacks).
-     * A node that is refused later for another reason (a slot that does not resolve, a bad template) is still counted, so
-     * the count is an upper bound, and it is exact for a plan that expands.
+     * E-OUT-OF-BOUNDS on the first node that takes the expanded plan past a limit, or null when the plan stays within them.
+     * Two things are counted, in one pass and before anything is built:
+     * <ul>
+     * <li>the parts, against {@link BuildLimits#MAX_CELLS}: a part places at least one cell, and the compiler refuses more
+     * cells than that, so a plan with more parts could not be built; this is the compiler's own work-budget refusal (same
+     * code, key and data);</li>
+     * <li>the connections, against {@link BuildLimits#MAX_EXPANDED_CONNECTIONS}: the plan's own, then the internal
+     * connections of each module instance's template.</li>
+     * </ul>
+     * A part counts as one part, a module instance as the parts and the internal connections of its template, and a node
+     * the expansion will refuse (inside a module instance, or of a template the bundle lacks) as none. A node that is
+     * refused later for another reason (a slot that does not resolve, a bad template) is still counted, so the counts are
+     * upper bounds, and they are exact for a plan that expands. Counting only, so a plan of 100,000 instances of a large
+     * template is refused without building a single node or connection. The plan's own connections are counted first; when
+     * they alone are over the limit, the one that crosses it is the subject. When a node crosses both limits, the parts
+     * are reported. The messages name no id: the node is the subject of the issue.
      */
-    private static int partsAddedBy(PlanNode node, Set<String> moduleIds, TemplateBundle templates) {
-        if (node.parent() != null && moduleIds.contains(node.parent())) {
-            return 0;
+    private static Issue firstOverLimit(SemanticPlan plan, Set<String> moduleIds, TemplateBundle templates) {
+        List<Connection> own = plan.connections();
+        if (own.size() > BuildLimits.MAX_EXPANDED_CONNECTIONS) {
+            return overLimit(BuildLimits.KEY_CONNECTIONS, BuildLimits.MAX_EXPANDED_CONNECTIONS,
+                    own.get(BuildLimits.MAX_EXPANDED_CONNECTIONS).id(), TOO_MANY_CONNECTIONS);
         }
-        if (!isModule(node)) {
-            return 1;
-        }
-        return templates.find(node.type()).map(t -> t.nodes().size()).orElse(0);
-    }
-
-    /**
-     * E-OUT-OF-BOUNDS on the first node whose parts take the expanded plan past {@link BuildLimits#MAX_CELLS}, or null when
-     * the plan stays within it. A part places at least one cell, and the compiler refuses more cells than that, so a plan
-     * with more parts could not be built; this is the compiler's own work-budget refusal (same code, key and data), raised
-     * before any part is built. The parts are only counted, so a plan of 100,000 instances of a large template is
-     * refused without building a single node. The message names no id: the node is the subject of the issue.
-     */
-    private static Issue firstNodeOverLimit(SemanticPlan plan, Set<String> moduleIds, TemplateBundle templates) {
         long parts = 0;
+        long connections = own.size();
         for (PlanNode node : plan.nodes()) {
-            parts += partsAddedBy(node, moduleIds, templates);
+            if (node.parent() != null && moduleIds.contains(node.parent())) {
+                continue;
+            }
+            if (!isModule(node)) {
+                parts++;
+            } else {
+                ModuleTemplate template = templates.find(node.type()).orElse(null);
+                if (template != null) {
+                    parts += template.nodes().size();
+                    connections += template.internal().size();
+                }
+            }
             if (parts > BuildLimits.MAX_CELLS) {
-                return Issue.of(IssueCode.E_OUT_OF_BOUNDS, BuildLimits.KEY_CELLS, List.of(node.id()),
-                        "展開した部品が、施工の大きさの上限(" + BuildLimits.MAX_CELLS + "マス)を超えます。部品は1つにつき1マス以上を使うため、"
-                                + "これより多い部品は施工できません。モジュールの数か、テンプレートの部品の数を減らしてください",
-                        Map.of(BuildLimits.KEY_CELLS, String.valueOf(BuildLimits.MAX_CELLS)), List.of());
+                return overLimit(BuildLimits.KEY_CELLS, BuildLimits.MAX_CELLS, node.id(), TOO_MANY_PARTS);
+            }
+            if (connections > BuildLimits.MAX_EXPANDED_CONNECTIONS) {
+                return overLimit(BuildLimits.KEY_CONNECTIONS, BuildLimits.MAX_EXPANDED_CONNECTIONS, node.id(), TOO_MANY_CONNECTIONS);
             }
         }
         return null;
+    }
+
+    /** The refusal of a size limit: E-OUT-OF-BOUNDS with the limit's key, the node that crossed it, and the limit as data. */
+    private static Issue overLimit(String key, int limit, String subject, String message) {
+        return Issue.of(IssueCode.E_OUT_OF_BOUNDS, key, List.of(subject), message, Map.of(key, String.valueOf(limit)), List.of());
     }
 
     /**
