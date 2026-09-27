@@ -1,7 +1,5 @@
 package io.github.khayashi4337.micradrone.build.model;
 
-import java.util.Locale;
-
 /**
  * Horizontal direction in the local build frame: NORTH is +w (forward), EAST is +u (right), SOUTH is -w,
  * WEST is -u. Clockwise turns are counted seen from above, matching {@link BuildFrame}.
@@ -14,11 +12,11 @@ public enum Facing {
     }
 
     public Facing rotate(int quarterTurns) {
-        return values()[Math.floorMod(ordinal() + quarterTurns, 4)];
+        return values()[Math.floorMod(ordinal() + quarterTurns, Rot.QUARTER_TURNS_PER_CIRCLE)];
     }
 
     public Facing opposite() {
-        return rotate(2);
+        return rotate(Rot.HALF_TURN);
     }
 
     /** Unit step along u (EAST is +1, WEST is -1). */
@@ -40,10 +38,10 @@ public enum Facing {
     }
 
     public String lower() {
-        return name().toLowerCase(Locale.ROOT);
+        return WireEnum.lower(this);
     }
 
     public static Facing parse(String text) {
-        return valueOf(text.trim().toUpperCase(Locale.ROOT));
+        return WireEnum.parse(Facing.class, text);
     }
 }

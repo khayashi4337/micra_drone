@@ -1,11 +1,13 @@
 package io.github.khayashi4337.micradrone.build.parts;
 
+import io.github.khayashi4337.micradrone.build.model.SortedCopies;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 
 /** One entry of the part registry (design doc 01, section 3). */
@@ -28,18 +30,8 @@ public record PartType(String id, PartCategory category, Visibility visibility, 
         visualDescription = Objects.requireNonNullElse(visualDescription, NO_DESCRIPTION);
         params = List.copyOf(Objects.requireNonNullElse(params, List.of()));
         ports = List.copyOf(Objects.requireNonNullElse(ports, List.of()));
-        Set<String> seen = new HashSet<>();
-        for (ParamSpec p : params) {
-            if (!seen.add(p.name())) {
-                throw new IllegalArgumentException("duplicate parameter " + p.name() + " in " + id);
-            }
-        }
-        seen.clear();
-        for (PortSpec p : ports) {
-            if (!seen.add(p.name())) {
-                throw new IllegalArgumentException("duplicate port " + p.name() + " in " + id);
-            }
-        }
+        requireUniqueNames(params, ParamSpec::name, "parameter", id);
+        requireUniqueNames(ports, PortSpec::name, "port", id);
         volume = Objects.requireNonNullElse(volume, VolumeSpec.GENERATED);
         requires = Objects.requireNonNullElse(requires, VersionRange.ALWAYS);
         placer = Objects.requireNonNullElse(placer, PlacerId.SIMPLE);
@@ -47,6 +39,16 @@ public record PartType(String id, PartCategory category, Visibility visibility, 
         volatileProps = SortedCopies.set(volatileProps);
         effect = Objects.requireNonNullElse(effect, EffectSpec.NONE);
         phase = Objects.requireNonNullElse(phase, BuildPhase.STRUCTURE);
+    }
+
+    /** Rejects a list that names the same thing twice (parameters share one namespace, ports another). */
+    private static <T> void requireUniqueNames(List<T> items, Function<T, String> name, String what, String id) {
+        Set<String> seen = new HashSet<>();
+        for (T item : items) {
+            if (!seen.add(name.apply(item))) {
+                throw new IllegalArgumentException("duplicate " + what + " " + name.apply(item) + " in " + id);
+            }
+        }
     }
 
     public Optional<ParamSpec> param(String name) {

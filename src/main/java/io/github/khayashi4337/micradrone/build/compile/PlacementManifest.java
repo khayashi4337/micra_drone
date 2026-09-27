@@ -2,10 +2,9 @@ package io.github.khayashi4337.micradrone.build.compile;
 
 import io.github.khayashi4337.micradrone.build.model.BuildFrame;
 import io.github.khayashi4337.micradrone.build.model.Box;
-import java.util.Collections;
+import io.github.khayashi4337.micradrone.build.model.SortedCopies;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 
 /** Everything the construction needs, in world coordinates and in construction order, plus the hash that pins it. */
 public record PlacementManifest(int manifestVersion, String planId, int planRevision, String registryVersion, String dimension,
@@ -16,7 +15,7 @@ public record PlacementManifest(int manifestVersion, String planId, int planRevi
     public PlacementManifest {
         placements = List.copyOf(placements);
         assemblies = List.copyOf(assemblies);
-        bom = Collections.unmodifiableSortedMap(new TreeMap<>(bom));
+        bom = SortedCopies.map(bom);
         phases = List.copyOf(phases);
     }
 }

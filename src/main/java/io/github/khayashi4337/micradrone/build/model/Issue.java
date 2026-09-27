@@ -1,9 +1,7 @@
 package io.github.khayashi4337.micradrone.build.model;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 
 /**
  * A problem found by a deterministic check. It always points at design nodes or connections by their stable
@@ -25,7 +23,7 @@ public record Issue(String id, IssueCode code, Severity severity, boolean accept
                 "acceptable mismatch for " + code.label() + ": expected " + code.acceptable() + ", got " + acceptable);
         }
         subjects = List.copyOf(subjects);
-        data = Collections.unmodifiableMap(new TreeMap<>(data == null ? Map.of() : data));
+        data = SortedCopies.map(data);
         hints = List.copyOf(hints);
     }
 

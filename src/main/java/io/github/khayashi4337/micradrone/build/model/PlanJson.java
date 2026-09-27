@@ -19,106 +19,106 @@ import java.util.function.Function;
  */
 public final class PlanJson {
     // Keys of the JSON form. The same names are used for writing and reading, and they are hashed.
-    private static final String KEY_SCHEMA_VERSION = "schemaVersion";
-    private static final String KEY_PLAN_ID = "planId";
-    private static final String KEY_REVISION = "revision";
-    private static final String KEY_PARENT_REVISION = "parentRevision";
-    private static final String KEY_PROVENANCE = "provenance";
-    private static final String KEY_SITE = "site";
-    private static final String KEY_STYLE = "style";
-    private static final String KEY_NODES = "nodes";
-    private static final String KEY_CONNECTIONS = "connections";
-    private static final String KEY_LOGISTICS = "logistics";
+    public static final String KEY_SCHEMA_VERSION = "schemaVersion";
+    public static final String KEY_PLAN_ID = "planId";
+    public static final String KEY_REVISION = "revision";
+    public static final String KEY_PARENT_REVISION = "parentRevision";
+    public static final String KEY_PROVENANCE = "provenance";
+    public static final String KEY_SITE = "site";
+    public static final String KEY_STYLE = "style";
+    public static final String KEY_NODES = "nodes";
+    public static final String KEY_CONNECTIONS = "connections";
+    public static final String KEY_LOGISTICS = "logistics";
 
-    private static final String KEY_DIMENSION = "dimension";
-    private static final String KEY_ORIGIN = "origin";
-    private static final String KEY_FACING = "facing";
-    private static final String KEY_BOUNDS = "bounds";
-    private static final String KEY_TERRAIN_DIGEST = "terrainDigest";
-    private static final String KEY_CLAIM_ID = "claimId";
+    public static final String KEY_DIMENSION = "dimension";
+    public static final String KEY_ORIGIN = "origin";
+    public static final String KEY_FACING = "facing";
+    public static final String KEY_BOUNDS = "bounds";
+    public static final String KEY_TERRAIN_DIGEST = "terrainDigest";
+    public static final String KEY_CLAIM_ID = "claimId";
 
-    private static final String KEY_PALETTE = "palette";
-    private static final String KEY_MOOD_TAGS = "moodTags";
+    public static final String KEY_PALETTE = "palette";
+    public static final String KEY_MOOD_TAGS = "moodTags";
 
-    private static final String KEY_ID = "id";
-    private static final String KEY_TYPE = "type";
-    private static final String KEY_PARENT = "parent";
-    private static final String KEY_ANCHOR = "anchor";
-    private static final String KEY_PARAMS = "params";
-    private static final String KEY_TAGS = "tags";
-    private static final String KEY_LABEL = "label";
+    public static final String KEY_ID = "id";
+    public static final String KEY_TYPE = "type";
+    public static final String KEY_PARENT = "parent";
+    public static final String KEY_ANCHOR = "anchor";
+    public static final String KEY_PARAMS = "params";
+    public static final String KEY_TAGS = "tags";
+    public static final String KEY_LABEL = "label";
 
-    private static final String KEY_KIND = "kind";
-    private static final String KEY_POS = "pos";
-    private static final String KEY_ROT = "rot";
-    private static final String KEY_NODE = "node";
-    private static final String KEY_SIDE = "side";
-    private static final String KEY_U = "u";
-    private static final String KEY_V = "v";
-    private static final String KEY_SLOT = "slot";
-    private static final String KEY_TURNS = "turns";
-    private static final String KEY_MIRROR = "mirror";
+    public static final String KEY_KIND = "kind";
+    public static final String KEY_POS = "pos";
+    public static final String KEY_ROT = "rot";
+    public static final String KEY_NODE = "node";
+    public static final String KEY_SIDE = "side";
+    public static final String KEY_U = "u";
+    public static final String KEY_V = "v";
+    public static final String KEY_SLOT = "slot";
+    public static final String KEY_TURNS = "turns";
+    public static final String KEY_MIRROR = "mirror";
 
     // Members of a {key, value} parameter pair (the compact array form of "params").
-    private static final String KEY_PAIR_KEY = "key";
-    private static final String KEY_PAIR_VALUE = "value";
+    public static final String KEY_PAIR_KEY = "key";
+    public static final String KEY_PAIR_VALUE = "value";
     /** A rot that names no turns means no rotation. */
     private static final int DEFAULT_QUARTER_TURNS = 0;
 
-    private static final String KEY_PORT = "port";
-    private static final String KEY_FROM = "from";
-    private static final String KEY_TO = "to";
-    private static final String KEY_ROUTING = "routing";
-    private static final String KEY_MODE = "mode";
-    private static final String KEY_VIA = "via";
-    private static final String KEY_CONSTRAINTS = "constraints";
-    private static final String KEY_MAX_LENGTH = "maxLength";
-    private static final String KEY_AVOID = "avoid";
-    private static final String KEY_MAX_TURNS = "maxTurns";
-    private static final String KEY_ENTRY_DIRS = "entryDirs";
+    public static final String KEY_PORT = "port";
+    public static final String KEY_FROM = "from";
+    public static final String KEY_TO = "to";
+    public static final String KEY_ROUTING = "routing";
+    public static final String KEY_MODE = "mode";
+    public static final String KEY_VIA = "via";
+    public static final String KEY_CONSTRAINTS = "constraints";
+    public static final String KEY_MAX_LENGTH = "maxLength";
+    public static final String KEY_AVOID = "avoid";
+    public static final String KEY_MAX_TURNS = "maxTurns";
+    public static final String KEY_ENTRY_DIRS = "entryDirs";
 
-    private static final String KEY_DOCKS = "docks";
-    private static final String KEY_ROUTES = "routes";
-    private static final String KEY_FLOWS = "flows";
-    private static final String KEY_PAD = "pad";
-    private static final String KEY_CLEARANCE = "clearance";
-    private static final String KEY_APPROACH = "approach";
-    private static final String KEY_PORTS = "ports";
-    private static final String KEY_CONNECTORS = "connectors";
-    private static final String KEY_WAYPOINTS = "waypoints";
-    private static final String KEY_AIRSHIP = "airship";
-    private static final String KEY_ITEM = "item";
-    private static final String KEY_PER_MIN = "perMin";
+    public static final String KEY_DOCKS = "docks";
+    public static final String KEY_ROUTES = "routes";
+    public static final String KEY_FLOWS = "flows";
+    public static final String KEY_PAD = "pad";
+    public static final String KEY_CLEARANCE = "clearance";
+    public static final String KEY_APPROACH = "approach";
+    public static final String KEY_PORTS = "ports";
+    public static final String KEY_CONNECTORS = "connectors";
+    public static final String KEY_WAYPOINTS = "waypoints";
+    public static final String KEY_AIRSHIP = "airship";
+    public static final String KEY_ITEM = "item";
+    public static final String KEY_PER_MIN = "perMin";
 
-    private static final String KEY_STAGE_ID = "stageId";
-    private static final String KEY_MODEL_ID = "modelId";
-    private static final String KEY_PROMPT_HASH = "promptHash";
-    private static final String KEY_IMAGE_IDS = "imageIds";
-    private static final String KEY_CREATED_AT_MILLIS = "createdAtMillis";
+    public static final String KEY_STAGE_ID = "stageId";
+    public static final String KEY_MODEL_ID = "modelId";
+    public static final String KEY_PROMPT_HASH = "promptHash";
+    public static final String KEY_IMAGE_IDS = "imageIds";
+    public static final String KEY_CREATED_AT_MILLIS = "createdAtMillis";
 
-    private static final String KEY_PATCH_ID = "patchId";
-    private static final String KEY_BASE_REVISION = "baseRevision";
-    private static final String KEY_OPS = "ops";
-    private static final String KEY_OP = "op";
-    private static final String KEY_CONNECTION = "connection";
+    public static final String KEY_PATCH_ID = "patchId";
+    public static final String KEY_BASE_REVISION = "baseRevision";
+    public static final String KEY_OPS = "ops";
+    public static final String KEY_OP = "op";
+    public static final String KEY_CONNECTION = "connection";
 
     // Values that tell the variants of an anchor, a routing and an operation apart.
-    private static final String ANCHOR_ABSOLUTE = "absolute";
-    private static final String ANCHOR_SURFACE = "surface";
-    private static final String ANCHOR_SLOT = "slot";
+    public static final String ANCHOR_ABSOLUTE = "absolute";
+    public static final String ANCHOR_SURFACE = "surface";
+    public static final String ANCHOR_SLOT = "slot";
 
-    private static final String ROUTING_AUTO = "auto";
-    private static final String ROUTING_EXPLICIT = "explicit";
+    public static final String ROUTING_AUTO = "auto";
+    public static final String ROUTING_EXPLICIT = "explicit";
 
-    private static final String OP_ADD_NODE = "add_node";
-    private static final String OP_UPDATE_PARAMS = "update_params";
-    private static final String OP_MOVE_NODE = "move_node";
-    private static final String OP_REMOVE_NODE = "remove_node";
-    private static final String OP_ADD_CONNECTION = "add_connection";
-    private static final String OP_REMOVE_CONNECTION = "remove_connection";
-    private static final String OP_SET_STYLE = "set_style";
-    private static final String OP_SET_SITE = "set_site";
-    private static final String OP_SET_LOGISTICS = "set_logistics";
+    public static final String OP_ADD_NODE = "add_node";
+    public static final String OP_UPDATE_PARAMS = "update_params";
+    public static final String OP_MOVE_NODE = "move_node";
+    public static final String OP_REMOVE_NODE = "remove_node";
+    public static final String OP_ADD_CONNECTION = "add_connection";
+    public static final String OP_REMOVE_CONNECTION = "remove_connection";
+    public static final String OP_SET_STYLE = "set_style";
+    public static final String OP_SET_SITE = "set_site";
+    public static final String OP_SET_LOGISTICS = "set_logistics";
 
     // Fixed-size integer arrays: a position, a site origin and a box.
     private static final int POS_SIZE = 3;
@@ -440,9 +440,8 @@ public final class PlanJson {
         }
         Map<String, Object> m = JsonTree.obj(v, path);
         Integer turns = JsonTree.optInt(m, KEY_TURNS, path);
-        Object mirrorValue = m.get(KEY_MIRROR);
-        boolean mirror = mirrorValue != null && JsonTree.bool(mirrorValue, JsonTree.child(path, KEY_MIRROR));
-        return new Rot(turns == null ? DEFAULT_QUARTER_TURNS : turns, mirror);
+        Boolean mirror = JsonTree.optBool(m, KEY_MIRROR, path);
+        return new Rot(turns == null ? DEFAULT_QUARTER_TURNS : turns, mirror != null && mirror);
     }
 
     static <E extends Enum<E>> E enumOf(Class<E> type, Function<String, E> parse, Object v, String path) {
@@ -458,10 +457,10 @@ public final class PlanJson {
         Map<String, Object> m = JsonTree.obj(v, path);
         String kind = JsonTree.reqStr(m, KEY_KIND, path);
         return switch (kind) {
-            case ANCHOR_ABSOLUTE -> new Anchor.Absolute(posFromTree(JsonTree.req(m, KEY_POS, path),
-                    JsonTree.child(path, KEY_POS)), rotFromTree(m.get(KEY_ROT), JsonTree.child(path, KEY_ROT)));
+            case ANCHOR_ABSOLUTE -> new Anchor.Absolute(JsonTree.req(m, KEY_POS, path, PlanJson::posFromTree),
+                    rotFromTree(m.get(KEY_ROT), JsonTree.child(path, KEY_ROT)));
             case ANCHOR_SURFACE -> new Anchor.OnSurface(JsonTree.reqStr(m, KEY_NODE, path),
-                    enumOf(Side.class, Side::parse, JsonTree.req(m, KEY_SIDE, path), JsonTree.child(path, KEY_SIDE)),
+                    JsonTree.req(m, KEY_SIDE, path, (val, p) -> enumOf(Side.class, Side::parse, val, p)),
                     JsonTree.reqInt(m, KEY_U, path), JsonTree.reqInt(m, KEY_V, path));
             case ANCHOR_SLOT -> new Anchor.InSlot(JsonTree.reqStr(m, KEY_SLOT, path),
                     rotFromTree(m.get(KEY_ROT), JsonTree.child(path, KEY_ROT)));
@@ -471,14 +470,12 @@ public final class PlanJson {
 
     static Site siteFromTree(Object v, String path) {
         Map<String, Object> m = JsonTree.obj(v, path);
-        int[] o = intsFromTree(JsonTree.req(m, KEY_ORIGIN, path), JsonTree.child(path, KEY_ORIGIN), ORIGIN_SIZE,
-                ORIGIN_SHAPE);
-        Facing facing = enumOf(Facing.class, Facing::parse, JsonTree.req(m, KEY_FACING, path),
-                JsonTree.child(path, KEY_FACING));
+        int[] o = JsonTree.req(m, KEY_ORIGIN, path, (val, p) -> intsFromTree(val, p, ORIGIN_SIZE, ORIGIN_SHAPE));
+        Facing facing = JsonTree.req(m, KEY_FACING, path, (val, p) -> enumOf(Facing.class, Facing::parse, val, p));
         String terrain = JsonTree.optStr(m, KEY_TERRAIN_DIGEST, path);
         String claim = JsonTree.optStr(m, KEY_CLAIM_ID, path);
         return new Site(JsonTree.reqStr(m, KEY_DIMENSION, path), new BuildFrame(new IntPos(o[0], o[1], o[2]), facing),
-                boxFromTree(JsonTree.req(m, KEY_BOUNDS, path), JsonTree.child(path, KEY_BOUNDS)), terrain, claim);
+                JsonTree.req(m, KEY_BOUNDS, path, PlanJson::boxFromTree), terrain, claim);
     }
 
     static StyleSpec styleFromTree(Object v, String path) {
@@ -502,16 +499,16 @@ public final class PlanJson {
         Set<String> tags = new TreeSet<>(JsonTree.optList(m, KEY_TAGS, path, JsonTree::str));
         return new PlanNode(JsonTree.reqStr(m, KEY_ID, path), JsonTree.reqStr(m, KEY_TYPE, path),
                 JsonTree.optStr(m, KEY_PARENT, path),
-                anchorFromTree(JsonTree.req(m, KEY_ANCHOR, path), JsonTree.child(path, KEY_ANCHOR)), params, tags,
+                JsonTree.req(m, KEY_ANCHOR, path, PlanJson::anchorFromTree), params, tags,
                 JsonTree.optStr(m, KEY_LABEL, path));
     }
 
     /** {@code params} may be an object or, in the compact form, an array of {@code {key, value}} pairs. */
     static Map<String, ParamValue> paramsFromTree(Object v, String path) {
-        Map<String, ParamValue> params = new TreeMap<>();
         if (v == null) {
-            return params;
+            throw JsonTree.bad(path, "params must be an object or an array of {key, value} pairs");
         }
+        Map<String, ParamValue> params = new TreeMap<>();
         if (v instanceof List<?> pairs) {
             for (int i = 0; i < pairs.size(); i++) {
                 String pairPath = JsonTree.item(path, i);
@@ -552,9 +549,9 @@ public final class PlanJson {
         Constraints constraints = Objects.requireNonNullElse(
                 JsonTree.opt(m, KEY_CONSTRAINTS, path, PlanJson::constraintsFromTree), Constraints.NONE);
         return new Connection(JsonTree.reqStr(m, KEY_ID, path),
-                portFromTree(JsonTree.req(m, KEY_FROM, path), JsonTree.child(path, KEY_FROM)),
-                portFromTree(JsonTree.req(m, KEY_TO, path), JsonTree.child(path, KEY_TO)),
-                enumOf(ConnKind.class, ConnKind::parse, JsonTree.req(m, KEY_KIND, path), JsonTree.child(path, KEY_KIND)),
+                JsonTree.req(m, KEY_FROM, path, PlanJson::portFromTree),
+                JsonTree.req(m, KEY_TO, path, PlanJson::portFromTree),
+                JsonTree.req(m, KEY_KIND, path, (val, p) -> enumOf(ConnKind.class, ConnKind::parse, val, p)),
                 routing, constraints);
     }
 
@@ -590,10 +587,9 @@ public final class PlanJson {
         List<PortRef> ports = JsonTree.reqList(d, KEY_PORTS, path, PlanJson::portFromTree);
         List<String> connectors = JsonTree.reqList(d, KEY_CONNECTORS, path, JsonTree::str);
         return new LogisticsPlan.Dock(JsonTree.reqStr(d, KEY_ID, path),
-                boxFromTree(JsonTree.req(d, KEY_PAD, path), JsonTree.child(path, KEY_PAD)),
-                boxFromTree(JsonTree.req(d, KEY_CLEARANCE, path), JsonTree.child(path, KEY_CLEARANCE)),
-                enumOf(Facing.class, Facing::parse, JsonTree.req(d, KEY_APPROACH, path),
-                        JsonTree.child(path, KEY_APPROACH)),
+                JsonTree.req(d, KEY_PAD, path, PlanJson::boxFromTree),
+                JsonTree.req(d, KEY_CLEARANCE, path, PlanJson::boxFromTree),
+                JsonTree.req(d, KEY_APPROACH, path, (val, p) -> enumOf(Facing.class, Facing::parse, val, p)),
                 ports, connectors);
     }
 
@@ -607,17 +603,17 @@ public final class PlanJson {
     private static LogisticsPlan.CargoFlow flowFromTree(Object v, String path) {
         Map<String, Object> f = JsonTree.obj(v, path);
         return new LogisticsPlan.CargoFlow(JsonTree.reqStr(f, KEY_ITEM, path),
-                JsonTree.number(JsonTree.req(f, KEY_PER_MIN, path), JsonTree.child(path, KEY_PER_MIN)),
+                JsonTree.req(f, KEY_PER_MIN, path, JsonTree::number),
                 JsonTree.reqStr(f, KEY_FROM, path), JsonTree.reqStr(f, KEY_TO, path));
     }
 
     static Provenance provenanceFromTree(Object v, String path) {
         Map<String, Object> m = JsonTree.obj(v, path);
         List<String> images = JsonTree.optList(m, KEY_IMAGE_IDS, path, JsonTree::str);
-        Double created = JsonTree.opt(m, KEY_CREATED_AT_MILLIS, path, JsonTree::number);
+        Long created = JsonTree.opt(m, KEY_CREATED_AT_MILLIS, path, JsonTree::longInteger);
         return new Provenance(JsonTree.optStr(m, KEY_STAGE_ID, path), JsonTree.optStr(m, KEY_MODEL_ID, path),
                 JsonTree.optStr(m, KEY_PROMPT_HASH, path), images,
-                created == null ? Provenance.NONE.createdAtMillis() : created.longValue());
+                created == null ? Provenance.NONE.createdAtMillis() : created);
     }
 
     // ------------------------------------------------------------------ patch
@@ -680,32 +676,25 @@ public final class PlanJson {
         String path = JsonTree.ROOT_PATH;
         Map<String, Object> m = JsonTree.obj(tree, path);
         List<PlanOp> ops = JsonTree.reqList(m, KEY_OPS, path, PlanJson::opFromTree);
-        String stage = Objects.requireNonNullElse(JsonTree.optStr(m, KEY_STAGE_ID, path), "");
-        return new PlanPatch(JsonTree.reqStr(m, KEY_PATCH_ID, path), JsonTree.reqInt(m, KEY_BASE_REVISION, path), stage,
-                ops);
+        return new PlanPatch(JsonTree.reqStr(m, KEY_PATCH_ID, path), JsonTree.reqInt(m, KEY_BASE_REVISION, path),
+                JsonTree.optStr(m, KEY_STAGE_ID, path), ops);
     }
 
     private static PlanOp opFromTree(Object v, String path) {
         Map<String, Object> m = JsonTree.obj(v, path);
         String op = JsonTree.reqStr(m, KEY_OP, path);
         return switch (op) {
-            case OP_ADD_NODE -> new PlanOp.AddNode(
-                    nodeFromTree(JsonTree.req(m, KEY_NODE, path), JsonTree.child(path, KEY_NODE)));
-            case OP_UPDATE_PARAMS -> {
-                Map<String, ParamValue> params = paramsFromTree(JsonTree.req(m, KEY_PARAMS, path),
-                        JsonTree.child(path, KEY_PARAMS));
-                yield new PlanOp.UpdateParams(JsonTree.reqStr(m, KEY_ID, path), params);
-            }
+            case OP_ADD_NODE -> new PlanOp.AddNode(JsonTree.req(m, KEY_NODE, path, PlanJson::nodeFromTree));
+            case OP_UPDATE_PARAMS -> new PlanOp.UpdateParams(JsonTree.reqStr(m, KEY_ID, path),
+                    JsonTree.req(m, KEY_PARAMS, path, PlanJson::paramsFromTree));
             case OP_MOVE_NODE -> new PlanOp.MoveNode(JsonTree.reqStr(m, KEY_ID, path),
-                    anchorFromTree(JsonTree.req(m, KEY_ANCHOR, path), JsonTree.child(path, KEY_ANCHOR)));
+                    JsonTree.req(m, KEY_ANCHOR, path, PlanJson::anchorFromTree));
             case OP_REMOVE_NODE -> new PlanOp.RemoveNode(JsonTree.reqStr(m, KEY_ID, path));
             case OP_ADD_CONNECTION -> new PlanOp.AddConnection(
-                    connectionFromTree(JsonTree.req(m, KEY_CONNECTION, path), JsonTree.child(path, KEY_CONNECTION)));
+                    JsonTree.req(m, KEY_CONNECTION, path, PlanJson::connectionFromTree));
             case OP_REMOVE_CONNECTION -> new PlanOp.RemoveConnection(JsonTree.reqStr(m, KEY_ID, path));
-            case OP_SET_STYLE -> new PlanOp.SetStyle(
-                    styleFromTree(JsonTree.req(m, KEY_STYLE, path), JsonTree.child(path, KEY_STYLE)));
-            case OP_SET_SITE -> new PlanOp.SetSite(
-                    siteFromTree(JsonTree.req(m, KEY_SITE, path), JsonTree.child(path, KEY_SITE)));
+            case OP_SET_STYLE -> new PlanOp.SetStyle(JsonTree.req(m, KEY_STYLE, path, PlanJson::styleFromTree));
+            case OP_SET_SITE -> new PlanOp.SetSite(JsonTree.req(m, KEY_SITE, path, PlanJson::siteFromTree));
             case OP_SET_LOGISTICS -> new PlanOp.SetLogistics(
                     JsonTree.opt(m, KEY_LOGISTICS, path, PlanJson::logisticsFromTree));
             default -> throw JsonTree.bad(JsonTree.child(path, KEY_OP), "unknown operation \"" + op + "\"");

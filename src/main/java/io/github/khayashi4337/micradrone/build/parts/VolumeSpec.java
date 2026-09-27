@@ -1,6 +1,7 @@
 package io.github.khayashi4337.micradrone.build.parts;
 
 import io.github.khayashi4337.micradrone.build.model.Box;
+import io.github.khayashi4337.micradrone.build.model.SortedCopies;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;

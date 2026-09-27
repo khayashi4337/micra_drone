@@ -1,5 +1,6 @@
 package io.github.khayashi4337.micradrone.chat;
 
+import io.github.khayashi4337.micradrone.build.model.CanonicalJson;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -69,25 +70,7 @@ public final class MiniJson {
     }
 
     private static void writeString(String s, StringBuilder sb) {
-        sb.append('"');
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            switch (c) {
-                case '"' -> sb.append("\\\"");
-                case '\\' -> sb.append("\\\\");
-                case '\n' -> sb.append("\\n");
-                case '\t' -> sb.append("\\t");
-                case '\r' -> sb.append("\\r");
-                default -> {
-                    if (c < 0x20) {
-                        sb.append(String.format("\\u%04x", (int) c));
-                    } else {
-                        sb.append(c);
-                    }
-                }
-            }
-        }
-        sb.append('"');
+        CanonicalJson.appendJsonString(s, sb);
     }
 
     /** Parses a single JSON value (object, array, string, number, boolean, or null). */
@@ -217,15 +200,29 @@ public final class MiniJson {
         throw new IllegalArgumentException("expected null at " + pos);
     }
 
-    private Double parseNumber() {
+    /** Integer text parses as a {@link Long} so ids and millis beyond 2^53 keep their digits; '.'/'e'/'E' or an overflow give a {@link Double}. */
+    private Number parseNumber() {
         int start = pos;
+        boolean integer = true;
         while (pos < src.length() && "-+.eE0123456789".indexOf(src.charAt(pos)) >= 0) {
+            char c = src.charAt(pos);
+            if (c == '.' || c == 'e' || c == 'E') {
+                integer = false;
+            }
             pos++;
         }
         if (pos == start) {
             throw new IllegalArgumentException("expected value at " + pos);
         }
-        return Double.parseDouble(src.substring(start, pos));
+        String text = src.substring(start, pos);
+        if (integer) {
+            try {
+                return Long.parseLong(text);
+            } catch (NumberFormatException overflow) {
+                return Double.parseDouble(text);
+            }
+        }
+        return Double.parseDouble(text);
     }
 
     private void expect(char c) {

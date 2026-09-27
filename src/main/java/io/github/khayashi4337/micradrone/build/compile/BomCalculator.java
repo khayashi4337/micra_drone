@@ -25,7 +25,7 @@ public final class BomCalculator {
             BlockSpec b = p.block();
             String id = b.blockId();
             int count = 1;
-            if (id.equals(BlockSpec.AIR.blockId())) {
+            if (b.isAir()) {
                 continue;
             }
             if (BlockForms.HALF_UPPER.equals(b.get(BlockForms.PROP_HALF)) && id.endsWith(BlockForms.DOOR_SUFFIX)) {

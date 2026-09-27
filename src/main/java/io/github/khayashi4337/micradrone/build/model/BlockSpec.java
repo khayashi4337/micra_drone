@@ -1,6 +1,5 @@
 package io.github.khayashi4337.micradrone.build.model;
 
-import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
 import java.util.SortedMap;
@@ -12,7 +11,12 @@ public record BlockSpec(String blockId, SortedMap<String, String> properties) {
 
     public BlockSpec {
         Objects.requireNonNull(blockId, "blockId");
-        properties = Collections.unmodifiableSortedMap(new TreeMap<>(properties == null ? Map.of() : properties));
+        properties = SortedCopies.map(properties);
+    }
+
+    /** True for {@link #AIR}'s block id. */
+    public boolean isAir() {
+        return AIR.blockId().equals(blockId);
     }
 
     /** {@code of("minecraft:oak_stairs", "facing", "north", "half", "bottom")}. */

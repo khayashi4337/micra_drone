@@ -548,8 +548,7 @@ public final class PlanPatcher {
                     "敷地の原点が大きすぎます(各成分は±" + MAX_COORD + "以内)"));
             return;
         }
-        // A dimension id is written like a block id: namespace:name.
-        if (!ParamValidator.isBlockId(site.dimension())) {
+        if (!ParamValidator.isNamespacedId(site.dimension())) {
             issues.add(Issue.of(IssueCode.E_PARAM_RANGE, KEY_SITE, List.of(SITE_SUBJECT),
                     "ディメンションは namespace:name の形で書いてください: " + site.dimension()));
             return;

@@ -5,8 +5,9 @@ import io.github.khayashi4337.micradrone.build.model.ConnKind;
 import io.github.khayashi4337.micradrone.build.model.Dir6;
 import io.github.khayashi4337.micradrone.build.model.Facing;
 import io.github.khayashi4337.micradrone.build.model.ParamValue;
-import io.github.khayashi4337.micradrone.build.model.Side;
 import io.github.khayashi4337.micradrone.build.model.PlanIds;
+import io.github.khayashi4337.micradrone.build.model.PlanJson;
+import io.github.khayashi4337.micradrone.build.model.Side;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -22,7 +23,8 @@ import java.util.Set;
  * shared pieces in $defs. FLAT: the compact form for the cmd.exe route (5,000 characters): parameters as
  * key/value pairs, and the rarely used sub-objects (logistics, constraints) and the parameter names only loosely
  * typed. In every form the schema shapes the output; PlanJson, PlanPatcher and PlanCompiler check everything
- * again (E-PARAM-RANGE etc.).
+ * again (E-PARAM-RANGE etc.). The plan's own property names come from {@link PlanJson}'s KEY_* constants, so the
+ * schema and the reader cannot drift apart.
  */
 public final class SchemaGenerator {
     /** TYPED: one branch per part, with parameter types. FLAT: the compact form for the tight budget. */
@@ -46,11 +48,12 @@ public final class SchemaGenerator {
     /** The id form shared with PlanIds: 1 to {@link PlanIds#MAX_LENGTH} of lowercase letters, digits, hyphens. */
     public static final String ID_PATTERN = "^[a-z0-9-]{1," + PlanIds.MAX_LENGTH + "}$";
     /** A palette role name (the same form {@link ParamValidator#isRoleName} accepts). */
-    public static final String ROLE_PATTERN = "^" + ROLE_BODY + "$";
+    static final String ROLE_PATTERN = "^" + ROLE_BODY + "$";
     /** A material is a palette role or a block id: the same union ParamValidator accepts. */
     public static final String MATERIAL_PATTERN = "^(" + ROLE_BODY + "|" + BLOCK_ID_BODY + ")$";
 
-    // JSON Schema keywords and the values of "type".
+    // JSON Schema keywords and the values of "type". These are schema-surface names, never plan property names:
+    // a property such as "maxLength" of Constraints goes through PlanJson.KEY_MAX_LENGTH instead.
     private static final String K_REF = "$ref";
     private static final String K_DEFS = "$defs";
     private static final String K_TYPE = "type";
@@ -76,7 +79,8 @@ public final class SchemaGenerator {
     private static final String T_BOOLEAN = "boolean";
     private static final String T_NULL = "null";
 
-    // $defs names; where a def name is also a property key ("anchor", "site", ...) the constant serves both.
+    // $defs names. A def name often matches the property it stands for, but the property position uses
+    // PlanJson's own KEY_* so the two surfaces are named, not coincidentally equal.
     private static final String DEF_POS = "pos";
     private static final String DEF_ROT = "rot";
     private static final String DEF_ANCHOR = "anchor";
@@ -89,21 +93,6 @@ public final class SchemaGenerator {
     private static final String DEF_CONSTRAINTS = "constraints";
     private static final String DEF_MATERIAL = "material";
     private static final String DEF_DIR4 = "dir4";
-
-    // Property keys that occur in more than one fragment.
-    private static final String KEY_OPS = "ops";
-    private static final String KEY_OP = "op";
-    private static final String KEY_ID = "id";
-    private static final String KEY_NODE = "node";
-    private static final String KEY_PORT = "port";
-    private static final String KEY_PARAMS = "params";
-    private static final String KEY_FROM = "from";
-    private static final String KEY_TO = "to";
-    private static final String KEY_KIND = "kind";
-    private static final String KEY_KEY = "key";
-    private static final String KEY_VALUE = "value";
-    private static final String KEY_MODE = "mode";
-    private static final String KEY_VIA = "via";
 
     private static final String REF_PREFIX = "#/$defs/";
     private static final List<String> DIR4 = Arrays.stream(Facing.values()).map(Facing::lower).toList();
@@ -159,15 +148,15 @@ public final class SchemaGenerator {
 
         Map<String, Object> defs = new LinkedHashMap<>();
         defs.put(DEF_POS, array(map(K_TYPE, T_INTEGER), POS_ITEMS, POS_ITEMS));
-        defs.put(DEF_ROT, obj(List.of(), map("turns",
+        defs.put(DEF_ROT, obj(List.of(), map(PlanJson.KEY_TURNS,
                 map(K_TYPE, T_INTEGER, K_MINIMUM, MIN_QUARTER_TURNS, K_MAXIMUM, MAX_QUARTER_TURNS),
-                "mirror", map(K_TYPE, T_BOOLEAN))));
+                PlanJson.KEY_MIRROR, map(K_TYPE, T_BOOLEAN))));
         defs.put(DEF_ANCHOR, anchorSchema());
         defs.put(DEF_CONNECTION, connectionSchema(flat));
         defs.put(DEF_SITE, siteSchema());
-        defs.put(DEF_STYLE, obj(List.of("palette"), map("palette",
+        defs.put(DEF_STYLE, obj(List.of(PlanJson.KEY_PALETTE), map(PlanJson.KEY_PALETTE,
                 map(K_TYPE, T_OBJECT, K_ADDITIONAL_PROPERTIES, map(K_TYPE, T_STRING)),
-                "moodTags", map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING)))));
+                PlanJson.KEY_MOOD_TAGS, map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING)))));
         defs.put(DEF_LOGISTICS, flat ? map(K_TYPE, T_OBJECT) : logisticsSchema());
         // ajv strictTypes (checked with the real claude CLI on 2026-09-26) warns on a "type" array of several
         // non-null members and a stricter CLI could turn that into an error, so "any value" is emitted as the
@@ -181,24 +170,28 @@ public final class SchemaGenerator {
         }
 
         List<Object> ops = new ArrayList<>();
-        ops.add(op("add_node", List.of(KEY_NODE), map(KEY_NODE, nodeSchema(parts, flat))));
-        ops.add(op("update_params", List.of(KEY_ID, KEY_PARAMS),
-                map(KEY_ID, map(K_TYPE, T_STRING), KEY_PARAMS, ref(DEF_ANY_PARAMS))));
-        ops.add(op("move_node", List.of(KEY_ID, DEF_ANCHOR),
-                map(KEY_ID, map(K_TYPE, T_STRING), DEF_ANCHOR, ref(DEF_ANCHOR))));
-        ops.add(op("remove_node", List.of(KEY_ID), map(KEY_ID, map(K_TYPE, T_STRING))));
-        ops.add(op("add_connection", List.of(DEF_CONNECTION), map(DEF_CONNECTION, ref(DEF_CONNECTION))));
-        ops.add(op("remove_connection", List.of(KEY_ID), map(KEY_ID, map(K_TYPE, T_STRING))));
-        ops.add(op("set_style", List.of(DEF_STYLE), map(DEF_STYLE, ref(DEF_STYLE))));
-        ops.add(op("set_site", List.of(DEF_SITE), map(DEF_SITE, ref(DEF_SITE))));
-        ops.add(op("set_logistics", List.of(DEF_LOGISTICS),
-                map(DEF_LOGISTICS, map(K_ONE_OF, List.of(ref(DEF_LOGISTICS), map(K_TYPE, T_NULL))))));
+        ops.add(op(PlanJson.OP_ADD_NODE, List.of(PlanJson.KEY_NODE),
+                map(PlanJson.KEY_NODE, nodeSchema(parts, flat))));
+        ops.add(op(PlanJson.OP_UPDATE_PARAMS, List.of(PlanJson.KEY_ID, PlanJson.KEY_PARAMS),
+                map(PlanJson.KEY_ID, map(K_TYPE, T_STRING), PlanJson.KEY_PARAMS, ref(DEF_ANY_PARAMS))));
+        ops.add(op(PlanJson.OP_MOVE_NODE, List.of(PlanJson.KEY_ID, PlanJson.KEY_ANCHOR),
+                map(PlanJson.KEY_ID, map(K_TYPE, T_STRING), PlanJson.KEY_ANCHOR, ref(DEF_ANCHOR))));
+        ops.add(op(PlanJson.OP_REMOVE_NODE, List.of(PlanJson.KEY_ID),
+                map(PlanJson.KEY_ID, map(K_TYPE, T_STRING))));
+        ops.add(op(PlanJson.OP_ADD_CONNECTION, List.of(PlanJson.KEY_CONNECTION),
+                map(PlanJson.KEY_CONNECTION, ref(DEF_CONNECTION))));
+        ops.add(op(PlanJson.OP_REMOVE_CONNECTION, List.of(PlanJson.KEY_ID),
+                map(PlanJson.KEY_ID, map(K_TYPE, T_STRING))));
+        ops.add(op(PlanJson.OP_SET_STYLE, List.of(PlanJson.KEY_STYLE), map(PlanJson.KEY_STYLE, ref(DEF_STYLE))));
+        ops.add(op(PlanJson.OP_SET_SITE, List.of(PlanJson.KEY_SITE), map(PlanJson.KEY_SITE, ref(DEF_SITE))));
+        ops.add(op(PlanJson.OP_SET_LOGISTICS, List.of(PlanJson.KEY_LOGISTICS),
+                map(PlanJson.KEY_LOGISTICS, map(K_ONE_OF, List.of(ref(DEF_LOGISTICS), map(K_TYPE, T_NULL))))));
 
         Map<String, Object> root = new LinkedHashMap<>();
         root.put(K_TYPE, T_OBJECT);
         root.put(K_ADDITIONAL_PROPERTIES, false);
-        root.put(K_REQUIRED, List.of(KEY_OPS));
-        root.put(K_PROPERTIES, map(KEY_OPS, map(K_TYPE, T_ARRAY, K_ITEMS, map(K_ONE_OF, ops))));
+        root.put(K_REQUIRED, List.of(PlanJson.KEY_OPS));
+        root.put(K_PROPERTIES, map(PlanJson.KEY_OPS, map(K_TYPE, T_ARRAY, K_ITEMS, map(K_ONE_OF, ops))));
         root.put(K_DEFS, defs);
         return root;
     }
@@ -220,14 +213,14 @@ public final class SchemaGenerator {
 
     private static Map<String, Object> nodeObject(Object typeSchema, Object paramsSchema, boolean flat) {
         Map<String, Object> props = new LinkedHashMap<>();
-        props.put(KEY_ID, flat ? map(K_TYPE, T_STRING) : map(K_TYPE, T_STRING, K_PATTERN, ID_PATTERN));
-        props.put(K_TYPE, typeSchema);
-        props.put("parent", map(K_TYPE, List.of(T_STRING, T_NULL)));
-        props.put(DEF_ANCHOR, ref(DEF_ANCHOR));
-        props.put(KEY_PARAMS, paramsSchema);
-        props.put("tags", map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING)));
-        props.put("label", map(K_TYPE, T_STRING));
-        return obj(List.of(KEY_ID, K_TYPE, DEF_ANCHOR, KEY_PARAMS), props);
+        props.put(PlanJson.KEY_ID, flat ? map(K_TYPE, T_STRING) : map(K_TYPE, T_STRING, K_PATTERN, ID_PATTERN));
+        props.put(PlanJson.KEY_TYPE, typeSchema);
+        props.put(PlanJson.KEY_PARENT, map(K_TYPE, List.of(T_STRING, T_NULL)));
+        props.put(PlanJson.KEY_ANCHOR, ref(DEF_ANCHOR));
+        props.put(PlanJson.KEY_PARAMS, paramsSchema);
+        props.put(PlanJson.KEY_TAGS, map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING)));
+        props.put(PlanJson.KEY_LABEL, map(K_TYPE, T_STRING));
+        return obj(List.of(PlanJson.KEY_ID, PlanJson.KEY_TYPE, PlanJson.KEY_ANCHOR, PlanJson.KEY_PARAMS), props);
     }
 
     private static Map<String, Object> typedParams(PartType t) {
@@ -280,87 +273,101 @@ public final class SchemaGenerator {
     /** The compact form: the name is a free string (PlanPatcher rejects unknown names), the value is unconstrained. */
     private static Map<String, Object> flatParams() {
         // The value {} accepts anything, for the same strictTypes reason as the typed anyParams (2026-09-26).
-        Map<String, Object> pair = obj(List.of(KEY_KEY, KEY_VALUE), map(KEY_KEY, map(K_TYPE, T_STRING),
-                KEY_VALUE, Map.of()));
+        Map<String, Object> pair = obj(List.of(PlanJson.KEY_PAIR_KEY, PlanJson.KEY_PAIR_VALUE),
+                map(PlanJson.KEY_PAIR_KEY, map(K_TYPE, T_STRING), PlanJson.KEY_PAIR_VALUE, Map.of()));
         return map(K_TYPE, T_ARRAY, K_ITEMS, pair);
     }
 
     private static Map<String, Object> anchorSchema() {
-        Map<String, Object> absolute = obj(List.of(KEY_KIND, DEF_POS), map(KEY_KIND, map(K_CONST, "absolute"),
-                DEF_POS, ref(DEF_POS), DEF_ROT, ref(DEF_ROT)));
-        Map<String, Object> surface = obj(List.of(KEY_KIND, KEY_NODE, "side", "u", "v"),
-                map(KEY_KIND, map(K_CONST, "surface"), KEY_NODE, map(K_TYPE, T_STRING),
-                        "side", map(K_TYPE, T_STRING, K_ENUM, SURFACE_SIDES),
-                        "u", map(K_TYPE, T_INTEGER, K_MINIMUM, MIN_SURFACE_INDEX),
-                        "v", map(K_TYPE, T_INTEGER, K_MINIMUM, MIN_SURFACE_INDEX)));
-        Map<String, Object> slot = obj(List.of(KEY_KIND, "slot"), map(KEY_KIND, map(K_CONST, "slot"),
-                "slot", map(K_TYPE, T_STRING), DEF_ROT, ref(DEF_ROT)));
+        Map<String, Object> absolute = obj(List.of(PlanJson.KEY_KIND, PlanJson.KEY_POS),
+                map(PlanJson.KEY_KIND, map(K_CONST, PlanJson.ANCHOR_ABSOLUTE),
+                        PlanJson.KEY_POS, ref(DEF_POS), PlanJson.KEY_ROT, ref(DEF_ROT)));
+        Map<String, Object> surface = obj(
+                List.of(PlanJson.KEY_KIND, PlanJson.KEY_NODE, PlanJson.KEY_SIDE, PlanJson.KEY_U, PlanJson.KEY_V),
+                map(PlanJson.KEY_KIND, map(K_CONST, PlanJson.ANCHOR_SURFACE),
+                        PlanJson.KEY_NODE, map(K_TYPE, T_STRING),
+                        PlanJson.KEY_SIDE, map(K_TYPE, T_STRING, K_ENUM, SURFACE_SIDES),
+                        PlanJson.KEY_U, map(K_TYPE, T_INTEGER, K_MINIMUM, MIN_SURFACE_INDEX),
+                        PlanJson.KEY_V, map(K_TYPE, T_INTEGER, K_MINIMUM, MIN_SURFACE_INDEX)));
+        Map<String, Object> slot = obj(List.of(PlanJson.KEY_KIND, PlanJson.KEY_SLOT),
+                map(PlanJson.KEY_KIND, map(K_CONST, PlanJson.ANCHOR_SLOT),
+                        PlanJson.KEY_SLOT, map(K_TYPE, T_STRING), PlanJson.KEY_ROT, ref(DEF_ROT)));
         return map(K_ONE_OF, List.of(absolute, surface, slot));
     }
 
     private static Map<String, Object> connectionSchema(boolean flat) {
         Map<String, Object> port = portSchema();
-        return obj(List.of(KEY_ID, KEY_FROM, KEY_TO, KEY_KIND),
-                map(KEY_ID, flat ? map(K_TYPE, T_STRING) : map(K_TYPE, T_STRING, K_PATTERN, ID_PATTERN),
-                        KEY_FROM, port, KEY_TO, port,
-                        KEY_KIND, map(K_TYPE, T_STRING, K_ENUM, CONN_KINDS),
-                        DEF_ROUTING, ref(DEF_ROUTING), DEF_CONSTRAINTS, ref(DEF_CONSTRAINTS)));
+        return obj(List.of(PlanJson.KEY_ID, PlanJson.KEY_FROM, PlanJson.KEY_TO, PlanJson.KEY_KIND),
+                map(PlanJson.KEY_ID, flat ? map(K_TYPE, T_STRING) : map(K_TYPE, T_STRING, K_PATTERN, ID_PATTERN),
+                        PlanJson.KEY_FROM, port, PlanJson.KEY_TO, port,
+                        PlanJson.KEY_KIND, map(K_TYPE, T_STRING, K_ENUM, CONN_KINDS),
+                        PlanJson.KEY_ROUTING, ref(DEF_ROUTING), PlanJson.KEY_CONSTRAINTS, ref(DEF_CONSTRAINTS)));
     }
 
     /** Discriminated by {@code mode}: {@code auto} takes no other member, {@code explicit} needs {@code via}. */
     private static Map<String, Object> routingSchema() {
-        Map<String, Object> auto = obj(List.of(KEY_MODE), map(KEY_MODE, map(K_CONST, "auto")));
-        Map<String, Object> explicit = obj(List.of(KEY_MODE, KEY_VIA), map(KEY_MODE, map(K_CONST, "explicit"),
-                KEY_VIA, map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING))));
+        Map<String, Object> auto = obj(List.of(PlanJson.KEY_MODE),
+                map(PlanJson.KEY_MODE, map(K_CONST, PlanJson.ROUTING_AUTO)));
+        Map<String, Object> explicit = obj(List.of(PlanJson.KEY_MODE, PlanJson.KEY_VIA),
+                map(PlanJson.KEY_MODE, map(K_CONST, PlanJson.ROUTING_EXPLICIT),
+                        PlanJson.KEY_VIA, map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING))));
         return map(K_ONE_OF, List.of(auto, explicit));
     }
 
     private static Map<String, Object> constraintsSchema() {
         return obj(List.of(),
-                map(K_MAX_LENGTH, map(K_TYPE, List.of(T_INTEGER, T_NULL)),
-                        "avoid", map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING)),
-                        "maxTurns", map(K_TYPE, List.of(T_INTEGER, T_NULL)),
-                        "entryDirs", map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING, K_ENUM, DIR6_ALL))));
+                map(PlanJson.KEY_MAX_LENGTH, map(K_TYPE, List.of(T_INTEGER, T_NULL)),
+                        PlanJson.KEY_AVOID, map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING)),
+                        PlanJson.KEY_MAX_TURNS, map(K_TYPE, List.of(T_INTEGER, T_NULL)),
+                        PlanJson.KEY_ENTRY_DIRS,
+                        map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING, K_ENUM, DIR6_ALL))));
     }
 
     private static Map<String, Object> siteSchema() {
-        return obj(List.of("dimension", "origin", "facing", "bounds"),
-                map("dimension", map(K_TYPE, T_STRING),
-                        "origin", array(map(K_TYPE, T_INTEGER), POS_ITEMS, POS_ITEMS),
-                        "facing", map(K_TYPE, T_STRING, K_ENUM, DIR4),
-                        "bounds", array(map(K_TYPE, T_INTEGER), BOX_ITEMS, BOX_ITEMS),
-                        "terrainDigest", map(K_TYPE, T_STRING), "claimId", map(K_TYPE, T_STRING)));
+        return obj(List.of(PlanJson.KEY_DIMENSION, PlanJson.KEY_ORIGIN, PlanJson.KEY_FACING, PlanJson.KEY_BOUNDS),
+                map(PlanJson.KEY_DIMENSION, map(K_TYPE, T_STRING),
+                        PlanJson.KEY_ORIGIN, array(map(K_TYPE, T_INTEGER), POS_ITEMS, POS_ITEMS),
+                        PlanJson.KEY_FACING, map(K_TYPE, T_STRING, K_ENUM, DIR4),
+                        PlanJson.KEY_BOUNDS, array(map(K_TYPE, T_INTEGER), BOX_ITEMS, BOX_ITEMS),
+                        PlanJson.KEY_TERRAIN_DIGEST, map(K_TYPE, T_STRING),
+                        PlanJson.KEY_CLAIM_ID, map(K_TYPE, T_STRING)));
     }
 
     private static Map<String, Object> logisticsSchema() {
         Map<String, Object> box = array(map(K_TYPE, T_INTEGER), BOX_ITEMS, BOX_ITEMS);
-        Map<String, Object> dock = obj(List.of(KEY_ID, "pad", "clearance", "approach", "ports", "connectors"),
-                map(KEY_ID, map(K_TYPE, T_STRING), "pad", box, "clearance", box,
-                        "approach", map(K_TYPE, T_STRING, K_ENUM, DIR4),
-                        "ports", map(K_TYPE, T_ARRAY, K_ITEMS, portSchema()),
-                        "connectors", map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING))));
-        Map<String, Object> route = obj(List.of(KEY_ID, KEY_FROM, KEY_TO, "waypoints"),
-                map(KEY_ID, map(K_TYPE, T_STRING), KEY_FROM, map(K_TYPE, T_STRING), KEY_TO, map(K_TYPE, T_STRING),
-                        "waypoints", map(K_TYPE, T_ARRAY, K_ITEMS, ref(DEF_POS)),
-                        "airship", map(K_TYPE, List.of(T_STRING, T_NULL))));
-        Map<String, Object> flow = obj(List.of("item", "perMin", KEY_FROM, KEY_TO),
-                map("item", map(K_TYPE, T_STRING), "perMin", map(K_TYPE, T_NUMBER),
-                        KEY_FROM, map(K_TYPE, T_STRING), KEY_TO, map(K_TYPE, T_STRING)));
-        return obj(List.of("docks", "routes", "flows"),
-                map("docks", map(K_TYPE, T_ARRAY, K_ITEMS, dock),
-                        "routes", map(K_TYPE, T_ARRAY, K_ITEMS, route),
-                        "flows", map(K_TYPE, T_ARRAY, K_ITEMS, flow)));
+        Map<String, Object> dock = obj(
+                List.of(PlanJson.KEY_ID, PlanJson.KEY_PAD, PlanJson.KEY_CLEARANCE, PlanJson.KEY_APPROACH,
+                        PlanJson.KEY_PORTS, PlanJson.KEY_CONNECTORS),
+                map(PlanJson.KEY_ID, map(K_TYPE, T_STRING), PlanJson.KEY_PAD, box, PlanJson.KEY_CLEARANCE, box,
+                        PlanJson.KEY_APPROACH, map(K_TYPE, T_STRING, K_ENUM, DIR4),
+                        PlanJson.KEY_PORTS, map(K_TYPE, T_ARRAY, K_ITEMS, portSchema()),
+                        PlanJson.KEY_CONNECTORS, map(K_TYPE, T_ARRAY, K_ITEMS, map(K_TYPE, T_STRING))));
+        Map<String, Object> route = obj(List.of(PlanJson.KEY_ID, PlanJson.KEY_FROM, PlanJson.KEY_TO,
+                        PlanJson.KEY_WAYPOINTS),
+                map(PlanJson.KEY_ID, map(K_TYPE, T_STRING), PlanJson.KEY_FROM, map(K_TYPE, T_STRING),
+                        PlanJson.KEY_TO, map(K_TYPE, T_STRING),
+                        PlanJson.KEY_WAYPOINTS, map(K_TYPE, T_ARRAY, K_ITEMS, ref(DEF_POS)),
+                        PlanJson.KEY_AIRSHIP, map(K_TYPE, List.of(T_STRING, T_NULL))));
+        Map<String, Object> flow = obj(List.of(PlanJson.KEY_ITEM, PlanJson.KEY_PER_MIN, PlanJson.KEY_FROM,
+                        PlanJson.KEY_TO),
+                map(PlanJson.KEY_ITEM, map(K_TYPE, T_STRING), PlanJson.KEY_PER_MIN, map(K_TYPE, T_NUMBER),
+                        PlanJson.KEY_FROM, map(K_TYPE, T_STRING), PlanJson.KEY_TO, map(K_TYPE, T_STRING)));
+        return obj(List.of(PlanJson.KEY_DOCKS, PlanJson.KEY_ROUTES, PlanJson.KEY_FLOWS),
+                map(PlanJson.KEY_DOCKS, map(K_TYPE, T_ARRAY, K_ITEMS, dock),
+                        PlanJson.KEY_ROUTES, map(K_TYPE, T_ARRAY, K_ITEMS, route),
+                        PlanJson.KEY_FLOWS, map(K_TYPE, T_ARRAY, K_ITEMS, flow)));
     }
 
     private static Map<String, Object> portSchema() {
-        return obj(List.of(KEY_NODE, KEY_PORT), map(KEY_NODE, map(K_TYPE, T_STRING), KEY_PORT, map(K_TYPE, T_STRING)));
+        return obj(List.of(PlanJson.KEY_NODE, PlanJson.KEY_PORT),
+                map(PlanJson.KEY_NODE, map(K_TYPE, T_STRING), PlanJson.KEY_PORT, map(K_TYPE, T_STRING)));
     }
 
     private static Map<String, Object> op(String name, List<String> required, Map<String, Object> fields) {
         Map<String, Object> props = new LinkedHashMap<>();
-        props.put(KEY_OP, map(K_CONST, name));
+        props.put(PlanJson.KEY_OP, map(K_CONST, name));
         props.putAll(fields);
-        List<String> req = new ArrayList<>(List.of(KEY_OP));
+        List<String> req = new ArrayList<>(List.of(PlanJson.KEY_OP));
         req.addAll(required);
         return obj(req, props);
     }

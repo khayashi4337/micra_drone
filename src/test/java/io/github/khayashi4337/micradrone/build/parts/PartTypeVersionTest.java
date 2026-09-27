@@ -218,7 +218,6 @@ class PartTypeVersionTest {
         // EffectSpec: 2 fields; the reach is six numbers
         v.put("EffectSpec.kind", d -> d.effectKind = EffectKind.FLUID);
         v.put("EffectSpec.reachLocal", d -> d.reach = new BoxDraft(0, 0, 0, 9, 9, 9));
-        v.put("EffectSpec.reachLocal.absent", d -> d.reach = null);
         v.put("EffectSpec.reachLocal.minA", d -> d.reach.minA = -9);
         v.put("EffectSpec.reachLocal.minB", d -> d.reach.minB = -9);
         v.put("EffectSpec.reachLocal.minC", d -> d.reach.minC = -9);

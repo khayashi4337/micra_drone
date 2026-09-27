@@ -19,7 +19,7 @@ class MiniJsonTest {
                 "{\"a\":\"text\",\"b\":42,\"c\":true,\"d\":false,\"e\":null}");
 
         assertEquals("text", obj.get("a"));
-        assertEquals(42.0, obj.get("b"));
+        assertEquals(42L, obj.get("b"));
         assertEquals(Boolean.TRUE, obj.get("c"));
         assertEquals(Boolean.FALSE, obj.get("d"));
         assertTrue(obj.containsKey("e"));
@@ -34,7 +34,7 @@ class MiniJsonTest {
 
         assertEquals("real-one", obj.get("session_id"));
         Map<String, Object> usage = (Map<String, Object>) obj.get("usage");
-        assertEquals(List.of(1.0, 2.0, 3.0), usage.get("list"));
+        assertEquals(List.of(1L, 2L, 3L), usage.get("list"));
     }
 
     @Test
@@ -67,10 +67,10 @@ class MiniJsonTest {
         Map<String, Object> parsed = (Map<String, Object>) MiniJson.parse(json);
 
         assertEquals("line1\nline2 \"quoted\"", parsed.get("text"));
-        assertEquals(42.0, parsed.get("n"));
+        assertEquals(42L, parsed.get("n"));
         assertEquals(Boolean.TRUE, parsed.get("flag"));
         assertNull(parsed.get("nothing"));
-        assertEquals(List.of(1.0, 2.0, 3.0), parsed.get("list"));
+        assertEquals(List.of(1L, 2L, 3L), parsed.get("list"));
     }
 
     @Test

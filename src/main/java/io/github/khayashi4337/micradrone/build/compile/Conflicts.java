@@ -9,8 +9,6 @@ import java.util.Set;
 
 /** Decides whether the world still matches what a manifest expects. Only listed states count, volatile ones never do. */
 public final class Conflicts {
-    private static final String AIR_ID = BlockSpec.AIR.blockId();
-
     private Conflicts() {
     }
 
@@ -33,7 +31,7 @@ public final class Conflicts {
         Objects.requireNonNull(observed, "observed");
         Objects.requireNonNull(volatileProps, "volatileProps");
         BlockSpec actual = observed.block();
-        if (!expected.blockId().equals(AIR_ID) && actual.blockId().equals(AIR_ID)) {
+        if (!expected.isAir() && actual.isAir()) {
             return Optional.of(new Conflict(pos, expected, observed, ConflictKind.MISSING));
         }
         if (!actual.blockId().equals(expected.blockId())) {

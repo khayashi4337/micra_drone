@@ -5,10 +5,13 @@ package io.github.khayashi4337.micradrone.build.model;
  * first, then {@code quarterTurns} clockwise turns seen from above; one turn maps (u,w) to (w,-u).
  */
 public record Rot(int quarterTurns, boolean mirror) {
+    public static final int QUARTER_TURNS_PER_CIRCLE = 4;
+    public static final int HALF_TURN = 2;
+
     public static final Rot NONE = new Rot(0, false);
 
     public Rot {
-        quarterTurns = Math.floorMod(quarterTurns, 4);
+        quarterTurns = Math.floorMod(quarterTurns, QUARTER_TURNS_PER_CIRCLE);
     }
 
     public LocalPos apply(LocalPos p) {

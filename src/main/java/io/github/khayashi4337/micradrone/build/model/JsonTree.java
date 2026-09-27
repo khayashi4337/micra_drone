@@ -74,6 +74,17 @@ final class JsonTree {
         throw bad(path, "expected an integer");
     }
 
+    /** A whole number read as a {@code long}, for values such as millis that do not fit an {@code int}. */
+    static long longInteger(Object value, String path) {
+        if (value instanceof Number n) {
+            double d = n.doubleValue();
+            if (d == Math.rint(d) && d >= Long.MIN_VALUE && d <= Long.MAX_VALUE) {
+                return n.longValue();
+            }
+        }
+        throw bad(path, "expected an integer");
+    }
+
     static double number(Object value, String path) {
         if (value instanceof Number n && Double.isFinite(n.doubleValue())) {
             return n.doubleValue();
@@ -101,6 +112,11 @@ final class JsonTree {
         return bool(req(map, key, path), child(path, key));
     }
 
+    /** Reads the required member {@code key} with {@code read}, giving it its own path. */
+    static <T> T req(Map<String, Object> map, String key, String path, BiFunction<Object, String, T> read) {
+        return read.apply(req(map, key, path), child(path, key));
+    }
+
     /** Null when the key is absent or JSON null. */
     static String optStr(Map<String, Object> map, String key, String path) {
         Object v = map.get(key);
@@ -111,6 +127,12 @@ final class JsonTree {
     static Integer optInt(Map<String, Object> map, String key, String path) {
         Object v = map.get(key);
         return v == null ? null : integer(v, child(path, key));
+    }
+
+    /** Null when the key is absent or JSON null. */
+    static Boolean optBool(Map<String, Object> map, String key, String path) {
+        Object v = map.get(key);
+        return v == null ? null : bool(v, child(path, key));
     }
 
     /** Reads member {@code key} with {@code read}; null when the key is absent or JSON null. */

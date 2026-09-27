@@ -1,5 +1,6 @@
 package io.github.khayashi4337.micradrone.build.parts;
 
+import io.github.khayashi4337.micradrone.build.model.CanonicalJson;
 import io.github.khayashi4337.micradrone.build.model.FixHint;
 import io.github.khayashi4337.micradrone.build.model.Issue;
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
@@ -11,6 +12,7 @@ import io.github.khayashi4337.micradrone.build.model.ParamValue.ListV;
 import io.github.khayashi4337.micradrone.build.model.ParamValue.MaterialV;
 import io.github.khayashi4337.micradrone.build.model.ParamValue.NumV;
 import io.github.khayashi4337.micradrone.build.model.ParamValue.StrV;
+import io.github.khayashi4337.micradrone.build.model.SortedCopies;
 import io.github.khayashi4337.micradrone.build.model.Zeros;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,8 +25,8 @@ public final class ParamValidator {
     private static final Pattern ROLE = Pattern.compile("[a-z][a-z0-9_]*");
     private static final Pattern BLOCK_ID = Pattern.compile("[a-z0-9_.-]+:[a-z0-9_/.-]+");
 
-    /** Characters below this are control characters. */
-    private static final char FIRST_PRINTABLE_CHAR = 0x20;
+    /** Characters below this are control characters (shared with the canonical JSON writer). */
+    private static final char FIRST_PRINTABLE_CHAR = CanonicalJson.FIRST_PRINTABLE_CHAR;
 
     // Keys of Issue.data and the fix hint of a rejected parameter (read by the repair prompts).
     private static final String DATA_PARAM = "param";
@@ -39,6 +41,10 @@ public final class ParamValidator {
     }
 
     public record Result(Map<String, ParamValue> typed, List<Issue> issues) {
+        public Result {
+            typed = SortedCopies.map(typed);
+            issues = List.copyOf(issues);
+        }
     }
 
     /** A palette role name such as {@code roof}: lowercase letters, digits and underscores, starting with a letter. */
@@ -49,6 +55,11 @@ public final class ParamValidator {
     /** A namespaced id such as {@code minecraft:stone}; blocks and dimensions are written the same way. */
     public static boolean isBlockId(String text) {
         return BLOCK_ID.matcher(text).matches();
+    }
+
+    /** The same shape as {@link #isBlockId}, named for callers that check a non-block id (a dimension, an item). */
+    public static boolean isNamespacedId(String text) {
+        return isBlockId(text);
     }
 
     /** Control characters other than newline and tab do not survive being written into a script and read back. */
