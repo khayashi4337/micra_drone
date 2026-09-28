@@ -159,8 +159,14 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
      * existed, an IDE opened on a controller with no scroll selected accepted typing but Save/Run
      * were refused with "invalid script id ''" and the text was lost on close (real-machine
      * report). Scrolls stay the way to carry/share scripts; this is just the built-in one.
+     * Starts as a comment pointing at the main commands and where the full reference lives, so
+     * a player who opens the IDE before owning an enchanting table still gets a first hint.
      */
-    private volatile String builtInScript = "";
+    private volatile String builtInScript =
+            "# Write your script here, then press Save & Run.\n"
+            + "# Commands like move(\"east\"), till(), plant(\"wheat\"), harvest() drive the drone.\n"
+            + "# The full command list is on the help scrolls: put a blank Script Scroll and\n"
+            + "# lapis lazuli into an enchanting table's slots to receive them.\n";
     /** What the list shows for the built-in script - a fixed label, since it isn't an item with a hover name. */
     static final String CONTROLLER_SCRIPT_DISPLAY_NAME = "Controller script";
     // The built-in script is the default selection, so Save/Run and an early redstone signal all
@@ -839,6 +845,12 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         // Ambient effects like the growth boost must never apply to the size-5-toward-SE guess used
         // when no marker has actually been placed/found - only to a plot the player explicitly marked.
         plotConfirmed = bounds.markerFound();
+        // The scan only checks true diagonals, so a marker that's merely near the controller would
+        // otherwise be missed with no sign of why - say what was (not) found on every run.
+        appendLog(bounds.markerFound()
+                ? "[plot] corner marker found - plot is " + worldSize + "x" + worldSize
+                : "[plot] no corner marker found - using the default " + worldSize + "x" + worldSize
+                        + " plot toward south-east (place a Corner Marker diagonally to size it)");
     }
 
     /**
