@@ -54,6 +54,34 @@ public record WallInfo(String id, StructureInfo structure, Facing side, int leve
     }
 
     /**
+     * The axis the wall runs along: "u" for north and south walls, "w" for east and west ones. A corner cell is one
+     * that two perpendicular walls of the same building both cover, so it may only ever join cells whose axes differ.
+     */
+    public String axis() {
+        return runsAlongU(side) ? "u" : "w";
+    }
+
+    /**
+     * Whether {@code p} is a cell of this wall: along it between {@code from} and {@code from + length}, within its
+     * thickness and its height — the rectangular prism the wall fills. The corner where a perpendicular wall reaches
+     * is inside both walls' prisms.
+     */
+    public boolean contains(LocalPos p) {
+        LocalPos o = structure.origin();
+        if (p.v() < baseV || p.v() >= baseV + height) {
+            return false;
+        }
+        int along = (runsAlongU(side) ? p.u() - o.u() : p.w() - o.w()) - from;
+        int across = switch (side) {
+            case SOUTH -> p.w() - o.w();
+            case NORTH -> structure.depth() - 1 - (p.w() - o.w());
+            case EAST -> structure.width() - 1 - (p.u() - o.u());
+            case WEST -> p.u() - o.u();
+        };
+        return along >= 0 && along < length && across >= 0 && across < thickness;
+    }
+
+    /**
      * Whether {@code span} cells that start at position {@code i} along the wall all lie within the wall: the last one,
      * {@code i + span - 1}, is at most the wall's last position, {@code length - 1}. Positions count from the wall's own
      * start ({@code from}), so this compares with the wall's length, not with the length of the side it stands on (a wall

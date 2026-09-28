@@ -45,6 +45,8 @@ class OpeningsTest {
     private static final String WALL_W = "wall-w";
     /** The south wall of the second storey. */
     private static final String WALL_S_UPPER = "wall-s1";
+    /** The east wall of the second storey. */
+    private static final String WALL_E_UPPER = "wall-e1";
     /** The two segments of a south wall that is built in pieces. */
     private static final String WALL_SEGMENT_A = "wall-a";
     private static final String WALL_SEGMENT_B = "wall-b";
@@ -526,6 +528,9 @@ class OpeningsTest {
         // the south wall starts at u=2, so its position 0 is the cell u=2 of the building and its last position is u=6
         List<PlanNode> nodes = hallWithoutSouthWall();
         nodes.add(southSegment(WALL_S, PARTIAL_FROM, HALL_SIDE - PARTIAL_FROM));
+        // the east wall stops one cell short of the south-east corner, so a window on the south wall's last position
+        // (the corner column) still opens into the hall — with a full-length east wall it would be sealed off
+        CompileFixtures.replaceWall(nodes, WALL_E, params(P_SIDE, EAST, P_FROM, 2, P_LENGTH, HALL_SIDE - 2));
         Map<LocalPos, BlockSpec> c = buildIn(nodes,
                 on(DOOR_ID, DOOR, WALL_S, Side.OUTER, 0, 0, Map.of()),
                 on(WINDOW_ID, WINDOW, WALL_S, Side.OUTER, HALL_SIDE - PARTIAL_FROM - 1, 1, Map.of()));
@@ -555,6 +560,93 @@ class OpeningsTest {
         assertEquals(archStair(WEST), c.get(new LocalPos(4, 3, 6)));
         assertEquals(archStair(EAST), c.get(new LocalPos(6, 3, 6)));
         assertEquals(HALL_WALL_CELLS, c.size());
+    }
+
+    @Test
+    void aDoorOnTheCornerColumnItselfIsSealedOff() {
+        // u=6 is the column the south and east walls share. A single door's tunnel through it ends against the east
+        // wall's body on every layer: the opening would be a notch cut into the corner, not a passage into the hall.
+        PlanNode cornerDoor = on(DOOR_ID, DOOR, WALL_S, Side.OUTER, HALL_SIDE - 1, 0, Map.of());
+        assertEquals(List.of("E-OPENING-BLOCKED:" + DOOR_ID), ids(compile(withOpening(cornerDoor))));
+        // a refused opening changes nothing: the corner column still stands
+        assertRefusedUntouched(generatedIn(hallWith(List.of()), Map.of()), cornerDoor, "E-OPENING-BLOCKED:" + DOOR_ID);
+    }
+
+    @Test
+    void aDoorOnAnyCornerColumnIsSealedOff() {
+        // both ends of all four walls are corner columns the adjoining wall fills: the same dead end everywhere
+        for (String wall : List.of(WALL_S, WALL_N, WALL_E, WALL_W)) {
+            for (int u : List.of(0, HALL_SIDE - 1)) {
+                assertEquals(List.of("E-OPENING-BLOCKED:" + DOOR_ID),
+                        ids(compile(withOpening(on(DOOR_ID, DOOR, wall, Side.OUTER, u, 0, Map.of())))),
+                        wall + " at u=" + u);
+            }
+        }
+    }
+
+    /** The hall whose south and east walls (which meet at the corner column u=6, w=0) have the given thicknesses. */
+    private static List<PlanNode> hallWithThickCorner(int southThickness, int eastThickness) {
+        List<PlanNode> nodes = new ArrayList<>(shell(HALL_SIDE, HALL_SIDE, FLOORS, HALL_FLOOR_HEIGHT));
+        CompileFixtures.replaceWall(nodes, WALL_S, params(P_SIDE, SOUTH, P_THICKNESS, southThickness));
+        CompileFixtures.replaceWall(nodes, WALL_E, params(P_SIDE, EAST, P_THICKNESS, eastThickness));
+        return nodes;
+    }
+
+    @Test
+    void aDoorThatEndsInsideAThickAdjoiningWallsBandIsSealedOff() {
+        // with 2-thick walls the east wall fills u=5..6: a door ending at u=5 tunnels through the south wall only to
+        // face the east wall's body — one more column of dead end, still sealed
+        List<PlanNode> thick2 = hallWithThickCorner(2, 2);
+        thick2.add(on(DOOR_ID, DOOR, WALL_S, Side.OUTER, HALL_SIDE - 2, 0, Map.of()));
+        assertEquals(List.of("E-OPENING-BLOCKED:" + DOOR_ID), ids(compile(thick2)));
+        // one column further in the tunnel clears the east wall's band, so the door stands
+        List<PlanNode> clear2 = hallWithThickCorner(2, 2);
+        clear2.add(on(DOOR_ID, DOOR, WALL_S, Side.OUTER, HALL_SIDE - 3, 0, Map.of()));
+        assertTrue(compile(clear2).issues().isEmpty());
+        // with 3-thick walls the sealed band reaches in one more column
+        List<PlanNode> thick3 = hallWithThickCorner(3, 3);
+        thick3.add(on(DOOR_ID, DOOR, WALL_S, Side.OUTER, HALL_SIDE - 3, 0, Map.of()));
+        assertEquals(List.of("E-OPENING-BLOCKED:" + DOOR_ID), ids(compile(thick3)));
+        List<PlanNode> clear3 = hallWithThickCorner(3, 3);
+        clear3.add(on(DOOR_ID, DOOR, WALL_S, Side.OUTER, HALL_SIDE - 4, 0, Map.of()));
+        assertTrue(compile(clear3).issues().isEmpty());
+    }
+
+    @Test
+    void aCornerDoorOnAnUpperStoreysWallIsSealedOffToo() {
+        // the second storey has its own south and east walls meeting at the corner; a door on the upper south wall's
+        // corner column is sealed by the upper east wall (it cannot slip down into the gap under the walls either)
+        List<PlanNode> nodes = new ArrayList<>(shell(HALL_SIDE, HALL_SIDE, TWO_FLOORS, HALL_FLOOR_HEIGHT));
+        nodes.add(node(WALL_S_UPPER, WALL, STRUCTURE_ID, 0, 0, 0, params(P_SIDE, SOUTH, P_LEVEL, UPPER_STOREY)));
+        nodes.add(node(WALL_E_UPPER, WALL, STRUCTURE_ID, 0, 0, 0, params(P_SIDE, EAST, P_LEVEL, UPPER_STOREY)));
+        nodes.add(on(DOOR_ID, DOOR, WALL_S_UPPER, Side.OUTER, HALL_SIDE - 1, 0, Map.of()));
+        assertEquals(List.of("E-OPENING-BLOCKED:" + DOOR_ID), ids(compile(nodes)));
+    }
+
+    @Test
+    void aHangarDoorAcrossTheWholeSideStillOpens() {
+        // a hangar door spanning u=0..6 covers both corner columns: the columns in between reach the hall, so the
+        // opening as a whole pierces the wall
+        List<PlanNode> nodes = hallWith(List.of(on(DOOR_ID, DOOR, WALL_S, Side.OUTER, 0, 0,
+                params(P_KIND, KIND_HANGAR, P_WIDTH, HALL_SIDE, P_HEIGHT, 3))));
+        CompileResult r = compile(nodes);
+        assertTrue(r.issues().isEmpty(), r.issues().toString());
+        Map<LocalPos, BlockSpec> c = cells(r.manifest());
+        assertEquals(gate(NORTH), c.get(new LocalPos(0, 1, 0)), "the west corner column is a gate too");
+        assertEquals(gate(NORTH), c.get(new LocalPos(HALL_SIDE - 1, 1, 0)), "the east corner column is a gate too");
+    }
+
+    @Test
+    void parallelWallsThatReachIntoTheSameCellsDoNotMerge() {
+        // a 7x3 hall whose north and south walls are both 2 cells thick: the two walls claim the same row of cells.
+        // They run along the same axis, so there is no corner they could share — the clash is an overlap, and no cell
+        // may silently change hands
+        List<PlanNode> nodes = new ArrayList<>(shell(HALL_SIDE, 3, FLOORS, HALL_FLOOR_HEIGHT));
+        CompileFixtures.replaceWall(nodes, WALL_S, params(P_SIDE, SOUTH, P_THICKNESS, 2));
+        CompileFixtures.replaceWall(nodes, WALL_N, params(P_SIDE, NORTH, P_THICKNESS, 2));
+        CompileResult r = compile(nodes);
+        assertNull(r.manifest(), r.issues().toString());
+        assertEquals(List.of("E-OVERLAP:wall-n,wall-s"), ids(r));
     }
 
     @Test

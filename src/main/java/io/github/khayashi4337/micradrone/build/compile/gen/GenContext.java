@@ -15,6 +15,9 @@ import io.github.khayashi4337.micradrone.build.parts.Params;
 import io.github.khayashi4337.micradrone.build.parts.PartParams;
 import io.github.khayashi4337.micradrone.build.parts.PartType;
 import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -38,6 +41,8 @@ public final class GenContext {
     private static final String KEY_FROM = "from";
     private static final String KEY_LENGTH = "length";
     private static final String KEY_CARVE = "carve";
+    /** The six axis steps a flood fill through the wall's cells may take. */
+    private static final int[][] NEIGHBOURS = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
 
     // Parameter names of the structure and wall parts.
     private static final String PART_HALF = "half";
@@ -250,7 +255,7 @@ public final class GenContext {
         emitAbs(node, pos, block, null, null, Map.of());
     }
 
-    /** {@code mergeVariant} tells walls of different sides apart: only those may share a corner cell (same group, same block). */
+    /** {@code mergeVariant} tells walls on different axes apart: only those may share a corner cell (same group, same block). */
     public void emitAbs(PlanNode node, LocalPos pos, BlockSpec block, String mergeGroup, String mergeVariant,
                         Map<String, String> blockEntity) {
         put(node, pos, block, blockEntity, mergeGroup, mergeVariant);
@@ -265,10 +270,12 @@ public final class GenContext {
 
     /**
      * Removes the cells an opening replaces. Refuses (and changes nothing) if any is not a wall cell of this building or
-     * was already carved. Every wall of a building shares one merge group, so a cell of another wall segment or storey of
-     * the same building passes too: an opening that must stay on its own wall checks its extent first (OpeningSpot.carved).
-     * A wall's extent includes its end columns, which the neighbouring wall shares (the building's corner), so an opening
-     * that reaches a wall's end removes that corner column too, and the neighbouring wall ends in the opening as well.
+     * was already carved. A cell of another wall of the same building counts only when it is a shared corner cell: one
+     * merge group, and the owning wall on a different axis. A cell of a parallel wall — or of a wall of another
+     * building — is not this opening's to take. An opening that must stay on its own wall checks its extent first
+     * (OpeningSpot.carved). A wall's extent includes its end columns, which the neighbouring wall shares (the
+     * building's corner), so an opening that reaches a wall's end removes that corner column too, and the neighbouring
+     * wall ends in the opening as well.
      * A cell listed twice counts as one. Every cell looked at is one unit of work, refused or not.
      */
     public void carve(PlanNode opener, WallInfo wall, List<LocalPos> cells) {
@@ -290,8 +297,10 @@ public final class GenContext {
                 continue;
             }
             Canvas.Cell c = canvas.get(pos);
-            // a corner cell shared with the neighbouring wall belongs to whichever wall was generated first: both are this building's walls
-            boolean ownWall = c != null && (c.ownerId().equals(wall.id()) || wall.cornerGroup().equals(c.mergeGroup()));
+            // a corner cell shared with the neighbouring wall belongs to whichever wall was generated first; it is
+            // this opening's to take only when the owning wall is a perpendicular one (same merge group, other axis)
+            boolean ownWall = c != null && (c.ownerId().equals(wall.id())
+                    || (wall.cornerGroup().equals(c.mergeGroup()) && !wall.axis().equals(c.mergeVariant())));
             if (!ownWall) {
                 notWall++;
                 if (firstBad == null) {
@@ -319,6 +328,65 @@ public final class GenContext {
         for (LocalPos pos : distinct) {
             canvas.remove(pos);
             carvedBy.put(pos, opener.id());
+        }
+    }
+
+    /**
+     * Refuses (E-OPENING-BLOCKED, changing nothing) an opening whose tunnel has no way out on the inside. A flood
+     * fill starts from every cell the opening would take, may pass through cells an earlier opening carved out of a
+     * wall (its tunnel continues there), and never steps through a standing cell; it succeeds on reaching a cell
+     * inside the building's footprint that no wall of the building covers — the room behind the wall. The search
+     * stays inside the footprint and inside the tunnel's own rows, so it cannot slip out under a storey or past the
+     * building's edge. The corner column is the case that fails: the adjoining wall fills every cell the tunnel could
+     * open into. Callers run this before {@link #carve}, so a refused opening leaves the canvas untouched.
+     */
+    void requirePierces(PlanNode opener, WallInfo wall, List<LocalPos> tunnel) {
+        StructureInfo st = wall.structure();
+        LocalPos o = st.origin();
+        int uLo = o.u();
+        int uHi = o.u() + st.width() - 1;
+        int wLo = o.w();
+        int wHi = o.w() + st.depth() - 1;
+        int vLo = Integer.MAX_VALUE;
+        int vHi = Integer.MIN_VALUE;
+        for (LocalPos p : tunnel) {
+            vLo = Math.min(vLo, p.v());
+            vHi = Math.max(vHi, p.v());
+        }
+        List<WallInfo> prisms = new ArrayList<>();
+        for (PlanNode n : nodes.values()) {
+            if (st.id().equals(n.parent()) && n.type().equals(BuildingParts.WALL)) {
+                wallInfo(n.id()).ifPresent(prisms::add);
+            }
+        }
+        Deque<LocalPos> fringe = new ArrayDeque<>(tunnel);
+        Set<LocalPos> seen = new HashSet<>(tunnel);
+        boolean pierced = false;
+        while (!fringe.isEmpty() && !pierced) {
+            LocalPos p = fringe.poll();
+            for (int[] step : NEIGHBOURS) {
+                LocalPos q = p.plus(step[0], step[1], step[2]);
+                if (q.u() < uLo || q.u() > uHi || q.w() < wLo || q.w() > wHi || q.v() < vLo || q.v() > vHi
+                        || !seen.add(q) || canvas.get(q) != null) {
+                    continue; // outside the footprint or the tunnel's rows, already visited, or a standing cell
+                }
+                boolean inWall = false;
+                for (WallInfo prism : prisms) {
+                    if (prism.contains(q)) {
+                        inWall = true;
+                        break;
+                    }
+                }
+                if (inWall) {
+                    fringe.add(q); // a cell an earlier opening carved out of a wall: the tunnel continues there
+                } else {
+                    pierced = true;
+                }
+            }
+        }
+        if (!pierced) {
+            throw fail(opener, IssueCode.E_OPENING_BLOCKED, "", opener.id()
+                    + "の開口部は屋内に貫通しません(掘ったトンネルの先が、壁 " + wall.id() + " に隣接する壁に塞がれた行き止まりです)");
         }
     }
 }

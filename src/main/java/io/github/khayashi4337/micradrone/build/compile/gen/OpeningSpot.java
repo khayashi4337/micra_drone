@@ -29,13 +29,16 @@ record OpeningSpot(WallInfo wall, int i, int row, boolean outer, int layer, int 
     /**
      * The spot of an opening, with its cells already taken out of the wall. The anchor only shows that the opening's
      * first cell is on the wall, so the whole extent is checked against the wall's own length and height first
-     * (E-OPENING-NO-WALL, nothing changed): {@link GenContext#carve} only tells this building's walls from other cells,
-     * so it would accept a cell of the next wall segment on the same side, or of the storey above. What is left for the
-     * carve to refuse is a cell inside the wall's extent that is no longer a wall cell, and a cell that another opening took.
+     * (E-OPENING-NO-WALL, nothing changed): {@link GenContext#carve} only tells this building's wall cells from other
+     * cells, so it would accept a cell of the next wall segment on the same side, or of the storey above. The tunnel
+     * must then reach the room behind the wall: one that ends against the adjoining wall's body is a sealed notch,
+     * refused too (E-OPENING-BLOCKED, nothing changed). What is left for the carve to refuse is a cell inside the
+     * wall's extent that is no longer a wall cell, and a cell that another opening took.
      */
     static OpeningSpot carved(GenContext ctx, PlanNode node, int width, int height) {
         OpeningSpot spot = of(ctx, node, width, height);
         spot.requireInsideWall(ctx, node);
+        ctx.requirePierces(node, spot.wall(), spot.cells());
         ctx.carve(node, spot.wall(), spot.cells());
         return spot;
     }

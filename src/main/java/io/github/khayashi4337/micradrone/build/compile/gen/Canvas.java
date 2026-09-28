@@ -30,7 +30,7 @@ public final class Canvas {
      */
     private static final int ATTEMPTS_PER_CELL = 2;
 
-    /** {@code mergeGroup}/{@code mergeVariant}: two cells of one group with the same block but different variants join (wall corners). */
+    /** {@code mergeGroup}/{@code mergeVariant}: two cells of one group with the same block but different variants join (a wall corner: two perpendicular walls of one building). */
     public record Cell(LocalPos pos, BlockSpec block, VerifyMode verify, BuildPhase phase, Map<String, String> blockEntity,
                        String ownerId, String mergeGroup, String mergeVariant) {
     }
