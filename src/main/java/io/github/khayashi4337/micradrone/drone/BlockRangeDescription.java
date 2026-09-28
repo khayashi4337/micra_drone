@@ -24,6 +24,16 @@ public final class BlockRangeDescription {
     }
 
     /**
+     * The number of cells in the inclusive range. The subtraction is widened to long first: at extreme
+     * coordinates {@code maxX - minX + 1} overflows int (a min-to-max range counts 0 cells, not 2^32).
+     */
+    static long rangeVolume(int x1, int y1, int z1, int x2, int y2, int z2) {
+        return ((long) Math.max(x1, x2) - Math.min(x1, x2) + 1)
+                * ((long) Math.max(y1, y2) - Math.min(y1, y2) + 1)
+                * ((long) Math.max(z1, z2) - Math.min(z1, z2) + 1);
+    }
+
+    /**
      * A human-readable description of the blocks in the (inclusive) range, or empty if any part of
      * the range isn't currently loaded in {@code level}.
      */
@@ -31,7 +41,7 @@ public final class BlockRangeDescription {
         int minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
         int minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
         int minZ = Math.min(z1, z2), maxZ = Math.max(z1, z2);
-        long volume = (long) (maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1);
+        long volume = rangeVolume(x1, y1, z1, x2, y2, z2);
         if (volume > MAX_BLOCKS_PER_QUERY) {
             return Optional.of("range too large (" + volume + " blocks, max " + MAX_BLOCKS_PER_QUERY
                     + ") - ask about a smaller range");
