@@ -2,6 +2,7 @@ package io.github.khayashi4337.micradrone.build.plan;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -196,6 +197,16 @@ class PlanExpanderConnectionsTest {
         // k0..k199999 are the limit's worth; k200000 is the one over
         assertEquals(List.of("E-OUT-OF-BOUNDS:k" + limit + "#connections"), ids(r));
         assertEquals(List.of("k" + limit), r.issues().get(0).subjects());
+    }
+
+    @Test
+    void thePlansOwnConnectionsExactlyAtTheLimitExpand() {
+        int limit = BuildLimits.MAX_EXPANDED_CONNECTIONS;
+        SemanticPlan plan = ExpanderFixtures.plan(List.of(shaftA()), ownConnections(limit));
+        ExpandResult r = assertTimeoutPreemptively(EXPAND_BOUND, () -> expander.expand(plan, TemplateBundle.EMPTY, Router.NONE));
+        assertTrue(r.issues().isEmpty(), () -> r.issues().stream().limit(3).toList().toString());
+        assertNotNull(r.plan());
+        assertEquals(limit, r.plan().routed().size());
     }
 
     @Test

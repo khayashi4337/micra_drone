@@ -438,6 +438,14 @@ class PlanCompilerTest {
     }
 
     @Test
+    void aChildOfANodeWithAMissingParentStillComesAfterItEvenWhenItsIdSortsFirst() {
+        // x hangs from a parent that is not in the plan (depth 1), a hangs from x (depth 2). If the loop depth were not
+        // above every real depth, both would be clamped to the same depth and the id order would put "a" before "x".
+        List<PlanNode> nodes = List.of(child("a", "x"), child("x", "ghost"));
+        assertEquals(List.of("x", "a"), orderedIds(nodes));
+    }
+
+    @Test
     void nodesInsideOrBelowAParentLoopComeLastByIdWithoutLoopingForever() {
         // b and c are each other's parent; a hangs from b. None has a root, so all three share the one depth above every
         // real depth and go by id, after the root z although "z" > "a".

@@ -155,6 +155,19 @@ class PlanJsonTest {
         assertEquals("dock-2", ((Map<?, ?>) ((List<?>) logistics.get(KEY_DOCKS)).get(0)).get("id"));
     }
 
+    @Test
+    void aDockOrRouteWithoutAnIdIsWrittenBeforeTheNamedOnesInTheCanonicalTree() {
+        // a hand-built plan may carry a null id; where it sorts decides the hash, so it is pinned (nulls first)
+        LogisticsPlan logistics = new LogisticsPlan(List.of(dock("dock-1"), dock(null)), List.of(route("route-1"), route(null)), List.of());
+        Map<?, ?> tree = assertInstanceOf(Map.class, PlanJson.contentTree(withLogistics(loosePlan(), logistics)).get(KEY_LOGISTICS));
+        List<?> docks = assertInstanceOf(List.class, tree.get(KEY_DOCKS));
+        assertNull(((Map<?, ?>) docks.get(0)).get("id"));
+        assertEquals("dock-1", ((Map<?, ?>) docks.get(1)).get("id"));
+        List<?> routes = assertInstanceOf(List.class, tree.get("routes"));
+        assertNull(((Map<?, ?>) routes.get(0)).get("id"));
+        assertEquals("route-1", ((Map<?, ?>) routes.get(1)).get("id"));
+    }
+
     /**
      * The content hash of {@link #loosePlan()}. Not copied from this code's output: the canonical text of the plan was
      * written out by hand from its definition (keys in dictionary order, nodes and connections by id, entry directions

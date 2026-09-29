@@ -123,6 +123,7 @@ class FreestandingPartsTest {
     private static final int LARGEST_CLEARANCE = 64;
     /** Room for the largest pad's cells in a canvas that is used directly. */
     private static final int PAD_CANVAS_CELLS = 10_000;
+    private static final int COLUMN_CELLS = 5;
     /** Unrelated cells that make the canvas larger than a small pad's air, so that the air is what gets walked. */
     private static final int FILLER_CELLS = 1_000;
     private static final String FILLER_ID = "x";
@@ -639,6 +640,22 @@ class FreestandingPartsTest {
         assertEquals(List.of(OVERLAP_ID_PREFIX + PAD_ID + "," + OBSTACLE_ID), ids(r));
         assertEquals("4", r.issues().get(0).data().get(COUNT_KEY));
         assertEquals(REASON_CLEARANCE, r.issues().get(0).data().get(REASON_KEY));
+    }
+
+    @Test
+    void aColumnOfTheAirWithSeveralOtherCellsNamesTheLowestOneFirstWhicheverWayTheAirIsChecked() {
+        // A 5 x 5 pad with 16 rows of air (400 cells) has 26 cells on the canvas, so the canvas is walked, in hash order.
+        // A pillar of several cells stands in one column of the air; the issue names its lowest cell, as the walk over the
+        // air cells does. The canvas walk sees a column's cells in hash order, which is not height order; in this
+        // column (u 1, w 3) the lowest cell is not the first one it meets.
+        LocalPos lower = new LocalPos(1, 1, 3);
+        List<PlanNode> nodes = List.of(
+                at(PAD_ID, DOCK_PAD, 0, 0, 0, params(P_WIDTH, SMALLEST_PAD, P_DEPTH, SMALLEST_PAD, P_CLEARANCE, 16)),
+                at(OBSTACLE_ID, PILLAR, lower.u(), lower.v(), lower.w(), params(P_HEIGHT, COLUMN_CELLS, P_BASE, false, P_CAPITAL, false)));
+        CompileResult r = compile(STYLE, nodes);
+        assertEquals(List.of(OVERLAP_ID_PREFIX + PAD_ID + "," + OBSTACLE_ID), ids(r));
+        assertEquals(String.valueOf(COLUMN_CELLS), r.issues().get(0).data().get(COUNT_KEY));
+        assertEquals(Canvas.posText(lower), r.issues().get(0).data().get(Canvas.DATA_FIRST_POS));
     }
 
     @Test
