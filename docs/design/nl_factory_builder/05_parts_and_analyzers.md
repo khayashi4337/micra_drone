@@ -42,7 +42,9 @@
 **素材**: `MaterialV`は、`:`を含めばブロックID、含まなければ役割名で、`StyleSpec.palette`から引く(無ければ既定のパレット)。階段・スラブが要る部品は、役割`R`の階段を`palette[R+"_stairs"]`、スラブを`palette[R+"_slab"]`、無ければ**族表**(`MaterialFamilies`。ゲーム標準の板材・石材などの族)から引く。族に無い素材(例: 赤いテラコッタは階段が無い)は、`E-PARAM-RANGE`と、族のある候補(`red_nether_bricks`など)を`FixHint`で返す。
 **既定のパレット**(すべて`minecraft:`。登録簿の版ハッシュに含める): `wall`=`stone_bricks`、`floor`=`oak_planks`、`roof`=`oak_planks`、`foundation`=`cobblestone`、`pillar`=`stone_bricks`、`beam`=`oak_log`、`trim`=`stone_bricks`、`glass`=`glass_pane`、`door`=`oak_door`、`gate`=`oak_fence_gate`、`fence`=`oak_fence`、`stairs`=`oak_stairs`、`ramp`=`stone`、`catwalk`=`iron_trapdoor`、`chimney`=`bricks`、`path`=`gravel`、`pad`=`smooth_stone`、`marker`=`yellow_concrete`、`cargo`=`barrel`、`sign`=`oak_wall_sign`、`planter`=`dirt`、`plant`=`poppy`。
 **フェーズ**: `foundation`・`floor`・`pillar`・`beam`・`chimney`・`stairs`・`ramp`=`STRUCTURE`、`wall`・`roof`・`door`・`window`=`ENVELOPE`、`ladder`・`catwalk`・`balcony`・`railing`・`lamp`・`sign`・`planter`・`trim`=`DECORATION`(壁や床に支えられて初めて残る物は、あとに置く)、`dock_pad`・`road`=`LOGISTICS`。`structure`はブロックを持たない。
-**重なり**: 同じ位置を2つの部品が使えば`E-OVERLAP`。**例外**: 同じ親の`wall`どうしの角で、ブロックが同じなら合流(角は1個)。合流できるのは**直交する壁どうし**だけ(同じ軸を走る壁どうしは角を共有しないので、触れれば`E-OVERLAP`)。開口部(`door`・`window`)は、壁のマスを**掘る**(壁のマスでなければ`E-OPENING-NO-WALL`)。掘ったトンネルが建屋の内側に通じなければ(隣の壁に塞がれた行き止まり、角の柱の切り欠きなど)`E-OPENING-BLOCKED`。開口部どうしの重なりは`E-OVERLAP`。壁の端まで届く開口部は、壁どうしが合流した角の柱も掘る。2つの開口部が同じマスを掘るときは、両方の開口部を名指しする`E-OVERLAP`を1つだけ出す(重なりの種類は`carve`)。
+**重なり**: 同じ位置を2つの部品が使えば`E-OVERLAP`。**例外**: 同じ親の`wall`どうしの角で、ブロックが同じなら合流(角は1個)。合流できるのは**直交する壁どうし**だけ(同じ軸を走る壁どうしは角を共有しないので、触れれば`E-OVERLAP`)。開口部(`door`・`window`)は、壁のマスを**掘る**(壁のマスでなければ`E-OPENING-NO-WALL`)。開口部どうしの重なりは`E-OVERLAP`。壁の端まで届く開口部は、壁どうしが合流した角の柱も掘る。2つの開口部が同じマスを掘るときは、両方の開口部を名指しする`E-OVERLAP`を1つだけ出す(重なりの種類は`carve`)。
+
+**開口部の解決**: 生成器は掘るだけではなくclaim(トンネルのマス・戻すブロックの透過性・配置の手続き)を登録し、全開口部のclaimが集まってから不変スナップショット上で一括に解決する。結果は部品IDや生成順に依存しない(IDは診断専用で、幾何と同点解消は座標・向きだけで決まる)。開口部は他の開口部が開けた穴を通って屋内に届いてよい。claimが満たせないとき(トンネルの先が角まわりの行き止まり)は、**1回だけ、角の局所補正**を試す: 窓は角の柱に続く直交壁の列をガラスに変えて角窓にする(`corner-return`)、扉は角まわりの壁の**内側だけ**(どの壁の外面でもない層)を掘って通す(`corner-dig`)。補正の歯止め: 外殻(厚さ1の壁の面)を破らない・他の開口部のclaim・他部品・予約空間を触らない・角を共有する直交壁1枚と宿主壁を越えない・上下の段に広げない・補正が次の補正を呼ばない(各claimの補正はそのclaimだけに見える)。直せたら`OpeningAdjustment`(`CompileResult.adjustments`)に正本を記録し、`W-OPENING-ADJUSTED`で知らせる。直せなければ`E-OPENING-BLOCKED`(=「どの局所補正でも屋内へ通せない」の意味。「塞がれたまま」の意味ではない)。「部屋どうしの壁を薄くする」ような大域的な調整はここでは行わずP18に送る。
 - **作業量の上限(P3で確定)**: 生成器が試す配置の回数は、占有セル1つあたり2回まで(`Canvas`の予算)。「検討したが空気のまま残したマス」(床の穴など)も1単位を使うので、何も置かない部品も仕事量に上限がある。発着場の上空の空きの確認は、他の部品が置かれたマスを調べた分だけ予算を使う(空きだったマスは使わない)。開口部が掘るマスは1マス1単位。前の検査で拒否された部品は、後の検査(発着場の上空の確認を含む)を受けない。
 **検証の既定**: 状態を持たない全ブロック=`EXACT`。階段・スラブ・扉・門・はしご・看板・ランタン・樽など=`STATE_SUBSET`(状態のうち、記した物だけ比べる)。ガラス板・柵など、隣で状態が変わる物=`BLOCK_ONLY`。稼働で変わる`open`・`powered`は`volatileProps`。置換の方針は、すべて`REPLACEABLE`(地形の切り盛りは、P4の整地が載せる)。
 
@@ -204,7 +206,8 @@
 | `E-OUT-OF-BOUNDS` | 敷地・区画の外(展開後の接続の端点が区画の外でも同じ。対象は越えた側のノード) | `PlanCompiler` | 範囲 |
 | `E-NOT-SUPPORTED` | 支えの無い部品(宙に浮く構造) | `BlueprintAnalyzer` | 柱・壁の追加 |
 | `E-OPENING-NO-WALL` | 壁の無い所の窓・扉 | `PlanCompiler` | 壁ID |
-| `E-OPENING-BLOCKED` | 掘った開口部が屋内に貫通しない(隣の壁に塞がれた行き止まり) | `PlanCompiler` | 位置の移動 |
+| `E-OPENING-BLOCKED` | 開口部が屋内に通じず、角の局所補正でも直せない(隣の壁に塞がれた行き止まりで、直すには外殻を破るか角の外まで及ぶしかない) | `PlanCompiler` | 位置の移動(`MOVE_OPENING`) |
+| `W-OPENING-ADJUSTED` | 塞がれた開口部を角の局所補正で通した記録(角窓化`corner-return`・内側掘り`corner-dig`。正本は`CompileResult.adjustments`の`OpeningAdjustment`) | `PlanCompiler` | (記録のみ・受け入れ不可) |
 | `E-ENCLOSURE-LEAK` | 屋内が閉じていない(壁・屋根の穴) | `BlueprintAnalyzer` | 穴の位置 |
 | `E-PORT-UNCONNECTED` | 必要なポートがつながっていない | `FactoryAnalyzer` | 接続の候補 |
 | `E-PORT-MISMATCH` | 種類・向きが合わない接続 | `FactoryAnalyzer` | 変換部品 |
@@ -243,7 +246,7 @@
 | `E-SITE-MISSING` | 敷地(`site`)が未設定 | `PlanCompiler` | `site(...)`を足す |
 | `E-SCRIPT-FORBIDDEN` | 建設のスクリプトで許可されていない命令(乱数・時刻・畑の命令・`create_task`等)を使った | 静的検査(`PlanScriptProfile`) | 許可された命令 |
 | `E-SCRIPT-LIMIT` | 建設のスクリプトが、実行の回数・時間の上限を超えた | 実行時 | 処理を減らす |
-**受け入れ可能(`acceptable=true`)なのは、`W-*`と`E-CLOG-RISK`だけ**。それ以外の`E-*`は受け入れ不可で、残っていれば承認できない(`01` 5節、`03` 0.2節)。
+**受け入れ可能(`acceptable=true`)なのは、`W-*`と`E-CLOG-RISK`だけ**。ただし`W-OPENING-ADJUSTED`は例外で受け入れ不可(承認すべきリスクではなく、既に行った補正の記録だから)。それ以外の`E-*`は受け入れ不可で、残っていれば承認できない(`01` 5節、`03` 0.2節)。
 
 将来のフェーズ(P16〜P21)向けに意味だけ先に確定したコード。enumへの追加と上の表への移動は、それぞれのフェーズで実装するときに行う：
 

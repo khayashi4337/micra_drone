@@ -9,6 +9,7 @@ import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.on
 import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.params;
 import static io.github.khayashi4337.micradrone.build.compile.CompileFixtures.shell;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -18,8 +19,10 @@ import io.github.khayashi4337.micradrone.build.compile.CompileResult;
 import io.github.khayashi4337.micradrone.build.compile.Placement;
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.Facing;
+import io.github.khayashi4337.micradrone.build.model.FixHint;
 import io.github.khayashi4337.micradrone.build.model.Issue;
 import io.github.khayashi4337.micradrone.build.model.LocalPos;
+import io.github.khayashi4337.micradrone.build.model.OpeningAdjustment;
 import io.github.khayashi4337.micradrone.build.model.ParamValue;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.model.Side;
@@ -578,9 +581,13 @@ class OpeningsTest {
     @Test
     void aDoorOnTheCornerColumnItselfIsSealedOff() {
         // u=6 is the column the south and east walls share. A single door's tunnel through it ends against the east
-        // wall's body on every layer: the opening would be a notch cut into the corner, not a passage into the hall.
+        // wall's body on every layer — and that wall is only one cell thick, so its body IS its outer face: the only
+        // way in would break the shell, which no correction may do.
         PlanNode cornerDoor = on(DOOR_ID, DOOR, WALL_S, Side.OUTER, HALL_SIDE - 1, 0, Map.of());
-        assertEquals(List.of("E-OPENING-BLOCKED:" + DOOR_ID), ids(compile(withOpening(cornerDoor))));
+        CompileResult r = compile(withOpening(cornerDoor));
+        assertEquals(List.of("E-OPENING-BLOCKED:" + DOOR_ID), ids(r));
+        assertEquals(List.of(new FixHint("MOVE_OPENING", Map.of("u", "5"))),
+                r.issues().getFirst().hints(), "sliding one cell off the corner would clear the east wall's band");
         // a refused opening changes nothing: the corner column still stands
         assertRefusedUntouched(generatedIn(hallWith(List.of()), Map.of()), cornerDoor, "E-OPENING-BLOCKED:" + DOOR_ID);
     }
@@ -606,23 +613,108 @@ class OpeningsTest {
     }
 
     @Test
-    void aDoorThatEndsInsideAThickAdjoiningWallsBandIsSealedOff() {
-        // with 2-thick walls the east wall fills u=5..6: a door ending at u=5 tunnels through the south wall only to
-        // face the east wall's body — one more column of dead end, still sealed
+    void aDoorThatEndsInsideAThickAdjoiningWallsBandIsDugThroughItsInside() {
+        // with 2-thick walls the east wall fills u=5..6: a door at u=5 tunnels through the south wall only to face
+        // the east wall's band. The corner is sealed, but a corridor dug through the wall band's inner layers —
+        // sideways out of the south wall's inner layer, never through any outer face — opens it
         List<PlanNode> thick2 = hallWithThickCorner(2, 2);
         thick2.add(on(DOOR_ID, DOOR, WALL_S, Side.OUTER, HALL_SIDE - 2, 0, Map.of()));
-        assertEquals(List.of("E-OPENING-BLOCKED:" + DOOR_ID), ids(compile(thick2)));
-        // one column further in the tunnel clears the east wall's band, so the door stands
+        CompileResult dug2 = compile(thick2);
+        assertEquals(List.of("W-OPENING-ADJUSTED:" + DOOR_ID), ids(dug2));
+        Map<LocalPos, BlockSpec> c2 = cells(dug2.manifest());
+        // the corridor leaves the tunnel through the south wall's inner layer at u=4, on both rows of the door
+        assertNull(c2.get(new LocalPos(4, 1, 1)), "the inner layer beside the corner is dug out");
+        assertNull(c2.get(new LocalPos(4, 2, 1)));
+        assertEquals(stoneBricks(), c2.get(new LocalPos(4, 3, 1)), "the row above the door is untouched");
+        assertEquals(stoneBricks(), c2.get(new LocalPos(4, 1, 0)), "the outer face of the south wall stands");
+        assertEquals(stoneBricks(), c2.get(new LocalPos(6, 1, 2)), "the outer face of the east wall stands");
+        assertEquals(doorBlock(NORTH, LOWER, LEFT), c2.get(new LocalPos(5, 1, 0)));
+        // the adjustment names what changed: the door, the wall that lost cells, the rule and the cells
+        assertEquals(1, dug2.adjustments().size());
+        OpeningAdjustment a2 = dug2.adjustments().getFirst();
+        assertEquals(DOOR_ID, a2.openingId());
+        assertEquals(List.of(WALL_S), a2.wallIds());
+        assertEquals("corner-dig", a2.rule());
+        assertEquals(List.of(
+                new OpeningAdjustment.ChangedCell(new LocalPos(4, 1, 1), WALL_S + "/" + STONE_BRICKS, "minecraft:air"),
+                new OpeningAdjustment.ChangedCell(new LocalPos(4, 2, 1), WALL_S + "/" + STONE_BRICKS, "minecraft:air")),
+                a2.cells());
+        // the warning is a record of a change already made, not a risk the user accepts
+        assertFalse(dug2.issues().getFirst().acceptable());
+
+        // with 3-thick walls the band is one layer deeper: the corridor slips out one column further along
+        List<PlanNode> thick3 = hallWithThickCorner(3, 3);
+        thick3.add(on(DOOR_ID, DOOR, WALL_S, Side.OUTER, HALL_SIDE - 3, 0, Map.of()));
+        CompileResult dug3 = compile(thick3);
+        assertEquals(List.of("W-OPENING-ADJUSTED:" + DOOR_ID), ids(dug3));
+        Map<LocalPos, BlockSpec> c3 = cells(dug3.manifest());
+        assertNull(c3.get(new LocalPos(3, 1, 2)), "the innermost layer beside the corner is dug out");
+        assertNull(c3.get(new LocalPos(3, 2, 2)));
+        assertEquals(stoneBricks(), c3.get(new LocalPos(3, 1, 0)), "the outer face of the south wall stands");
+        assertEquals(stoneBricks(), c3.get(new LocalPos(3, 1, 1)), "the middle layer stands: only the inside is dug");
+        assertEquals(1, dug3.adjustments().size());
+        assertEquals(List.of(
+                new OpeningAdjustment.ChangedCell(new LocalPos(3, 1, 2), WALL_S + "/" + STONE_BRICKS, "minecraft:air"),
+                new OpeningAdjustment.ChangedCell(new LocalPos(3, 2, 2), WALL_S + "/" + STONE_BRICKS, "minecraft:air")),
+                dug3.adjustments().getFirst().cells());
+
+        // one column further in than the corner band, the tunnel opens into the hall on its own — no correction
         List<PlanNode> clear2 = hallWithThickCorner(2, 2);
         clear2.add(on(DOOR_ID, DOOR, WALL_S, Side.OUTER, HALL_SIDE - 3, 0, Map.of()));
         assertTrue(compile(clear2).issues().isEmpty());
-        // with 3-thick walls the sealed band reaches in one more column
-        List<PlanNode> thick3 = hallWithThickCorner(3, 3);
-        thick3.add(on(DOOR_ID, DOOR, WALL_S, Side.OUTER, HALL_SIDE - 3, 0, Map.of()));
-        assertEquals(List.of("E-OPENING-BLOCKED:" + DOOR_ID), ids(compile(thick3)));
         List<PlanNode> clear3 = hallWithThickCorner(3, 3);
         clear3.add(on(DOOR_ID, DOOR, WALL_S, Side.OUTER, HALL_SIDE - 4, 0, Map.of()));
         assertTrue(compile(clear3).issues().isEmpty());
+    }
+
+    @Test
+    void aWindowAtTheCornerBecomesACornerWindow() {
+        // the pane at u=6 sits on the corner column the south and east walls share; the east wall seals its sight
+        // line, so the resolver wraps it around the corner: the east wall's next column is glazed too
+        PlanNode cornerWindow = on(WINDOW_ID, WINDOW, WALL_S, Side.OUTER, HALL_SIDE - 1, 1, Map.of());
+        CompileResult r = compile(withOpening(cornerWindow));
+        assertEquals(List.of("W-OPENING-ADJUSTED:" + WINDOW_ID), ids(r));
+        Map<LocalPos, BlockSpec> c = cells(r.manifest());
+        assertEquals(glassPane(), c.get(new LocalPos(6, 2, 0)), "the pane itself");
+        assertEquals(glassPane(), c.get(new LocalPos(6, 3, 0)));
+        assertEquals(glassPane(), c.get(new LocalPos(6, 2, 1)), "the return on the east wall's outer face");
+        assertEquals(glassPane(), c.get(new LocalPos(6, 3, 1)));
+        assertEquals(stoneBricks(), c.get(new LocalPos(6, 2, 2)), "the return does not run past the corner region");
+        assertEquals(4, countOf(c, GLASS_PANE));
+        assertEquals(1, r.adjustments().size());
+        OpeningAdjustment a = r.adjustments().getFirst();
+        assertEquals(WINDOW_ID, a.openingId());
+        assertEquals(List.of(WALL_E), a.wallIds());
+        assertEquals("corner-return", a.rule());
+        assertEquals(List.of(
+                new OpeningAdjustment.ChangedCell(new LocalPos(6, 2, 1), WALL_E + "/" + STONE_BRICKS, GLASS_PANE),
+                new OpeningAdjustment.ChangedCell(new LocalPos(6, 3, 1), WALL_E + "/" + STONE_BRICKS, GLASS_PANE)),
+                a.cells());
+    }
+
+    @Test
+    void aWindowMeetingAWallMidSpanIsNotACorner() {
+        // the pane at u=5 on a 2-thick south wall faces the east wall's band away from the corner: a correction may
+        // only ever wrap around the corner column, so nothing is dug or glazed — the window is refused
+        PlanNode midSpanWindow = on(WINDOW_ID, WINDOW, WALL_S, Side.OUTER, HALL_SIDE - 2, 1, Map.of());
+        List<PlanNode> nodes = hallWithThickCorner(2, 2);
+        nodes.add(midSpanWindow);
+        CompileResult r = compile(nodes);
+        assertEquals(List.of("E-OPENING-BLOCKED:" + WINDOW_ID), ids(r));
+        assertTrue(r.adjustments().isEmpty());
+        // the refusal leaves the wall it faced untouched
+        assertRefusedUntouched(generatedIn(hallWithThickCorner(2, 2), Map.of()), midSpanWindow,
+                "E-OPENING-BLOCKED:" + WINDOW_ID);
+    }
+
+    @Test
+    void aCornerDigDoesNotDependOnTheOpeningsId() {
+        // the corridor's cells come from the walls' geometry alone, so renaming the door changes only the issue's id
+        List<PlanNode> a = hallWithThickCorner(2, 2);
+        a.add(on("a-door", DOOR, WALL_S, Side.OUTER, HALL_SIDE - 2, 0, Map.of()));
+        List<PlanNode> z = hallWithThickCorner(2, 2);
+        z.add(on("z-door", DOOR, WALL_S, Side.OUTER, HALL_SIDE - 2, 0, Map.of()));
+        assertSameOutcome(compile(a), compile(z));
     }
 
     @Test

@@ -55,6 +55,7 @@
   10. **建築部品の生成**: 登録簿の`micra:`部品(22種)のすべてが生成器を持ち(登録簿と生成器の一致を検査するテスト)、金のファイル(小屋: 壁・床・屋根・扉・窓)と一致する。各部品の生成物が、規則から手で導いた値(小屋は238個)と一致する(占有体積は生成器が決める物で、宣言は生成器の写しになるので、宣言との一致は検査にならない)。`Conflict`の判定(`volatileProps`を無視し、別のブロックなら`PLAYER_MODIFIED`、空気なら`MISSING`)が単体テストで通る。
   11. **`SchemaGenerator`**: 登録簿から`PlanPatch`のスキーマを作り、`USER`の部品識別子が`enum`、`IMPLICIT`が出ず、`additionalProperties:false`が基本で、S-1で測った上限の文字数に収まる(超える規模では、パラメータ配列の方式に切り替わる)。
   12. **スクリプトの実行の限界**: 建設用の`Interpreter`が、総ステップ上限(既定100,000)と時間の上限(既定5秒)で止まり、`E-SCRIPT-LIMIT`になる。
+  13. **開口部の一括解決**: 全開口部のclaimを集めてから不変スナップショット上で一括に解決し、開口部のID改名・計画内の列挙順で結果(受理/拒否・施工リスト・ハッシュ)が変わらない(metamorphic test)。角に塞がれた窓は角窓へ変換(`corner-return`)、扉は角まわりの壁の内側だけを掘って通す(`corner-dig`)補正が`OpeningAdjustment`に記録され`W-OPENING-ADJUSTED`で知らされる。外殻(厚さ1の壁の面)を破るしかない場合は`E-OPENING-BLOCKED`と`MOVE_OPENING`の`FixHint`。
 - **実機確認**: なし(純Java)。ただし`runClient`が従来どおり起動することを確認。
 
 ### P4 サーバー施工ランタイム
@@ -155,6 +156,7 @@
 ### P18 動線と空きの予約
 
 - **作る物**: `ReservedSpace`・`SpacePurpose`・`CirculationReq`(`01` 14.1節)、Space Keeper(N-35)、Site Planner(N-10)の「動線・輸送の空きを足跡より先に予約」への変更、Zoning Fixer(N-11)の予約の扱い(侵入させない)、Router(N-18)の予約内経路の規則、`E-RESERVED-CONFLICT`・`E-CIRCULATION-BROKEN`。
+- **P3からの送り**: 開口部の補正(P3)は「外側→開口部→室内側の局所的な空気」までを受け持ち、その先から部屋・機械・出口などの端点までの大域的な到達はここ(P18の`CirculationReq`/Space Keeper)の責務。同じclaim表現(空気のマスの集合を先に集めて一括で判定する)を使い回すのがよい。「部屋どうしの壁を薄くする」ような内壁の調整もここ(P3には内壁が無いため)。
 - **依存**: P6(`VoxelClassGrid`・`SemanticMap`)、P7(Site Planner)。**先に必要なスパイク**: S-16(歩行・ドローン・荷物の通り道の断面と曲がりの実測)。
 - **完了の実測条件**: (1)予約した空き(`ReservedSpace`)に部品を置く計画が、施工の前に`E-RESERVED-CONFLICT`で拒否される。(2)出入口から各部屋・スロットまで`CirculationReq`の断面で歩ける建屋は通り、壁で分断した建屋は`E-CIRCULATION-BROKEN`(塞いでいる位置つき)になる。(3)「子供が建物の中をまっすぐ歩ける」小屋で、実機で入口から奥の部屋まで障害物なく歩ける(林さんに見てもらう)。(4)用途の合わない予約をRouterが避け、合う`TRANSPORT_PATH`の予約の中を通す。(5)廊下の断面の数値はS-16の実測値であり、推測で書いた値は無い。
 

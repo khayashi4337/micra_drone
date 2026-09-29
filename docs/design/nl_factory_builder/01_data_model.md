@@ -153,9 +153,19 @@ sealed interface AssemblyExpectation {                       // 結果の型は�
 }
 record AssemblyResult(String groupId, String assembledId /*エンティティUUIDまたはサブレベルID*/, int movedBlockCount, long atTick)
 // 組み立て後の個体は、PlacedRegistry.assembliesに記録する。解体・撤去・ロールバックは、この記録で個体を特定して行う
+
+record CompileResult(PlacementManifest manifest /*ERRORがあればnull*/, List<Issue> issues,
+                     List<OpeningAdjustment> adjustments /*コンパイラが開口部を通すために行った局所補正の正本*/)
+record OpeningAdjustment(String openingId /*直した開口部*/, List<String> wallIds /*マスの変わった壁*/,
+                         String rule /*"corner-return"(角窓化)|"corner-dig"(角まわりの内側掘り)*/, int ruleVersion,
+                         List<ChangedCell> cells /*施工順に整列*/, String reason /*機械向けの理由*/,
+                         String note /*子供向けの日本語の説明*/)
+record ChangedCell(LocalPos pos, String before /*変わる前の所有者とブロック("wall-e/minecraft:stone_bricks")*/,
+                   String after /*置いたブロックID。空気にしただけなら"minecraft:air"*/)
+// W-OPENING-ADJUSTEDはこの記録の投影(ユーザー向けの告知)で、acceptableではない — 承認するリスクではなく、既に行った補正の記録だから
 ```
 
-- `PlanCompiler.compile(expandedPlan, registry, policy, SurveyRef survey) → CompileResult(manifest | issues)`は**決定論**(`policy`は`PlaceableBlockPolicy`。入力は、サーバーが発行して固定した地形調査。世界の現在の状態そのものではない。04 F-3。**P3では`SurveyRef`は記録するだけで、地形の切り盛りはP4が載せる**): 同じ入力から、バイト単位で同じ施工リスト(=同じハッシュ)ができる。`ERROR`があれば`manifest`は`null`。
+- `PlanCompiler.compile(expandedPlan, registry, policy, SurveyRef survey) → CompileResult(manifest | issues, adjustments)`は**決定論**(`policy`は`PlaceableBlockPolicy`。入力は、サーバーが発行して固定した地形調査。世界の現在の状態そのものではない。04 F-3。**P3では`SurveyRef`は記録するだけで、地形の切り盛りはP4が載せる**): 同じ入力から、バイト単位で同じ施工リスト(=同じハッシュ)ができる。`ERROR`があれば`manifest`は`null`。
 - 施工順は`BuildPhase`の昇順、その中は、局所座標で下から上(v)・手前から奥(w)・左から右(u)(v3の「動力 → 上流 → 下流」を`POWER→UPSTREAM→DOWNSTREAM`で表す)。`ASSEMBLE`は、同じグループの部品を全部置いた後に、組み立てを実行する(風車の帆、飛行船)。
 - `hash`は`dimension`・`placements`・`assemblies`・`bom`・`registryVersion`・`worldBounds`から作る(`Placement`の`index`と`partNodeId`は含めない。並びは施工順で決まるので`index`は冗長で、`partNodeId`は逆引き用の情報。同じ建物は同じハッシュにする)。**承認の対象はこのハッシュ**(D-3)。
 - **組み立てで消える部品の検証**(`VerifyMode.ASSEMBLED_AWAY`): 組み立て後は、その位置に元のブロックは無いのが正しい。`SnapshotDiff`はこの配置を「不在=正常」とみなし、代わりに`AssemblyStep.expect`(生成されたエンティティの数・移動したブロック数)を検査する。組み立て前の検査で、置いたブロックが有ることも確認する。L7が、組み立てで消えたブロックを「欠落」と誤判定して置き直すことは無い。

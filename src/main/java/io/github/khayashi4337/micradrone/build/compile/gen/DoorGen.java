@@ -46,7 +46,9 @@ final class DoorGen implements PartGenerator {
                 fills.put(spot.at(di, dr), OpeningResolver.Perm.PASSABLE);
             }
         }
-        ctx.claimOpening(node, spot, OpeningResolver.Contract.PASSAGE, fills, c -> emit(c, node, p, kind, spot));
+        // a passage claim never asks the resolver for extra glazed cells (the second argument is the corner
+        // return's face, a window-only correction)
+        ctx.claimOpening(node, spot, OpeningResolver.Contract.PASSAGE, fills, (c, extra) -> emit(c, node, p, kind, spot));
     }
 
     private static void emit(GenContext ctx, PlanNode node, Params p, String kind, OpeningSpot spot) {

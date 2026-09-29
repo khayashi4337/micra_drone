@@ -5,7 +5,8 @@ import java.util.Optional;
 /**
  * The common vocabulary of problems across every loop (design doc 05, section 4.1). Adding a code means
  * adding it to that table too; a test keeps the two in step. Only warnings and E-CLOG-RISK may be accepted
- * by the user (01, section 5).
+ * by the user (01, section 5) — except W-OPENING-ADJUSTED, which reports a correction already made and is
+ * a record, not a risk to accept.
  */
 public enum IssueCode {
     E_SCHEMA("E-SCHEMA"),
@@ -17,6 +18,7 @@ public enum IssueCode {
     E_NOT_SUPPORTED("E-NOT-SUPPORTED"),
     E_OPENING_NO_WALL("E-OPENING-NO-WALL"),
     E_OPENING_BLOCKED("E-OPENING-BLOCKED"),
+    W_OPENING_ADJUSTED("W-OPENING-ADJUSTED"),
     E_ENCLOSURE_LEAK("E-ENCLOSURE-LEAK"),
     E_PORT_UNCONNECTED("E-PORT-UNCONNECTED"),
     E_PORT_MISMATCH("E-PORT-MISMATCH"),
@@ -75,7 +77,7 @@ public enum IssueCode {
 
     /** Whether the user may accept the risk and go on: warnings and E-CLOG-RISK only. */
     public boolean acceptable() {
-        return label.startsWith(WARNING_LABEL_PREFIX) || this == E_CLOG_RISK;
+        return (label.startsWith(WARNING_LABEL_PREFIX) && this != W_OPENING_ADJUSTED) || this == E_CLOG_RISK;
     }
 
     public static Optional<IssueCode> fromLabel(String label) {

@@ -146,7 +146,7 @@ public final class PlanCompiler {
         if (issues.stream().anyMatch(Issue::isError)) {
             return new CompileResult(null, issues);
         }
-        return new CompileResult(build(plan, site, registry, canvas, byId), issues);
+        return new CompileResult(build(plan, site, registry, canvas, byId), issues, ctx.adjustments());
     }
 
     /**

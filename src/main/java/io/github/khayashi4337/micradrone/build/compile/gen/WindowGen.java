@@ -8,6 +8,7 @@ import io.github.khayashi4337.micradrone.build.parts.Params;
 import io.github.khayashi4337.micradrone.build.parts.PartParams;
 import io.github.khayashi4337.micradrone.build.parts.Roles;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /** A window in a wall: one pane, a wide window of three, or an arch window with stairs at the top corners. */
@@ -54,10 +55,11 @@ final class WindowGen implements PartGenerator {
             fills.put(spot.at(FIRST_COLUMN, ARCH_FULL_ROWS), OpeningResolver.Perm.OPAQUE);
             fills.put(spot.at(LAST_COLUMN, ARCH_FULL_ROWS), OpeningResolver.Perm.OPAQUE);
         }
-        ctx.claimOpening(node, spot, OpeningResolver.Contract.VIEW, fills, c -> emit(c, node, p, kind, spot));
+        ctx.claimOpening(node, spot, OpeningResolver.Contract.VIEW, fills, (c, extra) -> emit(c, node, p, kind, spot, extra));
     }
 
-    private static void emit(GenContext ctx, PlanNode node, Params p, String kind, OpeningSpot spot) {
+    private static void emit(GenContext ctx, PlanNode node, Params p, String kind, OpeningSpot spot,
+                             List<LocalPos> extraFills) {
         boolean arch = kind.equals(KIND_ARCH);
         boolean lattice = p.b(PartParams.LATTICE);
         int width = kind.equals(KIND_PANE) ? PANE_WIDTH : WIDE_WIDTH;
@@ -81,6 +83,10 @@ final class WindowGen implements PartGenerator {
             // the corner stairs are upside down with their backs to the outer ends of the arch
             ctx.emitAbs(node, spot.at(FIRST_COLUMN, top), BlockForms.stairs(stairs, spot.wall().along().opposite(), true));
             ctx.emitAbs(node, spot.at(LAST_COLUMN, top), BlockForms.stairs(stairs, spot.wall().along(), true));
+        }
+        // the corner return's face cells the resolver asked for: the window's own glass on them
+        for (LocalPos pos : extraFills) {
+            ctx.emitAbs(node, pos, glass);
         }
     }
 }

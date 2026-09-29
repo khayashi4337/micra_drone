@@ -56,7 +56,7 @@ class GenContextTest {
      */
     private static void claim(GenContext ctx, PlanNode node, WallInfo wall, List<LocalPos> tunnel) {
         ctx.claimOpening(new OpeningResolver.Claim(node, new OpeningSpot(wall, 0, 0, true, 0, 1, 1), tunnel,
-                OpeningResolver.Contract.PASSAGE, Map.of(), c -> {
+                OpeningResolver.Contract.PASSAGE, Map.of(), (c, extra) -> {
                 }));
     }
 

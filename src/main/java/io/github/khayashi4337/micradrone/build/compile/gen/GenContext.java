@@ -7,6 +7,7 @@ import io.github.khayashi4337.micradrone.build.model.Facing;
 import io.github.khayashi4337.micradrone.build.model.Issue;
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.LocalPos;
+import io.github.khayashi4337.micradrone.build.model.OpeningAdjustment;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.model.Rot;
 import io.github.khayashi4337.micradrone.build.model.Side;
@@ -22,7 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 /** What a generator may use: the palette, the canvas, node geometry, and the ways to report a problem. */
 public final class GenContext {
@@ -283,9 +284,12 @@ public final class GenContext {
      * Registers an opening's claim — the spot it takes on its wall, what it puts back and where, and the emitter that
      * places those blocks if the claim is accepted. Nothing is carved or placed yet: the claims of every opening are
      * resolved together by {@link #resolveOpenings}, so the outcome cannot depend on the order they were claimed in.
+     * The emitter's second argument names extra cells the resolver wants a transparent fill on (a corner window's
+     * return face).
      */
     public void claimOpening(PlanNode node, OpeningSpot spot, OpeningResolver.Contract contract,
-                             Map<LocalPos, OpeningResolver.Perm> fills, Consumer<GenContext> emit) {
+                             Map<LocalPos, OpeningResolver.Perm> fills,
+                             BiConsumer<GenContext, List<LocalPos>> emit) {
         openings.add(new OpeningResolver.Claim(node, spot, spot.cells(), contract, fills, emit));
     }
 
@@ -304,16 +308,22 @@ public final class GenContext {
 
     /**
      * The cells the given emitter would place, collected instead of placed: an accepted opening's fills go down only
-     * once its whole tunnel is carved, and a refusal inside the emitter leaves the wall untouched.
+     * once its whole tunnel is carved, and a refusal inside the emitter leaves the wall untouched. {@code extraFills}
+     * is the correction's extra transparent cells (the corner return's face), passed on to the emitter.
      */
-    List<Canvas.Cell> captureEmit(Consumer<GenContext> emit) {
+    List<Canvas.Cell> captureEmit(BiConsumer<GenContext, List<LocalPos>> emit, List<LocalPos> extraFills) {
         List<Canvas.Cell> buffer = new ArrayList<>();
         captured = buffer;
         try {
-            emit.accept(this);
+            emit.accept(this, extraFills);
         } finally {
             captured = null;
         }
         return buffer;
+    }
+
+    /** The opening corrections the last {@link #resolveOpenings} made, for the compile result's record. */
+    public List<OpeningAdjustment> adjustments() {
+        return openings.adjustments();
     }
 }

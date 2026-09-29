@@ -67,9 +67,26 @@ public record WallInfo(String id, StructureInfo structure, Facing side, int leve
      * is inside both walls' prisms.
      */
     public boolean contains(LocalPos p) {
+        return prismCoords(p) != null;
+    }
+
+    /** The position along the wall's span (0-based from {@link #from}) of {@code p}, or -1 when outside the prism. */
+    public int alongAt(LocalPos p) {
+        int[] coords = prismCoords(p);
+        return coords == null ? -1 : coords[0];
+    }
+
+    /** The layer of {@code p} (0 = the outer face, toward the wall's side), or -1 when outside the prism. */
+    public int layerAt(LocalPos p) {
+        int[] coords = prismCoords(p);
+        return coords == null ? -1 : coords[1];
+    }
+
+    /** {@code p}'s [along, across] coordinates in the wall's prism, or {@code null} when the prism does not hold it. */
+    private int[] prismCoords(LocalPos p) {
         LocalPos o = structure.origin();
         if (p.v() < baseV || p.v() >= baseV + height) {
-            return false;
+            return null;
         }
         int along = (runsAlongU(side) ? p.u() - o.u() : p.w() - o.w()) - from;
         int across = switch (side) {
@@ -78,7 +95,7 @@ public record WallInfo(String id, StructureInfo structure, Facing side, int leve
             case EAST -> structure.width() - 1 - (p.u() - o.u());
             case WEST -> p.u() - o.u();
         };
-        return along >= 0 && along < length && across >= 0 && across < thickness;
+        return along >= 0 && along < length && across >= 0 && across < thickness ? new int[] {along, across} : null;
     }
 
     /**
