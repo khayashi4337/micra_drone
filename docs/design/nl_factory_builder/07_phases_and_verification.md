@@ -195,7 +195,7 @@
 | S-5b | Router用の、接続の種類ごとの動かし方の規則(ベルトの斜め・曲がり、シュート、パイプ) | 実機で実験して表にする | P11の前 | `Router`の規則表 |
 | S-5c | 試運転用の`BlockEntity`アクセス(品物の投入・観測、回転数・過負荷の読み取り)と、**ブレイズバーナーへの燃料の自動補給の可否** | ソースと実機で確認 | P11の前 | `Commissioning`の実装方法、`mod:mixer_station`の燃料補給部 |
 | S-5d | 動力源の出力の実測: 水車の水流の配置、風車の帆の数、蒸気機関のボイラーの状態と、回転数・容量の関係 | 実機で条件を変えて計測 | P10の前 | `PowerSourceModel` |
-| S-6 | サーバー宛て・クライアント宛てのカスタムペイロードの実際の上限 | 大きさを変えて送って実測 | P4の前 | 分割の大きさ、上限の値 |
+| S-6 | サーバー宛て・クライアント宛てのカスタムペイロードの実際の上限 | 大きさを変えて送って実測。ソースで確認済み(`docs/investigations/spk_s6_payload_limits.md`)。実機の測定はdevkitの測定用ペイロードで自動(P4 Task 32) | P4の前 | 分割の大きさ、上限の値 |
 | S-7 | ModDevGradle 2.0.141でGameTestサーバーが動くか(Create入りで)。**既に分かっていること**: `build.gradle`には`gameTestServer`の実行設定が既にある(`type = "gameTestServer"`。テストが1つも無いとサーバーが落ちる、とコメントにある)。動く実例: `DurdeuVlad/dwurdys-storynpcs`のPR #96(NeoForge 21.1.248系。`./gradlew runGameTestServer`が窓なしで起動し、終了コードで成否を返す。moddev-gradleに`gameTestServer()`という近道の書き方は無く、`type`で指定する)。**未確認**: このリポジトリで、Create入りのまま動くこと | `runGameTestServer`を、実際に`@GameTest`を1つ書いて試す | P10の前(早めに) | `FidelityLab`の実行方式(GameTestか、自己診断コマンドか) |
 | S-8 | Aeronauticsの飛行船の組み立て(物理アセンブラでブロックがサブレベルになる手順、消え方、**組み立て後の検証方法**、組み立ての結果の型(Createのコントラプションのエンティティか、Sableのサブレベルか。`AssemblyExpectation`の形を確定))、操縦・自動化(舵輪・操縦桿・センサー・レッドストーン)、係留・発着の仕組み(ドッキングコネクター)、**組み立て後の飛行が世界に与える影響(衝突による破壊、区画外への着陸)**、公開API | 実機での組み立てとjar/ソースの調査 | P13の前 | 飛行船テンプレート、`AssemblySpec`、Logistics Planner・`cargo_loader`の設計、運用の自動化の範囲 |
 | S-9 | 他modの保護(設置イベント)との互換: 実プレイヤーでなく`FakePlayer`/所有者を主体として`BlockEvent.EntityPlaceEvent`を出したときの挙動 | 開発環境で簡単な保護のテスト用リスナーを作って確認 | P4の前 | `PlacementPolicy`の実装 |
