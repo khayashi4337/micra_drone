@@ -216,4 +216,36 @@ class BuildPurityTest {
         assertEquals(0, violations(Path.of("X.java"),
                 "// mentions net.minecraft in a comment\n import java.util.List;\n").size());
     }
+
+    @Test
+    void theConstructionCoreIsPureAndDoesNotReachIntoAdapters() throws IOException {
+        Path core = ROOT.resolve("construction/core");
+        assertTrue(Files.isDirectory(core), "construction.core must exist");
+        List<String> all = new ArrayList<>();
+        Pattern adapter = Pattern.compile("^\\s*import\\s+(static\\s+)?io\\.github\\.khayashi4337\\.micradrone\\."
+                + "(construction\\.(?!core\\.)|drone\\.|client\\.)");
+        for (Path p : javaFiles(core)) {
+            String text = Files.readString(p, StandardCharsets.UTF_8);
+            all.addAll(violations(p, text));
+            int n = 0;
+            for (String line : text.split("\n", -1)) {
+                n++;
+                if (adapter.matcher(line).find()) {
+                    all.add(p + ":" + n + ": " + line.trim());
+                }
+            }
+        }
+        assertEquals(List.of(), all);
+    }
+
+    @Test
+    void theBuildPackagesDoNotDependOnConstruction() throws IOException {
+        List<String> all = new ArrayList<>();
+        for (Path p : javaFiles(ROOT.resolve("build"))) {
+            if (Files.readString(p, StandardCharsets.UTF_8).contains("import io.github.khayashi4337.micradrone.construction.")) {
+                all.add(p.toString());
+            }
+        }
+        assertEquals(List.of(), all, "build.* is the lower layer; construction.core builds on it, never the reverse");
+    }
 }

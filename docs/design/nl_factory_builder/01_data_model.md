@@ -262,9 +262,10 @@ record ConstructionJob(
     JobState state, PauseReason pauseReason, int cursor, int total, int repairRound,
     String claimId, MaterialPolicy materialPolicy,
     String journalFile, String ledgerFile /*別ファイル。SavedDataには置かない*/,
-    String lastError, long createdTick)
+    String lastError, long createdTick,
+    List<String> acceptedRiskIds /*F-3: 受け入れたリスクをジョブに記録*/)
 enum JobState { PENDING_APPROVAL, QUEUED, RUNNING, PAUSED, VERIFYING, REPAIRING, ASSEMBLING, VERIFIED, PARTIAL, FAILED, CANCELLED, ROLLED_BACK }
-enum PauseReason { OWNER_OFFLINE, CHUNK_UNLOADED, MATERIALS_MISSING, SERVER_BUSY, RECOVERY_NEEDED /*記録ファイルの破損・欠落*/, USER }
+enum PauseReason { OWNER_OFFLINE, CHUNK_UNLOADED, MATERIALS_MISSING, SERVER_BUSY, RECOVERY_NEEDED /*記録ファイルの破損・欠落*/, SITE_CHANGED /*調査の後で位置が置けなくなった(F-3の E-SITE-CHANGED)*/, USER }
 
 record UndoEntry(IntPos pos, BlockSpec before)          // ブロックエンティティを持つブロックの置換は禁止(F-5)なので、NBT本体は持たない
 record MaterialLedger(int schemaVersion, Map<Integer,String> consumedByPlacementIndex /*設置ごとの消費。冪等*/, Map<String,Integer> reserved)
@@ -485,7 +486,9 @@ enum EffectKind { NONE, BREAK, FLUID, PROJECTILE, MOVE_STRUCTURE }
 | `lang`・`lang.ast`(既存) | 言語の字句・構文・`Interpreter`に、建設の橋(`PlanApi`・`PlanRunLimits`・`PlanCommandDispatcher`・`PlanModeDroneApi`)を足す | なし |
 | `build.knowledge` | `ModuleLibrary`、`KnowledgeStore`の型 | なし |
 | `build.ai` | `BuildOrchestrator`、`StageSpec`、`LoopBudget`、各段のプロンプトと検証 | なし(CLI呼び出しは`chat`側の橋渡し) |
-| `construction` | `ConstructionJob`、`ConstructionExecutor`、`PlacementApplier`、`SafetyEnvelope`、`PlaceableBlockPolicy`、`MaterialPolicy`、`SiteClaimStore`、`ServerStateReader`、`ServerWorkerPool`、`ConstructionBudget`、`DroneShow`、`Commissioning`、`RuntimeMonitor`、サーバー側の調査と`RecipeSource`実装 | **あり(サーバー)** |
+| `construction.core`(P4で新設) | 施工ランタイムの判断のすべて: `ConstructionJob`・状態機械・置換の規則(`ReplaceRules`)・安全枠(`SafetyEnvelope`)・施工予算(`ConstructionBudget`)・記録(`Journal`・`PlacedRegistry`・`MaterialLedger`)・設置の実行(`ConstructionExecutor`)・区画(`ClaimBook`)・承認(`ApprovalDesk`)・ジョブの進行(`JobService`)・保存と復旧・分割ペイロードの組み立て・`ServerWorkerPool`。`build.*`の上の層で、`construction`(アダプタ)・`drone`・`client`をimportしない | なし |
+| `build.analyze`(P4で`VoxelClassGrid`だけ先に置く) | 範囲読み取りの分類グリッド。解析器はP6 | なし |
+| `construction` | `construction.core`の型をMinecraftにつなぐ薄いアダプタ: `ServerWorldPort`・`ServerStateReader`・`ServerSurveyor`・`ConstructionRuntime`・`ConstructionJobStore`(`SavedData`)・`PlacementGuard`・`InventoryMaterials`・`DroneShow`・`BuildCommands`・`ConstructionConfig`、サーバー側の`RecipeSource`実装(P7)・`Commissioning`(P11)・`RuntimeMonitor`(P13) | **あり(サーバー)** |
 | `construction.net` | ペイロード群 | あり |
 | `client.build` | レビュー画面、ホログラム、`PartAtlasRenderer`、`InGameRenderer`、画像表示、`LoopEscalationScreen`、`RouteChooserScreen` | **あり(クライアント)** |
 | `chat`(既存) | `ClaudeCliBridge`に構造化出力・画像入力・予算指定を追加、`CodexCliBridge`を新設、`ChatKey`の導入 | なし |
@@ -493,7 +496,7 @@ enum EffectKind { NONE, BREAK, FLUID, PROJECTILE, MOVE_STRUCTURE }
 | `build.device` | 機器層の純Java部分(13節): `DeviceDescriptor`・`DeviceRegistry`・指示の検査(`DeviceGate`)・監視記録の型 | なし |
 | `integration`(新設) | modのクラス(Create・Ponder・Flywheel・Registrate・Aeronautics・Sable・将来の能力パックのmod)に触れる橋渡しだけ。**modが入っているとModListで確かめてから読み込む**。他のパッケージがこれらのクラスをimport・参照することは`OptionalModBoundaryTest`が禁止する(F-11・F-25) | **あり(該当mod)** |
 
-- **依存の向きは固定されている**: `lang.ast`と`build.model`は内部に何も見ない。`build.parts`は`build.model`、`build.compile.gen`は`build.model`と`build.parts`、`lang`は`lang.ast`・`build.model`・`build.parts`、`build.plan`は`build.model`・`build.parts`・`lang`、`build.compile`は`build.model`・`build.parts`・`build.plan`・`build.compile.gen`、`build.script`は`build.model`・`build.parts`・`lang`・`lang.ast`を見る。`BuildPurityTest`が、この向きと「Minecraft・NeoForge・Createをimportしない」を機械的に検査する(新しい向きを足すときは設計の変更として扱う)。P3の時点では、`build.*`を呼ぶMinecraft側のコードはまだ無い(P4の`construction`が載せる)。`lang`を呼ぶ既存の呼び出し側は、`drone`(畑の言語)と`client`(構文ハイライト)。`integration`パッケージは、build.*の型(13節)を実装してmodの実物に結びつける層で、**他のパッケージから`integration`をimportすることは禁止しないが、`integration`以外がmodのクラスに触れることを`OptionalModBoundaryTest`が禁止する**(向きの不変条件は「`integration`だけがmodのクラス名を知る」)。
+- **依存の向きは固定されている**: `lang.ast`と`build.model`は内部に何も見ない。`build.parts`は`build.model`、`build.compile.gen`は`build.model`と`build.parts`、`lang`は`lang.ast`・`build.model`・`build.parts`、`build.plan`は`build.model`・`build.parts`・`lang`、`build.compile`は`build.model`・`build.parts`・`build.plan`・`build.compile.gen`、`build.script`は`build.model`・`build.parts`・`lang`・`lang.ast`を見る。`BuildPurityTest`が、この向きと「Minecraft・NeoForge・Createをimportしない」を機械的に検査する(新しい向きを足すときは設計の変更として扱う)。P3の時点では、`build.*`を呼ぶMinecraft側のコードはまだ無い(P4の`construction`が載せる)。`lang`を呼ぶ既存の呼び出し側は、`drone`(畑の言語)と`client`(構文ハイライト)。`integration`パッケージは、build.*の型(13節)を実装してmodの実物に結びつける層で、**他のパッケージから`integration`をimportすることは禁止しないが、`integration`以外がmodのクラスに触れることを`OptionalModBoundaryTest`が禁止する**(向きの不変条件は「`integration`だけがmodのクラス名を知る」)。`construction.core`は`build.*`と`chat.MiniJson`だけを見る。`build.*`は`construction`を見ない(`BuildPurityTest`が検査)。
 
 ## 13. 能力パック・機器モデル・未知のmodの読み解き(D-30〜D-32)
 
