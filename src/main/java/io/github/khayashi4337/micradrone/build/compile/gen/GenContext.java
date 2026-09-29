@@ -15,17 +15,14 @@ import io.github.khayashi4337.micradrone.build.parts.Params;
 import io.github.khayashi4337.micradrone.build.parts.PartParams;
 import io.github.khayashi4337.micradrone.build.parts.PartType;
 import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.TreeSet;
+import java.util.function.Consumer;
 
 /** What a generator may use: the palette, the canvas, node geometry, and the ways to report a problem. */
 public final class GenContext {
@@ -40,9 +37,6 @@ public final class GenContext {
     private static final String KEY_PARENT = "parent";
     private static final String KEY_FROM = "from";
     private static final String KEY_LENGTH = "length";
-    private static final String KEY_CARVE = "carve";
-    /** The six axis steps a flood fill through the wall's cells may take. */
-    private static final int[][] NEIGHBOURS = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
 
     // Parameter names of the structure and wall parts.
     private static final String PART_HALF = "half";
@@ -62,9 +56,11 @@ public final class GenContext {
     private final Map<String, LocalPos> origins;
     private final Map<String, NodeInfo> infoCache = new HashMap<>();
     private final Map<String, Optional<WallInfo>> walls = new HashMap<>();
-    private final Map<LocalPos, String> carvedBy = new HashMap<>();
+    private final OpeningResolver openings = new OpeningResolver();
     private final Set<String> reportedWalls = new HashSet<>();
     private final Set<String> refused = new HashSet<>();
+    /** Non-null while an accepted opening's emitter runs: its cells are collected, not placed (see resolveOpenings). */
+    private List<Canvas.Cell> captured;
 
     public GenContext(PartTypeRegistry registry, Palette palette, Canvas canvas, List<Issue> issues,
                       Map<String, PlanNode> nodes, Map<String, LocalPos> origins) {
@@ -86,6 +82,16 @@ public final class GenContext {
 
     public PlanNode node(String id) {
         return nodes.get(id);
+    }
+
+    /** Every node of the plan, for the passes that need the whole picture (the opening claims, for instance). */
+    Map<String, PlanNode> nodes() {
+        return nodes;
+    }
+
+    /** The issues reported so far: passes that run outside a node (the claim resolver) add theirs here. */
+    List<Issue> issues() {
+        return issues;
     }
 
     /** Records that the node's generator refused it (its issue is reported), so that no later pass works on it. */
@@ -264,129 +270,50 @@ public final class GenContext {
     private void put(PlanNode node, LocalPos pos, BlockSpec block, Map<String, String> blockEntity, String mergeGroup,
                      String mergeVariant) {
         PartType type = registry.get(node.type());
-        canvas.put(new Canvas.Cell(pos, block, BlockForms.verifyFor(block), type.phase(), blockEntity, node.id(), mergeGroup,
-                mergeVariant));
-    }
-
-    /**
-     * Removes the cells an opening replaces. Refuses (and changes nothing) if any is not a wall cell of this building or
-     * was already carved. A cell of another wall of the same building counts only when it is a shared corner cell: one
-     * merge group, and the owning wall on a different axis. A cell of a parallel wall — or of a wall of another
-     * building — is not this opening's to take. An opening that must stay on its own wall checks its extent first
-     * (OpeningSpot.carved). A wall's extent includes its end columns, which the neighbouring wall shares (the
-     * building's corner), so an opening that reaches a wall's end removes that corner column too, and the neighbouring
-     * wall ends in the opening as well.
-     * A cell listed twice counts as one. Every cell looked at is one unit of work, refused or not.
-     */
-    public void carve(PlanNode opener, WallInfo wall, List<LocalPos> cells) {
-        int notWall = 0;
-        LocalPos firstBad = null;
-        int overlapping = 0;
-        LocalPos firstOverlap = null;
-        Set<String> earlierOpeners = new TreeSet<>();
-        Set<LocalPos> distinct = new LinkedHashSet<>(cells);
-        for (LocalPos pos : distinct) {
-            canvas.charge();
-            String earlier = carvedBy.get(pos);
-            if (earlier != null) {
-                earlierOpeners.add(earlier);
-                overlapping++;
-                if (firstOverlap == null) {
-                    firstOverlap = pos;
-                }
-                continue;
-            }
-            Canvas.Cell c = canvas.get(pos);
-            // a corner cell shared with the neighbouring wall belongs to whichever wall was generated first; it is
-            // this opening's to take only when the owning wall is a perpendicular one (same merge group, other axis)
-            boolean ownWall = c != null && (c.ownerId().equals(wall.id())
-                    || (wall.cornerGroup().equals(c.mergeGroup()) && !wall.axis().equals(c.mergeVariant())));
-            if (!ownWall) {
-                notWall++;
-                if (firstBad == null) {
-                    firstBad = pos;
-                }
-            }
-        }
-        if (overlapping > 0) {
-            // The one report of this overlap: it names every opening involved (in dictionary order, as the canvas names a
-            // pair of overlapping parts), the number of cells and the first one.
-            Set<String> involved = new TreeSet<>(earlierOpeners);
-            involved.add(opener.id());
-            throw new GenAbort(Issue.of(IssueCode.E_OVERLAP, KEY_CARVE, List.copyOf(involved),
-                    opener.id() + "の開口部が、別の開口部(" + String.join(",", earlierOpeners) + ")と重なっています(" + overlapping
-                            + "マス。最初は " + Canvas.posText(firstOverlap) + ")",
-                    Map.of(Canvas.DATA_COUNT, String.valueOf(overlapping), Canvas.DATA_FIRST_POS, Canvas.posText(firstOverlap)),
-                    List.of()), false);
-        }
-        if (notWall > 0) {
-            throw new GenAbort(Issue.of(IssueCode.E_OPENING_NO_WALL, "", List.of(opener.id()),
-                    opener.id() + "の開口部が、壁(" + wall.id() + ")の外にはみ出しています(壁でないマスが" + notWall + "個。最初は "
-                            + Canvas.posText(firstBad) + ")",
-                    Map.of(Canvas.DATA_COUNT, String.valueOf(notWall)), List.of()), false);
-        }
-        for (LocalPos pos : distinct) {
-            canvas.remove(pos);
-            carvedBy.put(pos, opener.id());
+        Canvas.Cell cell = new Canvas.Cell(pos, block, BlockForms.verifyFor(block), type.phase(), blockEntity, node.id(),
+                mergeGroup, mergeVariant);
+        if (captured != null) {
+            captured.add(cell);
+        } else {
+            canvas.put(cell);
         }
     }
 
     /**
-     * Refuses (E-OPENING-BLOCKED, changing nothing) an opening whose tunnel has no way out on the inside. A flood
-     * fill starts from every cell the opening would take, may pass through cells an earlier opening carved out of a
-     * wall (its tunnel continues there), and never steps through a standing cell; it succeeds on reaching a cell
-     * inside the building's footprint that no wall of the building covers — the room behind the wall. The search
-     * stays inside the footprint and inside the tunnel's own rows, so it cannot slip out under a storey or past the
-     * building's edge. The corner column is the case that fails: the adjoining wall fills every cell the tunnel could
-     * open into. Callers run this before {@link #carve}, so a refused opening leaves the canvas untouched.
+     * Registers an opening's claim — the spot it takes on its wall, what it puts back and where, and the emitter that
+     * places those blocks if the claim is accepted. Nothing is carved or placed yet: the claims of every opening are
+     * resolved together by {@link #resolveOpenings}, so the outcome cannot depend on the order they were claimed in.
      */
-    void requirePierces(PlanNode opener, WallInfo wall, List<LocalPos> tunnel) {
-        StructureInfo st = wall.structure();
-        LocalPos o = st.origin();
-        int uLo = o.u();
-        int uHi = o.u() + st.width() - 1;
-        int wLo = o.w();
-        int wHi = o.w() + st.depth() - 1;
-        int vLo = Integer.MAX_VALUE;
-        int vHi = Integer.MIN_VALUE;
-        for (LocalPos p : tunnel) {
-            vLo = Math.min(vLo, p.v());
-            vHi = Math.max(vHi, p.v());
+    public void claimOpening(PlanNode node, OpeningSpot spot, OpeningResolver.Contract contract,
+                             Map<LocalPos, OpeningResolver.Perm> fills, Consumer<GenContext> emit) {
+        openings.add(new OpeningResolver.Claim(node, spot, spot.cells(), contract, fills, emit));
+    }
+
+    /** Registers a claim as it is — the form the resolver's own checks take in tests. */
+    void claimOpening(OpeningResolver.Claim claim) {
+        openings.add(claim);
+    }
+
+    /**
+     * Resolves every collected opening claim in one batch and applies the accepted ones to the canvas. Called once,
+     * after the CARVE stage has gathered them all.
+     */
+    public void resolveOpenings() {
+        openings.resolve(this);
+    }
+
+    /**
+     * The cells the given emitter would place, collected instead of placed: an accepted opening's fills go down only
+     * once its whole tunnel is carved, and a refusal inside the emitter leaves the wall untouched.
+     */
+    List<Canvas.Cell> captureEmit(Consumer<GenContext> emit) {
+        List<Canvas.Cell> buffer = new ArrayList<>();
+        captured = buffer;
+        try {
+            emit.accept(this);
+        } finally {
+            captured = null;
         }
-        List<WallInfo> prisms = new ArrayList<>();
-        for (PlanNode n : nodes.values()) {
-            if (st.id().equals(n.parent()) && n.type().equals(BuildingParts.WALL)) {
-                wallInfo(n.id()).ifPresent(prisms::add);
-            }
-        }
-        Deque<LocalPos> fringe = new ArrayDeque<>(tunnel);
-        Set<LocalPos> seen = new HashSet<>(tunnel);
-        boolean pierced = false;
-        while (!fringe.isEmpty() && !pierced) {
-            LocalPos p = fringe.poll();
-            for (int[] step : NEIGHBOURS) {
-                LocalPos q = p.plus(step[0], step[1], step[2]);
-                if (q.u() < uLo || q.u() > uHi || q.w() < wLo || q.w() > wHi || q.v() < vLo || q.v() > vHi
-                        || !seen.add(q) || canvas.get(q) != null) {
-                    continue; // outside the footprint or the tunnel's rows, already visited, or a standing cell
-                }
-                boolean inWall = false;
-                for (WallInfo prism : prisms) {
-                    if (prism.contains(q)) {
-                        inWall = true;
-                        break;
-                    }
-                }
-                if (inWall) {
-                    fringe.add(q); // a cell an earlier opening carved out of a wall: the tunnel continues there
-                } else {
-                    pierced = true;
-                }
-            }
-        }
-        if (!pierced) {
-            throw fail(opener, IssueCode.E_OPENING_BLOCKED, "", opener.id()
-                    + "の開口部は屋内に貫通しません(掘ったトンネルの先が、壁 " + wall.id() + " に隣接する壁に塞がれた行き止まりです)");
-        }
+        return buffer;
     }
 }

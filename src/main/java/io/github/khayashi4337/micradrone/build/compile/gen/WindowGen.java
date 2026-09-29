@@ -2,10 +2,13 @@ package io.github.khayashi4337.micradrone.build.compile.gen;
 
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
+import io.github.khayashi4337.micradrone.build.model.LocalPos;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.parts.Params;
 import io.github.khayashi4337.micradrone.build.parts.PartParams;
 import io.github.khayashi4337.micradrone.build.parts.Roles;
+import java.util.HashMap;
+import java.util.Map;
 
 /** A window in a wall: one pane, a wide window of three, or an arch window with stairs at the top corners. */
 final class WindowGen implements PartGenerator {
@@ -34,7 +37,31 @@ final class WindowGen implements PartGenerator {
         if (lattice && width == PANE_WIDTH) {
             throw ctx.fail(node, IssueCode.E_PARAM_RANGE, PartParams.LATTICE, "格子(lattice)は、幅のある窓(wide・arch)だけで使えます");
         }
-        OpeningSpot spot = OpeningSpot.carved(ctx, node, width, height);
+        OpeningSpot spot = OpeningSpot.claimable(ctx, node, width, height);
+        // what each cell the window puts back lets through: the glass is transparent to a sight line, the mullion and
+        // the arch's corner stairs are not
+        Map<LocalPos, OpeningResolver.Perm> fills = new HashMap<>();
+        int fullRows = arch ? ARCH_FULL_ROWS : height;
+        for (int di = 0; di < width; di++) {
+            for (int dr = 0; dr < fullRows; dr++) {
+                fills.put(spot.at(di, dr), lattice && di == MIDDLE_COLUMN
+                        ? OpeningResolver.Perm.OPAQUE : OpeningResolver.Perm.TRANSPARENT);
+            }
+        }
+        if (arch) {
+            fills.put(spot.at(MIDDLE_COLUMN, ARCH_FULL_ROWS), lattice
+                    ? OpeningResolver.Perm.OPAQUE : OpeningResolver.Perm.TRANSPARENT);
+            fills.put(spot.at(FIRST_COLUMN, ARCH_FULL_ROWS), OpeningResolver.Perm.OPAQUE);
+            fills.put(spot.at(LAST_COLUMN, ARCH_FULL_ROWS), OpeningResolver.Perm.OPAQUE);
+        }
+        ctx.claimOpening(node, spot, OpeningResolver.Contract.VIEW, fills, c -> emit(c, node, p, kind, spot));
+    }
+
+    private static void emit(GenContext ctx, PlanNode node, Params p, String kind, OpeningSpot spot) {
+        boolean arch = kind.equals(KIND_ARCH);
+        boolean lattice = p.b(PartParams.LATTICE);
+        int width = kind.equals(KIND_PANE) ? PANE_WIDTH : WIDE_WIDTH;
+        int height = arch ? ARCH_HEIGHT : PANE_HEIGHT;
         // Every block that will be placed is asked of the palette before the first one goes down (a refused material
         // leaves no cell behind), and only those that will be placed: the trim is asked for by a lattice or an arch only.
         BlockSpec glass = BlockForms.plain(ctx.palette().full(p.s(PartParams.MATERIAL), node));

@@ -1,10 +1,13 @@
 package io.github.khayashi4337.micradrone.build.compile.gen;
 
 import io.github.khayashi4337.micradrone.build.model.Facing;
+import io.github.khayashi4337.micradrone.build.model.LocalPos;
 import io.github.khayashi4337.micradrone.build.model.PlanNode;
 import io.github.khayashi4337.micradrone.build.parts.Params;
 import io.github.khayashi4337.micradrone.build.parts.PartParams;
 import io.github.khayashi4337.micradrone.build.parts.Roles;
+import java.util.HashMap;
+import java.util.Map;
 
 /** A door in a wall: one or two leaves, or a hangar opening closed by a row of gates. */
 final class DoorGen implements PartGenerator {
@@ -35,10 +38,21 @@ final class DoorGen implements PartGenerator {
             default -> throw new IllegalStateException("unknown door kind: " + kind);
         };
         int height = hangar ? p.i(PartParams.HEIGHT) : LEAF_HEIGHT;
-        OpeningSpot spot = OpeningSpot.carved(ctx, node, width, height);
+        OpeningSpot spot = OpeningSpot.claimable(ctx, node, width, height);
+        // the leaves or gates are what a walker passes through; the claim is resolved with every other opening's
+        Map<LocalPos, OpeningResolver.Perm> fills = new HashMap<>();
+        for (int di = 0; di < width; di++) {
+            for (int dr = 0; dr < (hangar ? GATE_ROWS : LEAF_HEIGHT); dr++) {
+                fills.put(spot.at(di, dr), OpeningResolver.Perm.PASSABLE);
+            }
+        }
+        ctx.claimOpening(node, spot, OpeningResolver.Contract.PASSAGE, fills, c -> emit(c, node, p, kind, spot));
+    }
+
+    private static void emit(GenContext ctx, PlanNode node, Params p, String kind, OpeningSpot spot) {
         // doors and gates face indoors; an INNER opening faces outdoors
         Facing facing = spot.outer() ? spot.wall().outward().opposite() : spot.wall().outward();
-        if (hangar) {
+        if (kind.equals(KIND_HANGAR)) {
             placeGates(ctx, node, spot, facing);
         } else {
             placeLeaves(ctx, node, p, kind, spot, facing);

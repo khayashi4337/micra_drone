@@ -128,6 +128,10 @@ public final class PlanCompiler {
                 for (PlanNode node : ordered) {
                     runNode(ctx, registry, node, stage, issues, false);
                 }
+                if (stage == PartGenerators.Stage.CARVE) {
+                    // the openings only registered claims while they ran; resolve the whole set at once
+                    ctx.resolveOpenings();
+                }
             }
             for (PlanNode node : ordered) {
                 runNode(ctx, registry, node, null, issues, true);

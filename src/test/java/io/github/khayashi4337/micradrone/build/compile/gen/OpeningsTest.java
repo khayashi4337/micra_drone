@@ -471,11 +471,24 @@ class OpeningsTest {
                 on(DOOR_ID, DOOR, WALL_S, Side.OUTER, 9, 0, Map.of())))), "the anchor itself is off the wall");
     }
 
-    /** Runs the opening's generator, expects the refusal {@code expectedId}, and checks that nothing was carved or placed. */
+    /**
+     * Runs the opening's generator and then resolves the collected claims, expects the refusal {@code expectedId},
+     * and checks that nothing was carved or placed. A refusal can come either way: thrown while claiming, or reported
+     * when the claims are resolved together.
+     */
     private static void assertRefusedUntouched(GenContext ctx, PlanNode opening, String expectedId) {
         int before = ctx.canvas().size();
-        GenAbort refusal = assertThrows(GenAbort.class, () -> generatorOf(opening.type()).generate(ctx, opening, resolved(opening)));
-        assertEquals(expectedId, refusal.issue().id());
+        try {
+            generatorOf(opening.type()).generate(ctx, opening, resolved(opening));
+        } catch (GenAbort refusal) {
+            assertEquals(expectedId, refusal.issue().id());
+            assertEquals(before, ctx.canvas().size(), "nothing was carved out of the wall or placed");
+            return;
+        }
+        ctx.resolveOpenings();
+        assertTrue(ctx.issues().stream().anyMatch(i -> i.id().equals(expectedId)),
+                () -> "expected " + expectedId + ", got " + ctx.issues());
+        assertTrue(ctx.isRefused(opening.id()), "the refused opening is marked so no later pass works on it");
         assertEquals(before, ctx.canvas().size(), "nothing was carved out of the wall or placed");
         assertTrue(ctx.canvas().all().stream().noneMatch(cell -> cell.ownerId().equals(opening.id())),
                 "no block of the refused opening was placed");
@@ -773,11 +786,15 @@ class OpeningsTest {
     @Test
     void aRefusedMaterialLeavesNoCellOfTheOpening() {
         // The arch's corner stairs come from the trim role, which has no stairs form here. The palette is asked for
-        // it before the first pane goes down, so the refusal leaves nothing of the window on the canvas.
+        // it when the accepted claim is applied, before any of its cells goes down, so the refusal leaves nothing of
+        // the window on the canvas.
         GenContext ctx = wallsIn(Map.of(ROLE_TRIM, BEDROCK));
         PlanNode arch = on(WINDOW_ID, WINDOW, WALL_N, Side.OUTER, 1, 0, params(P_KIND, KIND_ARCH));
-        GenAbort refusal = assertThrows(GenAbort.class, () -> generatorOf(WINDOW).generate(ctx, arch, resolved(arch)));
-        assertEquals("E-PARAM-RANGE:" + WINDOW_ID + "#material", refusal.issue().id());
+        generatorOf(WINDOW).generate(ctx, arch, resolved(arch));
+        ctx.resolveOpenings();
+        assertEquals(List.of("E-PARAM-RANGE:" + WINDOW_ID + "#material"),
+                ctx.issues().stream().map(Issue::id).toList());
+        assertTrue(ctx.isRefused(WINDOW_ID));
         assertTrue(ctx.canvas().all().stream().noneMatch(cell -> cell.ownerId().equals(WINDOW_ID)),
                 "no pane and no stair of the refused window was placed");
     }
@@ -813,5 +830,67 @@ class OpeningsTest {
         // in the local frame the door faces north; an east-facing site turns that a quarter turn clockwise, to east
         assertEquals(EAST, lower.block().get(PROP_FACING));
         assertEquals(LEFT, lower.block().get(PROP_HINGE), "a turn does not change the hinge");
+    }
+
+    // ---- openings are resolved from the collected claims, so the outcome is independent of ids and input order ----
+
+    /** The walls of the counterexample hall stand five rows high (the floor takes the first row of six). */
+    private static final int COUNTEREXAMPLE_FLOOR_HEIGHT = 6;
+    /** Where the counterexample hangar starts along the south wall, and how big it is. */
+    private static final int HANGAR_U = 3;
+    private static final int HANGAR_WIDTH = 3;
+    private static final int HANGAR_HEIGHT = 4;
+    /** The row of the corner window, counted from the wall's bottom row. */
+    private static final int CORNER_WINDOW_ROW = 2;
+
+    /**
+     * Codex's counterexample (agent-board 2026-09-29): a hangar door that stops one column short of the south-east
+     * corner, and a pane window in the corner column itself. The window's tunnel is a dead end unless the hangar's
+     * tunnel is already open; the claims are collected and resolved together, so the window sees through the
+     * hangar's opening into the hall and the order the openings are named in cannot matter.
+     */
+    private static List<PlanNode> hangarBesideCornerWindow(String hangarId, String windowId) {
+        return hangarBesideCornerWindow(hangarId, windowId, false);
+    }
+
+    /** {@code windowFirst} puts the window before the hangar in the plan (the patcher wants parents first anyway). */
+    private static List<PlanNode> hangarBesideCornerWindow(String hangarId, String windowId, boolean windowFirst) {
+        List<PlanNode> nodes = new ArrayList<>(shell(HALL_SIDE, HALL_SIDE, FLOORS, COUNTEREXAMPLE_FLOOR_HEIGHT));
+        PlanNode hangar = on(hangarId, DOOR, WALL_S, Side.OUTER, HANGAR_U, 0,
+                params(P_KIND, KIND_HANGAR, P_WIDTH, HANGAR_WIDTH, P_HEIGHT, HANGAR_HEIGHT));
+        PlanNode window = on(windowId, WINDOW, WALL_S, Side.OUTER, HALL_SIDE - 1, CORNER_WINDOW_ROW, Map.of());
+        nodes.add(windowFirst ? window : hangar);
+        nodes.add(windowFirst ? hangar : window);
+        return nodes;
+    }
+
+    /** The issue codes, sorted: an id rename renames the subjects but not the codes. */
+    private static List<String> sortedIssueCodes(CompileResult r) {
+        return r.issues().stream().map(i -> i.code().label()).sorted().toList();
+    }
+
+    /** Two compilations of the same geometry must accept or refuse alike and, when accepted, build the same thing. */
+    private static void assertSameOutcome(CompileResult a, CompileResult b) {
+        assertEquals(a.manifest() == null, b.manifest() == null,
+                () -> "one variant built, the other was refused: " + ids(a) + " vs " + ids(b));
+        assertEquals(sortedIssueCodes(a), sortedIssueCodes(b), "the same checks fire");
+        if (a.manifest() != null && b.manifest() != null) {
+            assertEquals(cells(a.manifest()), cells(b.manifest()), "the placements differ (ids already stripped)");
+            assertEquals(a.manifest().hash(), b.manifest().hash(), "the manifest hash covers what is built, not the ids");
+        }
+    }
+
+    @Test
+    void renamingOpeningIdsKeepsTheOutcome() {
+        // a-... is generated before z-...: the hangar carves first and the window pierces through its tunnel. Under the
+        // swapped ids the window used to run first and hit the sealed corner.
+        assertSameOutcome(compile(hangarBesideCornerWindow("a-hangar", "z-window")),
+                compile(hangarBesideCornerWindow("z-hangar", "a-window")));
+    }
+
+    @Test
+    void swappingTheOpeningsInputOrderKeepsTheOutcome() {
+        assertSameOutcome(compile(hangarBesideCornerWindow("hangar", "window", false)),
+                compile(hangarBesideCornerWindow("hangar", "window", true)));
     }
 }
