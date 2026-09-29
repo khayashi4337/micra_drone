@@ -6,7 +6,7 @@
 
 **Architecture:** 判断のすべて(ジョブの状態機械、カーソルと再開、施工予算と自動減速、置換の規則、安全枠、材料台帳、区画、設置の記録、取り消し記録とロールバック、`MODIFY`、L7の差分と修復、承認とハッシュ、原子的な保存と復旧、分割ペイロードの組み立て)は、**Minecraftに依存しない純Java**(新設`construction.core`と`build.verify`、既存`build.compile`への追加)に置き、`FakeWorld`などの偽物でJUnitで検査する。Minecraftに触れるのは薄いアダプタ(`construction`・`construction.net`・`client.build`)だけで、アダプタの挙動は単体テストで検証したことにせず、**devkitと台本による実機の自動確認**で証拠を取る。ワールドを書き換えるのはサーバーのメインスレッドだけ(F-1)。重い純計算は`ServerWorkerPool`で、不変の入力に対して行う。`PacedActionQueue`は使わない(D-11)。
 
-**Tech Stack:** Java 21(record・sealed interface・パターンマッチ)、JUnit 5、NeoForge 21.1.238 / Minecraft 1.21.1(`SavedData`、`ServerTickEvent.Post`、`BlockEvent.EntityPlaceEvent`、`ModConfigSpec`、`CustomPacketPayload`)、既存の`chat/MiniJson`・`build.model.CanonicalJson`・`Hashing`。devkit(別リポジトリ`G:\prj2\micra_drone_devkit`。JDK内蔵の`com.sun.net.httpserver`)。台本はPython 3.12(標準ライブラリのみ。`unittest`・`urllib`・`ctypes`)。新規の外部ライブラリなし。
+**Tech Stack:** Java 21(record・sealed interface・パターンマッチ)、JUnit 5、NeoForge 21.1.238 / Minecraft 1.21.1(`SavedData`、`ServerTickEvent.Pre`、`BlockEvent.EntityPlaceEvent`、`ModConfigSpec`、`CustomPacketPayload`)、既存の`chat/MiniJson`・`build.model.CanonicalJson`・`Hashing`。devkit(別リポジトリ`G:\prj2\micra_drone_devkit`。JDK内蔵の`com.sun.net.httpserver`)。台本はPython 3.12(標準ライブラリのみ。`unittest`・`urllib`・`ctypes`)。新規の外部ライブラリなし。
 
 **Spec:** `docs/design/nl_factory_builder/`(第7版)。特に`00`のD-1・D-3・D-11・D-16・D-22〜D-27、`01`の4・4.1・5・8・10・11・12節、`04`のF-1〜F-8・F-13〜F-17・F-20〜F-23、`07`のP4(完了条件16個)・3節(S-6・S-9)・4節・7節・8節、`03`のL7・0.4節、`02`のN-26・N-27・N-29。
 
@@ -21,11 +21,17 @@
 - **撤去・変更できるのは、このプロジェクトが置いたブロック(`PlacedRegistry`に載る物)だけ**(D-25)。元からあったブロックエンティティは置換も撤去もしない(空だと確かめたコンテナを、利用者が明示的に確認したときだけ例外。F-5)。このプロジェクトが置いたコンテナの中身は、撤去の前にドロップして保全する。
 - **材料の複製を作らない**(F-7): 消費は設置ごとに冪等、取消では返さない、ロールバック・`MODIFY`の撤去は「消費した記録がある分だけ」返す、置換で壊した自然のブロックはドロップしない。整地で切ったブロックは所有者へ、盛るブロックは所有者から。
 - **区画(`SiteClaim`)と設置の記録(`PlacedRegistry`・`journal`)は、区画が解放されるまで保持する**(D-23)。ジョブの終了では解放しない。
-- **オーナーは確認の輪に入れない**(2026-09-30のオーナーの指示): 実機の確認は、devkit(`127.0.0.1:47391`=クライアント、`127.0.0.1:47392`=サーバー。Task 18で足す)と台本(`tools/p4/p4_scenarios.py`)で自動に行い、証拠(JSONとスクリーンショット)を`run-evidence/p4/<runId>/`に残す。**OSのマウス・キーボードの合成入力は使わない。ゲームの窓へ文字を送らない**(過去に、合成したキー入力でシェーダーがOFFになる事故があった)。ゲームは`gradlew runClientP4`/`runServerP4`(Task 19で足す専用の実行設定。Store版ランチャーを使わない)で起動し、`--quickPlaySingleplayer`/`--quickPlayMultiplayer`で世界に入る。閉じるときは窓に`WM_CLOSE`を送り、窓が無ければ報告して止まる(ループしない)。起動したプロセス・一時フォルダは、台本の終わりに必ず後始末する。
+- **オーナーは確認の輪に入れない**(2026-09-30のオーナーの指示): 実機の確認は、devkit(`127.0.0.1:47391`=クライアント、`127.0.0.1:47392`=サーバー。Task 18で足す)と台本(`tools/p4/p4_scenarios.py`)で自動に行い、証拠(JSONとスクリーンショット)を`run-evidence/p4/<runId>/`に残す。**OSのマウス・キーボードの合成入力は使わない。ゲームの窓へ文字を送らない**(過去に、合成したキー入力でシェーダーがOFFになる事故があった)。ゲームは`gradlew runClientP4`/`runServerP4`など(Task 19で足す専用の実行設定。どれも`-Xmx3G`。Store版ランチャーを使わない)で起動する。シングルプレイの世界は、タイトル画面からdevkitの`/client/create-world`で作り(EULAが要らない。コマンドの許可つき)、2回目からは`--quickPlaySingleplayer`で開く。マルチプレイは`--quickPlayMultiplayer`。台本は起動の前に47391・47392・47393・25565が空いていることを確かめ、devkitの応答の`runId`が自分の物でなければ止まる(**林さんが別に起動しているゲームを操作しない**)。閉じるときは窓に`WM_CLOSE`を送り、窓が無ければ報告して止まる(ループしない)。起動したプロセスは、台本の終わりに必ず後始末する(ゲームのフォルダは次の実行のために残し、世界は次の実行の始めに消す)。自動確認の結果は`PASS`・`FAIL`・`NOT-RUN`で、**`NOT-RUN`は合格として数えない**。
 - **子供に見える文言は、データ(`assets/micradrone/lang/ja_jp.json`・`en_us.json`)にする**(Task 14)。サーバーは`Component.translatable`で送り、文言をコードに直書きしない。
 - 定数はすべて名前を付け、出どころ(設計の節)をコメントに書く。生の数値を直書きしない。同じ引数の組は引数のrecordに、同じ文字列は名前付き定数に、同じ検査は共有のヘルパーにまとめる。外部と接する処理(ファイル・ネットワーク・ワールド)は、純粋な計算と別のクラスに分ける。
 - コードのコメントは英語で技術的な理由だけを書く(「林さんの要望」などとは書かない)。`Objects.requireNonNull`・record・sealed interface・JUnit 5の既存の書き方に合わせる。
 - 1タスク=1コミット(日本語。`feat|fix|test|refactor|docs: <説明>(自然言語→工場建設 P4 Task N)`、空行、署名の行)。**署名の行は、コードを書いた者で決める**: Devin(SWE-2)が実装したコミットは`Implemented-by: SWE-2 via Devin CLI`(Claudeの`Co-Authored-By`を付けない。オーナーの指示: 実装のコードはDevinに書かせる)、Claudeが書いたコミットは`Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`。各タスクのコミット手順の署名の行は、この規則で読み替える。**pushしない。`--amend`しない。** devkitの変更は、devkitのリポジトリに同じ形式でコミットする。
+- **担当の分け方**(オーナーの指示): 各タスクの見出しの下の「担当」の行に従う。
+  - **Devin(SWE-2)**: `src/main`・`src/test`のJavaと、`src/main/resources`のJSON(言語ファイル・タグ)。PowerShellで、**1回に1つの単純なコマンド**だけを打つ(`&&`・`;`・パイプでつながない)。Pythonは実行しない。`docs/`・`tools/`・別のリポジトリ(devkit)は編集しない。ファイルを消さない。コミットは、ファイルを**1つずつ名前で**`git add`し、`git status --short`で余計な物が無いことを見て(`build/libs`が変わっていれば`git checkout -- build/libs`)、メッセージを作業用のフォルダの`commit_msg.txt`に書いてから`git commit -F <そのファイル>`。署名の行は`Implemented-by: SWE-2 via Devin CLI`。
+  - **コントローラ(Claude)**: Task 1・2・18・19・35(設計図・README・Issue)・36・38、devkitのリポジトリの作業すべて、`tools/p4`とPythonの実行すべて、`docs/`の編集、ゲームの起動を伴う確認(`gradlew runClient*`)。署名の行は`Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`。
+  - **1つのタスクに両方の仕事がある時**: Devinの分(Java)を先に1つのコミットにし、その後でコントローラの分(台本・実機の確認・devkit)を別のコミットにする(署名の行が違うため、1タスク1コミットの例外。どちらのコミットにも同じ`(自然言語→工場建設 P4 Task N)`を付ける)。devkitはさらに別のリポジトリのコミット。
+  - **設計図の変更がJavaのテストと結び付くタスク**(Task 3・11・12・26。例: `IssueTest`が`05`の表を読む): コントローラが先に設計図を書き(コミットしない)、Devinがそのファイルも`git add`して自分のコミットに含める(Devinは編集しない。含めるだけ)。こうすると、どのコミットの時点でもテストが緑になる。
+  - 各タスクのコミットの手順に書いた`bash`の形(`git commit -m "$(cat <<'MSG' ...`)は、コントローラの分の書き方。Devinの分は上の`-F`の形で読み替える(タスクに両方を書いた物もある)。
 - **AIは使わない**(P4の範囲)。後のフェーズのCLI呼び出しのテストは、オーナーが許可したスタブで行う(P4では該当なし)。
 - 設計との食い違いを見つけたら、コードより先に設計図を直す(`07` 7節の6)。この計画書で確定する設計の変更は、Task 35で設計図に反映し、`00`の変更履歴に書く(一覧は末尾の「設計図との食い違い」)。
 
@@ -34,10 +40,10 @@
 (設計が暗に求めるが、どのタスクのテストにも自然には出てこない、実害の大きい入力。起きやすい順。各行の対策テストは、担当のタスクに書いてある。)
 
 1. **施工中に、子供やほかのプレイヤーが現場をいじる**: まだ置いていない位置にブロックを置く/置いた壁を壊す/置いた階段を回す。期待: 置いていない位置は`PAUSED(SITE_CHANGED)`で止まり、その位置だけが`Conflict`になる(上書きしない)。置いた後に壊された位置はL7が直し、回された階段(自分が置いた物)は直すが、別の種類のブロックに置き換えられた位置は触らずに報告する(Task 9 `pausesWhenAnUnbuiltPositionChanged`、Task 10 `aReplacedBlockIsAConflictNotARepair`、Task 13 `theL7RoundRepairsBrokenBlocksAndReportsReplacedOnes`)。
-2. **きれいに止まらなかったサーバー**(落ちた・電源が切れた): `SavedData`のカーソルと、別ファイルの`journal`・`ledger`の新しさがずれる。期待: カーソルより前の記録が欠けていれば`PAUSED(RECOVERY_NEEDED)`(黙って再実行しない)。記録がカーソルより先に進んでいるのは正常で、古いカーソルから冪等に再開し、台帳が二重の消費を防ぐ(保存の順はプレイヤー→`SavedData`→チャンク→`LevelEvent.Save`のファイルなので、台帳が持ち物より新しくなることは無い)(Task 24 `aJournalBehindTheCursorNeedsRecovery`・`aJournalAheadOfTheCursorIsNormal`、Task 9 `aJournalAheadOfTheCursorResumesWithoutChargingTwice`、Task 25の`crash-window`)。
+2. **きれいに止まらなかったサーバー**(落ちた・電源が切れた): `SavedData`とチャンクは非同期に書かれ、チャンクは読み込みから外れた時にも書かれる(Task 24の「保存の順序の事実」)ので、`SavedData`のカーソル、別ファイルの`journal`・`ledger`・`PlacedRegistry`、**世界そのもの**の新しさが、どの向きにもずれる。期待: 世界が記録より進んでいれば、承認の時の調査と照らして**引き取り**(自分のブロックを「よその物」と誤らない。偽の`Conflict`も`SITE_CHANGED`も出さず、ロールバックでも撤去できる)。引き取っても、カーソルより前の記録が欠けていれば`PAUSED(RECOVERY_NEEDED)`(黙って再実行しない)。記録がカーソルより先に進んでいるのは正常で、古いカーソルから冪等に再開し、台帳が二重の消費を防ぐ(Task 24 `AdoptPassTest`・`aJournalBehindTheCursorIsNotSettledUntilAdopted`・`aJournalAheadOfTheCursorIsNormal`、Task 9 `aJournalAheadOfTheCursorResumesWithoutChargingTwice`、Task 25の`crash-window`、Task 28の`crash-window-rollback`)。
 3. **同じtickに、2人が重なる敷地を承認する**: どちらも承認の検査は通る。期待: 区画の予約はメインスレッドで順に行い、先の1人だけが`QUEUED`、後の1人は`CANCELLED`(`E-CLAIM-OVERLAP`)(Task 13 `overlappingApprovalsInOneTickAdmitOnlyTheFirst`)。
 4. **所有者が承認の途中で抜ける・ディメンションを移る**: 保留中の承認・動いているジョブ。期待: 承認は無効(`dropOwner`)、別ディメンションからの承認は`DIMENSION_MISMATCH`、動いていたジョブは`PAUSED(OWNER_OFFLINE)`で、戻れば自動で再開(Task 12 `approvalFromAnotherDimensionIsRejected`、Task 13 `theJobPausesWhileTheOwnerIsAwayAndResumesOnReturn`)。
-5. **材料の数え方が、ブロックと品物で1対1にならない**: 扉(上下2ブロックで1個)、2段の半ブロック(1ブロックで2個)、壁掛け看板(品物は看板)、メカニカルベルト(品物は`belt_connector`)。サバイバルで足りない→補給→再開、ロールバックで返す個数。期待: 上の半分の扉は数えない、2段は2個、返却は消費と同じ個数で1回だけ(Task 6 `doorsSlabsSignsAndBeltsUseTheirItems`、Task 9 `survivalChargesTheDoorOnceAndPausesWhenShort`・`rollbackRestoresEveryBlockTopDownAndReturnsExactlyWhatWasConsumedOnce`、Task 28 `rollbackRestoresTheSiteReleasesTheClaimAndReturnsWhatWasConsumedOnce`)。
+5. **材料の数え方が、ブロックと品物で1対1にならない。撤去で品物が勝手に落ちる**: 扉(上下2ブロックで1個)、2段の半ブロック(1ブロックで2個)、壁掛け看板(品物は看板)、メカニカルベルト(品物は`belt_connector`)。サバイバルで足りない→補給→再開、ロールバックで返す個数。さらに、撤去で扉の片方や壁の看板を普通に消すと、隣の更新でもう片方・看板が**アイテムを落として**外れ、台帳の外で品物が増え、偽の`Conflict`が出る。期待: 上の半分の扉は数えない、2段は2個、返却は消費と同じ個数で1回だけ、撤去で落ちるアイテムは0(入れ物の中身を除く)(Task 6 `doorsSlabsSignsAndBeltsUseTheirItems`、Task 9 `survivalChargesTheDoorOnceAndPausesWhenShort`・`rollbackRestoresEveryBlockTopDownAndReturnsExactlyWhatWasConsumedOnce`・`aDoorIsRestoredAsOnePieceEvenAcrossTheAllowanceAndSettledOnce`、Task 28 `rollbackRestoresTheSiteReleasesTheClaimAndReturnsWhatWasConsumedOnce`・`aDoorsHalvesGoTogetherAndASignGoesBeforeItsWall`と`rollback`シナリオの落ちたアイテム0)。
 
 ## File Structure
 
@@ -50,16 +56,16 @@
 | `construction.core` | `SafetyLimits`・`PlacementSurvey`・`ItemCatalog`・`ReplacementSummary`・`SafetyReport`・`SafetyEnvelope` | 安全枠(F-5) | なし |
 | `construction.core` | `BudgetConfig`・`BudgetJob`・`QueuedJob`・`Allowance`・`BudgetTick`・`ConstructionBudget` | 施工予算・自動減速(F-2) | なし |
 | `construction.core` | `JournalRecord`・`UndoEntry`・`Journal`・`PlacedEntry`・`PlacedRegistry`・`AssemblyResult`・`MaterialLedger`・`LedgerBook`・`SkippedPlacement`・`JobOutcome`・`RestoreItem`・`PutItem`・`JobProgram` | 記録と台帳 | なし |
-| `construction.core` | `MaterialPort`・`ExecutionContext`・`StepReport`・`ConstructionExecutor` | 1tick分の設置・撤去 | なし |
+| `construction.core` | `MaterialPort`・`ExecutionContext`・`StepReport`・`ConstructionExecutor`・`Attachments` | 1tick分の設置・撤去(撤去は部品ごと。付いている物が先) | なし |
 | `construction.core` | `SiteClaim`・`ClaimBook`・`OperatingBox` | 区画(F-4・D-23) | なし |
 | `construction.core` | `Confirmations`・`AcceptedRisk`・`ApprovalRequest`・`PendingApproval`・`PlanSubmission`・`CompiledPlan`・`PlanCompilation`・`SurveyCache`・`Candidate`・`Approver`・`ApprovalRejection`・`ApprovalDecision`・`ApprovalDesk`・`WorkResult`・`ServerWorkerPool` | 承認とワーカー(F-3) | なし |
 | `construction.core` | `JobWorld`・`TickInput`・`JobUpdate`・`JobStatus`・`ControlResult`・`JobRecord`・`RepairQueue`・`JobService` | ジョブの進行(tick) | なし |
 | `construction.core` | `ChildMessages`・`MessageKey` | 子供向けの文言のキー(Task 14) | なし |
 | `construction.core` | `DroneMove`・`DroneChoreographer` | 演出の割り当て(N-27) | なし |
-| `construction.core` | `FileSystemPort`・`NioFileSystem`・`SealedFile`・`PersistenceEnvelope`・`Migrations`・`JsonReads`・`JobCodec`・`JournalCodec`・`LedgerCodec`・`OutcomeCodec`・`ProgramCodec`・`ManifestCodec`・`ClaimCodec`・`JobFiles`・`RecoveryDecision`・`RecoveryPlanner`・`OrphanSweep` | 保存と復旧(F-2) | なし |
+| `construction.core` | `FileSystemPort`・`NioFileSystem`・`SealedFile`・`PersistenceEnvelope`・`Migrations`・`JsonReads`・`JobCodec`・`JournalCodec`・`LedgerCodec`・`OutcomeCodec`・`ProgramCodec`・`ManifestCodec`・`ClaimCodec`・`PlacementSurveyCodec`・`SurveyCodec`・`JobFiles`・`RecoveryDecision`・`RecoveryPlanner`・`AdoptPass`・`OrphanSweep` | 保存と復旧・引き取り(F-2) | なし |
 | `construction.core` | `PlacementRules`・`PermissionLevel`・`PlaceVerdict` | 建築権限の純粋な部分(F-4) | なし |
 | `construction.core` | `Stock`・`StockTake`・`StockBook`・`SupplyRegistry`・`SupplyCodec` | 材料の出どころ(持ち物と補給チェスト。F-7) | なし |
-| `construction.core` | `SubmitOutcome`・`RemovalPreview`・`MsptStats`・`ChunkSet`・`BlockSpecText`・`SaveTypes`・`RegistryCodec`・`JobLoad`・`RecoveryChoice`・`UnreadableFileException` | 提出の結果・撤去の予告・MSPTの計測・チャンクの集合・保存の型の表 | なし |
+| `construction.core` | `SubmitOutcome`・`RemovalPreview`・`HeldContents`・`QueryArgs`・`MsptStats`・`ChunkSet`・`BlockSpecText`・`SaveTypes`・`RegistryCodec`・`JobLoad`・`RecoveryChoice`・`UnreadableFileException` | 提出の結果・撤去の予告・MSPTの計測・チャンクの集合・保存の型の表 | なし |
 | `construction.core` | `RollbackPlanner`・`ModifyPlanner`・`ModifyPlan` | 撤去と変更(F-14・D-14) | なし |
 | `build.compile`(追加・続き) | `SiteSurveyBuilder` | 調査をtickに分けて組み立てる | なし |
 | `build.analyze`(続き) | `VoxelGridFiller` | 範囲読み取りをtickに分けて詰める | なし |
@@ -73,13 +79,13 @@
 | `construction.net`(新設) | `SubmitPlanPayload`・`PlanPreviewPayload`・`ApprovePlanPayload`・`JobStatusPayload`・`QueryRequestPayload`・`QueryResponsePayload`・`BuildNetHandlers` | ペイロード | あり |
 | `client.build`(新設) | `ClientBuildCommands`・`ClientUploads`・`ClientQueries` | デバッグ用のクライアント側コマンド(P5の画面の前段) | あり(クライアント) |
 
-devkit(別リポジトリ`G:\prj2\micra_drone_devkit`。Task 18): `MicradroneDevkit`を共通のmodにし、`DevkitServerApi`(サーバー側HTTP、`127.0.0.1:47392`)・`DevkitClientBuildApi`(クライアント側の追加エンドポイント)・`DevkitProbe`(S-6の測定用ペイロード)・`DevkitProtectBox`(S-9の測定用の保護リスナー)を足す。
+devkit(別リポジトリ`G:\prj2\micra_drone_devkit`。Task 18): `MicradroneDevkit`を共通のmodにし、`DevkitServerApi`(サーバー側HTTP、`127.0.0.1:47392`)・`DevkitClientBuildApi`(クライアント側の追加エンドポイント)・`DevkitProbe`(S-6の測定用ペイロード)・`DevkitProtectBox`(S-9の測定用の保護リスナー)・`DevkitRunInfo`(実行のIDの照合)・`DevkitTeeSource`(コマンドの出力を集める)・`DevkitWorldCreator`(タイトル画面から世界を作る)・`DevkitInjector`(開発専用の注入)を足す。
 
-台本(Task 19〜): `tools/p4/p4_scenarios.py`(入口。`python tools/p4/p4_scenarios.py --all`)、`tools/p4/harness.py`(起動・窓・後始末)、`tools/p4/devkit_client.py`(HTTP)、`tools/p4/compare.py`(施工リストと読み戻しの照合)、`tools/p4/evidence.py`(証拠)、`tools/p4/persona_bundle.py`(ペルソナに渡す資料の束)、テスト`tools/p4/tests/test_*.py`(`python -m unittest discover tools/p4/tests`)。
+台本(Task 19〜): `tools/p4/p4_scenarios.py`(入口。`python -m tools.p4.p4_scenarios --all`)、`tools/p4/harness.py`(起動・窓・後始末)、`tools/p4/devkit_client.py`(HTTP)、`tools/p4/compare.py`(施工リストと読み戻しの照合)、`tools/p4/evidence.py`(証拠)、`tools/p4/persona_bundle.py`(ペルソナに渡す資料の束)、`tools/p4/plans.py`(計画のJSONを作る)、`tools/p4/scenarios_*.py`(シナリオ。タスクごとに1つ)、`tools/p4/game_config/`(起動の前に置く`options.txt`・`neoforge-client.toml`)、`tools/__init__.py`・`tools/p4/__init__.py`・`tools/p4/tests/__init__.py`(空)、テスト`tools/p4/tests/test_*.py`(`python -m unittest discover -s tools/p4/tests -t .`)。どれもリポジトリの一番上から`python -m tools.p4....`で実行する。
 
 資源: `src/main/resources/data/micradrone/build_samples/hut.json`(小屋の見本)、`data/micradrone/tags/block/{terraformable,palette_allowed}.json`、`assets/micradrone/lang/ja_jp.json`(新規)と`en_us.json`(追記)。
 
-変更(既存): `build/compile/{ObservedBlock,ReplacePolicy,Conflicts,BomCalculator,PlanCompiler}.java`(意味を変えない追加・共有化)、`build/model/IssueCode.java`(コードを4つ足す)、`MicraDrone.java`(登録)、`MicraDroneClient.java`(クライアントのコマンド・ペイロード)、`build.gradle`(自動確認の実行設定)、`src/test/.../build/BuildPurityTest.java`、`.gitignore`(`run-p4*/`・`run-evidence/`)、設計図(`00`・`01`・`04`・`05`・`07`、新規`09`)。
+変更(既存): `build/compile/{ObservedBlock,ReplacePolicy,Conflicts,BomCalculator,PlanCompiler}.java`(意味を変えない追加・共有化)、`build/model/IssueCode.java`(コードを4つ足す)、`build/model/Hashing.java`(バイト列の版)、`MicraDrone.java`(登録。チケットの登録はmodのバス)、`MicraDroneClient.java`(クライアントのコマンド・ペイロード)、`build.gradle`(自動確認の実行設定)、`src/test/.../build/BuildPurityTest.java`(`ALLOWED`を`Map.ofEntries`にし、`build.verify`・`build.analyze`を足す)、`.gitignore`(`run-p4/`・`run-evidence/`)、設計図(`00`・`01`・`04`・`05`・`07`、新規`09`)。
 
 ## 型の辞書(後のタスクが使う名前と形。ここと違う綴りを使わない)
 
@@ -92,19 +98,20 @@ devkit(別リポジトリ`G:\prj2\micra_drone_devkit`。Task 18): `MicradroneDev
 - cc `JobStateMachine.next(JobState, JobEvent) → JobState`(許されない組は`IllegalStateException`)、`allows(JobState, JobEvent) → boolean`
 - cc `record ConstructionJob(int schemaVersion, String jobId, UUID ownerUuid, String dimension, String manifestHash, JobKind kind, String parentJobId, JobState state, PauseReason pauseReason, int cursor, int total, int repairRound, String claimId, MaterialPolicy materialPolicy, String journalFile, String ledgerFile, String lastError, long createdTick, List<String> acceptedRiskIds)` + `on(JobEvent)`・`paused(PauseReason)`・`withCursor(int)`・`withTotal(int)`・`withRepairRound(int)`・`withLastError(String)`・`withClaimId(String)`・`static create(...)`
 - build.compile `record ObservedBlock(BlockSpec block, boolean hasBlockEntity, String blockEntityType)`(既存の1引数コンストラクタは残す)
-- build.compile `BlockMatch.satisfies(BlockSpec observed, BlockSpec expected, Set<String> ignoredProps) → boolean`
+- build.compile `BlockMatch.satisfies(BlockSpec observed, BlockSpec expected, Set<String> ignoredProps) → boolean`(`STATE_SUBSET`: 期待に書いた状態だけ)、`BlockMatch.exact(...) → boolean`(`EXACT`: 両方の状態を全部)
 - cc `enum CellTrait {REPLACEABLE, FLUID, LEAVES, TERRAFORMABLE, UNBREAKABLE, EMPTY_CONTAINER}`、`record WorldCell(boolean loaded, ObservedBlock observed, Set<CellTrait> traits)`
-- cc `interface WorldPort { WorldCell read(IntPos); PlaceResult place(IntPos, BlockSpec, Map<String,String> blockEntityConfig, UUID actor); PlaceResult restore(IntPos, BlockSpec, UUID actor, boolean dropContentsFirst); }`、`enum PlaceResult {PLACED, DENIED, INVALID}`
+- cc `interface WorldPort { WorldCell read(IntPos); PlaceResult place(IntPos, BlockSpec, Map<String,String> blockEntityConfig, UUID actor); PlaceResult restore(IntPos, BlockSpec, UUID actor, boolean dropContentsFirst); void settle(List<IntPos> positions); }`、`enum PlaceResult {PLACED, DENIED, INVALID}`
 - cc `enum Refusal {FOREIGN_BLOCK_ENTITY, UNBREAKABLE, NOT_REPLACEABLE, NOT_TERRAFORMABLE, EXPECTED_OTHER}`、`enum Destruction {NONE, FLUID, LEAVES, EMPTY_CONTAINER, TERRAIN}`、`sealed interface ReplaceDecision {Place(Destruction), AlreadyDone(), Refused(Refusal)}`、`ReplaceRules.decide(Placement, WorldCell, boolean journaled, boolean placedByProject)`
-- build.compile `record SiteSurvey(String dimension, Box worldBounds, int[][] surfaceY, String[][] surfaceBlock, boolean[][] water, boolean[][] tree, String digest)` + `static of(...)`・`static air(String, Box)`・`int surfaceAt(int x, int z)`・`boolean covers(int x, int z)`・`SurveyRef ref(long cachedUntilTick)`
+- build.compile `record SiteSurvey(String dimension, Box worldBounds, int[][] surfaceY, String[][] surfaceBlock, boolean[][] water, boolean[][] tree, String digest)` + `static of(...)`・`static air(String, Box)`・`int surfaceAt(int x, int z)`・`boolean hasGround(int x, int z)`(表面のブロックが空気でない。空気の列は整地しない)・`boolean covers(int x, int z)`・`SurveyRef ref(long cachedUntilTick)`
 - build.compile `ReplacePolicy.Terraform`(`CODE_TERRAFORM="terraform"`)、`ReplacePolicy.fromCode(String)`
 - build.compile `record TerrainSummary(int cut, int fill)`、`record TerrainResult(PlacementManifest manifest, TerrainSummary summary, List<Issue> issues)`、`TerrainPrep.apply(PlacementManifest, SiteSurvey) → TerrainResult`、`PhaseRanges.of(List<Placement>) → List<PhaseRange>`
 - build.compile `record ItemCount(String itemId, int count)`、`BlockToItem.cost(BlockSpec) → Optional<ItemCount>`・`cutYield(BlockSpec) → Optional<ItemCount>`・`merge(List<ItemCount>) → List<ItemCount>`
 - cc `record SafetyLimits(int maxPlacements, int maxSizeX, int maxSizeY, int maxSizeZ, int minBuildY, int maxBuildYExclusive)`、`record PlacementSurvey(Map<IntPos,WorldCell> cells)`、`interface ItemCatalog { boolean exists(String itemId); }`、`record ReplacementSummary(int fluids, int leaves, int emptyContainers, int terrainCut, int terrainFill, List<IntPos> destructiveSample)`、`record SafetyReport(List<Issue> issues, ReplacementSummary replacements)`、`SafetyEnvelope.check(PlacementManifest, TerrainSummary, PlacementSurvey, SafetyLimits, PlaceableBlockPolicy, ItemCatalog, Predicate<IntPos> projectPlaced) → SafetyReport`
 - cc `ConstructionBudget(BudgetConfig)`: `admit(List<QueuedJob>, List<BudgetJob>) → List<String>`、`allocate(long tick, double averageMspt, List<BudgetJob>) → BudgetTick`、`static droneCount(int, BudgetConfig)`、`static etaTicks(int fast, int slow, BudgetConfig)`
 - cc `record JournalRecord(int placementIndex, IntPos pos, BlockSpec before, boolean beforeHadBlockEntity, BlockSpec placed, int ledgerKey)`、`Journal`、`PlacedRegistry`、`MaterialLedger`、`LedgerBook`、`JobOutcome`、`record PutItem(int index, int ledgerKey, Placement placement)`、`record RestoreItem(IntPos pos, BlockSpec expectedNow, Set<String> volatileProps, BlockSpec restoreTo, String sourceJobId, int sourceLedgerKey, boolean dropContents)`、`record JobProgram(List<RestoreItem> restores, List<PutItem> puts)`
+- cc `Attachments.dependent(BlockSpec)`・`samePiece(RestoreItem, RestoreItem)`・`REMOVAL_ORDER`、`JobOutcome.addRestoreConflict`・`hasRestoreConflictAt`・`resolveConflictAt`、`AdoptPass.adopt(JobRecord, WorldPort, PlacedRegistry) → AdoptPass.Result(int adopted, List<IntPos> unloaded)`、`record RecoveryDecision(ConstructionJob job, JobLoad load, boolean adoptFirst)`、`record HeldContents(int items, long fluidMillibuckets, boolean burningFuel)`
 - cc `ConstructionExecutor.run(ExecutionContext, int cursor, int allowance) → StepReport`、`record StepReport(int cursor, PauseReason pause, List<IntPos> touched, List<ItemCount> shortage, List<Conflict> conflicts)`
-- build.verify `SnapshotDiff.compare(PlacementManifest, SparseSnapshot, CompareScope, Function<String,Set<String>> volatileOfNode) → SnapshotDiff.Result(List<Deviation> deviations, List<Integer> unread)`、`RepairPlanner.plan(...) → RepairPlan(List<Integer> reapply, List<Conflict> conflicts, List<Deviation> unfixable)`
+- build.verify `SnapshotDiff.compare(PlacementManifest, SparseSnapshot, CompareScope, Function<String,Set<String>> volatileOfNode) → SnapshotDiff.Result(List<Deviation> deviations, List<Integer> unread)`、`RepairPlanner.plan(...) → RepairPlan(List<Integer> reapply, List<Conflict> conflicts, List<Deviation> unfixable)`、`SnapshotDiff.statesMatch(VerifyMode, BlockSpec, BlockSpec, Set<String>) → boolean`
 - cc `ClaimBook(int maxPerOwner)`: `check(UUID, String dim, Box operatingBox, String exceptClaimId) → List<Issue>`、`reserve(...) → SiteClaim`、`release(String)`
 - cc `ApprovalDesk`: `offer(...) → PendingApproval`、`approve(ApprovalRequest, Approver, String registryVersion, SurveyCache, long now, Supplier<String> newJobId) → ApprovalDecision`
 - cc `JobService`: `admitApproved(...)`、`add(JobRecord)`・`addBroken(...)`、`tick(TickInput, JobWorld) → List<JobUpdate>`、`cancel`・`resume`(Task 13)・`beginVerify`(Task 21)・`recover`(Task 24)・`rollback`(Task 28) → `ControlResult`、`status(String) → Optional<JobStatus>`
@@ -116,21 +123,21 @@ devkit(別リポジトリ`G:\prj2\micra_drone_devkit`。Task 18): `MicradroneDev
 | 完了条件(設計図07 P4) | 純Javaのテスト | 実機の自動確認(台本のシナリオ) | ペルソナ |
 |---|---|---|---|
 | 1. 手書きの計画から小屋がドローン演出つきで建つ | Task 3〜13、17(`SampleHutTest`)、20(`DroneChoreographerTest`) | Task 19 `hut-golden`・`hut-here`、Task 20 `drone-show` | Task 36(演出の画面の視覚判定) |
-| 2. 状態まで検査(向きの違う階段・扉)。壊す・向きを変える→修復で`VERIFIED`。直せない→`PARTIAL`と理由 | Task 10、13 | Task 21 `l7-repair`・`l7-partial` | Task 36(`PARTIAL`の理由の文言) |
+| 2. 状態まで検査(向きの違う階段・扉)。壊す・向きを変える→修復で`VERIFIED`。直せない→`PARTIAL`と理由 | Task 10(`EXACT`は状態を全部、`STATE_SUBSET`は書いた状態だけ)、13(修復の途中で止まってもラウンドを使わない) | Task 21 `l7-repair`・`l7-partial` | Task 36(`PARTIAL`の理由の文言) |
 | 3. `MODIFY`: 差分どおりに直り、手で置き換えた位置は`Conflict`として触らずに報告 | Task 29 | Task 29 `modify-conflict` | Task 36 |
-| 4. 再起動で`PAUSED`から自動再開(10秒以内)。取消。ロールバック。記録ファイル欠落で「復旧待ち」 | Task 13、22〜24、28 | Task 25 `restart-resume`・`missing-journal`・`crash-window`、Task 28 `cancel`・`rollback` | Task 36(復旧待ちの文言) |
+| 4. 再起動で`PAUSED`から自動再開(10秒以内)。取消。ロールバック。記録ファイル欠落で「復旧待ち」 | Task 13、22〜24(`AdoptPassTest`: 世界が記録より進んだ状態)、28 | Task 25 `restart-resume`・`missing-journal`・`crash-window`(世界が記録より進んだディスクを本当に作る)、Task 28 `cancel`・`rollback`・`crash-window-rollback`、Task 31 `offline-chunk` | Task 36(復旧待ちの文言) |
 | 5. 偽の施工リストの承認を拒否。サーバーが作り直す。別ディメンションからの承認を拒否 | Task 12、17、32 | Task 19 `hut-golden`(サーバーの作り直しが金のハッシュ)、Task 32 `fake-approval`・`dimension-bound` | — |
-| 6. 専用サーバー+クライアント2つで、他人が取消・承認できない。他人の区画への施工を拒否 | Task 11、13、26 | Task 26 `permissions-single`、Task 34 `dedicated-two-clients` | — |
+| 6. 専用サーバー+クライアント2つで、他人が取消・承認できない。他人の区画への施工を拒否 | Task 11、13、26 | Task 34 `dedicated-two-clients`(**`NOT-RUN`は合格にしない**。各JVMは`-Xmx3G`で、空きメモリの線はそこから求める)、Task 26 `permissions-single`(1つのクライアントでの論理。代わりの根拠にはしない) | — |
 | 7. 材料: クリエイティブは消費なし、サバイバルは消費・不足で停止・補給で再開、取消で返さない、ロールバックは撤去分だけ返す、再起動で二重に消費しない | Task 6、8、9、24、27、28 | Task 27 `survival-materials`、Task 28 `rollback-return` | Task 36(材料不足の文言) |
 | 8. 安全枠: 上限超過・置換不可(ブロックエンティティを含む)が承認前に`Issue` | Task 4、6、30 | Task 21 `safety-limits`、Task 30 `block-entities` | Task 36(`E-SITE-BLOCKED`の文言) |
 | 9. 30KB超の計画が分割して送られ、ハッシュ検証を通る | Task 32 | Task 32 `payload-30kb`・`s6-payload-limits` | — |
-| 10. 性能: 20,000設置で平均MSPTの増加5ms以内(最大15ms)。重い計算はワーカー。4ジョブ同時で45ms以内、超えると自動減速と`PAUSED(SERVER_BUSY)`表示 | Task 7、12、33 | Task 33 `perf-20000`・`four-jobs` | — |
+| 10. 性能: 20,000設置で平均MSPTの増加5ms以内(最大15ms)。重い計算はワーカー。4ジョブ同時で45ms以内、超えると自動減速と`PAUSED(SERVER_BUSY)`表示 | Task 7、12、13(`aSlowedRunningJobIsShownAsServerBusy`)、33 | Task 33 `perf-20000`・`four-jobs`(施工の仕事は`ServerTickEvent.Pre`=MSPTの窓の中で行い、ランタイム自身の時間も`MsptStats`に記録。Task 16。重さの道具`/spike/load`も`Pre`) | — |
 | 11. 既存の畑ドローン機能が動く(農場のスクリプトを1本)。`get_block_snapshot`のテストが緑 | Task 37(全テスト) | Task 37 `farm-regression` | — |
 | 12. 整地: 傾斜地で切り・盛りが個数つきで出て、確認後に実行。サバイバルで資源が消えも増えもしない。確認なしは拒否 | Task 5、6、12、27 | Task 21 `terrain-slope`、Task 27 `terrain-survival` | Task 36 |
-| 13. ブロックエンティティ: 置いた保管庫・デポを撤去でき、中身はドロップ。元からあるチェストは置換も撤去もされない | Task 28、29、30 | Task 30 `block-entities` | — |
+| 13. ブロックエンティティ: 置いた保管庫・デポを撤去でき、中身はドロップ。元からあるチェストは置換も撤去もされない | Task 15(中身はアイテムの能力で取り出す。Createのクラスをimportしない)、28、29、30(`RemovalPreviewTest`) | Task 30 `block-entities`(devkitの開発専用の注入でCreateの`item_vault`・`depot`とバニラの樽を置き、中身を入れて撤去→落ちたアイテムの数) | — |
 | 14. 区画の存続: ジョブの後も区画を保持し他人の施工を拒否。`journal`は解放まで残る | Task 11、24、28 | Task 26 `permissions-single`(区画)、Task 28 `rollback`(解放) | — |
 | 15. L7の保守性: `volatileProps`を戻さない。別の種類のブロックは上書きせず`Conflict` | Task 10 | Task 21 `l7-repair`(開けた扉はそのまま・金のブロックは上書きしない) | — |
-| 16. 調査の固定: 調査から承認までに地形が変わってもハッシュ不一致にならず、置けなくなった位置だけが`Conflict`・`PAUSED`(`E-SITE-CHANGED`) | Task 5、9、12 | Task 21 `survey-pinned` | Task 36 |
+| 16. 調査の固定: 調査から承認までに地形が変わってもハッシュ不一致にならず、置けなくなった位置だけが`Conflict`・`PAUSED`(`E-SITE-CHANGED`) | Task 5、9、12、13(`lastError`が`E-SITE-CHANGED`のID、スキップなしの再開で報告が消える) | Task 21 `survey-pinned` | Task 36 |
 
 **横断基盤・決定事項 × タスク**(P4の担当分。空欄なし):
 
@@ -138,14 +145,14 @@ devkit(別リポジトリ`G:\prj2\micra_drone_devkit`。Task 18): `MicradroneDev
 |---|---|
 | F-1 サーバー権威・スレッド | Task 12(ワーカー)、15(メインスレッドの世界)、16(ランタイム) |
 | F-2 永続化・予算 | Task 7(予算)、22〜25(保存・復旧・孤児の掃除・自動再開) |
-| F-3 承認と改ざん防止 | Task 5(調査の固定)、12(承認)、32(分割ペイロード・受け入れたリスク) |
+| F-3 承認と改ざん防止 | Task 5(調査の固定)、12(承認・同梱テンプレートのIDとハッシュの照合`aBundledTemplateMustMatchTheServersOwnCopyByIdAndHash`)、32(分割ペイロード・受け入れたリスク) |
 | F-4 権限・所有者 | Task 11(区画)、13(所有者/OPの操作)、26(建築権限)、35(既存の権限の穴のIssue起票) |
-| F-5 安全枠 | Task 4、5、6、7(所有者ごと1ジョブ)、30、31 |
+| F-5 安全枠 | Task 4、5、6、7(所有者ごと1ジョブ)、16(OPの緩和の設定`safety.opMax*`。検査のテストは無い)、30、31 |
 | F-7 材料 | Task 6、8、9、27、28 |
-| F-8 問い合わせ経路 | Task 32 |
+| F-8 問い合わせ経路 | Task 32(クライアント側`PendingQueriesTest`、サーバー側`QueryArgsTest`) |
 | F-13 チャンクとオフライン | Task 31 |
 | F-14 取消とロールバック | Task 13(取消)、28(ロールバック) |
-| F-15 設定 | Task 16 |
+| F-15 設定 | P7の担当(設計`07`)。P4はTask 16で設定の器(`ConstructionConfig`)を作るだけで、設定そのものの検査のテストは持たない |
 | F-16 マルチプレイ | Task 34 |
 | F-17 ログと診断 | Task 34 |
 | F-19 ドキュメント | Task 35 |
@@ -173,6 +180,8 @@ devkit(別リポジトリ`G:\prj2\micra_drone_devkit`。Task 18): `MicradroneDev
 ---
 ### Task 1: スパイクS-6(カスタムペイロードの実際の上限)
 
+**担当: コントローラ(Claude)**。調査文書と設計図なので、Devinには渡さない。
+
 **事実の確定(ソースを読んだ。2026-09-30、計画書の作成時に実施済み)** と、**実機での自動測定の手順**(測定の実行はTask 32。devkitの測定用ペイロードを使うので、ゲームを起動できる段階まで待つ)を、調査文書に書く。コードは書かない。
 
 **Files:**
@@ -188,11 +197,11 @@ devkit(別リポジトリ`G:\prj2\micra_drone_devkit`。Task 18): `MicradroneDev
 1. **確認済み(ソース)**:
    - `net/minecraft/network/protocol/common/ServerboundCustomPayloadPacket.java`: `private static final int MAX_PAYLOAD_SIZE = 32767;`。ただし使われるのは`DiscardedPayload.codec(id, 32767)`(**登録されていない**ペイロードを読み捨てるとき)だけ。登録済みのペイロードの大きさは、このコーデックでは制限されない。
    - `net/minecraft/network/protocol/common/ClientboundCustomPayloadPacket.java`: `MAX_PAYLOAD_SIZE = 1048576`(同じく読み捨て用)。
-   - `net/neoforged/neoforge/network/filters/GenericPacketSplitter.java`: エンコード後のパケットが上限を超えると`SplitPacketPayload`に分割して送る。上限は`CompressionDecoder.MAXIMUM_COMPRESSED_LENGTH = 2097152`(圧縮器の無い接続=シングルプレイのメモリ内接続)と`MAXIMUM_UNCOMPRESSED_LENGTH = 8388608`(圧縮器がある接続)。分割用のチャンネルは`.optional()`で登録され、相手がそのチャンネルを持つときだけ使う(`isRemoteCompatible`)。
+   - `net/neoforged/neoforge/network/filters/GenericPacketSplitter.java`: エンコード後のパケットが上限を超えると`SplitPacketPayload`に分割して送る。上限は`CompressionDecoder.MAXIMUM_COMPRESSED_LENGTH = 2097152`(**圧縮の処理が無い接続**。シングルプレイのメモリ内接続のほか、`network-compression-threshold=-1`のTCPも当たる)と`MAXIMUM_UNCOMPRESSED_LENGTH = 8388608`(圧縮器がある接続)。分割用のチャンネルは`.optional()`で登録され、相手がそのチャンネルを持つときだけ使う(`isRemoteCompatible`)。
    - `net/minecraft/network/FriendlyByteBuf.java`: `MAX_STRING_LENGTH = 32767`(文字数)。`ByteBufCodecs.STRING_UTF8`で文字列を送ると、この文字数を超えた時点で読み取りが失敗する。**だから、計画の本文は文字列ではなく`ByteBufCodecs.byteArray(上限)`で送る**。
 2. **設計の理解との違い**: 設計(`04` F-3)は「サーバー宛ての通常のカスタムペイロードは約32KBが上限と理解している」と書いていた。ソース上は、32,767は**登録されていない**ペイロードの読み捨て用の値で、登録済みのペイロードはNeoForgeが分割して送る。ただし、相手が分割チャンネルを持たない場合や、1つのパケットの上限(2MiB/8MiB)の実際の振る舞いは、実機で測るまで確定しない。
 3. **P4の決定(測定の前でも崩れない側)**: 計画は**30KB(`30 * 1024`バイト)以下のチャンク**に分けて送る(設計どおり)。30KBは、どの上限(32,767・2MiB・8MiB)よりも小さいので、測定の結果がどうであっても動く。全体の上限は2MB(`2 * 1024 * 1024`)で、チャンクに分けるので単一パケットの上限には触れない。**測定の結果で変わりうるのはチャンクの大きさの最適値だけで、正しさは変わらない**。
-4. **自動測定の手順(Task 32のシナリオ`s6-payload-limits`で実行)**: devkitの測定用ペイロード`micradrone_devkit:probe`(Task 18。`ByteBufCodecs.byteArray(16 * 1024 * 1024)`。micradrone本体の検査を通らない)を、devkitのクライアントAPI`POST /spike/send-probe {"bytes": N}`で送り、サーバー側API`POST /spike/probe-log`で受け取った大きさを読む。Nは16,384・30,720・32,767・32,768・65,536・1,048,576・2,097,151・2,097,152・2,097,153・8,388,608。(a)シングルプレイ(メモリ内接続)と(b)専用サーバー(TCP)の両方で行い、「受信できた/切断された/ログの例外」を`run-evidence/p4/<runId>/s6-payload-limits.json`に記録し、この文書の5節に追記する。切断が起きたら、台本はクライアントを再接続させて次の大きさへ進む(ループしない。3回続けて接続できなければ打ち切りを記録)。
+4. **自動測定の手順(Task 32のシナリオ`s6-payload-limits`で実行)**: devkitの測定用ペイロード`micradrone_devkit:probe`(Task 18。`ByteBufCodecs.byteArray(16 * 1024 * 1024)`。micradrone本体の検査を通らない)を、devkitのクライアントAPI`POST /spike/send-probe {"bytes": N}`で送り、サーバー側API`POST /spike/probe-log`で受け取った大きさを読む。Nは16,384・30,720・32,767・32,768・65,536・1,048,576・2,097,151・2,097,152・2,097,153・8,388,608。**予想**: 圧縮のあるTCPで、圧縮の効かない中身を2〜8MiB送ると、分割の上限(非圧縮の8MiB)より先に、枠の上限2,097,151バイト(`Varint21LengthFieldPrepender.java` 18〜22行・`Varint21FrameDecoder.java` 15〜42行)に当たって切断される見込み。台本は切断を「失敗」ではなく測定の結果として記録する(P4レビューD-5)。(a)シングルプレイ(メモリ内接続)と(b)専用サーバー(TCP)の両方で行い、「受信できた/切断された/ログの例外」を`run-evidence/p4/<runId>/s6-payload-limits.json`に記録し、この文書の5節に追記する。切断が起きたら、台本はクライアントを再接続させて次の大きさへ進む(ループしない。3回続けて接続できなければ打ち切りを記録)。
 5. **結果**(Task 32で追記。今は「未測定」と書いておく)。
 
 - [ ] **Step 2: 設計図を直す**
@@ -217,6 +226,8 @@ MSG
 
 ### Task 2: スパイクS-9(保護modの設置イベントとの互換、`FakePlayer`)
 
+**担当: コントローラ(Claude)**。
+
 **Files:**
 - Create: `docs/investigations/spk_s9_place_event.md`
 - Modify: `docs/design/nl_factory_builder/04_foundations.md`(F-4の「建築権限の確認」の(c))、`docs/design/nl_factory_builder/07_phases_and_verification.md`(S-9の行)
@@ -229,18 +240,19 @@ MSG
 
 1. **確認済み(ソース)**:
    - `net/neoforged/neoforge/event/EventHooks.java` `onBlockPlace(@Nullable Entity entity, BlockSnapshot blockSnapshot, Direction direction)`: 置いた面の反対側のブロック(`placedAgainst`)を読み、`new BlockEvent.EntityPlaceEvent(blockSnapshot, placedAgainst, entity)`を`NeoForge.EVENT_BUS`に投げ、`isCanceled()`を返す。
-   - `net/neoforged/neoforge/event/level/BlockEvent.java` `EntityPlaceEvent(BlockSnapshot, BlockState placedAgainst, @Nullable Entity)`: 親の`BlockEvent`に渡す状態は`!(entity instanceof Player) ? blockSnapshot.getState() : blockSnapshot.getCurrentState()`。**主体がプレイヤー(`FakePlayer`を含む)のときは、世界の今の状態(=既に置いたブロック)を読む**。つまり、バニラの`BlockItem`と同じく「先に`setBlock`し、イベントがキャンセルされたら`BlockSnapshot.restore()`で戻す」順で呼ぶ前提。
+   - `net/neoforged/neoforge/event/level/BlockEvent.java` `EntityPlaceEvent(BlockSnapshot, BlockState placedAgainst, @Nullable Entity)`: 親の`BlockEvent`に渡す状態は`!(entity instanceof Player) ? blockSnapshot.getState() : blockSnapshot.getCurrentState()`。**主体がプレイヤー(`FakePlayer`を含む)のときは、世界の今の状態(=既に置いたブロック)を読む**。つまり「先に`setBlock`し、イベントで決める」順で呼ぶ前提。
+   - `net/neoforged/neoforge/common/CommonHooks.java` `onPlaceItemIntoWorld`(594〜671行): バニラの`BlockItem`の設置は、`level.captureBlockSnapshots = true`の間に`setBlock`する。捕まえている間は`onPlace`も隣への通知も起きない(`Level.java` 244〜261行、`LevelChunk.java` 282行)。イベントがキャンセルなら、捕まえたスナップショットを逆順に`restoringBlockSnapshots = true`で戻し、通れば`onPlace`と`markAndNotifyBlock`を呼ぶ。**P4の設置もこの形にする**(捕まえずに`setBlock(..., 3)`→イベント→`restore()`の順にすると、`onPlace`・隣の更新・ブロックエンティティの副作用が、キャンセルの前に起きて元に戻らない。P4レビューD-3)。
    - `net/neoforged/neoforge/common/util/BlockSnapshot.java`: `create(ResourceKey<Level> dim, LevelAccessor level, BlockPos pos)`・`restore()`・`getState()`・`getCurrentState()`。
    - `net/neoforged/neoforge/common/util/FakePlayerFactory.java`: `get(ServerLevel, GameProfile)`・`getMinecraft(ServerLevel)`。
    - `BlockEvent.BreakEvent(Level, BlockPos, BlockState, Player)`はキャンセル可能(撤去・ロールバックで使う)。
-   - `net/minecraft/server/MinecraftServer.java` `isUnderSpawnProtection(ServerLevel, BlockPos, Player)`: 基底クラスは常に`false`。専用サーバーの実装の振る舞いは、Task 26の自動測定(専用サーバーの台本)で確かめる。
-2. **P4の決定(測定の前の既定)**: 設置は「`BlockSnapshot.create`→`setBlock`→`EventHooks.onBlockPlace(主体, snapshot, Direction.UP)`→キャンセルなら`snapshot.restore()`して`DENIED`」の順。主体は、所有者がオンラインならその`ServerPlayer`、オフラインなら`FakePlayerFactory.get(level, new GameProfile(ownerUuid, ownerName))`(所有者のUUIDを持つ偽のプレイヤー。保護modが所有者で判定できる)。撤去(ロールバック・`MODIFY`)は`BreakEvent`を同じ主体で投げる。
-3. **自動測定の手順(Task 26のシナリオ`s9-protection`で実行)**: devkitのサーバー側の測定用リスナー`DevkitProtectBox`(Task 18)を`POST /spike/protect-box {"box":[x1,y1,z1,x2,y2,z2], "cancelPlace":true, "cancelBreak":true}`で有効にし、そのリスナーが記録した「イベントの型・主体のクラス名・`instanceof FakePlayer`・イベントの`getPlacedBlock()`の状態・その時点の世界の状態」を`POST /spike/protect-log`で読む。(a)所有者オンラインで小屋を建て、箱の中の位置が`DENIED`で世界に残らないこと、(b)所有者がいない状態(devkitのサーバーAPIでOPの代理として再開)で`FakePlayer`が主体になり同じく`DENIED`になること、(c)ロールバックの`BreakEvent`がキャンセルされた位置が残ること、を確かめ、`run-evidence/p4/<runId>/s9-protection.json`に記録し、この文書の4節に追記する。
+   - `net/minecraft/server/MinecraftServer.java` `isUnderSpawnProtection(ServerLevel, BlockPos, Player)`: 基底クラスは常に`false`。専用サーバーの実装(`DedicatedServer.java` 397〜413行)は、オーバーワールド以外・OPの一覧が空・OPのプロフィールなら`false`、それ以外はスポーンからの距離で判定する(ソースで読めるので測らない。P4レビューD-7)。
+2. **P4の決定(測定の前の既定)**: 設置は「スナップショットを捕まえながら`setBlock`→`EventHooks.onBlockPlace`(2個以上なら`onMultiBlockPlace`)(主体, `Direction.UP`)→キャンセルなら捕まえた物を逆順に戻して`DENIED`、通れば`onPlace`と隣の更新」の順(上の`CommonHooks`と同じ形。Task 15)。主体は、所有者がオンラインならその`ServerPlayer`、オフラインなら`FakePlayerFactory.get(level, new GameProfile(ownerUuid, ownerName))`(所有者のUUIDを持つ偽のプレイヤー。保護modが所有者で判定できる)。撤去(ロールバック・`MODIFY`)は`BreakEvent`を同じ主体で投げる。
+3. **自動測定の手順(Task 26の`s9-protection-online`・Task 31の`s9-protection-offline`・Task 28の`s9-protection-rollback`で実行)**: devkitのサーバー側の測定用リスナー`DevkitProtectBox`(Task 18)を`POST /spike/protect-box {"box":[x1,y1,z1,x2,y2,z2], "cancelPlace":true, "cancelBreak":true}`で有効にし、そのリスナーが記録した「イベントの型・主体のクラス名・`instanceof FakePlayer`・イベントの`getPlacedBlock()`の状態・その時点の世界の状態」を`POST /spike/protect-log`で読む。(a)所有者オンラインで小屋を建て、箱の中の位置が`DENIED`で世界に残らないこと、(b)所有者がいない状態(devkitのサーバーAPIでOPの代理として再開)で`FakePlayer`が主体になり同じく`DENIED`になること、(c)ロールバックの`BreakEvent`がキャンセルされた位置が残ること、を確かめ、`run-evidence/p4/<runId>/s9-protection.json`に記録し、この文書の4節に追記する。
 4. **結果**(Task 26で追記。今は「未測定」と書いておく)。
 
 - [ ] **Step 2: 設計図を直す**
 
-`04` F-4の(c)の後に「(S-9の確認済みの事実: プレイヤー主体の設置イベントは既に置いた状態を読むので、`setBlock`の後に投げ、キャンセルなら`BlockSnapshot.restore()`で戻す。オフラインの所有者は`FakePlayerFactory.get`で所有者のUUIDを持つ偽のプレイヤーを主体にする。`docs/investigations/spk_s9_place_event.md`)」を足す。`07`のS-9の行の「方法」に「ソースで確認済み。測定はdevkitの測定用リスナーで自動(P4 Task 26)」を足す。
+`04` F-4の(c)の後に「(S-9の確認済みの事実: プレイヤー主体の設置イベントは既に置いた状態を読むので、バニラの`BlockItem`と同じく、スナップショットを捕まえながら置いてからイベントを投げ、キャンセルなら捕まえた物を戻す。オフラインの所有者は`FakePlayerFactory.get`で所有者のUUIDを持つ偽のプレイヤーを主体にする。`docs/investigations/spk_s9_place_event.md`)」を足す。`07`のS-9の行の「方法」に「ソースで確認済み。測定はdevkitの測定用リスナーで自動(P4 Task 26)」を足す。
 
 - [ ] **Step 3: コミット**
 
@@ -260,6 +272,8 @@ MSG
 
 ### Task 3: `construction.core`の新設 — ジョブの型と状態機械、純粋さの検査、設計図の配置表
 
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。設計図の追記はコントローラ(Claude)が先に書き(コミットしない)、Devinが自分のコミットに`git add`で含める(Global Constraintsの「担当の分け方」)。
+
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{JobState,PauseReason,JobKind,MaterialPolicy,JobEvent,JobStateMachine,ConstructionJob}.java`
 - Test: `src/test/java/io/github/khayashi4337/micradrone/construction/core/{JobStateMachineTest,ConstructionJobTest}.java`
@@ -267,7 +281,7 @@ MSG
 
 **Interfaces:**
 - Consumes: なし(`java.*`のみ)
-- Produces: 型の辞書のとおり。`ConstructionJob.ID_PATTERN = "[a-z0-9-]{1,64}"`(IDはファイルのパスに使うので形式を検査する。F-22)、`JOBS_DIR = "jobs/"`、`JOURNAL_FILE = "journal.bin"`、`LEDGER_FILE = "ledger.bin"`、`MAX_REPAIR_ROUNDS = 3`(`03` L7の上限)。
+- Produces: 型の辞書のとおり。`ConstructionJob.ID_PATTERN = Pattern.compile("[a-z0-9-]{1,64}")`(IDはファイルのパスに使うので形式を検査する。F-22)、`JOBS_DIR = "jobs/"`、`JOURNAL_FILE = "journal.bin"`、`LEDGER_FILE = "ledger.bin"`、`MAX_REPAIR_ROUNDS = 3`(`03` L7の上限)。
 
 - [ ] **Step 1: 失敗するテストを書く**
 
@@ -684,7 +698,7 @@ public record ConstructionJob(int schemaVersion, String jobId, UUID ownerUuid, S
 }
 ```
 
-- [ ] **Step 4: 設計図の配置表と型を直す**(コードより先に設計を正本にする原則。この計画書で確定した内容)
+- [ ] **Step 4: 設計図の配置表と型を直す(担当: コントローラ。Devinに渡す前に書き、コミットしない。Devinのコミットに含まれる)**(コードより先に設計を正本にする原則。この計画書で確定した内容)
 
 `01_data_model.md`の12節の表の`construction`の行の直前に、次の2行を足す(唯一一致する行の前に挿入):
 ```
@@ -700,19 +714,27 @@ Expected: `BUILD SUCCESSFUL`、失敗0件(既存のテストを含む全部)。
 
 - [ ] **Step 6: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/build/BuildPurityTest.java docs/design/nl_factory_builder/01_data_model.md
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add src/test/java/io/github/khayashi4337/micradrone/build/BuildPurityTest.java
+git add docs/design/nl_factory_builder/01_data_model.md
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: construction.coreを新設し、施工ジョブの型と状態機械を追加(純粋さの検査と設計図の配置表も更新)(自然言語→工場建設 P4 Task 3)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
 ---
 
 ### Task 4: 抽象の世界と置換の規則(`WorldCell`・`ReplaceRules`)、状態の照合(`BlockMatch`)
+
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。
 
 **Files:**
 - Modify: `src/main/java/io/github/khayashi4337/micradrone/build/compile/ObservedBlock.java`(ブロックエンティティの有無を足す。既存の1引数コンストラクタは残す)、`src/main/java/io/github/khayashi4337/micradrone/build/compile/Conflicts.java`(`BlockMatch`を使う。挙動は同じ)
@@ -721,7 +743,7 @@ MSG
 
 **Interfaces:**
 - Consumes: `build.compile.Placement`・`ReplacePolicy`(既存。`AirOnly`・`Replaceable`・`Expect`)、`build.model.BlockSpec`・`IntPos`
-- Produces: 型の辞書の`ObservedBlock`・`BlockMatch`・`CellTrait`・`WorldCell`(`static WorldCell unloaded()`・`static WorldCell of(BlockSpec, CellTrait...)`・`static WorldCell withBlockEntity(BlockSpec, String type, CellTrait...)`・`BlockSpec block()`)・`WorldPort`・`PlaceResult`・`Refusal`・`Destruction`(`boolean needsDestructiveConfirm()`)・`ReplaceDecision`・`ReplaceRules`。テスト用の`FakeWorld`(以降のタスクのテストが使う)。`Terraform`の置換方針はTask 5で足し、`ReplaceRules`のswitchにもTask 5で足す。
+- Produces: 型の辞書の`ObservedBlock`・`BlockMatch`(`satisfies`=`STATE_SUBSET`の比べ方、`exact`=`EXACT`の比べ方。設計`05` 1.1.1のとおり2つを分ける)・`CellTrait`・`WorldCell`(`static WorldCell unloaded()`・`static WorldCell of(BlockSpec, CellTrait...)`・`static WorldCell withBlockEntity(BlockSpec, String type, CellTrait...)`・`BlockSpec block()`)・`WorldPort`・`PlaceResult`・`Refusal`・`Destruction`(`boolean needsDestructiveConfirm()`)・`ReplaceDecision`・`ReplaceRules`。テスト用の`FakeWorld`(以降のタスクのテストが使う)。`Terraform`の置換方針はTask 5で足し、`ReplaceRules`のswitchにもTask 5で足す。
 
 - [ ] **Step 1: 失敗するテストを書く**
 
@@ -756,6 +778,16 @@ class BlockMatchTest {
         BlockSpec door = BlockSpec.of("minecraft:oak_door", "open", "false", "facing", "south");
         assertTrue(BlockMatch.satisfies(door.with("open", "true"), door, Set.of("open")));
         assertFalse(BlockMatch.satisfies(door.with("open", "true"), door, Set.of()));
+    }
+
+    @Test
+    void exactComparesEveryStateAndSubsetOnlyTheListedOnes() {
+        BlockSpec log = BlockSpec.of("minecraft:oak_log", "axis", "y");
+        assertTrue(BlockMatch.exact(log, log, Set.of()));
+        assertFalse(BlockMatch.exact(log.with("extra", "1"), log, Set.of()), "an unlisted observed state fails EXACT");
+        assertTrue(BlockMatch.satisfies(log.with("extra", "1"), log, Set.of()), "but not STATE_SUBSET");
+        assertTrue(BlockMatch.exact(log.with("open", "true"), log, Set.of("open")), "volatile states are ignored by both");
+        assertFalse(BlockMatch.exact(BlockSpec.of("minecraft:stone"), BlockSpec.of("minecraft:stone", "x", "1"), Set.of()));
     }
 
     @Test
@@ -850,6 +882,15 @@ public final class FakeWorld implements WorldPort {
 
     public int itemsIn(IntPos pos) {
         return containerItems.getOrDefault(pos, 0);
+    }
+
+    @Override
+    public void settle(List<IntPos> positions) {
+        StringBuilder sb = new StringBuilder("settle");
+        for (IntPos p : positions) {
+            sb.append(' ').append(p.x()).append(',').append(p.y()).append(',').append(p.z());
+        }
+        log.add(sb.toString());
     }
 
     private PlaceResult write(String what, IntPos pos, BlockSpec block) {
@@ -1049,7 +1090,9 @@ package io.github.khayashi4337.micradrone.build.compile;
 
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Whether an observed block satisfies an expected one: the same block id, and every state the expectation lists (minus
@@ -1066,6 +1109,25 @@ public final class BlockMatch {
         }
         for (Map.Entry<String, String> e : expected.properties().entrySet()) {
             if (!ignoredProps.contains(e.getKey()) && !e.getValue().equals(observed.get(e.getKey()))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * VerifyMode.EXACT (design 05, 1.1.1): the same id and exactly the same states on both sides, the ignored (volatile)
+     * ones aside. A state the observation has but the plan did not list fails, unlike {@link #satisfies}.
+     */
+    public static boolean exact(BlockSpec observed, BlockSpec expected, Set<String> ignoredProps) {
+        if (!observed.blockId().equals(expected.blockId())) {
+            return false;
+        }
+        Set<String> keys = new TreeSet<>(observed.properties().keySet());
+        keys.addAll(expected.properties().keySet());
+        keys.removeAll(ignoredProps);
+        for (String k : keys) {
+            if (!Objects.equals(observed.get(k), expected.get(k))) {
                 return false;
             }
         }
@@ -1146,6 +1208,7 @@ package io.github.khayashi4337.micradrone.construction.core;
 
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.IntPos;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -1164,6 +1227,12 @@ public interface WorldPort {
      * {@code dropContentsFirst}, a container's items are dropped into the world first (D-25); a refused break drops nothing.
      */
     PlaceResult restore(IntPos pos, BlockSpec block, UUID actor, boolean dropContentsFirst);
+
+    /**
+     * Runs the neighbour updates a restore skipped (a restore changes one position without shape updates, so a door's
+     * other half or a sign's wall cannot pop off with an item drop mid-way). Called once a piece is fully restored.
+     */
+    void settle(List<IntPos> positions);
 }
 ```
 `PlaceResult.java`: `public enum PlaceResult { PLACED, DENIED, INVALID }`(javadoc: `DENIED`=保護・権限のイベントがキャンセル、`INVALID`=ブロック状態がこの版のゲームで作れない)。`Refusal.java`: 型の辞書の5個の`enum`。`Destruction.java`:
@@ -1282,19 +1351,27 @@ Expected: `BUILD SUCCESSFUL`、失敗0件(既存の`ConflictsTest`・`ManifestDi
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/build/compile src/main/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/build/compile/BlockMatchTest.java src/test/java/io/github/khayashi4337/micradrone/construction
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/build/compile の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add src/test/java/io/github/khayashi4337/micradrone/build/compile/BlockMatchTest.java
+git add <src/test/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: 抽象の世界(WorldCell・WorldPort)と置換の規則(ReplaceRules)、状態の照合(BlockMatch)を追加(自然言語→工場建設 P4 Task 4)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
 ---
 
 ### Task 5: 地形調査(`SiteSurvey`)と整地(`TerrainPrep`)、置換方針`Terraform`
+
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。
 
 設計`01` 4節(「P3では`SurveyRef`は記録するだけで、地形の切り盛りはP4が載せる」)と`04` F-5(整地)を実装する。整地は**固定した調査(`SiteSurvey`)だけ**から決定論で作るので、調査から承認までに世界が変わってもハッシュは変わらない(完了条件16)。
 
@@ -1443,6 +1520,9 @@ class SiteSurveyTest {
     void airSurveyPutsTheSurfaceBelowTheBox() {
         SiteSurvey air = SiteSurvey.air(TestManifests.DIM, BOX);
         assertEquals(BOX.minB() - 1, air.surfaceAt(0, 0));
+        assertFalse(air.hasGround(0, 0), "an air column has no ground: terrain prep leaves it alone");
+        assertTrue(SiteSurvey.flat(TestManifests.DIM, BOX, 63, "minecraft:grass_block").hasGround(0, 0));
+        assertThrows(IllegalArgumentException.class, () -> air.hasGround(5, 0));
         assertEquals(new SurveyRef(air.digest(), 7L), air.ref(7L));
     }
 }
@@ -1715,6 +1795,13 @@ public record SiteSurvey(String dimension, Box worldBounds, int[][] surfaceY, St
 
     public static SiteSurvey of(String dimension, Box worldBounds, int[][] surfaceY, String[][] surfaceBlock, boolean[][] water,
                                 boolean[][] tree) {
+        // the shape (and the non-null cells) is checked before the digest reads the arrays
+        int sx = worldBounds.maxA() - worldBounds.minA() + 1;
+        int sz = worldBounds.maxC() - worldBounds.minC() + 1;
+        copy(surfaceY, sx, sz);
+        copy(surfaceBlock, sx, sz);
+        copy(water, sx, sz);
+        copy(tree, sx, sz);
         return new SiteSurvey(dimension, worldBounds, surfaceY, surfaceBlock, water, tree,
                 digestOf(dimension, worldBounds, surfaceY, surfaceBlock, water, tree));
     }
@@ -1753,6 +1840,14 @@ public record SiteSurvey(String dimension, Box worldBounds, int[][] surfaceY, St
             throw new IllegalArgumentException("column " + x + "," + z + " is outside the survey " + worldBounds);
         }
         return surfaceY[x - worldBounds.minA()][z - worldBounds.minC()];
+    }
+
+    /** False when the column holds no natural ground inside the box (the surveyor wrote air): nothing to cut or fill. */
+    public boolean hasGround(int x, int z) {
+        if (!covers(x, z)) {
+            throw new IllegalArgumentException("column " + x + "," + z + " is outside the survey " + worldBounds);
+        }
+        return !AIR.equals(surfaceBlock[x - worldBounds.minA()][z - worldBounds.minC()]);
     }
 
     public SurveyRef ref(long cachedUntilTick) {
@@ -1914,7 +2009,9 @@ public final class TerrainPrep {
         List<Placement> rest = new ArrayList<>(m.placements().size());
         int sunk = 0;
         for (Placement p : m.placements()) {
-            boolean underground = p.pos().y() <= survey.surfaceAt(p.pos().x(), p.pos().z());
+            int px = p.pos().x();
+            int pz = p.pos().z();
+            boolean underground = survey.hasGround(px, pz) && p.pos().y() <= survey.surfaceAt(px, pz);
             if (underground && p.replaces() instanceof ReplacePolicy.Replaceable) {
                 rest.add(withReplaces(p, ReplacePolicy.TERRAFORM));
                 sunk++;
@@ -1931,6 +2028,9 @@ public final class TerrainPrep {
             }
             int x = (int) (e.getKey() >> 32);
             int z = e.getKey().intValue();
+            if (!survey.hasGround(x, z)) {
+                continue; // a column without ground (air survey) is neither cut nor filled
+            }
             int surface = survey.surfaceAt(x, z);
             for (int y = base; y <= Math.min(buildingTop, surface); y++) {
                 IntPos q = new IntPos(x, y, z);
@@ -2008,19 +2108,27 @@ Expected: `BUILD SUCCESSFUL`、失敗0件(`GoldenHutTest`・`DeterminismTest`・
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/build/compile src/main/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/build/compile src/test/java/io/github/khayashi4337/micradrone/construction
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/build/compile の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/build/compile の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: 固定した地形調査(SiteSurvey)からの整地(TerrainPrep)と置換方針Terraformを追加(自然言語→工場建設 P4 Task 5)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
 ---
 
 ### Task 6: ブロックと品物の対応(`BlockToItem`)と安全枠(`SafetyEnvelope`)
+
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。
 
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/build/compile/{ItemCount,BlockToItem}.java`、`src/main/java/io/github/khayashi4337/micradrone/construction/core/{SafetyLimits,PlacementSurvey,ItemCatalog,ReplacementSummary,SafetyReport,SafetyEnvelope}.java`
@@ -2322,7 +2430,7 @@ public final class BlockToItem {
     }
 }
 ```
-(`BlockForms`の定数は既存の`BomCalculator`が使っている物。可視性が`package`なら`public`にする。挙動は変えない。)
+(`BlockForms`の定数は既存の`BomCalculator`が使っている物で、すでに`public static final`(`gen/BlockForms.java` 15〜33行)。変えない。)
 
 `BomCalculator.bom`の本体を、次に置き換える(`ITEM_OF_BLOCK`・`ITEMS_PER_DOUBLE_SLAB`は`BlockToItem`へ移したので消す):
 ```java
@@ -2545,19 +2653,27 @@ Expected: `BUILD SUCCESSFUL`、失敗0件(既存の`BomCalculatorTest`・`Golden
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/build/compile src/main/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/build/compile/BlockToItemTest.java src/test/java/io/github/khayashi4337/micradrone/construction
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/build/compile の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add src/test/java/io/github/khayashi4337/micradrone/build/compile/BlockToItemTest.java
+git add <src/test/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: ブロックと品物の対応(BlockToItem)と、承認前の安全枠(SafetyEnvelope)を追加(自然言語→工場建設 P4 Task 6)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
 ---
 
 ### Task 7: 施工予算(`ConstructionBudget`)— 同時ジョブ・1tickの上限・ドローンの間隔・自動減速
+
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。
 
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{BudgetConfig,BudgetJob,QueuedJob,Allowance,BudgetTick,ConstructionBudget}.java`
@@ -2842,19 +2958,25 @@ Expected: `BUILD SUCCESSFUL`、失敗0件。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/construction
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: 施工予算(同時4ジョブ・所有者ごと1・1tick32個の公平な分配・ドローンの間隔・自動減速)を追加(自然言語→工場建設 P4 Task 7)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
 ---
 
 ### Task 8: 記録と台帳(`Journal`・`PlacedRegistry`・`MaterialLedger`・`JobOutcome`・`JobProgram`)
+
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。
 
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{JournalRecord,UndoEntry,Journal,PlacedEntry,PlacedRegistry,AssemblyResult,MaterialLedger,LedgerBook,SkippedPlacement,JobOutcome,PutItem,RestoreItem,JobProgram}.java`
@@ -2867,12 +2989,12 @@ MSG
   - `record UndoEntry(IntPos pos, BlockSpec before)`(`01` 8節のまま)
   - `final class Journal`: `Journal(int maxEntries)`・`Journal()`(`MAX_ENTRIES = SafetyLimits.DEFAULT_MAX_PLACEMENTS`、F-2の「最大20,000件」)、`boolean record(JournalRecord)`(同じ`placementIndex`は**最初の1件だけ**残す=施工前の状態を上書きしない)、`Optional<JournalRecord> at(int)`、`int size()`、`List<JournalRecord> records()`(番号順)、`List<UndoEntry> undo()`(上から下=y降順、同じ高さはz→x昇順)
   - `record PlacedEntry(BlockSpec placed, BlockSpec before, String jobId, int placementIndex)`(`01` 11.1のまま。`placementIndex`には台帳のキーを入れる)
-  - `final class PlacedRegistry`: `SCHEMA_VERSION = 1`、`PlacedRegistry(String claimId)`、`void apply(String jobId, JournalRecord r)`、`Optional<PlacedEntry> at(IntPos)`、`boolean contains(IntPos)`、`Map<IntPos,PlacedEntry> placed()`(読み取り専用)、`Map<String,AssemblyResult> assemblies()`、`void putAll(Map<IntPos,PlacedEntry>)`(復元用)、`String claimId()`、`int size()`
+  - `final class PlacedRegistry`: `SCHEMA_VERSION = 1`、`PlacedRegistry(String claimId)`、`void apply(String jobId, JournalRecord r)`、`Optional<PlacedEntry> at(IntPos)`、`boolean contains(IntPos)`、`Map<IntPos,PlacedEntry> placed()`(読み取り専用)、`Map<String,AssemblyResult> assemblies()`、`void putAll(Map<IntPos,PlacedEntry>)`(復元用)、`void putAssembly(AssemblyResult)`(組み立ての個体。復元とP10・P13用)、`String claimId()`、`int size()`
   - `record AssemblyResult(String groupId, String assembledId, int movedBlockCount, long atTick)`(`01` 4節。P4では記録が生じない。P10・P13の組み立てが書く)
   - `final class MaterialLedger`: `SCHEMA_VERSION = 1`、`isConsumed/consumed/recordConsumed`、`isReturned/recordReturned`、`isYielded/yielded/recordYield`、`isReclaimed/recordReclaimed`、`SortedMap<Integer,List<ItemCount>> consumedView()`・`yieldedView()`、`SortedSet<Integer> returnedView()`・`reclaimedView()`
   - `final class LedgerBook`: `MaterialLedger of(String jobId)`(無ければ作る)、`Optional<MaterialLedger> find(String jobId)`、`Map<String,MaterialLedger> all()`
   - `record SkippedPlacement(int index, IntPos pos, String reason)`(`DENIED = "denied"`・`SITE_CHANGED = "site-changed"`・`INVALID = "invalid"`・`CONFLICT = "conflict"`)。**手順のどの位置も、終わったら「記録(`Journal`)がある」か「飛ばした記録(`SkippedPlacement`)がある」のどちらか**になる(Task 24の復旧の検査が使う不変条件)
-  - `final class JobOutcome`: `boolean addConflict(Conflict)`(同じ位置は1回)、`void skip(SkippedPlacement)`、`List<Conflict> conflicts()`、`List<SkippedPlacement> skipped()`、`Set<Integer> deniedIndexes()`、`boolean isSkipped(int index)`
+  - `final class JobOutcome`: `boolean addConflict(Conflict)`(同じ位置は1回)、`boolean addRestoreConflict(Conflict)`・`boolean hasRestoreConflictAt(IntPos)`(撤去で触らなかった位置。同じ位置への後の設置を止める)、`void resolveConflictAt(IntPos)`(置けなかった位置が後で置けたら、その報告を消す。撤去の`Conflict`は消さない)、`void skip(SkippedPlacement)`、`List<Conflict> conflicts()`、`List<SkippedPlacement> skipped()`、`Set<Integer> deniedIndexes()`、`boolean isSkipped(int index)`
   - `record PutItem(int index, int ledgerKey, Placement placement)`、`record RestoreItem(IntPos pos, BlockSpec expectedNow, Set<String> volatileProps, BlockSpec restoreTo, String sourceJobId, int sourceLedgerKey, boolean dropContents)`
   - `record JobProgram(List<RestoreItem> restores, List<PutItem> puts)`: `int size()`、`boolean isRestore(int)`、`RestoreItem restore(int)`、`PutItem put(int)`、`static JobProgram build(PlacementManifest)`、`static JobProgram repair(PlacementManifest, List<Integer> indexes, int round)`、`LEDGER_ROUND_STRIDE = Integer.MAX_VALUE / (ConstructionJob.MAX_REPAIR_ROUNDS + 1)`(修復のラウンドごとに台帳のキーを分ける。修復で置き直すブロックは、壊された分をもう一度消費するので、最初の消費と同じキーにしない)
 
@@ -3058,6 +3180,22 @@ class JobOutcomeTest {
         assertEquals(1, o.conflicts().size());
         assertEquals(Set.of(5), o.deniedIndexes());
         assertEquals(2, o.skipped().size());
+    }
+
+    @Test
+    void onlyRemovalConflictsBlockLaterPlacementsAndASiteConflictCanBeResolved() {
+        JobOutcome o = new JobOutcome();
+        IntPos site = new IntPos(1, 2, 3);
+        IntPos removed = new IntPos(4, 5, 6);
+        o.addConflict(new Conflict(site, BlockSpec.of("minecraft:stone"), new ObservedBlock(BlockSpec.of("minecraft:dirt")),
+                ConflictKind.PLAYER_MODIFIED));
+        o.addRestoreConflict(new Conflict(removed, BlockSpec.of("minecraft:stone"),
+                new ObservedBlock(BlockSpec.of("minecraft:gold_block")), ConflictKind.PLAYER_MODIFIED));
+        assertFalse(o.hasRestoreConflictAt(site));
+        assertTrue(o.hasRestoreConflictAt(removed));
+        o.resolveConflictAt(site);
+        o.resolveConflictAt(removed);
+        assertEquals(1, o.conflicts().size(), "the site conflict is resolved; the removal conflict stays reported");
     }
 }
 ```
@@ -3272,6 +3410,11 @@ public final class PlacedRegistry {
         placed.putAll(entries);
     }
 
+    /** The assembled individual of a group (P10/P13 write it; P4 stores and restores it). */
+    public void putAssembly(AssemblyResult result) {
+        assemblies.put(result.groupId(), result);
+    }
+
     public Optional<PlacedEntry> at(IntPos pos) {
         return Optional.ofNullable(placed.get(pos));
     }
@@ -3418,11 +3561,30 @@ import java.util.TreeMap;
 /** What a job could not do as planned: conflicts it left untouched and placements it skipped, reported to the owner. */
 public final class JobOutcome {
     private final Map<IntPos, Conflict> conflicts = new LinkedHashMap<>();
+    /** Positions a removal left alone: a later placement at the same position must not overwrite them (MODIFY). */
+    private final Set<IntPos> restoreConflicts = new HashSet<>();
     private final TreeMap<Integer, SkippedPlacement> skipped = new TreeMap<>();
 
     /** True the first time a position is reported. */
     public boolean addConflict(Conflict c) {
         return conflicts.putIfAbsent(c.pos(), c) == null;
+    }
+
+    /** A conflict found while removing: reported like any other, and it also blocks a placement at the same position. */
+    public boolean addRestoreConflict(Conflict c) {
+        restoreConflicts.add(c.pos());
+        return addConflict(c);
+    }
+
+    public boolean hasRestoreConflictAt(IntPos pos) {
+        return restoreConflicts.contains(pos);
+    }
+
+    /** A placement succeeded where a site-change conflict was recorded (the obstacle went away): no longer a conflict. */
+    public void resolveConflictAt(IntPos pos) {
+        if (!restoreConflicts.contains(pos)) {
+            conflicts.remove(pos);
+        }
     }
 
     public void skip(SkippedPlacement s) {
@@ -3515,23 +3677,29 @@ Expected: `BUILD SUCCESSFUL`、失敗0件。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/construction
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: 施工の記録(Journal)・設置の記録(PlacedRegistry)・冪等な材料台帳(MaterialLedger)・ジョブの手順(JobProgram)を追加(自然言語→工場建設 P4 Task 8)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
 ---
 
 ### Task 9: 設置の実行(`ConstructionExecutor`)— カーソル、再開、材料、置けなくなった位置
 
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。
+
 **Files:**
-- Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{MaterialPort,ExecutionContext,StepReport,ConstructionExecutor}.java`
-- Test: `src/test/java/io/github/khayashi4337/micradrone/construction/core/{FakeMaterials,ConstructionExecutorTest,ConstructionExecutorRestoreTest}.java`
+- Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{MaterialPort,ExecutionContext,StepReport,ConstructionExecutor,Attachments}.java`
+- Test: `src/test/java/io/github/khayashi4337/micradrone/construction/core/{FakeMaterials,ConstructionExecutorTest,ConstructionExecutorRestoreTest,AttachmentsTest}.java`
 
 **Interfaces:**
 - Consumes: Task 4〜8の型、`build.compile.{BlockToItem,BlockMatch,Conflicts,Conflict,ConflictKind}`
@@ -3540,9 +3708,51 @@ MSG
   - `record ExecutionContext(ConstructionJob job, JobProgram program, WorldPort world, MaterialPort materials, Journal journal, LedgerBook ledgers, PlacedRegistry registry, JobOutcome outcome, boolean skipSiteChanges)`
   - `record StepReport(int cursor, PauseReason pause /*null=止まっていない*/, List<IntPos> touched, List<ItemCount> shortage, List<Conflict> conflicts)`
   - `ConstructionExecutor.run(ExecutionContext ctx, int cursor, int allowance) → StepReport`
-- 1個の設置の順序(**これが正本**): (1)世界を読む→未読み込みなら`CHUNK_UNLOADED`で止まる、(2)`ReplaceRules.decide`(記録済みで既に置けていれば飛ばす=再開の冪等)、(3)置けない→`Conflict`を記録して`SITE_CHANGED`で止まる(`skipSiteChanges`なら飛ばして記録)、(4)サバイバルで台帳に消費が無ければ、不足を確かめる→足りなければ`MATERIALS_MISSING`で止まる(何も置かない)、(5)置く(保護で拒否→`DENIED`として飛ばし、消費しない)、(6)消費を取って台帳に記録、(7)整地で地面を切ったら、切った分を所有者に渡して台帳に記録、(8)記録(`Journal`は最初の1件だけ)と設置の記録(`PlacedRegistry`)を更新。撤去の順序: (1)読む、(2)既に戻っていれば記録だけ直して次へ、(3)`Conflicts.detect`(稼働で変わる状態は無視)で一致しなければ触らず報告、(4)切った地面を取り返す分が足りなければ`MATERIALS_MISSING`、(5)戻す(中身のドロップは`restore`の中で、許可された後)、(6)取り返し・返却(台帳に消費の記録がある分だけ、1回だけ)、(7)記録。
+  - `final class Attachments`: `static boolean dependent(BlockSpec)`(扉・看板・たいまつ・ランタン・はしご・ボタン・レバー・じゅうたん・感圧板・旗・植木鉢・トラップドア・レール: 隣のブロックに付いていて、その隣が消えると**アイテムを落として**外れる物)、`static boolean samePiece(RestoreItem a, RestoreItem b)`(同じ扉の上下の半分)、`static final Comparator<RestoreItem> REMOVAL_ORDER`(付いている物を先に、扉の上下は並べて上から、残りは上から下へ。Task 28・29の撤去の並びはこれを使う)
+- **撤去は「1つの部品」ごとに仕上げる**(P4レビューG-2。`Level.markAndNotifyBlock`は形の更新に渡すフラグから`UPDATE_SUPPRESS_DROPS`(32)を消す(`Level.java`の`int i = p_46607_ & -34`)ので、扉の片方を戻すと、もう片方が`Block.updateOrDestroy`で**アイテムを落として**消える(`Block.java` 177〜186行、`DoorBlock.updateShape`)): アダプタの`restore`は形の更新をしない(Task 15)。実行は、扉の上下(`samePiece`が続く間)を**許可の個数を超えても1回の呼び出しで最後まで**戻し、部品が終わったら`WorldPort.settle(その部品の全位置)`で隣の更新をまとめて行う。途中で止まった場合(材料不足など)は、残りを戻したときに部品の全位置を`settle`する。
+- 1個の設置の順序(**これが正本**): (1)世界を読む→未読み込みなら`CHUNK_UNLOADED`で止まる、(2)同じジョブの撤去で触らなかった位置(`JobOutcome.hasRestoreConflictAt`。`MODIFY`の変更で、撤去が`Conflict`になった位置)なら、置かずに`CONFLICT`として飛ばす、(2b)`ReplaceRules.decide`(記録済みで既に置けていれば飛ばす=再開の冪等)、(3)置けない→`Conflict`を記録して`SITE_CHANGED`で止まる(`skipSiteChanges`なら飛ばして記録)、(4)サバイバルで台帳に消費が無ければ、不足を確かめる→足りなければ`MATERIALS_MISSING`で止まる(何も置かない)、(5)置く(保護で拒否→`DENIED`として飛ばし、消費しない)、(6)消費を取って台帳に記録、(7)整地で地面を切ったら、切った分を所有者に渡して台帳に記録、(8)記録(`Journal`は最初の1件だけ)と設置の記録(`PlacedRegistry`)を更新し、この位置の`SITE_CHANGED`の報告があれば消す(`resolveConflictAt`: 邪魔な物がどかされて置けた)。撤去の順序: (1)読む、(2)既に戻っていれば記録だけ直して次へ、(3)`Conflicts.detect`(稼働で変わる状態は無視)で一致しなければ触らず報告(`addRestoreConflict`)、(4)切った地面を取り返す分が足りなければ`MATERIALS_MISSING`、(5)戻す(中身のドロップは`restore`の中で、許可された後)、(6)取り返し・返却(台帳に消費の記録がある分だけ、1回だけ)、(7)記録。
 
 - [ ] **Step 1: 失敗するテストを書く**
+
+`AttachmentsTest.java`:
+```java
+package io.github.khayashi4337.micradrone.construction.core;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import io.github.khayashi4337.micradrone.build.model.BlockSpec;
+import io.github.khayashi4337.micradrone.build.model.IntPos;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import org.junit.jupiter.api.Test;
+
+class AttachmentsTest {
+    private static RestoreItem undo(int x, int y, int z, BlockSpec now) {
+        return new RestoreItem(new IntPos(x, y, z), now, Set.of(), BlockSpec.AIR, "job-1", 0, true);
+    }
+
+    @Test
+    void attachedBlocksGoFirstAndADoorsHalvesStayTogether() {
+        RestoreItem wall = undo(0, 64, 0, BlockSpec.of("minecraft:stone_bricks"));
+        RestoreItem sign = undo(0, 64, 1, BlockSpec.of("minecraft:oak_wall_sign", "facing", "south"));
+        RestoreItem lower = undo(2, 64, 0, BlockSpec.of("minecraft:oak_door", "half", "lower"));
+        RestoreItem upper = undo(2, 65, 0, BlockSpec.of("minecraft:oak_door", "half", "upper"));
+        RestoreItem roof = undo(0, 66, 0, BlockSpec.of("minecraft:oak_planks"));
+        List<RestoreItem> all = new ArrayList<>(List.of(wall, sign, lower, upper, roof));
+        all.sort(Attachments.REMOVAL_ORDER);
+        assertEquals(List.of(upper, lower, sign, roof, wall), all);
+        assertTrue(Attachments.samePiece(upper, lower));
+        assertFalse(Attachments.samePiece(lower, sign));
+        assertTrue(Attachments.dependent(sign.expectedNow()));
+        assertTrue(Attachments.dependent(BlockSpec.of("minecraft:oak_trapdoor")), "a trapdoor hangs on its neighbour");
+        assertTrue(Attachments.dependent(BlockSpec.of("minecraft:potted_poppy")));
+        assertFalse(Attachments.dependent(wall.expectedNow()));
+    }
+}
+```
 
 `FakeMaterials.java`:
 ```java
@@ -3871,6 +4081,32 @@ class ConstructionExecutorRestoreTest {
     }
 
     @Test
+    void aDoorIsRestoredAsOnePieceEvenAcrossTheAllowanceAndSettledOnce() {
+        FakeWorld w = new FakeWorld();
+        IntPos upper = new IntPos(2, 65, 0);
+        IntPos lower = new IntPos(2, 64, 0);
+        IntPos wall = new IntPos(0, 64, 0);
+        BlockSpec up = BlockSpec.of("minecraft:oak_door", "half", "upper");
+        BlockSpec low = BlockSpec.of("minecraft:oak_door", "half", "lower");
+        w.setBlock(upper, up);
+        w.setBlock(lower, low);
+        w.setBlock(wall, BlockSpec.of("minecraft:stone"));
+        List<RestoreItem> items = List.of(
+                new RestoreItem(upper, up, Set.of("open", "powered"), BlockSpec.AIR, "job-1", 0, true),
+                new RestoreItem(lower, low, Set.of("open", "powered"), BlockSpec.AIR, "job-1", 1, true),
+                new RestoreItem(wall, BlockSpec.of("minecraft:stone"), Set.of(), BlockSpec.AIR, "job-1", 2, true));
+        Built b = new Built(TestManifests.smallHut(), w, new FakeMaterials(), new LedgerBook(), new PlacedRegistry("claim-job-1"));
+        StepReport first = ConstructionExecutor.run(rollback(b, items), 0, 1);
+        assertEquals(2, first.cursor(), "the allowance of 1 does not split the door");
+        assertEquals(List.of("drop 2,65,0 0", "restore 2,65,0 minecraft:air", "drop 2,64,0 0", "restore 2,64,0 minecraft:air",
+                "settle 2,65,0 2,64,0"), w.log.subList(w.log.size() - 5, w.log.size()));
+        assertEquals(0, first.conflicts().size(), "the lower half is still there when its turn comes");
+        StepReport second = ConstructionExecutor.run(rollback(b, items), 2, 1);
+        assertEquals(3, second.cursor());
+        assertEquals("settle 0,64,0", w.log.get(w.log.size() - 1));
+    }
+
+    @Test
     void takingBackCutGroundWaitsForTheItems() {
         FakeWorld w = new FakeWorld();
         IntPos p = new IntPos(0, 63, 0);
@@ -3900,6 +4136,64 @@ Run: `./gradlew test --tests "io.github.khayashi4337.micradrone.construction.cor
 Expected: FAIL(コンパイルエラー)。
 
 - [ ] **Step 3: 実装する**
+
+`Attachments.java`:
+```java
+package io.github.khayashi4337.micradrone.construction.core;
+
+import io.github.khayashi4337.micradrone.build.compile.gen.BlockForms;
+import io.github.khayashi4337.micradrone.build.model.BlockSpec;
+import io.github.khayashi4337.micradrone.build.model.IntPos;
+import java.util.Comparator;
+import java.util.List;
+
+/**
+ * Which blocks hang on a neighbour and fall off, dropping their item, when it goes (a door's other half, a wall sign on
+ * its wall). Removals take them first, and a door's two halves are one piece (removed back to back, settled once).
+ */
+public final class Attachments {
+    static final String POTTED_PREFIX = "minecraft:potted_";
+    /** Id endings of blocks that stand on or hang from a neighbour (vanilla survives-on / attached blocks). */
+    private static final List<String> DEPENDENT_SUFFIXES = List.of(BlockForms.DOOR_SUFFIX, "_trapdoor", BlockForms.SIGN_SUFFIX,
+            "_torch", "lantern", "ladder", "_button", "lever", "_carpet", "_pressure_plate", "_banner", "flower_pot", "rail");
+    /** Dependents first; a door is placed by its lower half; then top-down, z, x; the upper half before the lower. */
+    public static final Comparator<RestoreItem> REMOVAL_ORDER = Comparator
+            .<RestoreItem>comparingInt(r -> dependent(r.expectedNow()) ? 0 : 1)
+            .thenComparingInt(r -> -anchor(r).y())
+            .thenComparingInt(r -> anchor(r).z())
+            .thenComparingInt(r -> anchor(r).x())
+            .thenComparingInt(r -> -r.pos().y());
+
+    private Attachments() {
+    }
+
+    public static boolean dependent(BlockSpec b) {
+        String id = b.blockId();
+        if (id.startsWith(POTTED_PREFIX)) {
+            return true;
+        }
+        for (String suffix : DEPENDENT_SUFFIXES) {
+            if (id.endsWith(suffix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static boolean samePiece(RestoreItem a, RestoreItem b) {
+        String id = a.expectedNow().blockId();
+        return id.endsWith(BlockForms.DOOR_SUFFIX) && id.equals(b.expectedNow().blockId()) && a.pos().x() == b.pos().x()
+                && a.pos().z() == b.pos().z() && Math.abs(a.pos().y() - b.pos().y()) == 1;
+    }
+
+    /** A door's upper half sorts with its lower half (one below), so the two stay next to each other. */
+    private static IntPos anchor(RestoreItem r) {
+        boolean upperDoor = r.expectedNow().blockId().endsWith(BlockForms.DOOR_SUFFIX)
+                && BlockForms.HALF_UPPER.equals(r.expectedNow().get(BlockForms.PROP_HALF));
+        return upperDoor ? r.pos().plus(0, -1, 0) : r.pos();
+    }
+}
+```
 
 `MaterialPort.java`:
 ```java
@@ -3972,15 +4266,43 @@ public final class ConstructionExecutor {
     public static StepReport run(ExecutionContext ctx, int cursor, int allowance) {
         List<IntPos> touched = new ArrayList<>();
         List<Conflict> conflicts = new ArrayList<>();
+        JobProgram program = ctx.program();
         int c = cursor;
-        for (int n = 0; n < allowance && c < ctx.program().size(); n++) {
-            Step s = ctx.program().isRestore(c) ? restore(ctx, c, touched, conflicts) : put(ctx, c, touched, conflicts);
+        int done = 0;
+        while (c < program.size()) {
+            // a piece (a door's two halves) is never split at the allowance: its partner would pop off with a drop
+            if (done >= allowance && !continuesPiece(program, c)) {
+                break;
+            }
+            boolean restore = program.isRestore(c);
+            Step s = restore ? restore(ctx, c, touched, conflicts) : put(ctx, c, touched, conflicts);
             if (s.pause() != null) {
                 return new StepReport(c, s.pause(), touched, s.shortage(), conflicts);
             }
+            if (restore && !continuesPiece(program, c + 1)) {
+                settlePieceEndingAt(ctx, c);
+            }
             c++;
+            done++;
         }
         return new StepReport(c, null, touched, List.of(), conflicts);
+    }
+
+    /** Whether program position {@code j} restores the other half of the piece restored at {@code j - 1}. */
+    static boolean continuesPiece(JobProgram program, int j) {
+        return j > 0 && j < program.size() && program.isRestore(j - 1) && program.isRestore(j)
+                && Attachments.samePiece(program.restore(j - 1), program.restore(j));
+    }
+
+    private static void settlePieceEndingAt(ExecutionContext ctx, int last) {
+        List<IntPos> piece = new ArrayList<>();
+        int i = last;
+        piece.add(ctx.program().restore(i).pos());
+        while (continuesPiece(ctx.program(), i)) {
+            i--;
+            piece.add(0, ctx.program().restore(i).pos());
+        }
+        ctx.world().settle(piece);
     }
 
     private static Step put(ExecutionContext ctx, int i, List<IntPos> touched, List<Conflict> conflicts) {
@@ -3989,6 +4311,10 @@ public final class ConstructionExecutor {
         WorldCell cell = ctx.world().read(p.pos());
         if (!cell.loaded()) {
             return Step.pause(PauseReason.CHUNK_UNLOADED);
+        }
+        if (ctx.outcome().hasRestoreConflictAt(p.pos())) {
+            ctx.outcome().skip(new SkippedPlacement(item.index(), p.pos(), SkippedPlacement.CONFLICT));
+            return Step.NEXT;
         }
         boolean journaled = ctx.journal().at(item.index()).isPresent();
         ReplaceDecision d = ReplaceRules.decide(p, cell, journaled, ctx.registry().contains(p.pos()));
@@ -4041,6 +4367,7 @@ public final class ConstructionExecutor {
                 item.ledgerKey());
         ctx.journal().record(rec);
         ctx.registry().apply(ctx.job().jobId(), rec);
+        ctx.outcome().resolveConflictAt(p.pos());
         touched.add(p.pos());
         return Step.NEXT;
     }
@@ -4060,7 +4387,7 @@ public final class ConstructionExecutor {
         }
         Optional<Conflict> conflict = Conflicts.detect(item.pos(), item.expectedNow(), cell.observed(), item.volatileProps());
         if (conflict.isPresent()) {
-            if (ctx.outcome().addConflict(conflict.get())) {
+            if (ctx.outcome().addRestoreConflict(conflict.get())) {
                 conflicts.add(conflict.get());
             }
             ctx.outcome().skip(new SkippedPlacement(JournalRecord.restoreIndex(i), item.pos(), SkippedPlacement.CONFLICT));
@@ -4106,23 +4433,30 @@ Expected: `BUILD SUCCESSFUL`、失敗0件。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/construction
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: 設置と撤去の実行(ConstructionExecutor)を追加(冪等な再開・材料の消費と返却・置けなくなった位置での停止)(自然言語→工場建設 P4 Task 9)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
 ---
 
 ### Task 10: L7の差分と修復(`build.verify`: `SparseSnapshot`・`SnapshotDiff`・`RepairPlanner`・`SnapshotCollector`)
 
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。
+
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/build/verify/{SparseSnapshot,CompareScope,DeviationKind,Deviation,SnapshotDiff,RepairPlan,RepairPlanner,SnapshotCollector,VolatileProps}.java`
 - Test: `src/test/java/io/github/khayashi4337/micradrone/build/verify/{SnapshotDiffTest,RepairPlannerTest,SnapshotCollectorTest,VolatilePropsTest}.java`
+- Modify: `src/test/java/io/github/khayashi4337/micradrone/build/BuildPurityTest.java`(`ALLOWED`に`build.verify`)
 
 **Interfaces:**
 - Consumes: `build.compile.{PlacementManifest,Placement,ObservedBlock,BlockMatch,Conflict,ConflictKind}`、`build.parts.{VerifyMode,BuildPhase,PartTypeRegistry,PartType}`、`build.model.{BlockSpec,IntPos}`(`build.verify`は`construction`を見ない)
@@ -4130,11 +4464,11 @@ MSG
   - `record SparseSnapshot(Map<IntPos,ObservedBlock> blocks)`、`MAX_POSITIONS = 20_000`(F-21。これを超える位置は窓に分けて読む)
   - `sealed interface CompareScope { UpToCursor(int cursor), Phases(Set<BuildPhase>), IndexRange(int from, int toExclusive), All }`、`CompareScope.ALL`、`boolean includes(Placement)`(`IndexRange`はこの計画で足す: 20,000を超える施工リストを窓ごとに比べるため)
   - `enum DeviationKind {MISSING, WRONG_BLOCK, WRONG_STATE, EXTRA, BLOCKED}`、`record Deviation(int placementIndex, BlockSpec expected, ObservedBlock observed, DeviationKind kind)`
-  - `SnapshotDiff.compare(PlacementManifest, SparseSnapshot, CompareScope, Function<String,Set<String>> volatileOfNode) → SnapshotDiff.Result(List<Deviation> deviations, List<Integer> unread)`
+  - `SnapshotDiff.compare(PlacementManifest, SparseSnapshot, CompareScope, Function<String,Set<String>> volatileOfNode) → SnapshotDiff.Result(List<Deviation> deviations, List<Integer> unread)`、`public static boolean statesMatch(VerifyMode, BlockSpec observed, BlockSpec expected, Set<String> volatileProps)`(同じIDのときの状態の比べ方。Task 24の`AdoptPass`も使う)
   - `record RepairPlan(List<Integer> reapply, List<Conflict> conflicts, List<Deviation> unfixable)`、`RepairPlanner.plan(PlacementManifest, List<Deviation>, IntFunction<Optional<BlockSpec>> journaledBefore, Predicate<IntPos> placedByProject, Set<Integer> denied) → RepairPlan`
   - `final class SnapshotCollector`: `SnapshotCollector(List<IntPos> positions)`、`DEFAULT_READS_PER_TICK = 1_000`(F-21: 既存の`MAX_BLOCKS_PER_QUERY=1000`と同じ考え方)、`List<IntPos> nextBatch(int max)`(今の窓の中で、まだ読んでいない位置)、`void accept(IntPos, ObservedBlock)`、`void unloaded(IntPos)`、`boolean windowFull()`、`Window takeWindow()`(`record Window(int fromIndex, int toIndexExclusive, SparseSnapshot snapshot)`)、`boolean done()`、`List<IntPos> unloadedPositions()`、`void resetUnloaded()`
   - `VolatileProps.of(Map<String,String> nodeTypes, PartTypeRegistry) → Function<String,Set<String>>`(ノードID→部品の`volatileProps`。知らないノード・整地のノードは空)
-- 比べ方(**これが正本**。`01` 4節・8節、`03` L7): 範囲外は比べない。`ASSEMBLED_AWAY`は比べない(組み立ての検査はP10・P13)。読めていない位置は`unread`(欠落にしない)。期待が空気→観測が空気でなければ`EXTRA`。観測が空気→`MISSING`。IDが違う→`WRONG_BLOCK`。`BLOCK_ONLY`はIDだけ。`EXACT`と`STATE_SUBSET`は`BlockMatch.satisfies(観測, 期待, 稼働で変わる状態)`でなければ`WRONG_STATE`(**P4では両者の比較は同じ**: 純Javaは既定値を知らないので、期待に書いた状態だけを比べる。状態を持たないブロックは`EXACT`なので違いが出ない。Task 35で設計に書く)。修復の分け方: 保護で拒否された位置は`BLOCKED`として直さない。`MISSING`は置き直す。`WRONG_STATE`は、このプロジェクトが置いた位置なら置き直し、そうでなければ`Conflict`。`WRONG_BLOCK`・`EXTRA`は、観測が施工前の状態(記録の`before`)と同じなら「まだ置けていないだけ」で置き直し、違えば`Conflict`(**プレイヤーが置き換えた可能性があるので上書きしない**)。
+- 比べ方(**これが正本**。`01` 4節・8節、`03` L7): 範囲外は比べない。`ASSEMBLED_AWAY`は比べない(組み立ての検査はP10・P13)。読めていない位置は`unread`(欠落にしない)。期待が空気→観測が空気でなければ`EXTRA`。観測が空気→`MISSING`。IDが違う→`WRONG_BLOCK`。`BLOCK_ONLY`はIDだけ。`EXACT`は`BlockMatch.exact(観測, 期待, 稼働で変わる状態)`(**観測と期待の両方の状態を全部**比べる。期待に書いていない状態が観測にあれば違い)、`STATE_SUBSET`は`BlockMatch.satisfies(観測, 期待, 稼働で変わる状態)`(期待に書いた状態だけ)で、合わなければ`WRONG_STATE`(設計`05` 1.1.1のとおり2つを分ける。施工リストの`EXACT`は、コンパイラが全部の状態を書いた位置か、状態を持たないブロックだけに付く。見本の小屋では丸石・オークの板・石レンガ)。修復の分け方: 保護で拒否された位置は`BLOCKED`として直さない。`MISSING`は置き直す。`WRONG_STATE`は、このプロジェクトが置いた位置なら置き直し、そうでなければ`Conflict`。`WRONG_BLOCK`・`EXTRA`は、観測が施工前の状態(記録の`before`)と同じなら「まだ置けていないだけ」で置き直し、違えば`Conflict`(**プレイヤーが置き換えた可能性があるので上書きしない**)。
 
 - [ ] **Step 1: 失敗するテストを書く**
 
@@ -4249,6 +4583,22 @@ class SnapshotDiffTest {
                 BlockSpec.of("minecraft:white_wool"), "sail", BuildPhase.ASSEMBLE, VerifyMode.ASSEMBLED_AWAY)));
         Map<IntPos, ObservedBlock> world = Map.of(new IntPos(0, 64, 0), new ObservedBlock(BlockSpec.AIR));
         assertEquals(List.of(), SnapshotDiff.compare(m, new SparseSnapshot(world), CompareScope.ALL, NONE).deviations());
+    }
+
+    @Test
+    void exactComparesEveryStateButStateSubsetOnlyTheListedOnes() {
+        BlockSpec log = BlockSpec.of("minecraft:oak_log", "axis", "y");
+        List<Placement> ps = List.of(
+                TestManifests.put(new IntPos(0, 64, 0), log, "w", BuildPhase.STRUCTURE, VerifyMode.EXACT),
+                TestManifests.put(new IntPos(1, 64, 0), log, "w", BuildPhase.STRUCTURE, VerifyMode.STATE_SUBSET));
+        PlacementManifest m = TestManifests.of(new Box(-1, 60, -1, 2, 70, 1), ps);
+        Map<IntPos, ObservedBlock> world = new HashMap<>();
+        world.put(new IntPos(0, 64, 0), new ObservedBlock(log.with("waterlogged", "true")));
+        world.put(new IntPos(1, 64, 0), new ObservedBlock(log.with("waterlogged", "true")));
+        SnapshotDiff.Result r = SnapshotDiff.compare(m, new SparseSnapshot(world), CompareScope.ALL, NONE);
+        assertEquals(List.of(0), r.deviations().stream().map(Deviation::placementIndex).toList(),
+                "an unlisted observed state fails EXACT only");
+        assertEquals(List.of(DeviationKind.WRONG_STATE), kinds(r));
     }
 
     @Test
@@ -4541,7 +4891,7 @@ public final class SnapshotDiff {
                 kind = DeviationKind.MISSING;
             } else if (!o.blockId().equals(exp.blockId())) {
                 kind = DeviationKind.WRONG_BLOCK;
-            } else if (p.verify() != VerifyMode.BLOCK_ONLY && !BlockMatch.satisfies(o, exp, volatileOfNode.apply(p.partNodeId()))) {
+            } else if (!statesMatch(p.verify(), o, exp, volatileOfNode.apply(p.partNodeId()))) {
                 kind = DeviationKind.WRONG_STATE;
             }
             if (kind != null) {
@@ -4549,6 +4899,15 @@ public final class SnapshotDiff {
             }
         }
         return new Result(out, unread);
+    }
+
+    /** Design 05, 1.1.1: BLOCK_ONLY looks at the id only, EXACT at every state, STATE_SUBSET at the listed states. */
+    public static boolean statesMatch(VerifyMode mode, BlockSpec observed, BlockSpec expected, Set<String> volatileProps) {
+        return switch (mode) {
+            case BLOCK_ONLY, ASSEMBLED_AWAY -> true;
+            case EXACT -> BlockMatch.exact(observed, expected, volatileProps);
+            case STATE_SUBSET -> BlockMatch.satisfies(observed, expected, volatileProps);
+        };
     }
 }
 ```
@@ -4732,24 +5091,46 @@ public final class VolatileProps {
 
 - [ ] **Step 4: テストが通ることを確かめる**
 
+`BuildPurityTest.java`の`ALLOWED`を、10個を超えても書けるように`Map.ofEntries`に書き換え、`build.verify`の行を足す(`build.verify`は新しい純Javaの包みなので、ここに無いと`thePurePackagesKeepTheMeasuredLayering`が「新しい包み」として落ちる。`import static java.util.Map.entry;`を足す):
+```java
+    private static final Map<String, Set<String>> ALLOWED = Map.ofEntries(
+            entry("build.model", Set.of()),
+            entry("build.parts", Set.of("build.model")),
+            entry("build.plan", Set.of("build.model", "build.parts", "lang")),
+            entry("build.compile.gen", Set.of("build.model", "build.parts")),
+            entry("build.compile", Set.of("build.model", "build.parts", "build.plan", "build.compile.gen")),
+            entry("build.script", Set.of("build.model", "build.parts", "lang", "lang.ast")),
+            entry("build.verify", Set.of("build.model", "build.parts", "build.compile")),
+            entry("lang", Set.of("lang.ast", "build.model", "build.parts")),
+            entry("lang.ast", Set.of()));
+```
+(Task 15で`build.analyze`の行`entry("build.analyze", Set.of("build.model"))`を同じ形で足す。)
+
 Run: `./gradlew test --console=plain`
-Expected: `BUILD SUCCESSFUL`、失敗0件(`BuildPurityTest`が`build.verify`も走査し、Minecraftを見ていないことを含む)。
+Expected: `BUILD SUCCESSFUL`、失敗0件(`BuildPurityTest`が`build.verify`も走査し、Minecraftを見ていないこと、`build.verify`が`build.model`・`build.parts`・`build.compile`だけを見ることを含む)。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/build/verify src/test/java/io/github/khayashi4337/micradrone/build/verify
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/build/verify の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/build/verify の下の、このタスクで作った・変えたファイルを1つずつ>
+git add src/test/java/io/github/khayashi4337/micradrone/build/BuildPurityTest.java
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: L7の厳密な差分(SnapshotDiff)と保守的な修復の分類(RepairPlanner)、窓ごとの読み取り(SnapshotCollector)を追加(自然言語→工場建設 P4 Task 10)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
 ---
 
 ### Task 11: 区画(`SiteClaim`・`ClaimBook`・`OperatingBox`)
+
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。設計図の追記はコントローラ(Claude)が先に書き(コミットしない)、Devinが自分のコミットに`git add`で含める(Global Constraintsの「担当の分け方」)。
 
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{SiteClaim,ClaimBook,OperatingBox}.java`
@@ -4869,7 +5250,7 @@ class OperatingBoxTest {
 }
 ```
 
-`05_parts_and_analyzers.md`の4.1節の表の`E-SCRIPT-LIMIT`の行の直後に、次の2行を足す:
+(担当: コントローラ。Devinに渡す前に書き、コミットしない。Devinのコミットに含まれる) `05_parts_and_analyzers.md`の4.1節の表の`E-SCRIPT-LIMIT`の行の直後に、次の2行を足す:
 ```
 | `E-CLAIM-OVERLAP` | 区画(作用範囲を含む)が、ほかの区画と重なる(解放されるまで、ジョブが終わっても守られる。D-23) | 承認時・区画の予約時 | 場所の変更 |
 | `E-CLAIM-LIMIT` | 1人が持てる区画の数(既定8)を超える | 承認時・区画の予約時 | 使わない区画の解体(ロールバック) |
@@ -5066,19 +5447,27 @@ Expected: `BUILD SUCCESSFUL`、失敗0件(`IssueTest`の表との一致を含む
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/main/java/io/github/khayashi4337/micradrone/build/model/IssueCode.java src/test/java/io/github/khayashi4337/micradrone/construction docs/design/nl_factory_builder/05_parts_and_analyzers.md
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add src/main/java/io/github/khayashi4337/micradrone/build/model/IssueCode.java
+git add <src/test/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add docs/design/nl_factory_builder/05_parts_and_analyzers.md
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: 区画(SiteClaim・ClaimBook)と作用範囲(OperatingBox)、E-CLAIM-OVERLAP・E-CLAIM-LIMITを追加(自然言語→工場建設 P4 Task 11)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
 ---
 
 ### Task 12: 承認とハッシュ(`PlanCompilation`・`SurveyCache`・`ApprovalDesk`)と、重い計算のワーカー(`ServerWorkerPool`)
+
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。設計図の追記はコントローラ(Claude)が先に書き(コミットしない)、Devinが自分のコミットに`git add`で含める(Global Constraintsの「担当の分け方」)。
 
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{Confirmations,AcceptedRisk,ApprovalRequest,PendingApproval,PlanSubmission,CompiledPlan,PlanCompilation,SurveyCache,Candidate,Approver,ApprovalRejection,ApprovalDecision,ApprovalDesk,WorkResult,ServerWorkerPool}.java`
@@ -5132,6 +5521,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.khayashi4337.micradrone.build.TestParts;
 import io.github.khayashi4337.micradrone.build.compile.PlaceableBlockPolicy;
 import io.github.khayashi4337.micradrone.build.compile.SiteSurvey;
 import io.github.khayashi4337.micradrone.build.compile.TestManifests;
@@ -5139,6 +5529,7 @@ import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.model.SemanticPlan;
 import io.github.khayashi4337.micradrone.build.parts.BuildingParts;
 import io.github.khayashi4337.micradrone.build.plan.TemplateBundle;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -5175,6 +5566,24 @@ class PlanCompilationTest {
         CompiledPlan c = compile(SemanticPlan.empty("x"), SiteSurvey.air(TestManifests.DIM, TestManifests.hut().worldBounds()));
         assertNull(c.manifest());
         assertTrue(c.issues().stream().anyMatch(i -> i.code() == IssueCode.E_SITE_MISSING));
+    }
+
+    @Test
+    void aBundledTemplateMustMatchTheServersOwnCopyByIdAndHash() {
+        SemanticPlan hut = TestManifests.hutPlan();
+        SiteSurvey air = SiteSurvey.air(hut.site().dimension(), TestManifests.hut().worldBounds());
+        TemplateBundle sent = TestParts.bundle();
+        String id = TestParts.lineTemplate().id();
+        for (Map<String, String> known : List.of(Map.<String, String>of(), Map.of(id, "0000-tampered"))) {
+            CompiledPlan c = PlanCompilation.compile(new PlanSubmission(hut, sent, JobKind.BUILD, null, null),
+                    BuildingParts.registry(), PlaceableBlockPolicy.builtin(), air, known);
+            assertNull(c.manifest(), "an unknown or altered template is refused before anything is compiled");
+            assertNull(c.operatingBox());
+            assertTrue(c.issues().stream().anyMatch(i -> i.code() == IssueCode.E_TEMPLATE_UNVERIFIED));
+        }
+        CompiledPlan ok = PlanCompilation.compile(new PlanSubmission(hut, sent, JobKind.BUILD, null, null),
+                BuildingParts.registry(), PlaceableBlockPolicy.builtin(), air, Map.of(id, TestParts.lineTemplate().hash()));
+        assertTrue(ok.issues().stream().noneMatch(i -> i.code() == IssueCode.E_TEMPLATE_UNVERIFIED));
     }
 
     @Test
@@ -5449,7 +5858,7 @@ class ServerWorkerPoolTest {
     void failuresAndCancelsAreResultsNotCrashes() throws Exception {
         try (ServerWorkerPool pool = new ServerWorkerPool(1, 4, main::add)) {
             List<WorkResult<Integer>> got = new ArrayList<>();
-            pool.submit(A, () -> {
+            pool.<Integer>submit(A, () -> {
                 throw new IllegalStateException("boom");
             }, got::add);
             pumpUntil(() -> got.size() == 1);
@@ -5478,7 +5887,7 @@ class ServerWorkerPoolTest {
 }
 ```
 
-`05_parts_and_analyzers.md`の4.1節の表の`E-CLAIM-LIMIT`の行の直後に、次の1行を足す:
+(担当: コントローラ。Devinに渡す前に書き、コミットしない。Devinのコミットに含まれる) `05_parts_and_analyzers.md`の4.1節の表の`E-CLAIM-LIMIT`の行の直後に、次の1行を足す:
 ```
 | `E-REPLACE-UNCONFIRMED` | 破壊を伴う置換(水・溶岩・木の葉・空のコンテナ)が、承認画面で確認されていない | 承認時 | 確認 |
 ```
@@ -5900,19 +6309,28 @@ Expected: `BUILD SUCCESSFUL`、失敗0件(`PlanCompilationTest.theServerRebuilds
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/main/java/io/github/khayashi4337/micradrone/build/model/IssueCode.java src/test/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/build/compile/TestManifests.java docs/design/nl_factory_builder/05_parts_and_analyzers.md
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add src/main/java/io/github/khayashi4337/micradrone/build/model/IssueCode.java
+git add <src/test/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add src/test/java/io/github/khayashi4337/micradrone/build/compile/TestManifests.java
+git add docs/design/nl_factory_builder/05_parts_and_analyzers.md
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: サーバー自身の作り直し(PlanCompilation)・調査の固定・承認の検査(ApprovalDesk)・重い計算のワーカーを追加(自然言語→工場建設 P4 Task 12)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
 ---
 
 ### Task 13: ジョブの進行(`JobService`)— 区画の予約、所有者の在不在、予算、設置、L7の検査と修復ラウンド、取消・再開
+
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。
 
 世界を変える経路の本体(D-1)。純Javaで、`FakeWorld`の上で小屋が`VERIFIED`まで進むことを確かめる。
 
@@ -5932,7 +6350,7 @@ MSG
   - `record RepairQueue(JobProgram program, int cursor)`
   - `final class JobService`: `RETRY_INTERVAL_TICKS = 20`(材料不足・未読み込みで止まったジョブが、次に見直すまでの間隔=1秒。設計の「補給されれば自動で再開」の実装の間隔。Task 35で設計に書く)、`FAST_PHASES = {SITE_PREP, STRUCTURE, ENVELOPE}`(F-2)、`JobService(BudgetConfig, ClaimBook, PartTypeRegistry, boolean fastStructure, boolean continueWhileOffline)`(後の2つは設定。F-2の「設定で高速施工にできる」、F-13の「(設定で)チャンクを保持」)、`void admitApproved(ConstructionJob job, PlacementManifest manifest, Map<String,String> nodeTypes, JobProgram program, Box operatingBox)`、`void add(JobRecord)`(復元)、`List<JobUpdate> tick(TickInput, JobWorld)`、`ControlResult cancel(String jobId, UUID requester, boolean op)`、`ControlResult resume(String jobId, UUID requester, boolean op, boolean skipSiteChanges)`、`Optional<JobStatus> status(String)`、`List<JobStatus> statuses()`、`Optional<JobRecord> record(String)`、`List<JobRecord> records()`、`List<JobRecord> jobsInClaim(String claimId)`、`PlacedRegistry registry(String claimId)`、`Map<String,PlacedRegistry> registries()`、`LedgerBook ledgers()`、`ClaimBook claims()`、`boolean slowed()`
 
-- 1tickの順序(**これが正本**): (1)`PENDING_APPROVAL`を到着順に区画の検査→`BUILD`は区画を予約して`QUEUED`、重なれば`CANCELLED`(`lastError`に`E-CLAIM-OVERLAP:...`)。(2)所有者の在不在: 不在なら`QUEUED`/`RUNNING`/`VERIFYING`/`REPAIRING`を`PAUSED(OWNER_OFFLINE)`(`continueWhileOffline`なら止めない)、戻れば再開。`CHUNK_UNLOADED`・`MATERIALS_MISSING`は`RETRY_INTERVAL_TICKS`ごとに再開して見直す。(3)`ConstructionBudget.admit`で`QUEUED`を`RUNNING`へ。(4)`allocate`の割り当てで、`RUNNING`は手順を、`REPAIRING`は修復の手順を実行。手順が終われば`VERIFYING`へ(読み取りの`SnapshotCollector`を新しく作る)。(5)`VERIFYING`は1tickに`SnapshotCollector.DEFAULT_READS_PER_TICK`個まで読み、未読み込みがあれば`PAUSED(CHUNK_UNLOADED)`(再開後は読み直し)。窓ごとに`SnapshotDiff`(撤去の位置は「戻っているか」を別に確かめる)。読み終われば`RepairPlanner`で分けて、直す物が無ければ`VERIFIED`、直せる物があり上限(3)未満なら`REPAIRING`(ラウンド+1)、それ以外は`PARTIAL`(残る`Deviation`と理由を`lastError`・`remaining`に)。`ROLLBACK`が`VERIFIED`になったら、同じ区画の終わったジョブを`ROLLED_BACK`にし、区画を解放して`PlacedRegistry`を捨てる(D-23)。
+- 1tickの順序(**これが正本**): (1)`PENDING_APPROVAL`を到着順に区画の検査→`BUILD`は区画を予約して`QUEUED`、重なれば`CANCELLED`(`lastError`に`E-CLAIM-OVERLAP:...`)。(2)所有者の在不在: 不在なら`QUEUED`/`RUNNING`/`VERIFYING`/`REPAIRING`を`PAUSED(OWNER_OFFLINE)`(`continueWhileOffline`なら止めない)、戻れば再開。`CHUNK_UNLOADED`・`MATERIALS_MISSING`は`RETRY_INTERVAL_TICKS`ごとに再開して見直す。(3)`ConstructionBudget.admit`で`QUEUED`を`RUNNING`へ。(4)`allocate`の割り当てで、`RUNNING`は手順を、`REPAIRING`は修復の手順を実行(**修復の手順(`JobRecord.repair`)は一時停止をまたいで残る**。`REPAIRING`中に止まったジョブは`PAUSED→QUEUED→RUNNING`で戻り、`RUNNING`でも修復の手順の続きを実行し、終われば`PLACED_ALL`で`VERIFYING`へ行く。ラウンドは増やさない。P4レビューB-5)。手順が`SITE_CHANGED`で止まったら、`lastError`に`Issue.of(E_SITE_CHANGED, [ノードID], ...)`のIDを入れる(F-3の「`E-SITE-CHANGED`で`PAUSED`」)。手順が終われば`VERIFYING`へ(読み取りの`SnapshotCollector`を新しく作る)。(5)`VERIFYING`は1tickに`SnapshotCollector.DEFAULT_READS_PER_TICK`個まで読み、未読み込みがあれば`PAUSED(CHUNK_UNLOADED)`(再開後は読み直し)。窓ごとに`SnapshotDiff`(撤去の位置は「戻っているか」を別に確かめる)。読み終われば`RepairPlanner`で分けて、直す物が無ければ`VERIFIED`、直せる物があり上限(3)未満なら`REPAIRING`(ラウンド+1)、それ以外は`PARTIAL`(残る`Deviation`と理由を`lastError`・`remaining`に)。`ROLLBACK`が`VERIFIED`になったら、同じ区画の終わったジョブを`ROLLED_BACK`にし、区画を解放して`PlacedRegistry`を捨てる(D-23)。
 
 - [ ] **Step 1: 失敗するテストを書く**
 
@@ -5983,6 +6401,7 @@ import io.github.khayashi4337.micradrone.build.compile.TestManifests;
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.Box;
 import io.github.khayashi4337.micradrone.build.model.IntPos;
+import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.parts.BuildingParts;
 import java.util.ArrayList;
 import java.util.List;
@@ -6002,7 +6421,11 @@ class JobServiceTest {
         long tick;
 
         List<JobUpdate> step(JobService s, FakeJobWorld w) {
-            return c.step(s, w);
+            return s.tick(new TickInput(tick++, CALM), w);
+        }
+
+        List<JobUpdate> stepAt(JobService s, FakeJobWorld w, double averageMspt) {
+            return s.tick(new TickInput(tick++, averageMspt), w);
         }
 
         List<JobUpdate> runUntil(JobService s, FakeJobWorld w, String jobId, Predicate<ConstructionJob> stop) {
@@ -6129,10 +6552,14 @@ class JobServiceTest {
         List<JobUpdate> ups = c.runUntil(s, w, "job-1", in(JobState.PAUSED));
         assertEquals(PauseReason.MATERIALS_MISSING, s.record("job-1").orElseThrow().job().pauseReason());
         assertTrue(ups.stream().anyMatch(u -> !u.shortage().isEmpty()), "the owner is told what is missing");
+        long pausedAt = c.tick - 1;
         w.inventories.get(A).with("minecraft:cobblestone", 9).with("minecraft:oak_planks", 16);
-        for (int i = 0; i < JobService.RETRY_INTERVAL_TICKS - 2; i++) {
+        while (c.tick < pausedAt + JobService.RETRY_INTERVAL_TICKS) {
             c.step(s, w);
+            assertEquals(JobState.PAUSED, s.record("job-1").orElseThrow().job().state(), "no retry before one second");
         }
+        c.step(s, w);
+        assertEquals(JobState.RUNNING, s.record("job-1").orElseThrow().job().state(), "retried exactly one second later");
         c.runUntil(s, w, "job-1", in(JobState.VERIFIED));
         assertEquals(0, w.inventories.get(A).count("minecraft:oak_planks"));
     }
@@ -6169,6 +6596,8 @@ class JobServiceTest {
         submit(s, approved("job-1", A, m, MaterialPolicy.CREATIVE_FREE), m);
         c.runUntil(s, w, "job-1", in(JobState.PAUSED));
         assertEquals(PauseReason.SITE_CHANGED, s.record("job-1").orElseThrow().job().pauseReason());
+        String error = s.record("job-1").orElseThrow().job().lastError();
+        assertTrue(error.startsWith(IssueCode.E_SITE_CHANGED.label() + ":"), error);
         for (int i = 0; i < JobService.RETRY_INTERVAL_TICKS * 2; i++) {
             c.step(s, w);
         }
@@ -6177,6 +6606,42 @@ class JobServiceTest {
         c.runUntil(s, w, "job-1", in(JobState.VERIFIED));
         assertEquals("minecraft:stone_bricks", w.world.blockAt(blocked).blockId());
         assertEquals(1, s.status("job-1").orElseThrow().conflicts());
+    }
+
+    @Test
+    void afterTheObstacleIsRemovedAResumeWithoutSkipBuildsThereAndDropsTheConflict() {
+        JobService s = service();
+        Clock c = new Clock();
+        FakeJobWorld w = new FakeJobWorld();
+        w.online.add(A);
+        PlacementManifest m = TestManifests.smallHut();
+        IntPos blocked = m.placements().get(3).pos();
+        w.world.setBlock(blocked, BlockSpec.of("minecraft:stone_bricks"));
+        submit(s, approved("job-1", A, m, MaterialPolicy.CREATIVE_FREE), m);
+        c.runUntil(s, w, "job-1", in(JobState.PAUSED));
+        w.world.setBlock(blocked, BlockSpec.AIR, CellTrait.REPLACEABLE);
+        assertEquals(ControlResult.OK, s.resume("job-1", A, false, false));
+        c.runUntil(s, w, "job-1", in(JobState.VERIFIED));
+        assertEquals(m.placements().get(3).block(), w.world.blockAt(blocked));
+        assertEquals(0, s.status("job-1").orElseThrow().conflicts());
+        assertEquals(0, s.status("job-1").orElseThrow().skipped());
+    }
+
+    @Test
+    void aSlowedRunningJobIsShownAsServerBusy() {
+        JobService s = service();
+        Clock c = new Clock();
+        FakeJobWorld w = new FakeJobWorld();
+        w.online.add(A);
+        PlacementManifest m = TestManifests.smallHut();
+        submit(s, approved("job-1", A, m, MaterialPolicy.CREATIVE_FREE), m);
+        c.step(s, w);
+        assertEquals(null, s.status("job-1").orElseThrow().shownPause());
+        c.stepAt(s, w, 50.0);
+        JobStatus st = s.status("job-1").orElseThrow();
+        assertEquals(JobState.RUNNING, st.state());
+        assertTrue(s.slowed());
+        assertEquals(PauseReason.SERVER_BUSY, st.shownPause());
     }
 }
 ```
@@ -6228,6 +6693,33 @@ class JobServiceL7Test {
         assertEquals(m.placements().get(0).block(), w.world.blockAt(broken));
         assertEquals("minecraft:gold_block", w.world.blockAt(swapped).blockId(), "a swapped block is never overwritten");
         assertEquals(1, st.conflicts());
+    }
+
+    @Test
+    void aPauseDuringRepairKeepsTheRepairQueueAndTheRound() {
+        JobService s = service();
+        JobServiceTest.Clock c = new JobServiceTest.Clock();
+        FakeJobWorld w = new FakeJobWorld();
+        w.online.add(A);
+        PlacementManifest m = TestManifests.smallHut();
+        IntPos broken = m.placements().get(0).pos();
+        boolean[] once = {false};
+        w.world.afterWrite = (pos, block) -> {
+            if (pos.equals(broken) && !once[0]) {
+                once[0] = true;
+                w.world.setBlock(pos, BlockSpec.AIR, CellTrait.REPLACEABLE);
+            }
+        };
+        submit(s, approved("job-1", A, m, MaterialPolicy.CREATIVE_FREE), m);
+        c.runUntil(s, w, "job-1", in(JobState.REPAIRING));
+        w.online.remove(A);
+        c.step(s, w);
+        assertEquals(PauseReason.OWNER_OFFLINE, s.record("job-1").orElseThrow().job().pauseReason());
+        assertEquals(1, s.record("job-1").orElseThrow().repair().program().size(), "the repair queue survives the pause");
+        w.online.add(A);
+        c.runUntil(s, w, "job-1", in(JobState.VERIFIED));
+        assertEquals(1, s.status("job-1").orElseThrow().repairRound(), "resuming does not spend another round");
+        assertEquals(m.placements().get(0).block(), w.world.blockAt(broken));
     }
 
     @Test
@@ -6409,6 +6901,7 @@ import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.Box;
 import io.github.khayashi4337.micradrone.build.model.IntPos;
 import io.github.khayashi4337.micradrone.build.model.Issue;
+import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.parts.BuildPhase;
 import io.github.khayashi4337.micradrone.build.parts.PartTypeRegistry;
 import io.github.khayashi4337.micradrone.build.verify.CompareScope;
@@ -6555,7 +7048,7 @@ public final class JobService {
     }
 
     private boolean fastPhase(JobRecord r) {
-        if (!fastStructure || r.job().state() == JobState.REPAIRING) {
+        if (!fastStructure || r.repair != null) {
             return false;
         }
         int c = r.job().cursor();
@@ -6567,11 +7060,12 @@ public final class JobService {
 
     private void place(JobRecord r, int allowance, TickInput in, JobWorld w, List<JobUpdate> updates) {
         ConstructionJob j = r.job();
-        boolean repairing = j.state() == JobState.REPAIRING;
+        // the repair queue outlives a pause: PAUSED -> QUEUED -> RUNNING goes on with it instead of the finished main program
+        boolean repairing = r.repair != null;
         JobProgram program = repairing ? r.repair.program() : r.program();
         int cursor = repairing ? r.repair.cursor() : j.cursor();
         if (cursor >= program.size()) {
-            finishPlacing(r, repairing, updates);
+            finishPlacing(r, updates);
             return;
         }
         if (allowance == 0) {
@@ -6590,21 +7084,32 @@ public final class JobService {
             r.lastDroneTick = in.tick();
         }
         if (rep.pause() != null) {
+            if (rep.pause() == PauseReason.SITE_CHANGED && !program.isRestore(rep.cursor())) {
+                r.setJob(r.job().withLastError(siteChanged(program.put(rep.cursor()).placement())));
+            }
             pause(r, rep.pause(), in, updates, rep);
             return;
         }
         updates.add(new JobUpdate(r.job(), rep.touched(), List.of(), rep.conflicts(), false));
         if (rep.cursor() >= program.size()) {
-            finishPlacing(r, repairing, updates);
+            finishPlacing(r, updates);
         }
     }
 
-    private void finishPlacing(JobRecord r, boolean repairing, List<JobUpdate> updates) {
+    /** F-3: the pause names its cause as an Issue id (E-SITE-CHANGED:node#...), which the owner's text is built from. */
+    static String siteChanged(Placement p) {
+        IntPos pos = p.pos();
+        return Issue.of(IssueCode.E_SITE_CHANGED, List.of(p.partNodeId()),
+                "位置" + pos.x() + "," + pos.y() + "," + pos.z() + "が、調べた後で変わりました").id();
+    }
+
+    private void finishPlacing(JobRecord r, List<JobUpdate> updates) {
         r.repair = null;
         r.placementDeviations.clear();
         r.restoreFailures.clear();
         r.collector = new SnapshotCollector(verifyPositions(r));
-        change(r, r.job().on(repairing ? JobEvent.REPAIRED : JobEvent.PLACED_ALL), updates);
+        // a repair resumed after a pause runs in RUNNING; RUNNING -> VERIFYING is PLACED_ALL and keeps the round
+        change(r, r.job().on(r.job().state() == JobState.REPAIRING ? JobEvent.REPAIRED : JobEvent.PLACED_ALL), updates);
     }
 
     private static List<IntPos> verifyPositions(JobRecord r) {
@@ -6851,19 +7356,25 @@ Expected: `BUILD SUCCESSFUL`、失敗0件。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/construction
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: ジョブの進行(JobService)を追加(区画の予約・所有者の在不在・予算・設置・L7の検査と3ラウンドの修復・取消と再開)(自然言語→工場建設 P4 Task 13)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
 ---
 
 ### Task 14: 子供に見える文言をデータにする(`ChildMessages`・`ja_jp.json`・`en_us.json`)
+
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。
 
 P4で子供の目に入るのは、デバッグコマンドの返事、ジョブの状態と進み具合、止まった理由、`Issue`の説明、ドローンの演出だけ。これを**翻訳キーのデータ**にし、サーバーは`Component.translatable`で送る(文言をコードに直書きしない。F-18)。日本語は、小学3年生のペルソナ(ひらがな中心)でも読めるように、漢字を少なくする(機械的な検査: 漢字の割合30%以下)。ペルソナの確認はTask 36。
 
@@ -7144,28 +7655,37 @@ Expected: `BUILD SUCCESSFUL`、失敗0件。漢字の割合の検査で落ちた
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction/core/ChildMessages.java src/main/java/io/github/khayashi4337/micradrone/construction/core/MessageKey.java src/main/resources/assets/micradrone/lang src/test/java/io/github/khayashi4337/micradrone/construction/core/ChildMessagesTest.java
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add src/main/java/io/github/khayashi4337/micradrone/construction/core/ChildMessages.java
+git add src/main/java/io/github/khayashi4337/micradrone/construction/core/MessageKey.java
+git add <src/main/resources/assets/micradrone/lang の下の、このタスクで作った・変えたファイルを1つずつ>
+git add src/test/java/io/github/khayashi4337/micradrone/construction/core/ChildMessagesTest.java
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: 子供に見える施工の文言を翻訳キーのデータにする(ChildMessages・ja_jp.json・en_us.json。漢字の割合の検査つき)(自然言語→工場建設 P4 Task 14)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
 ---
 
 ### Task 15: アダプタ — 世界の読み書き(`ServerWorldPort`・`PlacementGuard`・`ServerStateReader`)、地形調査(`ServerSurveyor`)、タグ
 
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。
+
 ここから先の`construction`パッケージはMinecraftに触れる薄いアダプタ。判断は`construction.core`に任せ、ここでは「読む・置く・イベントを投げる」だけをする。**アダプタの挙動は単体テストで検証したことにしない**: 純粋に切り出せる部分(調査の組み立て・範囲読み取りの区切り・タグの中身)だけJUnitで確かめ、実機での確認はTask 19以降の台本(devkit)で自動に行う。
 
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/construction/{BlockStates,ServerWorldPort,PlacementGuard,ServerStateReader,ServerSurveyor,BuildTags}.java`、`src/main/java/io/github/khayashi4337/micradrone/build/compile/SiteSurveyBuilder.java`、`src/main/java/io/github/khayashi4337/micradrone/build/analyze/{VoxelClassGrid,VoxelGridFiller}.java`、`src/main/resources/data/micradrone/tags/block/{terraformable,palette_allowed}.json`
 - Test: `src/test/java/io/github/khayashi4337/micradrone/build/compile/{SiteSurveyBuilderTest,BuildTagFilesTest}.java`、`src/test/java/io/github/khayashi4337/micradrone/build/analyze/VoxelGridFillerTest.java`
+- Modify: `src/test/java/io/github/khayashi4337/micradrone/build/BuildPurityTest.java`(`ALLOWED`に`entry("build.analyze", Set.of("build.model"))`。Task 10で`Map.ofEntries`にしてある。`build.analyze`は新しい純Javaの包みなので、無いと`thePurePackagesKeepTheMeasuredLayering`が落ちる)
 
 **Interfaces:**
-- Consumes: Task 4の`WorldPort`・`WorldCell`・`CellTrait`・`PlaceResult`、Task 5の`SiteSurvey`、既存の`BuiltinAllowList.ids()`・`PlaceableBlockPolicy(Set<String>)`。Minecraft/NeoForge(Task 2で読んだ物): `BlockStateParser.parseForBlock(HolderLookup<Block>, String, boolean)`(`net/minecraft/commands/arguments/blocks/BlockStateParser.java`)、`BuiltInRegistries.BLOCK.asLookup()`、`Property.getName(T)`、`Level.isLoaded(BlockPos)`、`Level.setBlock(BlockPos, BlockState, int)`と`Block.UPDATE_ALL = 3`、`BlockBehaviour.BlockStateBase.canBeReplaced()`・`getFluidState()`・`is(TagKey<Block>)`・`getDestroySpeed(BlockGetter, BlockPos)`、`BlockTags.LEAVES`・`BlockTags.LOGS`、`Container.isEmpty()`・`Containers.dropContents(Level, BlockPos, Container)`、`BlockSnapshot.create(ResourceKey<Level>, LevelAccessor, BlockPos)`・`restore()`、`EventHooks.onBlockPlace(Entity, BlockSnapshot, Direction)`、`BlockEvent.BreakEvent(Level, BlockPos, BlockState, Player)`、`FakePlayerFactory.get(ServerLevel, GameProfile)`、`Level.getHeight(Heightmap.Types, int, int)`と`Heightmap.Types.WORLD_SURFACE`
+- Consumes: Task 4の`WorldPort`・`WorldCell`・`CellTrait`・`PlaceResult`、Task 5の`SiteSurvey`、既存の`PlaceableBlockPolicy.builtin()`・`PlaceableBlockPolicy(Set<String>)`(`BuiltinAllowList.ids()`はpackage-privateなので、アダプタからは使わない。同じ包みの`BuildTagFilesTest`だけが使う)。Minecraft/NeoForge(Task 2で読んだ物、`build/moddev/artifacts/neoforge-21.1.238-sources.jar`): `Level.captureBlockSnapshots`・`Level.capturedBlockSnapshots`・`Level.restoringBlockSnapshots`・`Level.markAndNotifyBlock(BlockPos, LevelChunk, BlockState, BlockState, int, int)`(`Level.java` 120〜122行・233〜300行)、`BlockSnapshot.getFlags()`・`restore(int)`、`EventHooks.onMultiBlockPlace`、`Block.UPDATE_CLIENTS = 2`・`UPDATE_KNOWN_SHAPE = 16`・`UPDATE_SUPPRESS_DROPS = 32`(`Block.java` 81〜82行)、`ServerLevel.updateNeighborsAt(BlockPos, Block)`・`BlockState.updateNeighbourShapes(LevelAccessor, BlockPos, int)`、`Capabilities.ItemHandler.BLOCK`・`Capabilities.FluidHandler.BLOCK`・`Level.getCapability(BlockCapability, BlockPos, Direction)`・`IItemHandler.getSlots()`・`extractItem(int, int, boolean)`・`Containers.dropItemStack(Level, double, double, double, ItemStack)`、`BlockStateParser.parseForBlock(HolderLookup<Block>, String, boolean)`(`net/minecraft/commands/arguments/blocks/BlockStateParser.java`)、`BuiltInRegistries.BLOCK.asLookup()`、`Property.getName(T)`、`Level.isLoaded(BlockPos)`、`Level.setBlock(BlockPos, BlockState, int)`と`Block.UPDATE_ALL = 3`、`BlockBehaviour.BlockStateBase.canBeReplaced()`・`getFluidState()`・`is(TagKey<Block>)`・`getDestroySpeed(BlockGetter, BlockPos)`、`BlockTags.LEAVES`・`BlockTags.LOGS`、`Container.isEmpty()`・`Containers.dropContents(Level, BlockPos, Container)`、`BlockSnapshot.create(ResourceKey<Level>, LevelAccessor, BlockPos)`・`restore()`、`EventHooks.onBlockPlace(Entity, BlockSnapshot, Direction)`、`BlockEvent.BreakEvent(Level, BlockPos, BlockState, Player)`、`FakePlayerFactory.get(ServerLevel, GameProfile)`、`Level.getHeight(Heightmap.Types, int, int)`と`Heightmap.Types.WORLD_SURFACE`
 - Produces:
   - `BlockStates.toState(BlockSpec) → BlockState`(作れなければ`IllegalArgumentException`)、`BlockStates.toSpec(BlockState) → BlockSpec`(全プロパティ)
   - `ServerStateReader.read(ServerLevel, IntPos) → WorldCell`(`ServerWorldPort.read`と`ServerSurveyor`が共有する唯一の読み取り)、`ServerStateReader.step(ServerLevel, VoxelGridFiller, int maxReads, ToIntFunction<WorldCell> classifier)`(範囲の分類読み取りを1tick分進める。分類はP6が決める)
@@ -7176,7 +7696,11 @@ MSG
   - `build.analyze.VoxelClassGrid(Box worldBox, byte[] classes)`(`01` 8節。`MAX_CELLS = 1_572_864`=約157万セル・約1.5MB)、`VoxelGridFiller(Box)`(純粋: `nextBatch(int)`・`set(IntPos, byte)`・`done()`・`grid()`)
   - `BuildTags.TERRAFORMABLE`(`micradrone:terraformable`)・`BuildTags.PALETTE_ALLOWED`(`micradrone:palette_allowed`)・`BuildTags.policy() → PlaceableBlockPolicy`(タグの中身で作る。D-22の「実行時はデータパックのタグに置き換える」)
 
-- 設置と撤去の順序(S-9の既定。**これが正本**): 設置=`BlockSnapshot.create`→`level.setBlock(pos, state, Block.UPDATE_ALL)`→`EventHooks.onBlockPlace(actor, snapshot, Direction.UP)`→キャンセルなら`snapshot.restore()`して`DENIED`。撤去=`BreakEvent`を投げる→キャンセルなら何もせず`DENIED`→`dropContentsFirst`でコンテナなら`Containers.dropContents`→`setBlock`。`setBlock`は自然のブロックのアイテムを落とさない(`destroyBlock`ではない)ので、置換で壊した草・水・葉は増えない(F-7)。`Placement.blockEntityConfig`が空でなければ`INVALID`(許可するキーはS-5で決まるのでP10。P4の部品は使わない)。
+- 設置と撤去の順序(S-9の既定。**これが正本**。P4レビューD-3・G-2で直した):
+  - **設置はバニラの`BlockItem`と同じ「捕まえてから決める」形**(`CommonHooks.onPlaceItemIntoWorld`、`CommonHooks.java` 594〜671行): `level.captureBlockSnapshots = true`→`level.setBlock(pos, state, Block.UPDATE_ALL)`(捕まえている間は`LevelChunk.setBlockState`が`onPlace`を呼ばず、`Level.setBlock`は隣への通知をしない。`Level.java` 244〜261行、`LevelChunk.java` 282行)→`captureBlockSnapshots = false`→捕まえた`BlockSnapshot`を取り出す→1個なら`EventHooks.onBlockPlace`、2個以上なら`onMultiBlockPlace`(持ち主=`actor`、`Direction.UP`)→キャンセルなら逆順に`restoringBlockSnapshots = true`で`snapshot.restore(snapshot.getFlags() | Block.UPDATE_CLIENTS)`して`DENIED`(隣への影響はまだ起きていないので、元に戻すだけで済む)→通れば各スナップショットで`newState.onPlace(...)`と`level.markAndNotifyBlock(pos, chunk, old, new, flags, 512)`を、バニラと同じ順で呼ぶ。
+  - **撤去は隣の形を動かさず、アイテムを落とさない**: `BreakEvent`を投げる→キャンセルなら何もせず`DENIED`→`dropContentsFirst`なら中身を落とす(下の「中身」)→`level.setBlock(pos, state, Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE | Block.UPDATE_SUPPRESS_DROPS)`(=2|16|32。16で隣の形の更新をしないので、扉のもう片方や壁の看板が**アイテムを落として**外れることがない。`Level.markAndNotifyBlock`は形の更新に渡すフラグから32を消すので(`Level.java` 294行`& -34`)、32だけでは防げない)。隣の更新は、1つの部品を戻し終えた後に`WorldPort.settle`でまとめて行う: 各位置で`level.updateNeighborsAt(pos, 今のブロック)`と`今の状態.updateNeighbourShapes(level, pos, Block.UPDATE_ALL)`。撤去の順序(付いている物から先、扉の上下は続けて)は純Javaの`Attachments.REMOVAL_ORDER`(Task 9)が決めるので、`settle`の時点で、このプロジェクトが付けた物はもう無い。
+  - **中身**(完了条件13。保管庫・デポ・樽を同じ道で扱う。Createのクラスはimportしない): `level.getCapability(Capabilities.ItemHandler.BLOCK, pos, null)`があれば、全スロットを`extractItem(slot, Integer.MAX_VALUE, false)`で空になるまで取り出し、`Containers.dropItemStack(level, x+0.5, y+0.5, z+0.5, stack)`で落とす(Createの`item_vault`・`depot`はこの能力を出す。保管庫は複数ブロックで1つの中身なので、最初の1ブロックで全部落ちる)。能力が無く`BlockEntity`が`Container`なら`Containers.dropContents`と`clearContent()`。液体(`Capabilities.FluidHandler.BLOCK`の中身)と、燃えている燃料(`lit=true`の状態)は取り出せないので、撤去の**確認の文言で先に知らせる**(Task 30)。
+  - `setBlock`は自然のブロックのアイテムを落とさない(`destroyBlock`ではない)ので、置換で壊した草・水・葉は増えない(F-7)。`Placement.blockEntityConfig`が空でなければ`INVALID`(許可するキーはS-5で決まるのでP10。P4の部品は使わない)。
 
 - [ ] **Step 1: 失敗するテストを書く(純粋な部分)**
 
@@ -7463,14 +7987,17 @@ public final class BlockStates {
 }
 ```
 
-`ServerStateReader.read`(唯一の読み取り): `!level.isLoaded(bp)`なら`WorldCell.unloaded()`。そうでなければ`BlockState st = level.getBlockState(bp)`、`BlockEntity be = level.getBlockEntity(bp)`から`CellTrait`を集める: `st.canBeReplaced()`→`REPLACEABLE`、`!st.getFluidState().isEmpty()`→`FLUID`、`st.is(BlockTags.LEAVES)`→`LEAVES`、`st.is(BuildTags.TERRAFORMABLE)`→`TERRAFORMABLE`、`st.getDestroySpeed(level, bp) < 0`→`UNBREAKABLE`、`be instanceof Container c && c.isEmpty()`→`EMPTY_CONTAINER`。観測は`new ObservedBlock(BlockStates.toSpec(st), be != null, be == null ? "" : BuiltInRegistries.BLOCK_ENTITY_TYPE.getKey(be.getType()).toString())`。(既存の`BlockRangeDescription`は`SenseNames.simplify`で名前を短くするので、完全なIDが要るここでは共有しない。`BlockRangeDescription`は変更しない。)
+`ServerStateReader.read`(唯一の読み取り): `!level.isLoaded(bp)`なら`WorldCell.unloaded()`。そうでなければ`BlockState st = level.getBlockState(bp)`、`BlockEntity be = level.getBlockEntity(bp)`から`CellTrait`を集める: `st.canBeReplaced()`→`REPLACEABLE`、`!st.getFluidState().isEmpty()`→`FLUID`、`st.is(BlockTags.LEAVES)`→`LEAVES`、`st.is(BuildTags.TERRAFORMABLE)`→`TERRAFORMABLE`、`st.getDestroySpeed(level, bp) < 0`→`UNBREAKABLE`、中身を持つ入れ物で、中身が空→`EMPTY_CONTAINER`(`level.getCapability(Capabilities.ItemHandler.BLOCK, bp, null)`があれば全スロットの`getStackInSlot(i).isEmpty()`、無ければ`be instanceof Container c && c.isEmpty()`。液体の能力があれば、全タンクが空であることも条件)。観測は`new ObservedBlock(BlockStates.toSpec(st), be != null, be == null ? "" : BuiltInRegistries.BLOCK_ENTITY_TYPE.getKey(be.getType()).toString())`。(既存の`BlockRangeDescription`は`SenseNames.simplify`で名前を短くするので、完全なIDが要るここでは共有しない。`BlockRangeDescription`は変更しない。)
 
 `PlacementGuard.java`:
 ```java
 package io.github.khayashi4337.micradrone.construction;
 
+import com.google.common.collect.Lists;
 import com.mojang.authlib.GameProfile;
 import io.github.khayashi4337.micradrone.construction.core.PlaceResult;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.function.Function;
 import net.minecraft.core.BlockPos;
@@ -7480,18 +8007,23 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
 import net.minecraft.world.Containers;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
+import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.common.util.BlockSnapshot;
 import net.neoforged.neoforge.common.util.FakePlayerFactory;
 import net.neoforged.neoforge.event.EventHooks;
 import net.neoforged.neoforge.event.level.BlockEvent;
+import net.neoforged.neoforge.items.IItemHandler;
 
 /**
  * Every world write of the construction goes through here, with the owner as the acting player so protection mods can
- * refuse it (04 F-4 (c), S-9): the place event is posted after setBlock (a player's event reads the current state) and a
- * cancelled one is undone from the snapshot; a removal posts the break event first and changes nothing if cancelled.
+ * refuse it (04 F-4 (c), S-9). A placement is captured like vanilla's BlockItem (CommonHooks.onPlaceItemIntoWorld): the
+ * block is set while snapshots are captured, the place event decides, and only an accepted placement runs onPlace and the
+ * neighbour updates. A removal posts the break event first, drops the contents it holds, and changes the block without
+ * neighbour shape updates or drops; {@link #settle} runs the neighbour updates once a whole piece is removed.
  */
 public final class PlacementGuard {
     private final MinecraftServer server;
@@ -7507,18 +8039,54 @@ public final class PlacementGuard {
         return online != null ? online : FakePlayerFactory.get(level, new GameProfile(owner, ownerName.apply(owner)));
     }
 
+    /** A removal changes one position quietly: no neighbour shape updates (16), no drops (32); settle() updates later. */
+    static final int QUIET_REMOVAL_FLAGS = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE | Block.UPDATE_SUPPRESS_DROPS;
+    /** Same recursion budget vanilla passes when it replays captured placements (CommonHooks.onPlaceItemIntoWorld). */
+    static final int NEIGHBOUR_UPDATE_DEPTH = 512;
+
     public PlaceResult place(ServerLevel level, BlockPos pos, BlockState state, UUID owner) {
-        BlockSnapshot snapshot = BlockSnapshot.create(level.dimension(), level, pos);
-        level.setBlock(pos, state, Block.UPDATE_ALL);
-        if (level.getBlockState(pos).getBlock() != state.getBlock()) {
-            snapshot.restore();
+        level.captureBlockSnapshots = true;
+        boolean set;
+        try {
+            set = level.setBlock(pos, state, Block.UPDATE_ALL);
+        } finally {
+            level.captureBlockSnapshots = false;
+        }
+        List<BlockSnapshot> snapshots = new ArrayList<>(level.capturedBlockSnapshots);
+        level.capturedBlockSnapshots.clear();
+        if (!set || snapshots.isEmpty()) {
             return PlaceResult.INVALID;
         }
-        if (EventHooks.onBlockPlace(actor(level, owner), snapshot, Direction.UP)) {
-            snapshot.restore();
+        if (level.getBlockState(pos).getBlock() != state.getBlock()) {
+            undo(level, snapshots);
+            return PlaceResult.INVALID;
+        }
+        ServerPlayer actor = actor(level, owner);
+        boolean cancelled = snapshots.size() > 1 ? EventHooks.onMultiBlockPlace(actor, snapshots, Direction.UP)
+                : EventHooks.onBlockPlace(actor, snapshots.get(0), Direction.UP);
+        if (cancelled) {
+            undo(level, snapshots);
             return PlaceResult.DENIED;
         }
+        for (BlockSnapshot snap : snapshots) {
+            BlockState old = snap.getState();
+            BlockState now = level.getBlockState(snap.getPos());
+            now.onPlace(level, snap.getPos(), old, false);
+            level.markAndNotifyBlock(snap.getPos(), level.getChunkAt(snap.getPos()), old, now, snap.getFlags(),
+                    NEIGHBOUR_UPDATE_DEPTH);
+        }
         return PlaceResult.PLACED;
+    }
+
+    private static void undo(ServerLevel level, List<BlockSnapshot> snapshots) {
+        for (BlockSnapshot snap : Lists.reverse(snapshots)) {
+            level.restoringBlockSnapshots = true;
+            try {
+                snap.restore(snap.getFlags() | Block.UPDATE_CLIENTS);
+            } finally {
+                level.restoringBlockSnapshots = false;
+            }
+        }
     }
 
     public PlaceResult restore(ServerLevel level, BlockPos pos, BlockState state, UUID owner, boolean dropContentsFirst) {
@@ -7526,20 +8094,48 @@ public final class PlacementGuard {
         if (NeoForge.EVENT_BUS.post(event).isCanceled()) {
             return PlaceResult.DENIED;
         }
-        if (dropContentsFirst && level.getBlockEntity(pos) instanceof Container c) {
+        if (dropContentsFirst) {
+            dropContents(level, pos);
+        }
+        level.setBlock(pos, state, QUIET_REMOVAL_FLAGS);
+        return PlaceResult.PLACED;
+    }
+
+    /** Runs the neighbour updates the quiet removals skipped, once for each position of a finished piece. */
+    public void settle(ServerLevel level, List<BlockPos> positions) {
+        for (BlockPos pos : positions) {
+            BlockState now = level.getBlockState(pos);
+            level.updateNeighborsAt(pos, now.getBlock());
+            now.updateNeighbourShapes(level, pos, Block.UPDATE_ALL);
+        }
+    }
+
+    /** Items leave through the item-handler capability (vanilla chests, Create's vault and depot alike), else Container. */
+    static void dropContents(ServerLevel level, BlockPos pos) {
+        IItemHandler items = level.getCapability(Capabilities.ItemHandler.BLOCK, pos, null);
+        if (items != null) {
+            for (int slot = 0; slot < items.getSlots(); slot++) {
+                for (ItemStack out = items.extractItem(slot, Integer.MAX_VALUE, false); !out.isEmpty();
+                     out = items.extractItem(slot, Integer.MAX_VALUE, false)) {
+                    Containers.dropItemStack(level, pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, out);
+                }
+            }
+            return;
+        }
+        if (level.getBlockEntity(pos) instanceof Container c) {
             Containers.dropContents(level, pos, c);
             c.clearContent();
         }
-        level.setBlock(pos, state, Block.UPDATE_ALL);
-        return PlaceResult.PLACED;
     }
 }
 ```
 (置いた直後に比べるのはブロックの種類だけ。隣の影響で形の状態(階段の角・板ガラスのつながり)が変わるのは正常で、状態の違いはL7が`BlockMatch`で判定する。)
 
-`ServerWorldPort`: `read`は`ServerStateReader.read(level, pos)`。`place`は`blockEntityConfig`が空でなければ`INVALID`、`BlockStates.toState`が`IllegalArgumentException`なら`INVALID`、それ以外は`guard.place`。`restore`は`guard.restore`。`IntPos`→`BlockPos`の変換は`new BlockPos(p.x(), p.y(), p.z())`の1か所(`ServerWorldPort.toBlockPos`)にまとめる。
+`ServerWorldPort`: `read`は`ServerStateReader.read(level, pos)`。`place`は`blockEntityConfig`が空でなければ`INVALID`、`BlockStates.toState`が`IllegalArgumentException`なら`INVALID`、それ以外は`guard.place`。`restore`は`guard.restore`。`settle`は`guard.settle`(位置を`BlockPos`にして)。`IntPos`→`BlockPos`の変換は`new BlockPos(p.x(), p.y(), p.z())`の1か所(`ServerWorldPort.toBlockPos`)にまとめる。
 
 `ServerSurveyor.allLoaded(ServerLevel, Box) → boolean`(範囲の全チャンクについて`level.hasChunk(cx, cz)`)を、調査を**始める前に**確かめ、偽なら調査を始めない(提出の返事で「ちかくに いってね」)。`ServerSurveyor.step(level, builder, maxColumns)`は、`builder.nextColumns(maxColumns)`の各列を調べる(途中でチャンクが外れたら`false`を返し、提出は`E-SITE-BLOCKED#unloaded`で終わる)。列の中では`y = min(level.getHeight(WORLD_SURFACE, x, z) - 1, box.maxB())`から下へ、空気・`canBeReplaced()`(草花・雪の層)は飛ばし、液体は`water=true`で飛ばし、`BlockTags.LEAVES`・`BlockTags.LOGS`は`tree=true`で飛ばし、それ以外で止まる。`box.minB()`より下に行けば`surfaceY = box.minB() - 1`・`"minecraft:air"`。
+
+`BuildPurityTest.java`の`ALLOWED`(Task 10で`Map.ofEntries`にした物)に`entry("build.analyze", Set.of("build.model")),`を`build.compile.gen`の行の前に足す。
 
 `BuildTags.java`: `TagKey.create(Registries.BLOCK, ResourceLocation.fromNamespaceAndPath(MicraDrone.MODID, "terraformable"))`などの2つと、`policy()`=`new PlaceableBlockPolicy(ids)`(`ids`は`BuiltInRegistries.BLOCK.getTag(PALETTE_ALLOWED)`の中身のブロックID。タグが空=データパックが読めていないなら`PlaceableBlockPolicy.builtin()`に倒し、`MicraDrone.LOGGER.warn`で知らせる)。
 
@@ -7550,21 +8146,29 @@ Expected: `BUILD SUCCESSFUL`、失敗0件(`OptionalModBoundaryTest`・`BuildPuri
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/main/java/io/github/khayashi4337/micradrone/build src/main/resources/data/micradrone/tags src/test/java/io/github/khayashi4337/micradrone/build
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/main/java/io/github/khayashi4337/micradrone/build の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/main/resources/data/micradrone/tags の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/build の下の、このタスクで作った・変えたファイルを1つずつ>
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: 世界の読み書きのアダプタ(ServerWorldPort・PlacementGuard・ServerStateReader・ServerSurveyor)と、整地・素材のタグを追加(自然言語→工場建設 P4 Task 15)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
-**実機での確認**: このタスクのアダプタは、Task 19のシナリオ`hut-golden`・`hut-here`(小屋が建ち、読み戻したブロックが施工リストと全数一致する)と、Task 26の`s9-protection`(保護イベント)で自動に確かめる。
+**実機での確認**: このタスクのアダプタは、Task 19のシナリオ`hut-golden`・`hut-here`(小屋が建ち、読み戻したブロックが施工リストと全数一致する)と、Task 26・28・31の`s9-protection-online`・`-rollback`・`-offline`(保護イベント)と、Task 28・29の落ちたアイテム0の確認(撤去の書き方)で自動に確かめる。
 
 ---
 
 ### Task 16: アダプタ — 設定(`ConstructionConfig`)と施工ランタイム(`ConstructionRuntime`)、状態のJSON(`JobViews`)
+
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。
 
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/construction/{ConstructionConfig,ConstructionRuntime,RuntimeJobWorld,ServerMessages}.java`、`src/main/java/io/github/khayashi4337/micradrone/construction/core/{JobViews,SubmitOutcome}.java`
@@ -7572,17 +8176,18 @@ MSG
 - Test: `src/test/java/io/github/khayashi4337/micradrone/construction/core/JobViewsTest.java`
 
 **Interfaces:**
-- Consumes: Task 3〜15の型。NeoForge: `ModConfigSpec.Builder`(`defineInRange(String, int, int, int)`・`defineInRange(String, double, double, double)`・`define(String, boolean)`・`defineEnum(String, V)`・`build()`)、`ModContainer.registerConfig(ModConfig.Type.SERVER, IConfigSpec)`(`ModConfig.Type.SERVER`の既定の名前は`micradrone-server.toml`。F-15)、`ServerStartedEvent`・`ServerStoppingEvent`・`ServerTickEvent.Post`・`PlayerEvent.PlayerLoggedOutEvent`、`MinecraftServer.getAverageTickTimeNanos()`・`getTickCount()`・`execute(Runnable)`
+- Consumes: Task 3〜15の型。NeoForge: `ModConfigSpec.Builder`(`defineInRange(String, int, int, int)`・`defineInRange(String, double, double, double)`・`define(String, boolean)`・`defineEnum(String, V)`・`build()`)、`ModContainer.registerConfig(ModConfig.Type.SERVER, IConfigSpec)`(`ModConfig.Type.SERVER`の既定の名前は`micradrone-server.toml`。F-15)、`ServerStartedEvent`・`ServerStoppingEvent`・`ServerTickEvent.Pre`・`PlayerEvent.PlayerLoggedOutEvent`、`MinecraftServer.getAverageTickTimeNanos()`・`getTickCount()`・`execute(Runnable)`
 - Produces:
   - `ConstructionConfig`: `ModConfigSpec SPEC`と値(カッコ内は既定・出どころ): `safety.maxPlacements`(20,000・F-5)、`safety.maxSizeX/Y/Z`(128/96/128・F-5)、`safety.opMaxPlacements`・`safety.opMaxSizeX/Y/Z`(同じ値。F-5の「OPは設定で緩和」)、`materials.policy`(`AUTO`・F-7。`AUTO`はゲームモードで決める)、`budget.maxRunningJobs`(4)・`budget.maxPlacementsPerTick`(32)・`budget.fastPlacementsPerTick`(16)・`budget.fastStructure`(`true`)・`budget.slowdownAboveMspt`(45.0)・`budget.recoverBelowMspt`(40.0)、`permissions.level`(`ALL`・F-4(d))・`permissions.largeJobPlacements`(20,000。これ以上はOPだけ。設計に数値なし: 既定では上限と同じで、実質OFF)、`chunks.continueWhileOffline`(`false`・F-13)、`claims.maxPerOwner`(8・F-4)。`static BudgetConfig budget()`・`static SafetyLimits limits(ServerLevel, boolean op)`
   - `record SubmitOutcome(String state /*WORKING|OFFERED|FAILED*/, PendingApproval pending, List<Issue> issues, ReplacementSummary replacements, long etaTicks)`(cc。`WORKING`は調査・コンパイル・読み取りの途中)
   - `JobViews`(cc、純粋。devkit・F-8の問い合わせ・コマンドが同じJSONを使う): `static Map<String,Object> statusTree(JobStatus)`、`jobsTree(List<JobStatus>)`、`submitTree(SubmitOutcome)`、`issueTree(Issue)`
-  - `ConstructionRuntime`: `static Optional<ConstructionRuntime> of(MinecraftServer)`、`void submit(ServerPlayer, PlanSubmission)`(非同期: 調査(tickに分ける)→ワーカーでコンパイル→施工リストの位置を読む(tickに分ける)→安全枠→`ApprovalDesk.offer`)、`SubmitOutcome lastSubmit(UUID)`、`ApprovalDecision approve(ServerPlayer, String hash, Confirmations, List<AcceptedRisk>)`(承認できたら`JobService.admitApproved(job, manifest, nodeTypes, JobProgram.build(manifest), operatingBox)`)、`ControlResult cancel(UUID requester, boolean op, String jobId)`・`resume(UUID, boolean, String, boolean skip)`、`Map<String,Object> statusTree(String jobId)`・`jobsTree()`・`manifestTree(String hash)`・`perfTree()`、`JobService jobs()`、`String registryVersion()`
-  - `RuntimeJobWorld implements JobWorld`: `world(dim)`=`ServerWorldPort`(ディメンションのID→`server.getLevel(ResourceKey.create(Registries.DIMENSION, ResourceLocation.parse(dim)))`)、`ownerOnline`=`server.getPlayerList().getPlayer(uuid) != null`、`materials`=クリエイティブは`MaterialPort.FREE`(サバイバルの在庫はTask 27の`InventoryMaterials`。**Task 27までは、サバイバルの方針のジョブは材料不足で止まる**。自動確認のTask 19〜21はクリエイティブで行う)
+  - `ConstructionRuntime`: `static Optional<ConstructionRuntime> of(MinecraftServer)`、`void submit(ServerPlayer, PlanSubmission)`(非同期: 調査(tickに分ける)→ワーカーでコンパイル→施工リストの位置を読む(tickに分ける)→安全枠→`ApprovalDesk.offer`)、`SubmitOutcome lastSubmit(UUID)`、`ApprovalDecision approve(ServerPlayer, String hash, Confirmations, List<AcceptedRisk>)`(承認できたら`JobService.admitApproved(job, manifest, nodeTypes, JobProgram.build(manifest), operatingBox)`)、`ControlResult cancel(UUID requester, boolean op, String jobId)`・`resume(UUID, boolean, String, boolean skip)`、`Map<String,Object> statusTree(String jobId)`・`jobsTree()`・`manifestTree(String hash)`、`JobService jobs()`、`String registryVersion()`、`String nextJobId()`(`"job-" + overworld().getGameTime() + "-" + その起動での通し番号`。ゲーム内の時刻は保存され、再起動しても戻らないので、前の起動のIDとぶつからない。`ConstructionJob.ID_PATTERN`に合う。`approve`の`Supplier<String> newJobId`はこれ。P4レビューB-6: Task 21より前に要る)、`long lastTickWorkNanos()`(直前のtickで、このランタイムの処理にかかった実時間。`perfTree()`と`MsptStats`はTask 33で足す)
+  - `RuntimeJobWorld implements JobWorld`: `world(dim)`=`ServerWorldPort`(ディメンションのID→`server.getLevel(ResourceKey.create(Registries.DIMENSION, ResourceLocation.parse(dim)))`)、`ownerOnline`=`server.getPlayerList().getPlayer(uuid) != null`、`materials`=クリエイティブは`MaterialPort.FREE`、サバイバルはTask 27までは`RuntimeJobWorld.NO_MATERIALS`(`missing(need)`は`need`をそのまま返し、`take`は`false`、`give`は何もしない`MaterialPort`。サバイバルの在庫はTask 27の`InventoryMaterials`が置き換える。**Task 27までは、サバイバルの方針のジョブは材料不足で止まる**。自動確認のTask 19〜21はクリエイティブで行う)
   - `ServerMessages`: `Component issueLine(Issue)`(`Component.translatable(ChildMessages.issue(code))`+灰色の` (E-...)`)、`Component status(JobStatus)`、`Component rejection(ApprovalRejection, List<Issue>)`など、`ChildMessages`のキーからだけ文を作る
 
-- 1tickの順序(サーバーのメインスレッド、`ServerTickEvent.Post`): (1)`ApprovalDesk.expire`・`SurveyCache.expire`、(2)進行中の提出(調査・位置の読み取り)を、それぞれ`SiteSurveyBuilder.SURVEY_COLUMNS_PER_TICK`列・`SnapshotCollector.DEFAULT_READS_PER_TICK`個まで進める、(3)`JobService.tick(new TickInput(server.getTickCount(), server.getAverageTickTimeNanos() / NANOS_PER_MILLI), world)`、(4)更新を所有者に知らせる(状態が変わった時だけ。`ServerMessages`)、(5)演出(Task 20)。`NANOS_PER_MILLI = 1_000_000.0`。**ワールドへの書き込みは(3)の中だけ**(D-1)。
-- 登録: `MicraDrone`のコンストラクタで`modContainer.registerConfig(ModConfig.Type.SERVER, ConstructionConfig.SPEC)`と`NeoForge.EVENT_BUS.register(ConstructionRuntime.Events.class)`(静的な`@SubscribeEvent`を集めた入れ子のクラス)。`ServerStartedEvent`でランタイムを作り`MicraDrone.LOGGER.info("MicraDrone: construction runtime ready")`、`ServerStoppingEvent`でワーカーを閉じる。ログアウトで`ApprovalDesk.dropOwner`。
+- 1tickの順序(サーバーのメインスレッド、**`ServerTickEvent.Pre`**): (0)`long t0 = System.nanoTime()`、(1)`ApprovalDesk.expire`・`SurveyCache.expire`、(2)進行中の提出(調査・位置の読み取り)を、それぞれ`SiteSurveyBuilder.SURVEY_COLUMNS_PER_TICK`列・`SnapshotCollector.DEFAULT_READS_PER_TICK`個まで進める、(3)`JobService.tick(new TickInput(server.getTickCount(), server.getAverageTickTimeNanos() / NANOS_PER_MILLI), world)`、(4)更新を所有者に知らせる(状態が変わった時だけ。`ServerMessages`)、(5)演出(Task 20)。`NANOS_PER_MILLI = 1_000_000.0`。(6)`lastTickWorkNanos = System.nanoTime() - t0`(Task 33で`MsptStats`に入れる)。**ワールドへの書き込みは(3)の中だけ**(D-1)。
+  - **なぜ`Pre`か**(P4レビューD-1): `MinecraftServer.tickServer`は、tickの開始時刻を取った後に`ServerTickEvent.Pre`を投げ(`MinecraftServer.java` 928〜930行)、ワールドを進め、その後で経過時間を`tickTimesNanos`に足し(950〜955行)、最後に`ServerTickEvent.Post`を投げる(958行)。`Post`で働くと、その時間は`getAverageTickTimeNanos()`に入らず、自動減速(45ms)も性能の線(完了条件10)も、施工の重さを見ないで判定してしまう。`Pre`なら測られる窓の中に入る。さらに、ランタイム自身の処理時間を`System.nanoTime()`で測り、Task 33の`MsptStats`に「施工の仕事の時間」として別に記録する(サーバー全体の平均と、施工の分を分けて見られる)。Task 35で`04` F-2に書く。
+- 登録: `MicraDrone`のコンストラクタで`modContainer.registerConfig(ModConfig.Type.SERVER, ConstructionConfig.SPEC)`と`NeoForge.EVENT_BUS.register(ConstructionRuntime.Events.class)`(静的な`@SubscribeEvent`を集めた入れ子のクラス。**ゲームのバスの事件だけ**を入れる。`RegisterTicketControllersEvent`のようなmodのバスの事件(`IModBusEvent`)はここに入れない。ゲームのバスは`IModBusEvent`を受け付けない(`NeoForge.java` 17〜20行)。Task 31を見よ)。`ServerStartedEvent`でランタイムを作り`MicraDrone.LOGGER.info("MicraDrone: construction runtime ready")`、`ServerStoppingEvent`でワーカーを閉じる。ログアウトで`ApprovalDesk.dropOwner`。
 
 - [ ] **Step 1: 失敗するテストを書く(`JobViews`)**
 
@@ -7654,20 +8259,25 @@ Expected: FAIL(コンパイルエラー)。
 Run: `./gradlew test --console=plain`
 Expected: `BUILD SUCCESSFUL`、失敗0件。
 
-- [ ] **Step 5: 起動の確認(ログだけ。ゲーム窓に入力しない)**
+- [ ] **Step 5: 起動の確認(ログだけ。ゲーム窓に入力しない)** — 担当: コントローラ(Claude)。Devinはこの手順をしない(プロセスの起動と後始末が複数のコマンドになるため)
 
 P3 Task 23 Step 3と同じ手順で、`./gradlew runClient --console=plain`をバックグラウンドで起動し(起動前の`java.exe`を控える)、ログに`MicraDrone: construction runtime ready`が出る(世界に入らない限りサーバーは起動しないので、この行はTask 19の自動確認で見る)か、少なくとも`crash-reports`に新しいファイルが無く、`micradrone-server.toml`の読み込みでエラーが出ないことを確かめ、この起動で増えたプロセスだけを終了する。
 
 - [ ] **Step 6: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/main/java/io/github/khayashi4337/micradrone/MicraDrone.java src/test/java/io/github/khayashi4337/micradrone/construction/core/JobViewsTest.java
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add src/main/java/io/github/khayashi4337/micradrone/MicraDrone.java
+git add src/test/java/io/github/khayashi4337/micradrone/construction/core/JobViewsTest.java
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: サーバー設定と施工ランタイム(提出の流れ・tickの駆動・状態のJSON)を追加(自然言語→工場建設 P4 Task 16)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
 **実機での確認**: Task 19の`hut-golden`(提出→承認→`VERIFIED`)、Task 33の`perf-20000`(ワーカーで計算し、メインスレッドを止めない)。
@@ -7675,6 +8285,8 @@ MSG
 ---
 
 ### Task 17: デバッグコマンド(`/micradrone build ...`)と、同梱の小屋の見本
+
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。
 
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{PlanSource,PlanFileReader,SiteRelocation,ApproveArgs}.java`、`src/main/java/io/github/khayashi4337/micradrone/construction/BuildCommands.java`、`src/main/resources/data/micradrone/build_samples/hut.json`(`src/test/resources/build/golden/hut.patch.json`のバイト単位の写し)
@@ -7933,14 +8545,19 @@ Expected: `BUILD SUCCESSFUL`、失敗0件(`SampleHutTest`で、見本がサー�
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/main/resources/data/micradrone/build_samples src/test/java/io/github/khayashi4337/micradrone/construction
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/main/resources/data/micradrone/build_samples の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: デバッグコマンド(/micradrone build submit・approve・status・cancel・resume・check)と同梱の小屋の見本を追加(自然言語→工場建設 P4 Task 17)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
 **実機での確認**: Task 19の`hut-golden`(見本の提出で、サーバーの保留のハッシュが金のファイルの1行目と一致する)・`hut-here`・`bad-source`(`../`を含む指定が断られ、子供向けの文が出る)。
@@ -7949,77 +8566,93 @@ MSG
 
 ### Task 18: devkitに建設のAPIを足す(サーバー側HTTP `127.0.0.1:47392`・クライアント側の追加・スパイクの測定具)
 
+**担当: コントローラ(Claude)**。別のリポジトリなので、Devinには渡さない。
+
 **このタスクは別リポジトリ`G:\prj2\micra_drone_devkit`で行い、そのリポジトリにコミットする**(開発専用。配布しない)。オーナーを確認の輪から外すための土台: 台本(Task 19)は、このAPIだけでゲームを動かし、読む。**OSのマウス・キーボードの合成入力は使わない。ゲームの窓へ文字を送らない。**
 
+**このタスクで作るのは、下の表で「(Task Nで足す)」の印が無い行だけ**(P4レビューB-2)。印のある行は、そのタスクでmicradrone側の型ができてから、そのタスクの中でdevkitに足す(devkitのリポジトリへの別のコミット)。印の無い行だけで`devkit-smoke`(Task 19)が通る。
+
 **Files(devkitのリポジトリ):**
-- Modify: `src/main/java/io/github/khayashi4337/micradronedevkit/MicradroneDevkit.java`(`dist = Dist.CLIENT`を外し、共通のmodにする。クライアントの初期化は`DevkitClientSetup`へ移す)、`src/main/templates/META-INF/neoforge.mods.toml`(依存の`side`を`BOTH`に)、`src/main/java/io/github/khayashi4337/micradronedevkit/DevkitHttpServer.java`(ポートをシステムプロパティ`micradrone.devkit.port`で変えられるようにする。既定47391。2つ目のクライアント用)、`README.md`(新しいエンドポイントの一覧)
-- Create: `src/main/java/io/github/khayashi4337/micradronedevkit/{DevkitClientSetup,DevkitServerHooks,DevkitServerApi,DevkitClientBuildApi,DevkitChatLog,DevkitProbe,DevkitProtectBox,DevkitStates}.java`
+- Modify: `src/main/java/io/github/khayashi4337/micradronedevkit/MicradroneDevkit.java`(`dist = Dist.CLIENT`を外し、共通のmodにする。クライアントの初期化は`DevkitClientSetup`へ移す)、`src/main/templates/META-INF/neoforge.mods.toml`(依存の`side`を`BOTH`に)、`src/main/java/io/github/khayashi4337/micradronedevkit/DevkitHttpServer.java`(ポートをシステムプロパティ`micradrone.devkit.port`で変えられるようにする。既定47391。2つ目のクライアント用。**ポートを取れなければ例外を握りつぶさず、ログに`DEVKIT PORT BUSY`を出して、そのAPIを立てない**。今は握りつぶしているので、林さんのゲームが同じポートを持っていても気づけない。P4レビューF-3)、`README.md`(新しいエンドポイントの一覧と、JSONの形)
+- Create: `src/main/java/io/github/khayashi4337/micradronedevkit/{DevkitClientSetup,DevkitServerHooks,DevkitServerApi,DevkitClientBuildApi,DevkitChatLog,DevkitProbe,DevkitProtectBox,DevkitStates,DevkitRunInfo,DevkitTeeSource,DevkitWorldCreator,DevkitInjector}.java`
 
 **Interfaces:**
-- Consumes(micradrone): `ConstructionRuntime.of(MinecraftServer)`と、その公開メソッド(Task 16。後のタスクで足す`rollback`・`modify`・`recover`・`verify`・`perfTree`も、足した時点でこのAPIから呼ぶ)、`ManifestJson.toTree`。Minecraft/NeoForge: `ServerStartedEvent`・`ServerStoppedEvent`、`MinecraftServer.createCommandSourceStack()`・`getCommands().performPrefixedCommand(CommandSourceStack, String)`・`saveEverything(boolean, boolean, boolean)`・`halt(boolean)`・`getAverageTickTimeNanos()`、`CommandSourceStack.withSource(CommandSource)`(出力を集める)、`FakePlayerFactory.get(ServerLevel, GameProfile)`・`UUIDUtil.createOfflinePlayerUUID(String)`、`Screenshot.grab(File gameDirectory, String name, RenderTarget, Consumer<Component>)`・`Minecraft.getMainRenderTarget()`、`ClientChatReceivedEvent`(`getMessage()`・`isSystem()`)、`ConnectScreen.startConnecting(Screen, Minecraft, ServerAddress, ServerData, boolean, TransferState)`・`Minecraft.disconnect()`、`RegisterPayloadHandlersEvent`・`ByteBufCodecs.byteArray(int)`、`BlockEvent.EntityPlaceEvent`・`BlockEvent.BreakEvent`・`FakePlayer`
-- Produces(**台本が使うエンドポイントの一覧**。すべて`POST`・JSON。応答に`"error"`があれば失敗):
+- Consumes(micradrone): `ConstructionRuntime.of(MinecraftServer)`と、その公開メソッド(Task 16)、`JobViews`、`ManifestJson.toTree`、`JobService.admitApproved`・`ConstructionJob.create`・`JobProgram.build`(注入の行だけ。下を見よ)。Minecraft/NeoForge: `ServerStartedEvent`・`ServerStoppedEvent`、`MinecraftServer.createCommandSourceStack()`・`getCommands().performPrefixedCommand(CommandSourceStack, String)`・`saveEverything(boolean, boolean, boolean)`・`halt(boolean)`・`getAverageTickTimeNanos()`、`CommandSource`(`sendSystemMessage(Component)`・`acceptsSuccess()`・`acceptsFailure()`・`shouldInformAdmins()`)・`CommandSourceStack.withSource(CommandSource)`、`FakePlayerFactory.get(ServerLevel, GameProfile)`・`UUIDUtil.createOfflinePlayerUUID(String)`、`Screenshot.grab(File gameDirectory, String name, RenderTarget, Consumer<Component>)`(**書き込みは非同期**、`Screenshot.java` 44〜77行)・`Minecraft.getMainRenderTarget()`、`ClientChatReceivedEvent`(`getMessage()`・`isSystem()`)、`ConnectScreen.startConnecting(Screen, Minecraft, ServerAddress, ServerData, boolean, TransferState)`・`Minecraft.disconnect()`、`Minecraft.createWorldOpenFlows().createFreshLevel(String, LevelSettings, WorldOptions, Function<RegistryAccess,WorldDimensions>, Screen)`(`WorldOpenFlows.java` 79行)・`new LevelSettings(name, GameType.CREATIVE, false, Difficulty.PEACEFUL, true, new GameRules(), WorldDataConfiguration.DEFAULT)`(5番目の`true`がコマンドの許可。`CreateWorldScreen.java` 262行と同じ形)・`new WorldOptions(seed, false, false)`・`WorldPresets.FLAT`と`WorldPreset.createWorldDimensions()`、`RegisterPayloadHandlersEvent`・`ByteBufCodecs.byteArray(int)`、`BlockEvent.EntityPlaceEvent`・`BlockEvent.BreakEvent`・`FakePlayer`、`Capabilities.ItemHandler.BLOCK`・`IItemHandler.insertItem`
+- Produces(**台本が使うエンドポイントの一覧**。既存の`GET /state`はそのまま(項目を足すだけ)。新しいものは`POST`・JSON。応答に`"error"`があれば失敗。形は下の「JSONの形」):
+
+  すべての応答に`runId`・`pid`・`gameDir`を入れる(`DevkitRunInfo`: `runId`はシステムプロパティ`micradrone.devkit.runId`。無ければ`"none"`)。**台本は毎回の呼び出しで`runId`が自分の物か確かめ、違えば止まる**(林さんが別に起動しているゲームのdevkitに触れないため。P4レビューF-3)。
+
+  クライアント側の`GET /state`に足す項目: `screen`(今の画面のクラスの単純名。無ければ`null`)・`inWorld`(`mc.level != null && mc.player != null`)・`runId`・`pid`・`gameDir`。
 
   サーバー側(`DevkitServerApi`、ポートはシステムプロパティ`micradrone.devkit.serverPort`、既定47392。サーバーのメインスレッドで実行し、5秒で打ち切り):
   | エンドポイント | 要求 | 応答 |
   |---|---|---|
-  | `/server/state` | なし | `ready`・`tick`・`msptAvg`(`getAverageTickTimeNanos()/1e6`)・`worldDir`・`players`(名前・UUID・ディメンション・座標・ゲームモード・OPか)・`levels` |
-  | `/server/run-command` | `command` | コンソール(権限4)で実行し、出力の行`output`(`withSource`で集める) |
-  | `/server/run-as` | `player`・`command` | オンラインならその人の`createCommandSourceStack()`、いなければ`FakePlayerFactory.get(overworld, new GameProfile(UUIDUtil.createOfflinePlayerUUID(player), player))`で実行(権限はその人の物)。出力はその人のチャットに出る(子供が見る文のため。集めない) |
+  | `/server/state` | なし | `ready`・`tick`・`msptAvg`(`getAverageTickTimeNanos()/1e6`)・`worldDir`・`players`(名前・UUID・ディメンション・座標・ゲームモード・`op`・`flying`)・`levels` |
+  | `/server/run-command` | `command` | コンソール(権限4)で実行し、出力の行`output`(`DevkitTeeSource`で集める) |
+  | `/server/run-as` | `player`・`command` | オンラインならその人の`createCommandSourceStack()`、いなければ`FakePlayerFactory.get(overworld, new GameProfile(UUIDUtil.createOfflinePlayerUUID(player), player))`で実行(権限はその人の物)。**出力は`DevkitTeeSource`で`output`に集め、同時に、その人がオンラインならそのチャットにも出す**(子供が見る文を、偽のプレイヤーでも台本が読めるように。P4レビューF-4) |
   | `/server/save-all` | なし | `saveEverything(false, true, true)` |
   | `/server/stop` | なし | `halt(false)`(きれいに止める) |
   | `/build/submit` | `player`・`source`・`here` | `ConstructionRuntime.submit`を呼ぶ(非同期)。`accepted` |
   | `/build/pending` | `player` | `JobViews.submitTree(runtime.lastSubmit(uuid))` |
-  | `/build/approve` | `player`・`hash`・`confirmTerraform`・`confirmDestructive`・`accept`(IDの配列) | `approved`・`jobId`または`rejection`・`blocking` |
+  | `/build/approve` | `player`・`hash`・`confirmTerraform`・`confirmDestructive`・`accept`(IDの配列)・`owner`(Task 26で足す) | `approved`・`jobId`または`rejection`・`blocking` |
   | `/build/status` | `jobId` | `JobViews.statusTree` |
   | `/build/jobs` | なし | `JobViews.jobsTree` |
   | `/build/cancel`・`/build/resume` | `player`・`jobId`(・`skipConflicts`) | `ControlResult`の名前 |
-  | `/build/verify`・`/build/rollback`・`/build/modify`・`/build/recover` | `player`と各引数 | 各タスクで足すランタイムのメソッドの結果 |
-  | `/build/manifest` | `hash` | `ManifestJson.toTree`(`placements`に`pos`・`block`・`verify`・`phase`・`replaces`) |
-  | `/build/read-blocks` | `dimension`と`positions`(`[[x,y,z],...]`、最大4,096)か`box` | 各位置の`state`(`DevkitStates.text`: `id[k=v,...]`。**micradroneのコードを使わず独立に作る**)・`blockEntity`・`loaded` |
-  | `/build/entities` | `dimension`と、`tag`か`type`(例 `minecraft:item`)、任意で`box` | 当てはまるエンティティの数と座標(`type`がアイテムなら、品物ごとの個数の合計も) |
-  | `/build/files` | `jobId` | `<world>/data/micradrone/`の下の、そのジョブのファイルの名前と大きさ(Task 25) |
-  | `/build/perf` | なし | `runtime.perfTree()`とサーバーの`msptAvg` |
+  | `/build/verify`(Task 21で足す) | `player`・`jobId` | `ControlResult`の名前と`jobId` |
+  | `/build/files`・`/build/recover`(Task 25で足す) | `jobId`(・`player`・`action`) | ファイルの名前と大きさ/`ControlResult` |
+  | `/build/rollback`(Task 28で足す) | `player`・`claimId` | `ControlResult`の名前と`jobId` |
+  | `/build/modify`(Task 29で足す) | `player`・`claimId`・`source` | `accepted` |
+  | `/build/manifest` | `hash` | `ManifestJson.toTree`(`placements`に`index`・`pos`・`block`・`verify`・`phase`・`replaces`) |
+  | `/build/read-blocks` | `dimension`と、`positions`(`[[x,y,z],...]`、最大4,096)か`box`(`[x1,y1,z1,x2,y2,z2]`、4,096個まで) | `blocks`: `[{"pos":[x,y,z],"state":"id[k=v,...]","blockEntity":"<型のID>"か null,"loaded":bool}]`(`DevkitStates.text`。**micradroneのコードを使わず独立に作る**) |
+  | `/build/entities` | `dimension`と、`type`(例 `minecraft:item`)か`tag`、任意で`box` | `count`・`positions`(`[[x,y,z],...]`)・`items`(`type`がアイテムのとき、品物のID→個数の合計) |
+  | `/build/inject-manifest` | `player`・`blocks`(`[{"pos":[x,y,z],"state":"id[k=v,...]"}]`、最大64)・`materialPolicy` | `jobId`。**開発専用の注入**(下の`DevkitInjector`) |
+  | `/build/fill-container` | `dimension`・`pos`・`item`・`count` | `inserted`(`Capabilities.ItemHandler.BLOCK`の`insertItem`で入った数。保管庫・デポ・樽に同じ道で入れる) |
+  | `/build/perf`(Task 33で足す) | なし | `runtime.perfTree()`とサーバーの`msptAvg` |
   | `/spike/protect-box` | `dimension`・`box`・`cancelPlace`・`cancelBreak`(`box`が`null`なら無効) | `enabled` |
   | `/spike/protect-log` | なし | 記録: イベントの型・主体のクラス名・`fakePlayer`・`placedState`・`worldState`・`pos` |
   | `/spike/probe-log` | なし | 受け取った測定用ペイロードの大きさの一覧 |
-  | `/spike/load`(Task 33で足す) | `msPerTick` | サーバーのtickの終わりに、その時間だけ待って重さを作る(自動減速の確認用。`0`で止める) |
+  | `/spike/load`(Task 33で足す) | `msPerTick` | **`ServerTickEvent.Pre`で**、その時間だけ待って重さを作る(自動減速の確認用。`0`で止める。`Pre`はtickの時間を測る窓の中にある(`MinecraftServer.java` 928〜955行)ので、`getAverageTickTimeNanos()`に入る。`Post`では入らない。P4レビューD-1) |
 
   クライアント側(既存の`DevkitHttpServer`に足す`DevkitClientBuildApi`。描画スレッドで実行):
   | エンドポイント | 要求 | 応答 |
   |---|---|---|
-  | `/client/screenshot` | `name` | `Screenshot.grab(gameDirectory, name, mainRenderTarget, msg -> {})`の保存先のパス(`<gameDir>/screenshots/<name>`) |
-  | `/client/chat-log` | `since`(番号) | `ClientChatReceivedEvent`で集めた、この言語で表示された文字列(`getMessage().getString()`)と`system` |
+  | `/client/create-world` | `name`・`seed`・`flat`(真なら`WorldPresets.FLAT`)・`gameMode`(`creative`) | タイトル画面のときだけ、`DevkitWorldCreator`が`createFreshLevel`で世界を作って入る(`allowCommands=true`なので、シングルプレイの`Dev`がOPになる)。`started`。タイトル画面でなければ`error`(P4レビューF-2: `--quickPlaySingleplayer`は無い世界を作れず、サーバーで作った世界はコマンドが許可されない) |
+  | `/client/screenshot` | `name`(**`.png`で終わる**。違えば`error`) | `Screenshot.grab(gameDirectory, name, mainRenderTarget, msg -> {})`を呼び、**ファイルができて大きさが0でなくなるまで**(最大5秒)待ってから、保存先のパス(`<gameDir>/screenshots/<name>`)を返す(書き込みが非同期のため。P4レビューF-10) |
+  | `/client/chat-log` | `since`(番号) | `lines`: `[{"n":番号,"text":この言語で表示された文字列(getMessage().getString()),"system":bool}]`・`next`(次の`since`) |
   | `/client/connect` | `host`・`port` | `ConnectScreen.startConnecting(new TitleScreen(), mc, ServerAddress.parseString(host + ":" + port), new ServerData("p4", host + ":" + port, ServerData.Type.OTHER), false, null)` |
   | `/client/disconnect` | なし | `Minecraft.disconnect()`(世界から出る) |
-  | `/client/upload` | `path`(任意で`corruptChunk`: その番号のチャンクを1バイト変えて送る。改ざんの確認用) | Task 32の`ClientUploads.send`を呼ぶ(ファイルを分割して送る) |
-  | `/client/approve-remote` | `hash`・フラグ | Task 32の`ApprovePlanPayload`を送る |
-  | `/spike/send-probe` | `bytes` | 測定用ペイロードをその大きさで送る |
+  | `/spike/send-probe` | `bytes` | 測定用ペイロードをその大きさで送る(S-6の測定具。ここで作り、Task 32が使う) |
+  | `/client/upload`(Task 32で足す) | `path`(任意で`corruptChunk`: その番号のチャンクを1バイト変えて送る。改ざんの確認用) | Task 32の`ClientUploads.send`を呼ぶ(ファイルを分割して送る) |
+  | `/client/approve-remote`(Task 32で足す) | `hash`・`confirmTerraform`・`confirmDestructive`・`accept`(IDの配列)・`owner`(省略可) | Task 32の`ApprovePlanPayload`を送る。`sent` |
   | `/client/send-command`(Task 34で足す) | `command` | `Minecraft.player.connection.sendCommand`でサーバーのコマンドを送る(キーボードの合成入力ではない) |
 
+- `DevkitTeeSource implements CommandSource`: 受け取った`Component`を`getString()`で行のリストに足し、元の`CommandSource`(プレイヤーかコンソール)があればそれにも渡す。`acceptsSuccess`・`acceptsFailure`は`true`、`shouldInformAdmins`は`false`。`CommandSourceStack.withSource(tee)`で使う。
+- `DevkitWorldCreator.create(Minecraft, name, seed, flat)`: `mc.screen instanceof TitleScreen`を確かめ、`mc.createWorldOpenFlows().createFreshLevel(name, settings, new WorldOptions(seed, false, false), ra -> flat ? ra.registryOrThrow(Registries.WORLD_PRESET).getHolderOrThrow(WorldPresets.FLAT).value().createWorldDimensions() : WorldPresets.createNormalWorldDimensions(ra), new TitleScreen())`。(既定の`WorldDataConfiguration.DEFAULT`でmicradroneのデータパック(タグ)が有効になるかは**未確認**。Task 19の`hut-here`の`terrainCut`=49と、`latest.log`に`BuildTags`の「タグが空」の警告が無いことで確かめる。無効なら、`PackRepository`の全部のIDを有効にした`WorldDataConfiguration`を渡す。)
+- `DevkitInjector`(**開発専用の注入**。完了条件13の実機の確認で、Createの`item_vault`・`depot`とバニラの`barrel`を「このプロジェクトが置いた物」にするため。これらを置く部品はP4に無い): 要求の`blocks`から、`Placement(index, pos, block, Map.of(), "inject-" + index, BuildPhase.STRUCTURE, PlacerId.SIMPLE, VerifyMode.BLOCK_ONLY, ReplacePolicy.AIR_ONLY, null)`の並びと`PlacementManifest`(ハッシュは`ManifestJson.computeHash`)を作り、`ConstructionJob.create(runtime.nextJobId(), uuid, dim, hash, JobKind.BUILD, null, n, "claim-" + jobId, policy, tick, List.of())`を`runtime.jobs().admitApproved(job, manifest, Map.of(), JobProgram.build(manifest), manifest.worldBounds())`へ入れる。**micradroneの公開の型だけを使い、micradroneに裏口を作らない**(配布するjarには注入の道が無い)。台本は、この注入を`inject`という名前の証拠に残す。
 - `DevkitProbe`: `record ProbePayload(byte[] data)`、`TYPE = micradrone_devkit:probe`、`STREAM_CODEC = ByteBufCodecs.byteArray(PROBE_MAX_BYTES)`(`PROBE_MAX_BYTES = 16 * 1024 * 1024`: 測りたい最大の8MiBより大きく)。`RegisterPayloadHandlersEvent`で`playToServer`に登録し、サーバーは受け取った長さを記録する。
 - `DevkitProtectBox`: サーバー側の`@SubscribeEvent`。有効な箱の中の`EntityPlaceEvent`・`BreakEvent`をキャンセルし、上の記録を残す(S-9の「簡単な保護のテスト用リスナー」)。
 - `DevkitStates.text(BlockState)`: `BuiltInRegistries.BLOCK.getKey(block)`と、`getProperties()`を名前で並べた`k=v`を`,`で結ぶ(micradroneの`BlockStates`と同じ形だが、独立に書く。読み戻しの照合が、検査される側のコードに依存しないため)。
 
 - [ ] **Step 1: devkitの実装**
 
-上の表のとおりに実装する。すべてのハンドラは既存の`DevkitHttpServer.handle`と同じ作法(本文をJSONで読み、結果をJSONで返し、例外は`{"error": ...}`)。サーバー側は`server.execute`と`CompletableFuture`で5秒まで待つ(`SERVER_THREAD_TIMEOUT_MS = 5_000L`)。長い処理(提出・ジョブ)は待たずに返し、台本が`/build/pending`・`/build/status`を1秒ごとに読む。
+上の表の、印の無い行だけを実装する。すべてのハンドラは既存の`DevkitHttpServer.handle`と同じ作法(本文をJSONで読み、結果をJSONで返し、例外は`{"error": ...}`)。サーバー側は`server.execute`と`CompletableFuture`で5秒まで待つ(`SERVER_THREAD_TIMEOUT_MS = 5_000L`)。長い処理(提出・ジョブ)は待たずに返し、台本が`/build/pending`・`/build/status`を1秒ごとに読む。
 
 - [ ] **Step 2: ビルドする**
 
 Run(micradroneのリポジトリで): `./gradlew.bat jar --console=plain`
-Expected: `BUILD SUCCESSFUL`、`build/libs/micradrone-<版>.jar`。
+Expected: `BUILD SUCCESSFUL`、`build/libs/micradrone-<版>.jar`。(`build/libs`のjarは`.gitignore`で追跡されない版名なら残してよい。追跡される名前なら、コミットの前に`git checkout -- build/libs`で戻す。)
 Run(devkitのリポジトリで): `./gradlew.bat build -Pmicradrone_jar_path=G:/prj2/micra_drone/build/libs/micradrone-<版>.jar --console=plain`
 Expected: `BUILD SUCCESSFUL`、`build/libs/micradrone_devkit-<版>.jar`。
 
-- [ ] **Step 3: 自動確認(煙の試験)**: Task 19の台本の`devkit-smoke`シナリオ(全エンドポイントを1回ずつ呼び、`error`が無いこと)で確かめる。このタスクのコミットの前に、Task 19の台本が無いので、ここでは`runClient`(devkitのjarを`run-p4/client/mods`に置く)をバックグラウンドで起動し、`http://127.0.0.1:47391/state`が応答すること、世界に入った後に`http://127.0.0.1:47392/server/state`が`ready: true`を返すことを、`curl`で確かめる(ゲーム窓には入力しない。起動は`--quickPlaySingleplayer`。窓は`WM_CLOSE`で閉じる。手順はTask 19の`harness.py`と同じ)。
+- [ ] **Step 3: 実機の煙の試験はTask 19で行う**(P4レビューE-5: 実機の起動に要る`run-p4/`・`clientP4`の実行設定・世界の作成は、Task 19の台本が作る)。このタスクはビルドとコミットまで。
 
 - [ ] **Step 4: コミット(devkitのリポジトリ)**
 
 ```bash
 cd /g/prj2/micra_drone_devkit
-git add -A src README.md
+git add src README.md
 git commit -m "$(cat <<'MSG'
-feat: 建設の自動確認のため、サーバー側API(47392)とスクリーンショット・チャット記録・接続・測定具のエンドポイントを追加(自然言語→工場建設 P4 Task 18)
+feat: 建設の自動確認のため、サーバー側API(47392)とスクリーンショット・チャット記録・接続・世界の作成・注入・測定具のエンドポイントを追加(自然言語→工場建設 P4 Task 18)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 MSG
@@ -8030,56 +8663,89 @@ MSG
 
 ### Task 19: 自動確認の台本(`tools/p4/`)と、最初のシナリオ(`devkit-smoke`・`hut-golden`・`hut-here`・`bad-source`)
 
+**担当: コントローラ(Claude)**。Pythonの実行と、ゲームの起動・後始末を含むため、Devinには渡さない。
+
 オーナーを確認の輪に入れないための本体。**1つのコマンドで、ゲームの起動→世界に入る→建てる→読み戻して照合→証拠→閉じる→後始末**まで行う。
 
 **Files:**
 - Modify: `build.gradle`(自動確認の専用の実行設定)、`.gitignore`(`run-p4/`・`run-evidence/`)
-- Create: `tools/p4/{p4_scenarios.py,harness.py,devkit_client.py,compare.py,evidence.py,plans.py,scenarios_basic.py}`、`tools/p4/tests/{test_compare.py,test_evidence.py,test_plans.py,test_registry.py}`、`tools/p4/server.properties`(雛形)、`tools/p4/README.md`(使い方。実行の入口は`python tools/p4/p4_scenarios.py --all`)
+- Create: `tools/__init__.py`・`tools/p4/__init__.py`・`tools/p4/tests/__init__.py`(空。`python -m`で包みとして読むため。P4レビューE-6)、`tools/p4/{p4_scenarios.py,harness.py,devkit_client.py,compare.py,evidence.py,plans.py,scenarios_basic.py}`、`tools/p4/tests/{test_compare.py,test_evidence.py,test_plans.py,test_registry.py,test_harness.py}`、`tools/p4/game_config/{options.txt,neoforge-client.toml}`(起動の前に置く設定)、`tools/p4/server.properties`(雛形)、`tools/p4/README.md`(使い方。実行の入口は`python -m tools.p4.p4_scenarios --all`。リポジトリの一番上で実行する)
 
 **Interfaces:**
 - Consumes: Task 18のdevkitのAPI、`src/test/resources/build/golden/hut.manifest.txt`(1行目のハッシュ)
 - Produces:
-  - `build.gradle`の`runs`に4つ(既存の`client`・`server`は変えない):
+  - `build.gradle`の`runs`に5つ(既存の`client`・`server`は変えない)。**どれも`-Xmx3G`**(P4レビューF-7: 指定が無いと、各JVMが物理メモリの1/4を取る)。`runId`はGradleのプロパティ`p4RunId`から渡す(台本が`-Pp4RunId=<runId>`を付ける):
     ```groovy
         clientP4 {
             client()
             gameDirectory = project.file('run-p4/client')
+            jvmArguments.addAll '-Xmx3G'
+            systemProperty 'micradrone.devkit.port', '47391'
+            systemProperty 'micradrone.devkit.runId', providers.gradleProperty('p4RunId').getOrElse('none')
+        }
+        clientLoadP4 {
+            client()
+            gameDirectory = project.file('run-p4/client')
+            jvmArguments.addAll '-Xmx3G'
             programArguments.addAll '--quickPlaySingleplayer', 'p4-auto'
             systemProperty 'micradrone.devkit.port', '47391'
+            systemProperty 'micradrone.devkit.runId', providers.gradleProperty('p4RunId').getOrElse('none')
         }
         clientMpP4 {
             client()
             gameDirectory = project.file('run-p4/client')
+            jvmArguments.addAll '-Xmx3G'
             programArguments.addAll '--quickPlayMultiplayer', '127.0.0.1:25565'
             systemProperty 'micradrone.devkit.port', '47391'
+            systemProperty 'micradrone.devkit.runId', providers.gradleProperty('p4RunId').getOrElse('none')
         }
         client2P4 {
             client()
             gameDirectory = project.file('run-p4/client2')
+            jvmArguments.addAll '-Xmx3G'
             programArguments.addAll '--username', 'Dev2', '--quickPlayMultiplayer', '127.0.0.1:25565'
             systemProperty 'micradrone.devkit.port', '47393'
+            systemProperty 'micradrone.devkit.runId', providers.gradleProperty('p4RunId').getOrElse('none')
         }
         serverP4 {
             server()
             gameDirectory = project.file('run-p4/server')
+            jvmArguments.addAll '-Xmx3G'
             programArgument '--nogui'
             systemProperty 'micradrone.devkit.serverPort', '47392'
+            systemProperty 'micradrone.devkit.runId', providers.gradleProperty('p4RunId').getOrElse('none')
         }
     ```
-  - `harness.py`: `class Game`(起動・待機・終了)。`start_server()`・`start_client(kind)`(`kind`は`sp`・`mp`・`mp2`)・`wait_api(port, timeout)`・`wait_in_world(port, timeout)`(`/state`の`cameraOnPlayer`)・`close_client(kind)`(**窓に`WM_CLOSE`**: `ctypes.windll.user32.EnumWindows`で、この起動で増えたjavaのプロセスの見える窓を探し、`PostMessageW(hwnd, WM_CLOSE, 0, 0)`。窓が無ければ`NoWindowError`で**止まって報告する**。終了を`CLOSE_TIMEOUT_S`秒待つ)・`stop_server()`(devkitの`/server/stop`)・`cleanup()`(この起動で増えたプロセスが残っていれば、そのPIDだけを終了して証拠に書く。`run-p4/`を消す。証拠は残す)。プロセスは`Get-CimInstance Win32_Process`の読み取りで、起動前後の差として見分ける(林さんが別に起動しているゲームには触れない)。定数: `API_UP_TIMEOUT_S = 900`(初回のGradleのコンパイルを含む)、`IN_WORLD_TIMEOUT_S = 300`、`JOB_TIMEOUT_S = 600`、`CLOSE_TIMEOUT_S = 120`、`POLL_INTERVAL_S = 1.0`、`MIN_FREE_MEMORY_GIB_TWO_CLIENTS = 12`(2つ目のクライアントを起動する条件。足りなければ`SKIPPED(resource)`として数値を証拠に書く)
-  - 世界の用意: `serverP4`を1回起動して`run-p4/server/world`を作り(`tools/p4/server.properties`: `level-type=minecraft\:flat`・`gamemode=creative`・`online-mode=false`・`spawn-protection=16`・`difficulty=peaceful`・`spawn-monsters=false`・`generate-structures=false`・`level-seed=4337`)、`/server/stop`で止め、`run-p4/client/saves/p4-auto`に写す(シングルプレイの`--quickPlaySingleplayer p4-auto`)。`run-p4/client/options.txt`に`lang:ja_jp`を書く(子供が見る言語で文言を集めるため)。**`run-p4/server/eula.txt`は台本が書かない**: 無ければ「EULAへの同意は林さんのアカウントの同意なので、一度だけ林さんが`eula=true`を書くか、同意済みと明言してください」と表示して止まる(オーナーだけができる項目。理由は同意の主体だから)。同意の記録は`tools/p4/eula_ack.txt`(林さんが作る)で、台本はそれがあれば`eula.txt`を写す。
-  - devkitのjar: 台本がmicradroneの`jar`とdevkitの`build`を走らせ、`run-p4/{client,client2,server}/mods/`に置く(起動のたびに作り直し、`cmp`で同一を確かめる。古いjarの`NoSuchMethodError`の事故を防ぐ。devkitのREADMEの教訓)。
-  - `devkit_client.py`: `class Devkit(port)`: `post(path, body) → dict`(`urllib.request`。`error`があれば`DevkitError`)、`poll(path, body, until, timeout)`
-  - `compare.py`(純粋): `parse_state("id[k=v,...]") → (id, dict)`、`compare(manifest_tree, readback) → list[Mismatch]`(`verify`が`BLOCK_ONLY`ならIDだけ、`EXACT`・`STATE_SUBSET`はIDと施工リストに書いた状態だけ、`ASSEMBLED_AWAY`は比べない。**`SnapshotDiff`と同じ規則を、micradroneのコードを使わずPythonで独立に書く**)、`Mismatch(index, pos, expected, observed, reason)`
-  - `evidence.py`: `RunFolder(run_id)`(`run-evidence/p4/<run_id>/`)、`write_json(name, obj)`、`add_file(src, name)`、`record(scenario, conditions, status, reason, files)`、`summary.json`(シナリオごとに`PASS`・`FAIL`・`SKIPPED`と理由・証拠のファイル名。**`SKIPPED`は理由を必ず書き、黙って飛ばさない**)
-  - `plans.py`: 計画のJSONを作る(金のファイルのパッチを読み、原点・大きさ・素材を差し替える): `hut_patch(origin, facing, palette=None)`・`long_road_patch(length)`(安全枠の超過用)・`hut_with_extra_wall_patch()`(`MODIFY`用)
-  - `p4_scenarios.py`: 入口。`--all`・`--only a,b`・`--mode sp|mp|both`・`--run-id`。シナリオの登録簿`SCENARIOS`(名前→`Scenario(func, conditions, mode, owner_only_reason=None)`)。**`test_registry.py`が、完了条件1〜16のすべてにシナリオが1つ以上あること(または理由つきの`owner_only_reason`)を検査する**。
+  - `harness.py`: `class Game`(起動・待機・終了)。
+    - `preflight()`: **47391・47392・47393・25565のどれかが既に待ち受けていれば、起動せずに`PortBusyError`で止まる**(林さんのゲームがdevkitを載せて47391を持っていると、台本がそのゲームを操作してしまう。P4レビューF-3)。確かめ方は`socket.create_connection(("127.0.0.1", port), timeout=0.5)`が成功するか。
+    - `start_server()`・`start_client(kind)`(`kind`は`sp`=`clientP4`・`sp-load`=`clientLoadP4`・`mp`=`clientMpP4`・`mp2`=`client2P4`): `gradlew.bat --no-daemon -Pp4RunId=<runId> run<名前>`をバックグラウンドで起動する。**起動は1つずつ**、前のAPIが応答してから次を起動する(同じプロジェクトのGradleを同時に走らせない。P4レビューF-6)。
+    - `wait_api(port, timeout)`: 応答があり、**その`runId`がこの実行の物**であるまで待つ。違う`runId`・`"none"`なら`ForeignGameError`で止まる。
+    - `wait_screen(port, name, timeout)`(`/state`の`screen`)、`wait_in_world(port, timeout)`(`/state`の`inWorld`)。
+    - `close_client(kind)`: **窓に`WM_CLOSE`**。`ctypes.windll.user32.EnumWindows`で、この起動のゲームのJVM(下の見分け方)の見える窓を探し、`PostMessageW(hwnd, WM_CLOSE, 0, 0)`。窓が無ければ`NoWindowError`で**止まって報告する**。終了を`CLOSE_TIMEOUT_S`秒待つ。
+    - `stop_server()`(devkitの`/server/stop`)。
+    - `collect_logs(folder)`: 各ゲームのフォルダの`logs/latest.log`と、この実行で増えた`crash-reports/*.txt`を証拠に写す(**後始末の前に必ず呼ぶ**。P4レビューF-10)。
+    - `cleanup()`: この起動で増えたプロセスが残っていれば、そのPIDだけを終了して証拠に書く。**ゲームのフォルダ(`run-p4/client`・`client2`・`server`)は残す**(毎回の初回起動の画面・資源のダウンロード・Gradleの冷えたコンパイルを避ける。P4レビューG-4)。消すのは世界だけ(`run-p4/client/saves/p4-auto`・`run-p4/server/world`)で、それも**次の実行の始め**に消す(失敗した実行の世界を、調べるために残す)。
+    - プロセスの見分け方: 起動前後の`Get-CimInstance Win32_Process`の読み取りの差のうち、**コマンドラインに`fml.modFolders`とこの実行のゲームのフォルダ(`run-p4\client`など)を含むjava**をゲームのJVMとする。Gradleのプロセスは、台本が起動した`gradlew.bat`の子のプロセスとして見分ける。林さんが別に起動しているゲームには触れない。
+    - 定数: `API_UP_TIMEOUT_S = 900`(初回のGradleのコンパイルを含む)、`IN_WORLD_TIMEOUT_S = 300`、`JOB_TIMEOUT_S = 600`、`CLOSE_TIMEOUT_S = 120`、`POLL_INTERVAL_S = 1.0`、`GAME_JVM_HEAP_GIB = 3`(`build.gradle`の`-Xmx3G`と同じ数。1か所で持ち、`test_harness.py`で`build.gradle`の値と一致を確かめる)、`GAME_JVM_NATIVE_GIB = 0.5`(ヒープの外: メタスペース・コードキャッシュ・直接バッファの見積もり。実際の使用量は毎回`Get-CimInstance`の`WorkingSetSize`で証拠に書く)、`GRADLE_JVM_GIB = 1.5`(`gradle.properties`の`org.gradle.jvmargs=-Xmx1G`とヒープの外)。
+    - `required_free_gib(n_games) = n_games * (GAME_JVM_HEAP_GIB + GAME_JVM_NATIVE_GIB + GRADLE_JVM_GIB)`(クライアント2つ+サーバー=3で15GiB)。`mp2`の前に空きメモリ(`Win32_OperatingSystem.FreePhysicalMemory`)がこれより少なければ、そのシナリオは**`NOT-RUN(resource)`**として、必要な数・空きの数・動いていたプロセスの上位10個のメモリを証拠に書く。**`NOT-RUN`は合格ではない**(P4レビューA1-4。Task 38は`NOT-RUN`が1つでもあれば失敗にする)。
+  - 設定の置き場: 起動の前に、`tools/p4/game_config/options.txt`を`run-p4/client/options.txt`・`run-p4/client2/options.txt`へ、`tools/p4/game_config/neoforge-client.toml`を`run-p4/{client,client2}/config/neoforge-client.toml`へ写す(毎回。ゲームが書き足した行は上書きされてよい)。`options.txt`の中身: `onboardAccessibility:false`(初回の「アクセシビリティ」の画面を出さない)・`pauseOnLostFocus:false`(窓に焦点が無いとシングルプレイが止まるのを防ぐ。`Options.java` 1212行、`GameRenderer.java` 1006行)・`lang:ja_jp`(子供が見る言語で文言を集める)・`tutorialStep:none`・`joinedFirstServer:true`・`skipMultiplayerWarning:true`・`narrator:0`。`neoforge-client.toml`: `showLoadWarnings = false`(modの読み込みの警告の画面が、世界に入る前に出るのを防ぐ。`ClientModLoader.completeModLoading`、`NeoForgeConfig.java` 113行)。(P4レビューF-1)
+  - 世界の用意:
+    - **シングルプレイ(`sp`)はEULAが要らない**: `clientP4`を世界の指定なしで起動し、`/state`の`screen`が`TitleScreen`になるまで待ち、devkitの`/client/create-world {name: "p4-auto", seed: 4337, flat: true, gameMode: "creative"}`で世界を作って入る(`allowCommands=true`。P4レビューF-2)。入った後、`/server/run-command "op Dev"`を送り、`/server/state`の`players`で`Dev`の`op`が`true`であることを確かめる(違えば止まる)。
+    - 2回目以降にその世界を開くとき(再起動の確認)は`clientLoadP4`(`--quickPlaySingleplayer p4-auto`)。
+    - **マルチプレイ(`mp`・`mp2`)だけEULAが要る**: `serverP4`が`run-p4/server/world`を作る(`tools/p4/server.properties`: `level-type=minecraft\:flat`・`gamemode=creative`・`online-mode=false`・`spawn-protection=16`・`difficulty=peaceful`・`spawn-monsters=false`・`generate-structures=false`・`level-seed=4337`・**`server-ip=127.0.0.1`**(全部のアドレスで待ち受けると、初回にWindowsのファイアウォールの許可の画面が出るおそれがある。P4レビューF-8)・`enable-query=false`・`enable-rcon=false`)。起動後に`/server/run-command "op Dev"`。
+    - **`run-p4/server/eula.txt`は台本が書かない**: 無ければ「EULAへの同意は林さんのアカウントの同意なので、一度だけ林さんが`tools/p4/eula_ack.txt`を作ってください(中身は`eula=true`の1行)」と表示し、`mp`・`mp2`のシナリオを**`NOT-RUN(eula)`**にする(オーナーだけができる項目。理由は同意の主体だから)。台本は`tools/p4/eula_ack.txt`があれば、その中身を`run-p4/server/eula.txt`に写す。**`sp`のシナリオはEULAに依存しない**(`--mode sp`はEULAが無くても全部走る)。
+  - devkitのjar: 台本がmicradroneの`jar`とdevkitの`build`を走らせ、`run-p4/{client,client2,server}/mods/`に置く(起動のたびに作り直し、`filecmp.cmp`で同一を確かめる。古いjarの`NoSuchMethodError`の事故を防ぐ。devkitのREADMEの教訓)。
+  - `devkit_client.py`: `class Devkit(port, run_id)`: `post(path, body) → dict`(`urllib.request`。`error`があれば`DevkitError`。**応答の`runId`が`run_id`と違えば`ForeignGameError`**)、`get(path) → dict`、`poll(path, body, until, timeout)`
+  - `compare.py`(純粋): `parse_state("id[k=v,...]") → (id, dict)`、`compare(manifest_tree, readback) → list[Mismatch]`(`verify`が`BLOCK_ONLY`ならIDだけ、`EXACT`は**両方の状態を全部**、`STATE_SUBSET`はIDと施工リストに書いた状態だけ、`ASSEMBLED_AWAY`は比べない。`SnapshotDiff`と同じ規則を、**micradroneのコードを使わずPythonで独立に書く**)、`Mismatch(index, pos, expected, observed, reason)`
+  - `evidence.py`: `RunFolder(run_id)`(`run-evidence/p4/<run_id>/`)、`write_json(name, obj)`、`add_file(src, name)`、`record(scenario, conditions, status, reason, files)`(`status`は`PASS`・`FAIL`・`NOT-RUN`。**`NOT-RUN`は理由を必ず書き、黙って飛ばさない**)、`summary.json`(シナリオごとの状態と理由・証拠のファイル名と、条件ごとの状態)
+  - `plans.py`: 計画のJSONを作る(金のファイルのパッチを読み、原点・大きさ・素材を差し替える): `hut_patch(origin, facing, palette=None)`・`long_road_patch(length)`(安全枠の超過用)・`hut_with_extra_wall_patch()`(`MODIFY`用)。後のタスクが使う補助は、そのタスクで足す(Task 25`hut_patch`の大きさの引数、Task 32`many_parts_patch`、Task 33`big_block_patch`。各タスクのFilesに`tools/p4/plans.py`を書いてある)
+  - `p4_scenarios.py`: 入口。`--all`・`--only a,b`・`--mode sp|mp|mp2|all`(P4レビューE-7)・`--run-id`。シナリオの登録簿`SCENARIOS`(名前→`Scenario(func, conditions, mode, owner_only_reason=None)`)と、`PENDING_CONDITIONS`(まだシナリオの無い完了条件→それを足すタスクの番号。各シナリオのタスクが、自分の条件をここから消す)。**`test_registry.py`が、完了条件1〜16のすべてにシナリオが1つ以上あるか、`PENDING_CONDITIONS`に載っていることを検査する**。
 
-- 最初のシナリオ(`scenarios_basic.py`):
-  1. `devkit-smoke`: クライアントとサーバーの全エンドポイントを1回ずつ呼び(破壊的な`stop`は除く)、`error`が無いこと。
-  2. `hut-golden`(条件1・5の一部・16の前提): `run-command`で`gamemode creative Dev`・`time set day`・`gamerule doDaylightCycle false`・`tp Dev 100 66 186 0 15`(小屋を正面から見る位置)。`/build/submit {player: Dev, source: "sample:hut"}`→`/build/pending`が`OFFERED`になるまで待つ→**`hash`が`hut.manifest.txt`の1行目と一致**(サーバーが自分で作り直した施工リストが金のファイルと同じ)→`/build/approve`→`/build/status`を`VERIFIED`まで1秒ごとに記録(`timeline.json`)→`/build/manifest`と`/build/read-blocks`で**238個の全配置を読み戻して`compare.py`で照合し、不一致0件**(`compare.json`)→`/client/screenshot`(`hut-golden.png`)→`/client/chat-log`(`chat.json`)。
-  3. `hut-here`(条件1・12の前提): `tp Dev 0 -60 0 180 20`(平らな地面の上)。`/build/submit {here: true}`→保留の`terrainCut`が49(基礎が草の層に沈む)で`>0`→確認なしの承認が`TERRAFORM_UNCONFIRMED`で断られる→`confirmTerraform: true`で承認→`VERIFIED`→読み戻しの照合(整地の`SITE_PREP`の配置を含む)→スクリーンショット。
-  4. `bad-source`(F-22): `/server/run-as Dev "micradrone build submit ../../server.properties"`→`/client/chat-log`に`micradrone.build.submit.bad_source`の日本語の文(「その けいかくの ファイルが よめないよ」)が出て、`/build/pending`が変わらないこと。
+- 最初のシナリオ(`scenarios_basic.py`。どれも`mode="sp"`):
+  1. `devkit-smoke`: クライアントとサーバーの、**このタスクまでに実装済みのエンドポイントだけ**を1回ずつ呼び(破壊的な`stop`は除く)、`error`が無いこと。`runId`・`pid`・`gameDir`が入っていること。
+  2. `hut-golden`(条件1・5の一部・16の前提): `run-command`で`gamemode creative Dev`・`time set day`・`gamerule doDaylightCycle false`・**`setblock 100 65 186 minecraft:glass`**(見る位置の足場。調査の箱の外。クリエイティブでも`tp`の後は飛んでいないので、足場が無いと地面まで落ちて、小屋が写らない。P4レビューF-5)・`tp Dev 100 66 186 0 15`→`/server/state`の`Dev`の`y`が66であることを確かめる。`/build/submit {player: Dev, source: "sample:hut"}`→`/build/pending`が`OFFERED`になるまで待つ→**`hash`が`hut.manifest.txt`の1行目と一致**(サーバーが自分で作り直した施工リストが金のファイルと同じ)→`/build/approve`→`/build/status`を`VERIFIED`まで1秒ごとに記録(`timeline.json`)→`/build/manifest`と`/build/read-blocks`で**238個の全配置を読み戻して`compare.py`で照合し、不一致0件**(`compare.json`)→`/client/screenshot`(`hut-golden.png`)→`/client/chat-log`(`chat.json`)。
+  3. `hut-here`(条件1・12の前提): `tp Dev 0 -60 0 180 20`(平らな地面の上に立つので、足場は要らない)。`/build/submit {here: true}`→保留の`terrainCut`が49(基礎が草の層に沈む)で`>0`→確認なしの承認が`TERRAFORM_UNCONFIRMED`で断られる→`confirmTerraform: true`で承認→`VERIFIED`→読み戻しの照合(整地の`SITE_PREP`の配置を含む)→スクリーンショット。`latest.log`に`BuildTags`の「タグが空」の警告が無いこと(世界の作成でmodのデータパックが有効なことの確認)。
+  4. `bad-source`(F-22): `/server/run-as Dev "micradrone build submit ../../server.properties"`→**応答の`output`**と`/client/chat-log`の両方に`micradrone.build.submit.bad_source`の日本語の文(「その けいかくの ファイルが よめないよ」)が出て、`/build/pending`が変わらないこと。
 
 - [ ] **Step 1: 失敗するテストを書く(Python。純粋な部分)**
 
@@ -8099,12 +8765,17 @@ class CompareTest(unittest.TestCase):
     def _manifest(self, block, verify="EXACT"):
         return {"placements": [{"index": 0, "pos": [1, 64, 2], "block": block, "verify": verify}]}
 
-    def test_listed_states_must_match_and_extra_states_are_ignored(self):
+    def test_listed_states_must_match_and_extra_states_are_ignored_by_state_subset(self):
         m = self._manifest({"id": "minecraft:oak_stairs", "props": {"facing": "north"}}, "STATE_SUBSET")
         ok = {(1, 64, 2): "minecraft:oak_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]"}
         self.assertEqual([], compare.compare(m, ok))
         turned = {(1, 64, 2): "minecraft:oak_stairs[facing=east,half=bottom]"}
         self.assertEqual("state:facing", compare.compare(m, turned)[0].reason)
+
+    def test_exact_compares_every_state(self):
+        m = self._manifest({"id": "minecraft:oak_log", "props": {"axis": "y"}}, "EXACT")
+        self.assertEqual([], compare.compare(m, {(1, 64, 2): "minecraft:oak_log[axis=y]"}))
+        self.assertEqual("state:extra", compare.compare(m, {(1, 64, 2): "minecraft:oak_log[axis=y,extra=1]"})[0].reason)
 
     def test_block_only_compares_the_id(self):
         m = self._manifest({"id": "minecraft:glass_pane", "props": {"north": "true"}}, "BLOCK_ONLY")
@@ -8129,13 +8800,21 @@ import unittest
 
 from tools.p4 import p4_scenarios
 
+ALL_CONDITIONS = set(range(1, 17))  # design 07, P4 completion conditions 1..16
+
 
 class RegistryTest(unittest.TestCase):
-    def test_every_completion_condition_has_an_automated_check_or_a_stated_reason(self):
-        covered = set()
+    def covered(self):
+        out = set()
         for s in p4_scenarios.SCENARIOS.values():
-            covered.update(s.conditions)
-        self.assertEqual(set(range(1, 17)), covered, "P4 completion conditions 1..16 (design 07)")
+            out.update(s.conditions)
+        return out
+
+    def test_every_completion_condition_has_an_automated_check_or_is_pending_with_its_task(self):
+        pending = set(p4_scenarios.PENDING_CONDITIONS)
+        self.assertEqual(ALL_CONDITIONS, self.covered() | pending, "P4 completion conditions 1..16 (design 07)")
+        for condition, task in p4_scenarios.PENDING_CONDITIONS.items():
+            self.assertTrue(task.startswith("Task "), (condition, task))
 
     def test_owner_only_scenarios_always_say_why(self):
         for name, s in p4_scenarios.SCENARIOS.items():
@@ -8146,8 +8825,16 @@ class RegistryTest(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 ```
-(`test_registry`は、後のタスクがシナリオを足すまで失敗する。**Task 19の時点では、まだ無い条件を`PENDING_CONDITIONS`(タスク番号つき)で明示し、このテストは`covered | PENDING_CONDITIONS == 1..16`で検査する**。Task 38で`PENDING_CONDITIONS`が空であることを確かめる。)
-`tools/p4/tests/test_evidence.py`(一時フォルダに`RunFolder`を作り、`record`で`SKIPPED`に理由が無いと`ValueError`、`summary.json`の形)、`tools/p4/tests/test_plans.py`(`hut_patch((5,-60,7), "east")`の`set_site`の原点と向きが差し替わり、`ops`の数が金のファイルと同じ)。
+Task 19の時点の`PENDING_CONDITIONS`(条件→**その条件のシナリオが全部そろうタスク**。条件1・5・12はこのタスクのシナリオが持つので入れない。条件5・12は後のタスクもシナリオを足すが、それは足すだけでよい):
+```python
+PENDING_CONDITIONS = {
+    2: "Task 21", 3: "Task 29", 4: "Task 28", 6: "Task 34", 7: "Task 28", 8: "Task 30", 9: "Task 32", 10: "Task 33",
+    11: "Task 37", 13: "Task 30", 14: "Task 28", 15: "Task 21", 16: "Task 21",
+}
+```
+シナリオは、条件が`PENDING_CONDITIONS`に残っていても、その条件の番号を持ってよい(途中のタスクが一部を足す)。**`PENDING_CONDITIONS`の値のタスクは、自分のシナリオを`SCENARIOS`に足すのと同じコミットで、その条件を`PENDING_CONDITIONS`から消す**(そのタスクのStepに1行ずつ書いてある)。Task 38は`test_no_pending_conditions_remain`で空であることを確かめる。
+
+`tools/p4/tests/test_evidence.py`(一時フォルダに`RunFolder`を作り、`record`で`NOT-RUN`・`FAIL`に理由が無いと`ValueError`、`summary.json`の形、条件ごとの状態が「全部のシナリオが`PASS`のときだけ`PASS`、1つでも`NOT-RUN`なら`NOT-RUN`、`FAIL`があれば`FAIL`」)、`tools/p4/tests/test_plans.py`(`hut_patch((5,-60,7), "east")`の`set_site`の原点と向きが差し替わり、`ops`の数が金のファイルと同じ)、`tools/p4/tests/test_harness.py`(`required_free_gib(3) == 15.0`、`GAME_JVM_HEAP_GIB`が`build.gradle`の`clientP4`・`client2P4`・`serverP4`の`-Xmx`と同じ数であること(`build.gradle`の文字列を読む)、`preflight`がポートを持つ偽のソケットを見つけて`PortBusyError`を出すこと(テストの中で`socket`を1つ`listen`して確かめる)、`options.txt`の雛形に`pauseOnLostFocus:false`と`onboardAccessibility:false`があること)。
 
 - [ ] **Step 2: テストが失敗することを確かめる**
 
@@ -8156,19 +8843,19 @@ Expected: FAIL(モジュールが無い)。
 
 - [ ] **Step 3: 実装する**
 
-上の「Produces」のとおり。`p4_scenarios.py`の実行の流れ: (1)ビルド(jar・devkit)と配置、(2)世界の用意(無ければ)、(3)モードごとにゲームを起動し、そのモードのシナリオを順に実行(各シナリオは例外を捕まえて`FAIL`と記録し、次へ進む。ゲームが落ちたら再起動は1回まで、2回目は残りを`SKIPPED(game crashed)`)、(4)閉じる(`WM_CLOSE`)、(5)後始末、(6)`summary.json`を表示。**同じエラーで同じ手を2回繰り返さない**(深く考えるルール)。
+上の「Produces」のとおり。`p4_scenarios.py`の実行の流れ: (1)`preflight`(ポート)、(2)ビルド(jar・devkit)と配置、設定の置き場、(3)モードごとにゲームを起動して世界を用意し、そのモードのシナリオを順に実行(各シナリオは例外を捕まえて`FAIL`と記録し、次へ進む。ゲームが落ちたら再起動は1回まで、2回目は残りを`NOT-RUN(game crashed)`)、(4)`collect_logs`、(5)閉じる(`WM_CLOSE`)、(6)後始末、(7)`summary.json`を表示し、1つでも`FAIL`か`NOT-RUN`があれば終了コード1。**同じエラーで同じ手を2回繰り返さない**(深く考えるルール)。
 
-- [ ] **Step 4: 単体テストと、実機の自動確認を走らせる**
+- [ ] **Step 4: 単体テストと、実機の自動確認を走らせる**(このタスクで、Task 18のdevkitの煙の試験も兼ねる)
 
 Run: `python -m unittest discover -s tools/p4/tests -t . -v`
 Expected: `OK`。
-Run: `python tools/p4/p4_scenarios.py --only devkit-smoke,hut-golden,hut-here,bad-source --mode sp`
-Expected: 4つとも`PASS`。`run-evidence/p4/<runId>/summary.json`・`hut-golden/compare.json`(不一致0・238件)・`hut-golden/hut-golden.png`・`hut-here/pending.json`(`terrainCut`=49)・`bad-source/chat.json`。起動したプロセスが残っていないこと(台本の最後の表示と、`Get-CimInstance`の確認)。`FAIL`なら、証拠を読み、原因をsystematic-debuggingで調べて直す(直した内容は、原因のタスクの範囲のコミットとして別に積む)。
+Run: `python -m tools.p4.p4_scenarios --only devkit-smoke,hut-golden,hut-here,bad-source --mode sp`
+Expected: 4つとも`PASS`(EULAが無くても走る)。`run-evidence/p4/<runId>/summary.json`・`hut-golden/compare.json`(不一致0・238件)・`hut-golden/hut-golden.png`・`hut-here/pending.json`(`terrainCut`=49)・`bad-source/chat.json`・`logs/client-latest.log`。起動したプロセスが残っていないこと(台本の最後の表示と、`Get-CimInstance`の確認)。`FAIL`なら、証拠を読み、原因をsystematic-debuggingで調べて直す(直した内容は、原因のタスクの範囲のコミットとして別に積む)。
 
 - [ ] **Step 5: コミット**
 
 ```bash
-git add build.gradle .gitignore tools/p4
+git add build.gradle .gitignore tools/__init__.py tools/p4
 git commit -m "$(cat <<'MSG'
 test: 実機の自動確認の台本(tools/p4)と、小屋の建設・読み戻しの照合・整地の確認・不正なパスのシナリオを追加(自然言語→工場建設 P4 Task 19)
 
@@ -8180,6 +8867,8 @@ MSG
 ---
 
 ### Task 20: ドローンの演出(`DroneChoreographer`・`DroneShow`)
+
+**担当**: Java(`src/`)とそのコミットはDevin。台本(`tools/p4`)・devkit・`docs/`・実機の確認とそのコミットはコントローラ(Claude)(Global Constraintsの「担当の分け方」)。
 
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{DroneMove,DroneChoreographer}.java`、`src/main/java/io/github/khayashi4337/micradrone/construction/DroneShow.java`、`tools/p4/scenarios_show.py`
@@ -8268,14 +8957,29 @@ public final class DroneChoreographer {
 - [ ] **Step 4: テストと自動確認**
 
 Run: `./gradlew test --console=plain` → `BUILD SUCCESSFUL`、失敗0件。
-Run: `python tools/p4/p4_scenarios.py --only drone-show --mode sp` → `PASS`。証拠`drone-show/drones.json`・`drone-show/drone-mid.png`。
+Run: `python -m tools.p4.p4_scenarios --only drone-show --mode sp` → `PASS`。証拠`drone-show/drones.json`・`drone-show/drone-mid.png`。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/construction/core/DroneChoreographerTest.java tools/p4
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add src/test/java/io/github/khayashi4337/micradrone/construction/core/DroneChoreographerTest.java
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: 施工のドローン演出(DroneChoreographer・DroneShow。保存しない・消えてもジョブは進む)と自動確認のシナリオを追加(自然言語→工場建設 P4 Task 20)
+
+Implemented-by: SWE-2 via Devin CLI
+```
+
+コントローラ(Claude。Devinのコミットの後):
+```bash
+git add tools/p4
+git commit -m "$(cat <<'MSG'
+test: Task 20の実機の自動確認のシナリオ・証拠の手順を追加(自然言語→工場建設 P4 Task 20)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 MSG
@@ -8285,6 +8989,8 @@ MSG
 ---
 
 ### Task 21: 建てた後の点検(`verify`・`REPAIR`ジョブ)と、L7・整地・安全枠・調査の固定の自動確認
+
+**担当**: Java(`src/`)とそのコミットはDevin。台本(`tools/p4`)・devkit・`docs/`・実機の確認とそのコミットはコントローラ(Claude)(Global Constraintsの「担当の分け方」)。
 
 完了条件2(壊す・向きを変える→直る/直せなければ`PARTIAL`)・8・12(確認の部分)・15・16を、実機で自動に確かめる。L7は施工の完了時に走るので、**建てた後の点検**として、同じ施工リストを当て直す`REPAIR`ジョブ(承認は要らない。`03` 0.4節の例外)を`/micradrone build verify <jobId>`で作れるようにする。
 
@@ -8374,7 +9080,7 @@ Expected: FAIL(`beginVerify`が無い)。
         return ControlResult.OK;
     }
 ```
-コマンド`/micradrone build verify <jobId>`とランタイムの`verify(UUID requester, boolean op, String jobId)`、devkitの`/build/verify`。新しいジョブのIDは、ランタイムの`nextJobId()`で作る(`"job-" + overworld().getGameTime() + "-" + その起動での通し番号`。ゲーム内の時刻は保存され、再起動しても戻らないので、前の起動のIDとぶつからない。`ConstructionJob.ID_PATTERN`に合う。承認のジョブIDもTask 16から同じ関数で作る)。
+コマンド`/micradrone build verify <jobId>`とランタイムの`verify(UUID requester, boolean op, String jobId)`、devkitの`/build/verify`。新しいジョブのIDは、Task 16で作ったランタイムの`nextJobId()`で作る(承認のジョブIDと同じ関数)。
 
 `tools/p4/scenarios_l7.py`(実機の自動確認):
 1. `l7-repair`(条件2・15): `hut-golden`の小屋(別の場所に`hut_patch`で)を建てて`VERIFIED`→`run-command`で(a)壁の1つを`setblock ... air`、(b)屋根の階段の1つを向きだけ変えて`setblock`(施工リストの状態を`/build/manifest`から読み、`facing`だけを変える)、(c)壁の1つを`gold_block`に、(d)扉を`open=true`にする(上下2つとも)。`/build/verify`→`VERIFIED`まで待つ→読み戻して: (a)(b)は施工リストどおりに戻る、(c)は`gold_block`のまま・`status.conflicts == 1`、(d)は`open=true`のまま(稼働で変わる状態を戻さない)。
@@ -8386,14 +9092,31 @@ Expected: FAIL(`beginVerify`が無い)。
 - [ ] **Step 4: テストと自動確認**
 
 Run: `./gradlew test --console=plain` → `BUILD SUCCESSFUL`、失敗0件。
-Run: `python tools/p4/p4_scenarios.py --only l7-repair,l7-partial,terrain-slope,safety-limits,survey-pinned --mode sp` → 5つとも`PASS`(証拠: 各シナリオの`compare.json`・`status.json`・`pending.json`・スクリーンショット・`chat.json`)。
+このタスクのシナリオを足すコミットで、`PENDING_CONDITIONS`から条件2・15・16を消す。
+
+Run: `python -m tools.p4.p4_scenarios --only l7-repair,l7-partial,terrain-slope,safety-limits,survey-pinned --mode sp` → 5つとも`PASS`(証拠: 各シナリオの`compare.json`・`status.json`・`pending.json`・スクリーンショット・`chat.json`)。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/construction/core/JobServiceVerifyTest.java tools/p4
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add src/test/java/io/github/khayashi4337/micradrone/construction/core/JobServiceVerifyTest.java
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: 建てた後の点検(verify・REPAIRジョブ)と、L7・整地・安全枠・調査の固定の実機の自動確認を追加(自然言語→工場建設 P4 Task 21)
+
+Implemented-by: SWE-2 via Devin CLI
+```
+
+コントローラ(Claude。Devinのコミットの後):
+```bash
+git add tools/p4
+git commit -m "$(cat <<'MSG'
+test: Task 21の実機の自動確認のシナリオ・証拠の手順を追加(自然言語→工場建設 P4 Task 21)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 MSG
@@ -8405,6 +9128,8 @@ MSG
 ---
 
 ### Task 22: 保存の土台 — 原子的な書き込みと検査値(`SealedFile`・`NioFileSystem`)、版の包み(`PersistenceEnvelope`・`Migrations`)
+
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。
 
 設計`04` F-2の「ファイルの書き込みは原子的(一時ファイル→リネーム)。検査値が合わない・欠けているファイルは、そのジョブを`PAUSED(RECOVERY_NEEDED)`」と、`01` 0節の「保存される型は`schemaVersion`を持ち、`PersistenceEnvelope`で包み、移行表で現在の版に変換する。新しい版・変換できない物は拒否する」を実装する。
 
@@ -8867,30 +9592,39 @@ Expected: `BUILD SUCCESSFUL`、失敗0件。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction/core src/test/java/io/github/khayashi4337/micradrone/construction/core
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction/core の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/construction/core の下の、このタスクで作った・変えたファイルを1つずつ>
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: 保存の土台(原子的な書き込み・検査値つきのファイル・版の包みと移行表)を追加(自然言語→工場建設 P4 Task 22)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
 ---
 
 ### Task 23: 保存の形(`JobCodec`・`JournalCodec`・`LedgerCodec`・`OutcomeCodec`・`ProgramCodec`・`ManifestCodec`・`ClaimCodec`・`RegistryCodec`)
 
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。
+
 **Files:**
-- Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{BlockSpecText,JobCodec,JournalCodec,LedgerCodec,OutcomeCodec,ProgramCodec,ManifestCodec,ClaimCodec,RegistryCodec,SaveTypes}.java`
+- Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{BlockSpecText,JobCodec,JournalCodec,LedgerCodec,OutcomeCodec,ProgramCodec,ManifestCodec,ClaimCodec,RegistryCodec,PlacementSurveyCodec,SaveTypes}.java`
 - Test: `src/test/java/io/github/khayashi4337/micradrone/construction/core/{BlockSpecTextTest,CodecRoundTripTest,ManifestCodecTest}.java`
 
 **Interfaces:**
 - Produces:
   - `BlockSpecText.parse(String) → BlockSpec`(`BlockSpec.toString()`の逆。`id`または`id[k=v,...]`。形が違えば`IllegalArgumentException`)
-  - `SaveTypes`: 型の名前と現在の版の表(`JOB = "job"`・`JOURNAL = "journal"`・`LEDGER = "ledger"`・`OUTCOME = "outcome"`・`PROGRAM = "program"`・`MANIFEST = "manifest"`・`CLAIMS = "claims"`・`REGISTRY = "registry"`、どれも版1。`ConstructionJob.SCHEMA_VERSION`・`MaterialLedger.SCHEMA_VERSION`・`PlacedRegistry.SCHEMA_VERSION`・`SiteClaim.SCHEMA_VERSION`と同じ値を参照する)、`static Migrations migrations()`
+  - `SaveTypes`: 型の名前と現在の版の表(`JOB = "job"`・`JOURNAL = "journal"`・`LEDGER = "ledger"`・`OUTCOME = "outcome"`・`PROGRAM = "program"`・`MANIFEST = "manifest"`・`CLAIMS = "claims"`・`REGISTRY = "registry"`・`SURVEY = "survey"`、どれも版1。`ConstructionJob.SCHEMA_VERSION`・`MaterialLedger.SCHEMA_VERSION`・`PlacedRegistry.SCHEMA_VERSION`・`SiteClaim.SCHEMA_VERSION`と同じ値を参照する)、`static Migrations migrations()`
   - 各`XxxCodec`: `static Object toTree(X)`と`static X fromTree(Object)`(`PersistenceEnvelope`の`payload`になる木)。`ManifestCodec`は`record Stored(PlacementManifest manifest, Map<String,String> nodeTypes)`を扱い、**ブロックの一覧(パレット)で圧縮**(F-2の「パレット圧縮」: 同じ`BlockSpec`の文字列を1回だけ持ち、配置は番号で指す)。読み込みでは`ManifestJson.computeHash`でハッシュを計算し直し、保存されたハッシュと違えば`IllegalArgumentException`(→復旧待ち)。`ProgramCodec`は、置く手順を「施工リストの番号と台帳のキー」だけで持ち(施工リスト本体は重複させない)、読み込みで施工リストから`Placement`を引く(`fromTree(Object, PlacementManifest)`)
   - `JobCodec`の木は`ConstructionJob`の全欄(列挙は`name()`、UUIDは文字列、`null`はそのまま)。`SavedData`にはこの木の正規JSONを文字列で入れる(Task 25)
+  - `ClaimCodec`は`static Object toTree(ClaimBook)`と`static ClaimBook fromTree(Object, int maxPerOwner)`(上限は設定から渡す。保存しない)
+  - `PlacementSurveyCodec`: `toTree(PlacementSurvey)`・`fromTree(Object) → PlacementSurvey`(承認の時に読んだ施工リストの位置の様子。復旧の「引き取り」(Task 24の`AdoptPass`)が「その位置は置き換えてよかったか」と「元の`before`」を知るために、ジョブのフォルダに`survey.bin`として残す。形は`{"palette": ["id[k=v]", ...], "cells": [[x, y, z, paletteIndex, hasBlockEntity, "beType", traitBits], ...]}`。`traitBits`は`CellTrait`の`ordinal()`のビット。未読み込みの位置は入れない)
+  - `OutcomeCodec`は`restoreConflicts`(撤去で触らなかった位置。Task 8の`JobOutcome.addRestoreConflict`)も保存する(無いと、再起動の後の`MODIFY`が、手で置き換えた位置に置いてしまう)
 
 - [ ] **Step 1: 失敗するテストを書く**
 
@@ -8974,9 +9708,13 @@ class CodecRoundTripTest {
         o.addConflict(new Conflict(new IntPos(0, 64, 0), BlockSpec.of("minecraft:stone"),
                 new ObservedBlock(BlockSpec.of("minecraft:dirt"), false, ""), ConflictKind.PLAYER_MODIFIED));
         o.skip(new SkippedPlacement(4, new IntPos(4, 64, 0), SkippedPlacement.DENIED));
+        o.addRestoreConflict(new Conflict(new IntPos(2, 64, 0), BlockSpec.of("minecraft:stone"),
+                new ObservedBlock(BlockSpec.of("minecraft:gold_block"), false, ""), ConflictKind.PLAYER_MODIFIED));
         JobOutcome ob = OutcomeCodec.fromTree(throughBytes(SaveTypes.OUTCOME, OutcomeCodec.toTree(o)));
         assertEquals(o.conflicts(), ob.conflicts());
         assertEquals(o.skipped(), ob.skipped());
+        assertEquals(true, ob.hasRestoreConflictAt(new IntPos(2, 64, 0)), "a removal conflict still blocks a placement");
+        assertEquals(false, ob.hasRestoreConflictAt(new IntPos(0, 64, 0)));
 
         ClaimBook claims = new ClaimBook(ClaimBook.DEFAULT_MAX_CLAIMS_PER_OWNER);
         claims.reserve("claim-a", new UUID(1, 1), "minecraft:overworld", new Box(0, 0, 0, 5, 5, 5), new Box(0, 0, 0, 5, 9, 5), 3L);
@@ -8995,6 +9733,16 @@ class CodecRoundTripTest {
         JobProgram p = new JobProgram(List.of(new RestoreItem(new IntPos(9, 64, 9), BlockSpec.of("minecraft:stone"),
                 Set.of("open"), BlockSpec.AIR, "job-0", 3, true)), JobProgram.repair(m, List.of(2, 5), 1).puts());
         assertEquals(p, ProgramCodec.fromTree(throughBytes(SaveTypes.PROGRAM, ProgramCodec.toTree(p)), m));
+    }
+
+    @Test
+    void theApprovalSurveyKeepsBlocksBlockEntitiesAndTraits() throws Exception {
+        PlacementSurvey s = new PlacementSurvey(java.util.Map.of(
+                new IntPos(0, 64, 0), WorldCell.of(BlockSpec.AIR, CellTrait.REPLACEABLE),
+                new IntPos(1, 64, 0), WorldCell.of(BlockSpec.of("minecraft:short_grass"), CellTrait.REPLACEABLE),
+                new IntPos(2, 64, 0), WorldCell.withBlockEntity(BlockSpec.of("minecraft:chest", "facing", "north"), "minecraft:chest",
+                        CellTrait.EMPTY_CONTAINER)));
+        assertEquals(s, PlacementSurveyCodec.fromTree(throughBytes(SaveTypes.SURVEY, PlacementSurveyCodec.toTree(s))));
     }
 }
 ```
@@ -9054,11 +9802,11 @@ Expected: FAIL(コンパイルエラー)。
   "palette": ["minecraft:cobblestone", "minecraft:oak_stairs[facing=north,half=bottom]", ...],
   "nodes": ["found", "wall-n", ...],
   "placements": [[x, y, z, paletteIndex, nodeIndex, "PHASE", "PLACER", "VERIFY", "replacesCode", groupOrNull, {beConfig}], ...],
-  "assemblies": [ManifestJson.assemblyTreeと同じ形], "bom": {...}, "hash": s, "nodeTypes": {...} }
+  "assemblies": [ManifestJson.assemblyTreeと同じ形。assemblyTreeはpackage-privateなので呼ばず、同じ形をこのクラスで書き直す], "bom": {...}, "hash": s, "nodeTypes": {...} }
 ```
 読み込みは、パレットと節の番号から`Placement`を作り直し(番号は並び順)、`PhaseRanges.of`で工程の区切り、`BomCalculator.bom`で材料表を作り直して保存値と比べ、`ManifestJson.computeHash`でハッシュを計算して保存値と比べる(どれかが違えば`IllegalArgumentException("stored manifest does not reproduce its hash")`)。`AssemblyExpectation`の形は`ManifestJson`と同じ(`contraption`/`sublevel`)。
 
-`JournalCodec`: `[[index, x, y, z, "before", hadBlockEntity, "placed", ledgerKey], ...]`(`BlockSpec`は`toString()`/`BlockSpecText.parse`)。`LedgerCodec`: `{"consumed": {"key": [["item", n], ...]}, "returned": [keys], "yielded": {...}, "reclaimed": [keys]}`(キーは文字列の数。`MiniJson`の`Map`のキーは文字列)。`OutcomeCodec`: `{"conflicts": [[x,y,z,"expected","observed",hasBE,"beType","KIND"]], "skipped": [[index,x,y,z,"reason"]]}`。`ProgramCodec`: `{"restores": [[x,y,z,"expectedNow",[volatile...],"restoreTo","sourceJobId",sourceLedgerKey,dropContents]], "puts": [[index, ledgerKey], ...]}`。`ClaimCodec`: 区画の一覧。`RegistryCodec`: `{"claimId": s, "placed": [[x,y,z,"placed","before","jobId",placementIndex]], "assemblies": [[groupId, assembledId, moved, atTick]]}`。`JobCodec`: `ConstructionJob`の全欄。
+`JournalCodec`: `[[index, x, y, z, "before", hadBlockEntity, "placed", ledgerKey], ...]`(`BlockSpec`は`toString()`/`BlockSpecText.parse`)。`LedgerCodec`: `{"consumed": {"key": [["item", n], ...]}, "returned": [keys], "yielded": {...}, "reclaimed": [keys]}`(キーは文字列の数。`MiniJson`の`Map`のキーは文字列)。`OutcomeCodec`: `{"conflicts": [[x,y,z,"expected","observed",hasBE,"beType","KIND"]], "restoreConflicts": [[x,y,z]], "skipped": [[index,x,y,z,"reason"]]}`(読み込みは、`restoreConflicts`に載る位置の衝突を`addRestoreConflict`で、他を`addConflict`で戻す)。`ProgramCodec`: `{"restores": [[x,y,z,"expectedNow",[volatile...],"restoreTo","sourceJobId",sourceLedgerKey,dropContents]], "puts": [[index, ledgerKey], ...]}`。`ClaimCodec`: 区画の一覧。`RegistryCodec`: `{"claimId": s, "placed": [[x,y,z,"placed","before","jobId",placementIndex]], "assemblies": [[groupId, assembledId, moved, atTick]]}`。`JobCodec`: `ConstructionJob`の全欄。
 
 - [ ] **Step 4: テストが通ることを確かめる**
 
@@ -9067,36 +9815,50 @@ Expected: `BUILD SUCCESSFUL`、失敗0件。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction/core src/test/java/io/github/khayashi4337/micradrone/construction/core
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction/core の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/construction/core の下の、このタスクで作った・変えたファイルを1つずつ>
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: ジョブ・記録・台帳・手順・施工リスト(パレット圧縮とハッシュの再計算)・区画の保存の形を追加(自然言語→工場建設 P4 Task 23)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
 ---
 
 ### Task 24: ジョブのファイル(`JobFiles`)と復旧の判断(`RecoveryPlanner`)、孤児の掃除(`OrphanSweep`)、復旧の操作(`JobService.recover`)
 
+**担当: Devin**(Java。コマンドはPowerShellで1回に1つ)。
+
 **Files:**
-- Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{JobFiles,JobLoad,RecoveryDecision,RecoveryPlanner,OrphanSweep,RecoveryChoice}.java`
-- Modify: `src/main/java/io/github/khayashi4337/micradrone/construction/core/JobService.java`(`addBroken`・`recover`・壊れたジョブの状態表示)
-- Test: `src/test/java/io/github/khayashi4337/micradrone/construction/core/{JobFilesTest,RecoveryPlannerTest,OrphanSweepTest,JobServiceRecoverTest,InMemoryFileSystem}.java`
+- Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{JobFiles,JobLoad,RecoveryDecision,RecoveryPlanner,OrphanSweep,RecoveryChoice,AdoptPass}.java`
+- Modify: `src/main/java/io/github/khayashi4337/micradrone/construction/core/JobService.java`(`addBroken`・`recover`・壊れたジョブの状態表示・引き取り)、`src/main/java/io/github/khayashi4337/micradrone/construction/core/JobRecord.java`(承認の時の調査と、引き取りの印)
+- Test: `src/test/java/io/github/khayashi4337/micradrone/construction/core/{JobFilesTest,RecoveryPlannerTest,OrphanSweepTest,JobServiceRecoverTest,AdoptPassTest,InMemoryFileSystem}.java`
 
 **Interfaces:**
 - Consumes: Task 22・23の型
 - Produces:
-  - ファイルの置き場(`04` F-2。根は`<world>/data/micradrone/`): `manifests/<hash>.bin`(内容で名前が決まる。同じ施工リストは1つ)、`jobs/<jobId>/journal.bin`・`ledger.bin`・`outcome.bin`・`program.bin`(`MODIFY`・`ROLLBACK`だけ。`BUILD`・`REPAIR`は施工リストから作り直せる)、`claims.bin`、`claims/<claimId>/placed.bin`。`JobFiles.MANIFESTS_DIR`などの名前付き定数。
-  - `final class JobFiles`: `JobFiles(FileSystemPort fs)`、`void saveJob(JobRecord r, LedgerBook ledgers) throws IOException`、`void saveClaims(ClaimBook)`・`void saveRegistry(PlacedRegistry)`、`JobLoad loadJob(ConstructionJob saved)`、`Optional<ClaimBook> loadClaims(int maxPerOwner)`、`Optional<PlacedRegistry> loadRegistry(String claimId)`、`List<String> allFiles()`
+  - ファイルの置き場(`04` F-2。根は`<world>/data/micradrone/`): `manifests/<hash>.bin`(内容で名前が決まる。同じ施工リストは1つ)、`jobs/<jobId>/journal.bin`・`ledger.bin`・`outcome.bin`・`program.bin`(`MODIFY`・`ROLLBACK`だけ。`BUILD`・`REPAIR`は施工リストから作り直せる)・`survey.bin`(承認の時に読んだ位置の様子。`PlacementSurveyCodec`。引き取りに使う)、`claims.bin`、`claims/<claimId>/placed.bin`。`JobFiles.MANIFESTS_DIR`などの名前付き定数。
+  - `final class JobFiles`: `JobFiles(FileSystemPort fs)`、`void saveJob(JobRecord r, LedgerBook ledgers) throws IOException`(`r.approvalSurvey()`があれば`survey.bin`も。一度書けば書き直さない)、`void saveClaims(ClaimBook)`・`void saveRegistry(PlacedRegistry)`、`JobLoad loadJob(ConstructionJob saved, ClaimBook claims)`(`operatingBox`は区画から取る。ジョブの保存には持たないため。区画が無ければ`Broken`で理由`"claim: missing"`。P4レビューB-7。`survey.bin`があれば`JobRecord.setApprovalSurvey`で戻す。無くても壊れたことにはしない)、`Optional<ClaimBook> loadClaims(int maxPerOwner)`、`Optional<PlacedRegistry> loadRegistry(String claimId)`、`List<String> allFiles()`
   - `sealed interface JobLoad { Loaded(JobRecord record, MaterialLedger ledger), Broken(PlacementManifest manifestOrNull, Map<String,String> nodeTypes, List<String> reasons) }`
-  - `record RecoveryDecision(ConstructionJob job, JobLoad load)`、`RecoveryPlanner.decide(ConstructionJob saved, JobLoad load) → RecoveryDecision`
+  - `record RecoveryDecision(ConstructionJob job, JobLoad load, boolean adoptFirst)`、`RecoveryPlanner.decide(ConstructionJob saved, JobLoad load) → RecoveryDecision`、`static boolean settledUpTo(JobRecord, int cursor)`
+  - `final class AdoptPass`: `record Result(int adopted, List<IntPos> unloaded)`、`static Result adopt(JobRecord r, WorldPort world, PlacedRegistry registry)`(下の「引き取り」)
+  - `JobRecord`に: `PlacementSurvey approvalSurvey()`・`void setApprovalSurvey(PlacementSurvey)`(`null`可)、`boolean adoptPending()`・`void requireAdopt()`
   - `OrphanSweep.forgettableJobs(Collection<ConstructionJob>, ClaimBook) → Set<String>`(区画が解放された、終わったジョブ)、`OrphanSweep.orphanFiles(List<String> files, Collection<ConstructionJob> kept, ClaimBook) → List<String>`
   - `enum RecoveryChoice {REPAIR, FAIL}`、`JobService.addBroken(ConstructionJob job, PlacementManifest manifestOrNull, Map<String,String> nodeTypes, Box operatingBox, List<String> reasons)`、`ControlResult JobService.recover(String jobId, UUID requester, boolean op, RecoveryChoice choice, String newJobId, long tick)`(`FAIL`=`FAILED`にして手動の後始末に任せる。`REPAIR`=施工リストが読めるときだけ、元を`FAILED`にし、新しい記録で`REPAIR`ジョブ(`beginVerify`と同じ形。記録が壊れたので施工前の状態は分からず、置き換えられた位置は`Conflict`に倒れる)を作る。F-2の(a)(b))
 
-- 復旧の判断(**これが正本**。F-2): (1)ファイルが読めない・検査値が合わない・施工リストがハッシュを再現しない→動いていたジョブは`PAUSED(RECOVERY_NEEDED)`、終わったジョブは状態を保ち理由だけ記録。(2)**カーソルより前のどの位置も「記録がある」か「飛ばした記録がある」**(Task 8の不変条件)でなければ、記録がカーソルより遅れている(保存の途中で止まった)ので`PAUSED(RECOVERY_NEEDED)`。**記録がカーソルより先に進んでいるのは正常**(`SavedData`→記録の順に保存するため。`MinecraftServer.saveEverything`はプレイヤー→各ディメンションの`saveLevelData`(`SavedData`)→チャンク→`LevelEvent.Save`の順で、Task 25はファイルを`LevelEvent.Save`で書く。再開は古いカーソルから冪等に進み、台帳が二重の消費を防ぐ。材料の台帳はプレイヤーの持ち物より後に保存されるので、台帳が持ち物より新しくなることは無い)。(3)`RUNNING`・`VERIFYING`・`REPAIRING`・`ASSEMBLING`・`QUEUED`は`PAUSED(OWNER_OFFLINE)`に(`04` F-2の「RUNNINGだったジョブはPAUSEDで復元」。所有者が戻れば次のtickで自動に再開=10秒以内)。`PENDING_APPROVAL`・`PAUSED`・終わった状態はそのまま。
+- **保存の順序の事実**(P4レビューD-2で直した。出どころは`build/moddev/artifacts/neoforge-21.1.238-sources.jar`):
+  - 呼ぶ順は、プレイヤー(`PlayerList.saveAll`。`PlayerDataStorage.save`は**同期**で書く。`PlayerDataStorage.java` 33〜41行)→各ディメンションの`ServerLevel.save`(`saveLevelData`で`SavedData`→チャンク→`LevelEvent.Save`。`ServerLevel.java` 810〜833行、`LevelEvent.Save`は828行)。
+  - しかし**ディスクに届く順は、呼ぶ順と同じではない**: `SavedData`の書き込みは`IOUtilities.withIOWorker`で`Util.ioPool()`に回り(`SavedData.java` 36〜55行、`IOUtilities.java` 195〜197行)、待つのは`flush`が真のときだけで、自動保存は偽を渡す(`MinecraftServer.java` 944行)。チャンクも非同期に書かれ、さらに**チャンクが読み込みから外れた時にも保存される**(`ChunkMap.java` 440〜466行・743〜765行)。
+  - だから、落ちた後には次のどれも起こりうる: (a)記録(`journal`)がカーソルより進んでいる、(b)記録がカーソルより遅れている、(c)**世界(チャンク)が、記録と設置の記録(`PlacedRegistry`)より進んでいる**。(c)を放っておくと、このプロジェクトが置いたブロックが「よその物」に見え、`ReplaceRules`が断って`SITE_CHANGED`と偽の`Conflict`になり(子供に「だれかが かえたよ」と誤って伝わる)、ロールバックもそれを撤去しない(D-25に反する)。
+  - 材料: プレイヤーは同期で先に書かれ、台帳は後で`LevelEvent.Save`で書くので、「台帳が持ち物より新しい」ことは起きない(台帳に消費の記録があれば、持ち物はそれより前の保存か同じ)。**台帳が遅れて持ち物が進んでいる**ことは起こりうる(持ち物から取った後、台帳を書く前に落ちた)が、その位置は再開の時に置き直して、もう1回取る。これは「複製」ではなく「1個多く取る」側の誤りで、F-7の「複製を作らない」は守られる。
+- **引き取り**(`AdoptPass`。(c)への対策): 復旧したジョブ(`RecoveryDecision.adoptFirst`)は、最初に何かを置く前に、施工リストの各置く手順のうち**記録も飛ばした記録も無い物**について、(1)承認の時の調査(`survey.bin`)で、その位置が置き換えてよかった(`ReplaceRules.decide(p, 調査の様子, false, 登録済みか)`が`Place`)、(2)今の世界が読み込まれていて、施工リストどおりのブロック(IDが同じで、`SnapshotDiff.statesMatch(p.verify(), 今, 予定, 空)`)、の両方なら、**このジョブが置いた物として引き取る**: `journal`に記録し(`before`は調査の様子のブロックと、ブロックエンティティの有無。台帳のキーは手順のキー)、`PlacedRegistry`に載せる。**台帳には消費を記録しない**(引き取りでは品物を増やさない。ロールバックは、その位置の品物を返さない。安全な側に倒す)。読み込まれていない位置があれば、そのジョブは`PAUSED(CHUNK_UNLOADED)`で待ち、戻ったら引き取りをやり直す。引き取りの後で`settledUpTo(カーソル)`を確かめ、まだ足りなければ`PAUSED(RECOVERY_NEEDED)`(黙って再実行しない)。調査のファイルが無い(古いジョブ)なら、引き取りはせずに同じ確認だけをする。
+- 復旧の判断(**これが正本**。F-2): (1)ファイルが読めない・検査値が合わない・施工リストがハッシュを再現しない・区画が無い→動いていたジョブは`PAUSED(RECOVERY_NEEDED)`、終わったジョブは状態を保ち理由だけ記録(`adoptFirst=false`)。(2)読めた生きたジョブ(`PENDING_APPROVAL`以外)は`adoptFirst=true`。**カーソルより前のどの位置も「記録がある」か「飛ばした記録がある」**(Task 8の不変条件)かの確認は、引き取りの後に`JobService`が行う(上)。記録がカーソルより先に進んでいるのは正常で、古いカーソルから冪等に進み、台帳が二重の消費を防ぐ。(3)`RUNNING`・`VERIFYING`・`REPAIRING`・`ASSEMBLING`・`QUEUED`は`PAUSED(OWNER_OFFLINE)`に(`04` F-2の「RUNNINGだったジョブはPAUSEDで復元」。所有者が戻れば次のtickで自動に再開=10秒以内)。`PENDING_APPROVAL`・`PAUSED`・終わった状態はそのまま。
 
 - [ ] **Step 1: 失敗するテストを書く**
 
@@ -9156,44 +9918,167 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class JobFilesTest {
-    static JobRecord builtHalfway(FakeJobWorld w) {
+    /** A service whose job-1 has run one tick (its claim reserved, some blocks placed). */
+    static JobService halfway(FakeJobWorld w) {
         JobService s = JobServiceTest.service();
         w.online.add(JobServiceTest.A);
         PlacementManifest m = TestManifests.smallHut();
         s.admitApproved(JobServiceTest.approved("job-1", JobServiceTest.A, m, MaterialPolicy.CREATIVE_FREE), m,
                 Map.of("wall", "micra:wall"), JobProgram.build(m), m.worldBounds());
         s.tick(new TickInput(0, JobServiceTest.CALM), w);
-        return s.record("job-1").orElseThrow();
+        return s;
+    }
+
+    static JobRecord builtHalfway(FakeJobWorld w) {
+        return halfway(w).record("job-1").orElseThrow();
     }
 
     @Test
     void aJobSavesToItsFilesAndLoadsBackTheSame() throws Exception {
         InMemoryFileSystem fs = new InMemoryFileSystem();
         JobFiles files = new JobFiles(fs);
-        JobRecord r = builtHalfway(new FakeJobWorld());
+        JobService s = halfway(new FakeJobWorld());
+        JobRecord r = s.record("job-1").orElseThrow();
+        r.setApprovalSurvey(new PlacementSurvey(Map.of(r.manifest().placements().get(0).pos(),
+                WorldCell.of(io.github.khayashi4337.micradrone.build.model.BlockSpec.AIR, CellTrait.REPLACEABLE))));
         files.saveJob(r, new LedgerBook());
         assertTrue(fs.files.containsKey("manifests/" + r.manifest().hash() + ".bin"));
         assertTrue(fs.files.containsKey("jobs/job-1/journal.bin"));
-        JobLoad.Loaded back = assertInstanceOf(JobLoad.Loaded.class, files.loadJob(r.job()));
+        assertTrue(fs.files.containsKey("jobs/job-1/survey.bin"));
+        JobLoad.Loaded back = assertInstanceOf(JobLoad.Loaded.class, files.loadJob(r.job(), s.claims()));
         assertEquals(r.journal().records(), back.record().journal().records());
         assertEquals(r.manifest(), back.record().manifest());
         assertEquals(Map.of("wall", "micra:wall"), back.record().nodeTypes());
+        assertEquals(r.operatingBox(), back.record().operatingBox(), "the operating box comes from the claim");
+        assertEquals(r.approvalSurvey(), back.record().approvalSurvey());
     }
 
     @Test
-    void aMissingOrDamagedFileIsBrokenWithAReason() throws Exception {
+    void aMissingOrDamagedFileOrAMissingClaimIsBrokenWithAReason() throws Exception {
         InMemoryFileSystem fs = new InMemoryFileSystem();
         JobFiles files = new JobFiles(fs);
-        JobRecord r = builtHalfway(new FakeJobWorld());
+        JobService s = halfway(new FakeJobWorld());
+        JobRecord r = s.record("job-1").orElseThrow();
         files.saveJob(r, new LedgerBook());
         fs.files.remove("jobs/job-1/journal.bin");
-        JobLoad.Broken missing = assertInstanceOf(JobLoad.Broken.class, files.loadJob(r.job()));
+        JobLoad.Broken missing = assertInstanceOf(JobLoad.Broken.class, files.loadJob(r.job(), s.claims()));
         assertTrue(missing.reasons().get(0).contains("journal"), missing.reasons().toString());
         assertEquals(r.manifest(), missing.manifestOrNull(), "the manifest is still usable for a repair");
         files.saveJob(r, new LedgerBook());
         byte[] ledger = fs.files.get("jobs/job-1/ledger.bin");
         ledger[ledger.length - 1] ^= 1;
-        assertInstanceOf(JobLoad.Broken.class, files.loadJob(r.job()));
+        assertInstanceOf(JobLoad.Broken.class, files.loadJob(r.job(), s.claims()));
+        files.saveJob(r, new LedgerBook());
+        JobLoad.Broken noClaim = assertInstanceOf(JobLoad.Broken.class,
+                files.loadJob(r.job(), new ClaimBook(ClaimBook.DEFAULT_MAX_CLAIMS_PER_OWNER)));
+        assertTrue(noClaim.reasons().contains("claim: missing"), noClaim.reasons().toString());
+    }
+}
+```
+
+`AdoptPassTest.java`(世界がディスクで記録より進んだ状態を、純Javaで作る。P4レビューD-2の「`FakeWorld`が0..kを持ち、記録が0..jを持つ(j<k)」):
+```java
+package io.github.khayashi4337.micradrone.construction.core;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+import io.github.khayashi4337.micradrone.build.compile.Placement;
+import io.github.khayashi4337.micradrone.build.compile.PlacementManifest;
+import io.github.khayashi4337.micradrone.build.compile.TestManifests;
+import io.github.khayashi4337.micradrone.build.model.BlockSpec;
+import io.github.khayashi4337.micradrone.build.model.IntPos;
+import java.util.HashMap;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+
+class AdoptPassTest {
+    private static final PlacementManifest M = TestManifests.smallHut();
+
+    /** The disk after a crash: the world holds placements 0..inWorld-1, the journal 0..journaled-1, the job cursor. */
+    private static JobService recovered(FakeJobWorld w, int inWorld, int journaled, int cursor) {
+        JobService s = JobServiceTest.service();
+        Journal journal = new Journal();
+        PlacedRegistry registry = s.registry("claim-job-1");
+        for (int i = 0; i < inWorld; i++) {
+            Placement p = M.placements().get(i);
+            w.world.setBlock(p.pos(), p.block());
+        }
+        JobProgram program = JobProgram.build(M);
+        for (int i = 0; i < journaled; i++) {
+            PutItem item = program.put(i);
+            JournalRecord rec = new JournalRecord(item.index(), item.placement().pos(), BlockSpec.AIR, false,
+                    item.placement().block(), item.ledgerKey());
+            journal.record(rec);
+            registry.apply("job-1", rec);
+        }
+        Map<IntPos, WorldCell> survey = new HashMap<>();
+        for (Placement p : M.placements()) {
+            survey.put(p.pos(), WorldCell.of(BlockSpec.AIR, CellTrait.REPLACEABLE));
+        }
+        ConstructionJob saved = JobServiceTest.approved("job-1", JobServiceTest.A, M, MaterialPolicy.CREATIVE_FREE)
+                .on(JobEvent.ADMITTED).on(JobEvent.START).withCursor(cursor);
+        RecoveryDecision d = RecoveryPlanner.decide(saved, new JobLoad.Loaded(
+                new JobRecord(saved, M, Map.of(), program, journal, new JobOutcome(), M.worldBounds()), new MaterialLedger()));
+        JobRecord r = new JobRecord(d.job(), M, Map.of(), program, journal, new JobOutcome(), M.worldBounds());
+        r.setApprovalSurvey(new PlacementSurvey(survey));
+        if (d.adoptFirst()) {
+            r.requireAdopt();
+        }
+        s.add(r);
+        return s;
+    }
+
+    private static long places(FakeJobWorld w) {
+        return w.world.log.stream().filter(l -> l.startsWith("place ")).count();
+    }
+
+    @Test
+    void theWorldAheadOfTheJournalIsAdoptedNotReportedAsAConflict() {
+        FakeJobWorld w = new FakeJobWorld();
+        w.online.add(JobServiceTest.A);
+        JobService s = recovered(w, 12, 5, 5);
+        new JobServiceTest.Clock().runUntil(s, w, "job-1", JobServiceTest.in(JobState.VERIFIED));
+        JobStatus st = s.status("job-1").orElseThrow();
+        assertEquals(0, st.conflicts(), "our own blocks are not someone else's change");
+        assertEquals(0, st.skipped());
+        assertEquals(M.placements().size() - 12, places(w), "adopted positions are not placed again");
+        assertEquals(M.placements().size(), s.registry("claim-job-1").size(), "a later rollback removes the adopted blocks too");
+        assertEquals(M.placements().size(), s.record("job-1").orElseThrow().journal().size());
+    }
+
+    @Test
+    void aCursorAheadOfTheJournalIsSettledByAdoptingWhatTheWorldHolds() {
+        FakeJobWorld w = new FakeJobWorld();
+        w.online.add(JobServiceTest.A);
+        JobService s = recovered(w, 12, 5, 10);
+        new JobServiceTest.Clock().runUntil(s, w, "job-1", JobServiceTest.in(JobState.VERIFIED));
+        assertEquals(0, s.status("job-1").orElseThrow().conflicts());
+    }
+
+    @Test
+    void positionsBeforeTheCursorThatTheWorldDoesNotHoldStillNeedRecovery() {
+        FakeJobWorld w = new FakeJobWorld();
+        w.online.add(JobServiceTest.A);
+        JobService s = recovered(w, 8, 5, 10);
+        new JobServiceTest.Clock().runUntil(s, w, "job-1", JobServiceTest.in(JobState.PAUSED)
+                .and(j -> j.pauseReason() == PauseReason.RECOVERY_NEEDED));
+        assertEquals(0, places(w), "nothing is placed silently");
+        assertEquals(8, s.record("job-1").orElseThrow().journal().size(), "what the world held was still adopted");
+    }
+
+    @Test
+    void anUnloadedPositionWaitsAndTheAdoptionIsRetried() {
+        FakeJobWorld w = new FakeJobWorld();
+        w.online.add(JobServiceTest.A);
+        JobService s = recovered(w, 12, 5, 5);
+        IntPos far = M.placements().get(20).pos();
+        w.world.unload(far);
+        JobServiceTest.Clock c = new JobServiceTest.Clock();
+        c.runUntil(s, w, "job-1", JobServiceTest.in(JobState.PAUSED).and(j -> j.pauseReason() == PauseReason.CHUNK_UNLOADED));
+        assertEquals(0, places(w));
+        w.world.load(far);
+        c.runUntil(s, w, "job-1", JobServiceTest.in(JobState.VERIFIED));
+        assertEquals(0, s.status("job-1").orElseThrow().conflicts());
     }
 }
 ```
@@ -9203,6 +10088,8 @@ class JobFilesTest {
 package io.github.khayashi4337.micradrone.construction.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.build.compile.PlacementManifest;
 import io.github.khayashi4337.micradrone.build.compile.TestManifests;
@@ -9216,19 +10103,20 @@ class RecoveryPlannerTest {
     }
 
     @Test
-    void aRunningJobComesBackPausedUntilItsOwnerIsHere() {
+    void aRunningJobComesBackPausedUntilItsOwnerIsHereAndAdoptsFirst() {
         JobRecord r = JobFilesTest.builtHalfway(new FakeJobWorld());
         RecoveryDecision d = RecoveryPlanner.decide(r.job(), loaded(r));
         assertEquals(JobState.PAUSED, d.job().state());
         assertEquals(PauseReason.OWNER_OFFLINE, d.job().pauseReason());
+        assertTrue(d.adoptFirst(), "the world may be ahead of the journal (async chunk saves)");
     }
 
     @Test
-    void aJournalBehindTheCursorNeedsRecovery() {
+    void aJournalBehindTheCursorIsNotSettledUntilAdopted() {
         JobRecord r = JobFilesTest.builtHalfway(new FakeJobWorld());
         ConstructionJob ahead = r.job().withCursor(r.job().cursor() + 3);
-        RecoveryDecision d = RecoveryPlanner.decide(ahead, loaded(r));
-        assertEquals(PauseReason.RECOVERY_NEEDED, d.job().pauseReason());
+        assertFalse(RecoveryPlanner.settledUpTo(r, ahead.cursor()));
+        assertTrue(RecoveryPlanner.decide(ahead, loaded(r)).adoptFirst(), "JobService adopts, then checks again");
     }
 
     @Test
@@ -9236,6 +10124,7 @@ class RecoveryPlannerTest {
         JobRecord r = JobFilesTest.builtHalfway(new FakeJobWorld());
         ConstructionJob behind = r.job().withCursor(Math.max(0, r.job().cursor() - 3));
         assertEquals(PauseReason.OWNER_OFFLINE, RecoveryPlanner.decide(behind, loaded(r)).job().pauseReason());
+        assertTrue(RecoveryPlanner.settledUpTo(r, behind.cursor()));
     }
 
     @Test
@@ -9243,6 +10132,7 @@ class RecoveryPlannerTest {
         JobRecord r = JobFilesTest.builtHalfway(new FakeJobWorld());
         JobLoad broken = new JobLoad.Broken(r.manifest(), Map.of(), List.of("journal: check value mismatch"));
         assertEquals(PauseReason.RECOVERY_NEEDED, RecoveryPlanner.decide(r.job(), broken).job().pauseReason());
+        assertFalse(RecoveryPlanner.decide(r.job(), broken).adoptFirst());
         PlacementManifest m = TestManifests.smallHut();
         ConstructionJob done = ConstructionJob.create("job-2", JobServiceTest.A, TestManifests.DIM, m.hash(), JobKind.BUILD, null, 25,
                 "claim-job-2", MaterialPolicy.CREATIVE_FREE, 0L, List.of()).on(JobEvent.ADMITTED).on(JobEvent.START)
@@ -9354,14 +10244,12 @@ public final class RecoveryPlanner {
     public static RecoveryDecision decide(ConstructionJob saved, JobLoad load) {
         boolean live = !saved.state().terminal();
         if (load instanceof JobLoad.Broken) {
-            return new RecoveryDecision(live ? needsRecovery(saved) : saved, load);
+            return new RecoveryDecision(live ? needsRecovery(saved) : saved, load, false);
         }
-        JobRecord r = ((JobLoad.Loaded) load).record();
-        if (live && !settledUpTo(r, saved.cursor())) {
-            return new RecoveryDecision(needsRecovery(saved), load);
-        }
+        // the settled check needs the world (AdoptPass first), so JobService makes it before the first placement
+        boolean adopt = live && saved.state() != JobState.PENDING_APPROVAL;
         ConstructionJob job = MOVING.contains(saved.state()) ? saved.paused(PauseReason.OWNER_OFFLINE) : saved;
-        return new RecoveryDecision(job, load);
+        return new RecoveryDecision(job, load, adopt);
     }
 
     private static ConstructionJob needsRecovery(ConstructionJob j) {
@@ -9375,7 +10263,7 @@ public final class RecoveryPlanner {
     }
 
     /** Every program position before the cursor ended in a journal record or a skip record (the Task 8 invariant). */
-    static boolean settledUpTo(JobRecord r, int cursor) {
+    public static boolean settledUpTo(JobRecord r, int cursor) {
         JobProgram p = r.program();
         for (int i = 0; i < Math.min(cursor, p.size()); i++) {
             int key = p.isRestore(i) ? JournalRecord.restoreIndex(i) : p.put(i).index();
@@ -9388,6 +10276,113 @@ public final class RecoveryPlanner {
 }
 ```
 (`PAUSED`から`RECOVERY_NEEDED`へは、状態機械の表に`PAUSED`→`PAUSE`の組が無いので、一度`RESUME`で`QUEUED`にしてから`PAUSE`する。どちらも表にある移り方。)
+
+`AdoptPass.java`:
+```java
+package io.github.khayashi4337.micradrone.construction.core;
+
+import io.github.khayashi4337.micradrone.build.compile.Placement;
+import io.github.khayashi4337.micradrone.build.model.IntPos;
+import io.github.khayashi4337.micradrone.build.verify.SnapshotDiff;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+
+/**
+ * After a crash the world can be ahead of the journal and the registry: chunks are saved asynchronously and also when
+ * they unload, while the job files are written at LevelEvent.Save (04 F-2). Before a recovered job places anything, each
+ * put without a journal or skip record is adopted as this job's own when the pinned approval survey said the position
+ * could be replaced and the world already holds the planned block. The ledger is not charged: adopting never makes items.
+ */
+public final class AdoptPass {
+    public record Result(int adopted, List<IntPos> unloaded) {
+        public Result {
+            unloaded = List.copyOf(unloaded);
+        }
+    }
+
+    private AdoptPass() {
+    }
+
+    public static Result adopt(JobRecord r, WorldPort world, PlacedRegistry registry) {
+        PlacementSurvey survey = r.approvalSurvey();
+        if (survey == null) {
+            return new Result(0, List.of());
+        }
+        List<IntPos> unloaded = new ArrayList<>();
+        int adopted = 0;
+        JobProgram program = r.program();
+        for (int c = 0; c < program.size(); c++) {
+            if (program.isRestore(c)) {
+                continue;
+            }
+            PutItem item = program.put(c);
+            if (r.journal().at(item.index()).isPresent() || r.outcome().isSkipped(item.index())) {
+                continue;
+            }
+            Placement p = item.placement();
+            WorldCell then = survey.cells().get(p.pos());
+            if (then == null || !(ReplaceRules.decide(p, then, false, registry.contains(p.pos()))
+                    instanceof ReplaceDecision.Place)) {
+                continue;
+            }
+            WorldCell now = world.read(p.pos());
+            if (!now.loaded()) {
+                unloaded.add(p.pos());
+                continue;
+            }
+            if (!now.block().blockId().equals(p.block().blockId())
+                    || !SnapshotDiff.statesMatch(p.verify(), now.block(), p.block(), Set.of())) {
+                continue;
+            }
+            JournalRecord rec = new JournalRecord(item.index(), p.pos(), then.block(), then.observed().hasBlockEntity(), p.block(),
+                    item.ledgerKey());
+            r.journal().record(rec);
+            registry.apply(r.job().jobId(), rec);
+            adopted++;
+        }
+        return new Result(adopted, unloaded);
+    }
+}
+```
+
+`JobRecord`に足す(フィールドと公開の読み書き。コンストラクタは変えない):
+```java
+    private PlacementSurvey approvalSurvey;
+    boolean adoptPending;
+
+    public PlacementSurvey approvalSurvey() {
+        return approvalSurvey;
+    }
+
+    public void setApprovalSurvey(PlacementSurvey survey) {
+        approvalSurvey = survey;
+    }
+
+    public boolean adoptPending() {
+        return adoptPending;
+    }
+
+    public void requireAdopt() {
+        adoptPending = true;
+    }
+```
+
+`JobService.place`の最初(`boolean repairing = ...`の前)に足す(引き取りは、許可の個数と関係なく1回だけ。読めない位置があれば待つ):
+```java
+        if (r.adoptPending) {
+            AdoptPass.Result adopted = AdoptPass.adopt(r, w.world(j.dimension()), registry(j.claimId()));
+            if (!adopted.unloaded().isEmpty()) {
+                pause(r, PauseReason.CHUNK_UNLOADED, in, updates, null);
+                return;
+            }
+            r.adoptPending = false;
+            if (!RecoveryPlanner.settledUpTo(r, j.cursor())) {
+                pause(r, PauseReason.RECOVERY_NEEDED, in, updates, null);
+                return;
+            }
+        }
+```
 
 `JobFiles`: 上の置き場へ、各コーデックの木を`PersistenceEnvelope(SaveTypes.X, version, tree).toBytes()`で書く。施工リストのファイルが既にあれば書かない(内容で名前が決まるので同じ)。読み込みは`PersistenceEnvelope.fromBytes`→`SaveTypes.migrations().payloadOf`→`fromTree`。どれかで`UnreadableFileException`・`IllegalArgumentException`・ファイルが無いなら、理由(`"journal: missing"`のように、ファイルの種類と理由)を集めて`Broken`(施工リストが読めていれば`manifestOrNull`に入れる)。`BUILD`・`REPAIR`の手順は`JobProgram.build(manifest)`(`REPAIR`は空の手順)で作り直す。`MODIFY`・`ROLLBACK`は`program.bin`から。
 
@@ -9402,69 +10397,87 @@ Expected: `BUILD SUCCESSFUL`、失敗0件。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction/core src/test/java/io/github/khayashi4337/micradrone/construction/core
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction/core の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/construction/core の下の、このタスクで作った・変えたファイルを1つずつ>
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: ジョブのファイルの保存と読み込み、復旧の判断(記録の遅れで復旧待ち・黙って再実行しない)、孤児の掃除、復旧の操作を追加(自然言語→工場建設 P4 Task 24)
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-MSG
-)"
+Implemented-by: SWE-2 via Devin CLI
 ```
 
 ---
 
 ### Task 25: アダプタ — ジョブの保存(`ConstructionJobStore`)と、再起動からの自動再開・復旧待ちの自動確認
 
+**担当**: Step 1〜2とそのコミットはDevin(Java)。Step 3(台本・devkit・実機)とそのコミットはコントローラ(Claude)。
+
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/construction/ConstructionJobStore.java`、`tools/p4/scenarios_restart.py`
-- Modify: `src/main/java/io/github/khayashi4337/micradrone/construction/ConstructionRuntime.java`(読み込み・保存・`recover`)、`src/main/java/io/github/khayashi4337/micradrone/construction/BuildCommands.java`(`recover <jobId> repair|fail`)、devkit(`/build/recover`・`/build/files`)、`tools/p4/p4_scenarios.py`
+- Modify: `src/main/java/io/github/khayashi4337/micradrone/construction/ConstructionRuntime.java`(読み込み・保存・`recover`・承認の時の調査を残す)、`src/main/java/io/github/khayashi4337/micradrone/construction/BuildCommands.java`(`recover <jobId> repair|fail`)、devkit(`/build/recover`・`/build/files`)、`tools/p4/p4_scenarios.py`、`tools/p4/plans.py`(`hut_patch`に`width`・`depth`・`floors`の引数を足す。P4レビューB-11)
 
 **Interfaces:**
-- Consumes: Task 22〜24。Minecraft/NeoForge: `SavedData`・`SavedData.Factory`・`DimensionDataStorage.computeIfAbsent(Factory, String)`(既存の`CornerMarkerNameRegistry`と同じ作法)、`LevelEvent.Save`(`ServerLevel.save`の中、チャンクの保存の後に投げられる。`net/minecraft/server/level/ServerLevel.java`の828行)、`MinecraftServer.getWorldPath(LevelResource.ROOT)`
+- Consumes: Task 22〜24。Minecraft/NeoForge: `SavedData`・`SavedData.Factory`・`DimensionDataStorage.computeIfAbsent(Factory, String)`(既存の`CornerMarkerNameRegistry`と同じ作法)、`LevelEvent.Save`(`ServerLevel.save`の中、チャンクの保存を頼んだ後に投げられる。`net/minecraft/server/level/ServerLevel.java`の828行)、`MinecraftServer.getWorldPath(LevelResource.ROOT)`
 - Produces:
   - `ConstructionJobStore extends SavedData`(ディメンションごと。`ID = "micradrone_construction_jobs"`): ジョブの小さな状態だけを、`JobCodec`の木の正規JSON文字列の一覧として`CompoundTag`の`"jobs"`(`ListTag`の`StringTag`)に持つ。`setJobs(List<ConstructionJob>)`で置き換えて`setDirty()`。
-  - `ConstructionRuntime`: 起動時(`ServerStartedEvent`)に、(1)`NioFileSystem(worldPath/data/micradrone)`を作り`cleanTemp()`、(2)`claims.bin`と各区画の`placed.bin`を読む、(3)全ディメンションの`ConstructionJobStore`からジョブを読み、`JobFiles.loadJob`→`RecoveryPlanner.decide`→`JobService.add`/`addBroken`(台帳は`LedgerBook`に戻す)、(4)`OrphanSweep`で、解放済みの区画のジョブを忘れ、孤児のファイルを消す(ログに件数)。`LevelEvent.Save`(そのディメンションのジョブを`ConstructionJobStore`に入れ、`JobFiles.saveJob`で書く。オーバーワールドの時に`claims.bin`と各`placed.bin`も)。`recover(UUID, boolean op, String jobId, RecoveryChoice)`。
+  - `ConstructionRuntime`: 起動時(`ServerStartedEvent`)に、(1)`NioFileSystem(worldPath/data/micradrone)`を作り`cleanTemp()`、(2)`claims.bin`と各区画の`placed.bin`を読む、(3)全ディメンションの`ConstructionJobStore`からジョブを読み、`JobFiles.loadJob(saved, claims)`→`RecoveryPlanner.decide`→`decision.adoptFirst()`なら`record.requireAdopt()`→`JobService.add`/`addBroken`(台帳は`LedgerBook`に戻す)、(4)`OrphanSweep`で、解放済みの区画のジョブを忘れ、孤児のファイルを消す(ログに件数)。承認でジョブを入れる時に、安全枠の検査に使った`PlacementSurvey`を`record.setApprovalSurvey`で持たせる(次の保存で`survey.bin`になる。Task 24の引き取りに使う)。`LevelEvent.Save`(そのディメンションのジョブを`ConstructionJobStore`に入れ、`JobFiles.saveJob`で書く。オーバーワールドの時に`claims.bin`と各`placed.bin`も)。`recover(UUID, boolean op, String jobId, RecoveryChoice)`。
   - コマンド`/micradrone build recover <jobId> repair|fail`(所有者かOP)。
 
-- [ ] **Step 1: 実装する**
+- [ ] **Step 1: 実装する**(担当: Devin)
 
-上のとおり。`SavedData`の`save`はジョブの一覧を書くだけ(ファイルの書き込みは`LevelEvent.Save`の中。**順序の根拠**: `MinecraftServer.saveEverything`は`getPlayerList().saveAll()`→各ディメンションの`ServerLevel.save`(`saveLevelData()`で`SavedData`→チャンク→`LevelEvent.Save`)。記録のファイルは`SavedData`より後に書かれるので、途中で止まると「記録がカーソルより遅れる」だけが起き、これは`RecoveryPlanner`が`RECOVERY_NEEDED`で捕まえる)。
+上のとおり。`SavedData`の`save`はジョブの一覧を書くだけ(ジョブのファイルの書き込みは`LevelEvent.Save`の中)。**順序について分かっていること**(Task 24の「保存の順序の事実」): 呼ぶ順はプレイヤー(同期)→`SavedData`→チャンク→`LevelEvent.Save`だが、`SavedData`とチャンクはI/Oのスレッドで非同期に書かれ、チャンクは読み込みから外れた時にも書かれる。だから落ちた後は、記録がカーソルより進む・遅れる、世界が記録より進む、のどれも起こりうる。前の2つは`RecoveryPlanner`と冪等な再開が、最後の1つは引き取り(`AdoptPass`)が扱う。**この順序に頼って「記録は遅れるだけ」とは考えない**。
 
-- [ ] **Step 2: 単体テストの回帰**
+- [ ] **Step 2: 単体テストの回帰**(担当: Devin)
 
 Run: `./gradlew test --console=plain`
 Expected: `BUILD SUCCESSFUL`、失敗0件。
 
-- [ ] **Step 3: 実機の自動確認(`tools/p4/scenarios_restart.py`)**
+- [ ] **Step 3: 実機の自動確認(`tools/p4/scenarios_restart.py`)**(担当: コントローラ。devkitの`/build/recover`・`/build/files`もここで足し、devkitのリポジトリに別にコミットする)
 
-1. `restart-resume`(条件4): 大きめの小屋(`plans.hut_patch`で`width=15`・`depth=15`・`floors=3`、ドローンの工程の配置が多い物)を建て始め、`status.cursor`が全体の半分を超えたら、`/server/save-all`はせずに**クライアントを`WM_CLOSE`で閉じる**(シングルプレイの終了は、統合サーバーを保存して止める=きれいな停止)→同じ世界で`clientP4`を起動し直す→`/state`の`cameraOnPlayer: true`になった時刻から、`/build/status`が`RUNNING`になるまでの秒数を測る(**10秒以内**、`resume.json`)→`VERIFIED`→読み戻しの照合で不一致0件→`/build/entities`で読み込み直後の演出用ドローンが0機だった(前の起動の残りが無い)ことも記録。
+1. `restart-resume`(条件4): 大きめの小屋(`plans.hut_patch`で`width=15`・`depth=15`・`floors=3`、ドローンの工程の配置が多い物)を建て始め、`status.cursor`が全体の半分を超えたら、`/server/save-all`はせずに**クライアントを`WM_CLOSE`で閉じる**(シングルプレイの終了は、統合サーバーを保存して止める=きれいな停止)→同じ世界で`clientLoadP4`を起動し直す→`/state`の`inWorld: true`になった時刻から、`/build/status`が`RUNNING`になるまでの秒数を測る(**10秒以内**、`resume.json`)→`VERIFIED`→読み戻しの照合で不一致0件→`/build/entities`で読み込み直後の演出用ドローンが0機だった(前の起動の残りが無い)ことも記録。
 2. `missing-journal`(条件4): 建て始めて途中で閉じ→`run-p4/client/saves/p4-auto/data/micradrone/jobs/<jobId>/journal.bin`を消す→起動し直す→`status.pause == RECOVERY_NEEDED`→30秒の間`cursor`が変わらず、世界も変わらない(読み戻しの数が同じ)=**黙って再実行しない**→`/client/chat-log`に「きろくが こわれて いるよ…」→`/build/recover {choice: "fail"}`→`FAILED`。同じことを`repair`でもう一度(別の場所で)行い、`REPAIR`ジョブが`VERIFIED`になる。
-3. `crash-window`(条件4・Review Focus 2): **強制終了はしない**(起動物は`WM_CLOSE`で閉じる約束のため)。代わりに、きれいに閉じた後で`journal.bin`を1つ前の保存の物(台本が1回目の`/server/save-all`の直後に写しておいた物)に差し替え、「記録がカーソルより遅れた」状態を作る→`RECOVERY_NEEDED`になる。
+3. `crash-window`(条件4・Review Focus 2。**世界が記録より進んだ状態を、本当に作る**。P4レビューD-2): **強制終了はしない**(起動物は`WM_CLOSE`で閉じる約束のため)。代わりに、ディスクの上で「ジョブのファイルと`SavedData`だけが古い」状態を作る: (a)小屋を建て始め、`cursor`が全体の約3割で`/server/save-all`(`flush`つき)→台本が`saves/p4-auto/data/micradrone/`の全部と`saves/p4-auto/data/micradrone_construction_jobs.dat`を証拠のフォルダに写す(古い写し)、(b)約7割まで進めてから`WM_CLOSE`(世界は7割まで保存される)、(c)`data/micradrone/`と`micradrone_construction_jobs.dat`を(a)の古い写しで置き換える(世界のチャンクは7割のまま。これで「世界が記録・カーソル・設置の記録より進んだ」ディスクになる)、(d)`clientLoadP4`で開き直す。期待: ジョブは引き取りを経て**`SITE_CHANGED`で一度も止まらず**(`/build/status`を1秒ごとに記録した`timeline.json`に無い)、`conflicts == 0`で`VERIFIED`→読み戻しの照合で不一致0件→`/client/chat-log`に「だれかが かえた」系の文が無い。引き取った位置もロールバックで撤去されることは、Task 28の`crash-window-rollback`がこの続きで確かめる。
 
-Run: `python tools/p4/p4_scenarios.py --only restart-resume,missing-journal,crash-window --mode sp`
-Expected: 3つとも`PASS`。証拠: `restart-resume/resume.json`(秒数)・`compare.json`、`missing-journal/status-*.json`・`chat.json`、`crash-window/status.json`。
+Run: `python -m tools.p4.p4_scenarios --only restart-resume,missing-journal,crash-window --mode sp`
+Expected: 3つとも`PASS`。証拠: `restart-resume/resume.json`(秒数)・`compare.json`、`missing-journal/status-*.json`・`chat.json`、`crash-window/timeline.json`・`compare.json`・`old-copy/`(差し替えに使った古い写しの一覧)。
 
 - [ ] **Step 4: コミット**
 
+Devin(Step 1〜2):
+```text
+git add <Filesの src/main/java の各ファイルを1つずつ>
+git commit -F <scratch>\commit_msg.txt
+```
+```text
+feat: ジョブの保存(SavedDataと別ファイル・承認の時の調査)・起動時の復旧と引き取り・孤児の掃除・recoverコマンドを追加(自然言語→工場建設 P4 Task 25)
+
+Implemented-by: SWE-2 via Devin CLI
+```
+コントローラ(Step 3):
 ```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction tools/p4
+git add tools/p4
 git commit -m "$(cat <<'MSG'
-feat: ジョブの保存(SavedDataと別ファイル)・起動時の復旧と孤児の掃除・recoverコマンドと、再起動・記録の欠落の自動確認を追加(自然言語→工場建設 P4 Task 25)
+test: 再起動・記録の欠落・世界が記録より進んだ状態からの復旧の実機の自動確認を追加(自然言語→工場建設 P4 Task 25)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 MSG
 )"
 ```
-
 (devkitの`/build/recover`・`/build/files`は、devkitのリポジトリに別のコミットとして積む。)
 
 ---
 
 ### Task 26: 建築権限(`PlacementRules`・`E-PERMISSION-DENIED`)、他人の操作の拒否、S-9の自動測定
 
+**担当**: Java(`src/`)とそのコミットはDevin。`05`の表の1行はコントローラ(Claude)が先に書き(コミットしない)、Devinが自分のコミットに`git add`で含める(`IssueTest`が表を読むため)。台本(`tools/p4`)・`docs/investigations`・実機の確認とそのコミットはコントローラ(Global Constraintsの「担当の分け方」)。
+
 **Files:**
-- Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{PermissionLevel,PlacementRules}.java`、`tools/p4/scenarios_permissions.py`
+- Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{PermissionLevel,PlaceVerdict,PlacementRules}.java`、`tools/p4/scenarios_permissions.py`
 - Modify: `src/main/java/io/github/khayashi4337/micradrone/build/model/IssueCode.java`(`E_PERMISSION_DENIED`)、`docs/design/nl_factory_builder/05_parts_and_analyzers.md`(4.1節に1行)、`src/main/java/io/github/khayashi4337/micradrone/construction/core/{ChildMessages,ApproveArgs}.java`(`P4_ISSUES`に足す。`owner=<名前>`で承認する保留を指せる)、`src/main/resources/assets/micradrone/lang/{ja_jp,en_us}.json`、`src/main/java/io/github/khayashi4337/micradrone/construction/{PlacementGuard,ConstructionRuntime,BuildCommands}.java`、`docs/investigations/spk_s9_place_event.md`(4節の結果)
 - Test: `src/test/java/io/github/khayashi4337/micradrone/construction/core/{PlacementRulesTest,ApproveArgsOwnerTest}.java`
 
@@ -9475,6 +10488,7 @@ MSG
   - `PlacementRules.canSubmit(PermissionLevel level, boolean op, int placements, int largeJobPlacements) → Optional<Issue>`(F-4(d)。拒否は`E-PERMISSION-DENIED`)
   - `enum PlaceVerdict {ALLOW, OUTSIDE_BORDER, OUTSIDE_HEIGHT, SPAWN_PROTECTED}`、`PlacementRules.check(boolean insideBorder, boolean insideHeight, boolean underSpawnProtection, boolean op) → PlaceVerdict`(F-4(a)(b)。OPはスポーン保護を越えられる)
   - `PlacementGuard.place`・`restore`は、イベントを投げる前に`PlacementRules.check`を当て、`ALLOW`以外は何も変えずに`DENIED`
+  - `ConstructionRuntime.approve`に最後の引数`String ownerNameOrNull`を足す: `approve(ServerPlayer, String hash, Confirmations, List<AcceptedRisk>, String ownerNameOrNull)`(P4レビューB-9。コマンド・devkitの`/build/approve`の`owner`・Task 32の`ApprovePlanPayload.ownerName`が同じ道を通る。Task 16の呼び出しは`null`を渡すように直す)
   - `ApproveArgs.Parsed`に`String ownerName`(`owner=<名前>`。無ければ`null`=自分の保留)。`ApprovalRequest.playerUuid`は、その名前のUUID(オフライン名の規則`UUIDUtil.createOfflinePlayerUUID`ではなく、サーバーの`getProfileCache`で引く。見つからなければ`NO_PENDING`)
   - 新しい`IssueCode`: `E_PERMISSION_DENIED("E-PERMISSION-DENIED")`
 
@@ -9528,7 +10542,7 @@ class ApproveArgsOwnerTest {
     }
 }
 ```
-`05_parts_and_analyzers.md`の4.1節の表の`E-REPLACE-UNCONFIRMED`の行の直後に:
+(担当: コントローラ。Devinに渡す前に書き、コミットしない。Devinのコミットに含まれる) `05_parts_and_analyzers.md`の4.1節の表の`E-REPLACE-UNCONFIRMED`の行の直後に:
 ```
 | `E-PERMISSION-DENIED` | 施工の権限が無い(設定の許可レベル・大規模のジョブはOPだけ) | 提出時 | OPに頼む |
 ```
@@ -9596,16 +10610,34 @@ Run: `./gradlew test --console=plain` → `BUILD SUCCESSFUL`、失敗0件。
 
 `tools/p4/scenarios_permissions.py`:
 1. `permissions-single`(条件6・14、シングルプレイの統合サーバー): `Dev`が小屋を建てて`VERIFIED`。**他人**は`Intruder`(devkitの`/server/run-as`で、オンラインでない偽のプレイヤー。本物のUUIDとOPでない権限を持つ): (a)`micradrone build cancel <DevのjobId>`→`control.not_allowed`の文(実行の出力と`/build/status`が変わらないこと)、(b)`micradrone build approve <Devの保留のハッシュ> owner=Dev`→`reject.not_owner`(Devが別の小屋を提出して保留を作ってから)、(c)Devの小屋に重なる計画を`submit`→保留の`issues`に`E-CLAIM-OVERLAP`(**ジョブが終わっても区画が守られている**=条件14)、(d)`Dev`がOPとして`cancel`できること(OPの代理)。
-2. `s9-protection`(S-9の測定): `/spike/protect-box`で小屋の壁の3ブロックを囲って有効にし、(a)`Dev`がオンラインで小屋を建てる→その3位置が`skipped`(`denied`)で世界に残らない(読み戻し)・`/spike/protect-log`の主体のクラスが`ServerPlayer`、(b)`chunks.continueWhileOffline=true`の設定(`run-p4/client/saves/p4-auto/serverconfig/micradrone-server.toml`を台本が書き換えてから起動)で、`Dev`をいない扱い(`/client/disconnect`は使えないので、シングルプレイではなく**専用サーバーの台本で**`Dev`のクライアントを閉じる)にして建てる→主体が`FakePlayer`・`fakePlayer: true`で同じく`denied`、(c)建てた小屋を守りの箱と重ねてロールバック(Task 28の後に実行)→`BreakEvent`がキャンセルされた位置が残る。結果を`docs/investigations/spk_s9_place_event.md`の4節に書き、主体の選び方(Task 2の既定)を変える必要が無いか判断する(変えるなら、テストを先に書いてから`PlacementGuard.actor`を直す)。
+2. `s9-protection-online`(S-9の測定、`mode="sp"`): `/spike/protect-box`で小屋の壁の3ブロックを囲って有効にし、`Dev`がオンラインで小屋を建てる→その3位置が`skipped`(`denied`)で世界に残らない(読み戻し)・`/spike/protect-log`の主体のクラスが`ServerPlayer`。結果を`docs/investigations/spk_s9_place_event.md`の4節に書き、主体の選び方(Task 2の既定)を変える必要が無いか判断する(変えるなら、テストを先に書いてから`PlacementGuard.actor`を直す)。同じ節に、スポーン保護の読み取った事実を書く: `DedicatedServer.isUnderSpawnProtection`は、オーバーワールド以外・OPの一覧が空・OPのプロフィールなら偽(`DedicatedServer.java` 397〜413行)。だから、OPの所有者のUUIDを持つ`FakePlayer`はスポーン保護を越え、`ops.json`が空ならスポーン保護は効かない(P4レビューD-7。測る必要は無い)。
+   - S-9の残り2つは、それぞれ要る部品ができたタスクで足す(P4レビューB-10): `s9-protection-offline`(所有者がいない間の主体が`FakePlayer`で、同じく`denied`になる。`ChunkKeeper`が要るのでTask 31、`mp`)、`s9-protection-rollback`(守りの箱と重なる小屋のロールバックで、`BreakEvent`がキャンセルされた位置が残る。Task 28、`sp`)。
 
-Run: `python tools/p4/p4_scenarios.py --only permissions-single --mode sp` と `python tools/p4/p4_scenarios.py --only s9-protection --mode mp` → `PASS`(証拠: `permissions-single/outputs.json`・`status.json`・`pending.json`、`s9-protection/protect-log.json`・`compare.json`)。
+Run: `python -m tools.p4.p4_scenarios --only permissions-single,s9-protection-online --mode sp` → `PASS`(証拠: `permissions-single/outputs.json`(`/server/run-as`の`output`。偽のプレイヤーにはチャットが無いので、Task 18の`DevkitTeeSource`で集めた行を見る)・`status.json`・`pending.json`、`s9-protection-online/protect-log.json`・`compare.json`)。このタスクでは`PENDING_CONDITIONS`を変えない(条件6は`dedicated-two-clients`のTask 34、条件14はロールバックの解放のTask 28で消す)。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone src/main/resources/assets/micradrone/lang src/test/java/io/github/khayashi4337/micradrone/construction/core docs/design/nl_factory_builder/05_parts_and_analyzers.md docs/investigations/spk_s9_place_event.md tools/p4
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/main/resources/assets/micradrone/lang の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/construction/core の下の、このタスクで作った・変えたファイルを1つずつ>
+git add docs/design/nl_factory_builder/05_parts_and_analyzers.md
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: 建築権限(許可レベル・大規模ジョブ・世界の端・スポーン保護)とE-PERMISSION-DENIED、他人の操作の拒否とS-9の自動測定を追加(自然言語→工場建設 P4 Task 26)
+
+Implemented-by: SWE-2 via Devin CLI
+```
+
+コントローラ(Claude。Devinのコミットの後):
+```bash
+git add docs/investigations/spk_s9_place_event.md tools/p4
+git commit -m "$(cat <<'MSG'
+test: Task 26の実機の自動確認のシナリオ・証拠の手順を追加(自然言語→工場建設 P4 Task 26)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 MSG
@@ -9616,9 +10648,11 @@ MSG
 
 ### Task 27: 材料(サバイバルの消費・補給チェスト・不足で停止・補給で再開・整地の資源)
 
+**担当**: Java(`src/`)とそのコミットはDevin。台本(`tools/p4`)・devkit・`docs/`・実機の確認とそのコミットはコントローラ(Claude)(Global Constraintsの「担当の分け方」)。
+
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{Stock,StockTake,StockBook,SupplyRegistry,SupplyCodec}.java`、`src/main/java/io/github/khayashi4337/micradrone/construction/{InventoryMaterials,SupplyChests}.java`、`tools/p4/scenarios_materials.py`
-- Modify: `src/main/java/io/github/khayashi4337/micradrone/construction/{RuntimeJobWorld,BuildCommands,ConstructionRuntime}.java`(`supply add <pos>`・`supply list`、補給チェストの保存)、`src/main/java/io/github/khayashi4337/micradrone/construction/core/JobFiles.java`(`claims/<claimId>/supply.bin`)
+- Modify: `src/main/java/io/github/khayashi4337/micradrone/construction/{RuntimeJobWorld,BuildCommands,ConstructionRuntime}.java`(`supply add <pos>`・`supply list`、補給チェストの保存)、`src/main/java/io/github/khayashi4337/micradrone/construction/core/{JobFiles,SaveTypes}.java`(`claims/<claimId>/supply.bin`と、保存の型`SUPPLY`)、`tools/p4/p4_scenarios.py`
 - Test: `src/test/java/io/github/khayashi4337/micradrone/construction/core/{StockBookTest,SupplyRegistryTest}.java`
 
 **Interfaces:**
@@ -9629,7 +10663,7 @@ MSG
   - `SupplyRegistry`: 区画ごとの補給チェストの位置(`add(claimId, IntPos)`・`remove`・`positions(claimId)`)。追加の条件(区画の`worldBox`の中・コンテナであること)はアダプタが確かめる。`SupplyCodec`(保存の形)
   - `InventoryMaterials implements MaterialPort`: 所有者がオンラインなら持ち物+補給チェスト、いなければ補給チェストだけ。`give`は持ち物→入らなければ足元にドロップ(いなければ補給チェスト→入らなければ区画の真ん中の上にドロップ)。F-7の返却先。
   - コマンド: `/micradrone build supply add <pos>`(所有者かOP。その区画の中のコンテナだけ)、`supply list`
-  - `RuntimeJobWorld.materials`: `SURVIVAL_CONSUME`なら`InventoryMaterials`(Task 16の仮の「すべて不足」を置き換える)
+  - `RuntimeJobWorld.materials`: `SURVIVAL_CONSUME`なら`InventoryMaterials`(Task 16の仮の`RuntimeJobWorld.NO_MATERIALS`を置き換え、`NO_MATERIALS`は消す)
 
 - [ ] **Step 1: 失敗するテストを書く**
 
@@ -9761,14 +10795,29 @@ Run: `./gradlew test --console=plain` → `BUILD SUCCESSFUL`、失敗0件。
 1. `survival-materials`: `gamemode survival Dev`・`clear Dev`→小屋の材料表(`/build/pending`の施工リストの`bom`)の半分だけ`give`→承認(クリエイティブでないので`SURVIVAL_CONSUME`になる)→`PAUSED(MATERIALS_MISSING)`・`/client/chat-log`に「〜が 〜こ たりないよ」→区画の中にチェストを置いて(`setblock`と`item replace`で残りの材料を入れる)`micradrone build supply add <pos>`→**1秒ほどで自動に再開**して`VERIFIED`→持ち物とチェストの残りが0(=材料表の個数ちょうどを消費)。途中で`cancel`した別の小屋では、`cancel`の前後で持ち物の数が変わらない(**取消で返さない**)。建てている途中でクライアントを`WM_CLOSE`で閉じて起動し直し(Task 25と同じ手順)、再開して完成した後の「持ち物+チェスト+置いたブロックの品物の数」が、最初に与えた数と等しい(**二重に消費しない**)。
 2. `terrain-survival`: 地面の上で`submit-here`(整地あり)→確認つきで承認(サバイバル)→完成後、「持ち物の土・丸石など+世界のその種類のブロックの数」が、建てる前と比べて**消えも増えもしない**(切った草の地面は土として渡り、盛った土は持ち物から減る。`inventory-before.json`・`inventory-after.json`・`world-count-*.json`)。
 
-Run: `python tools/p4/p4_scenarios.py --only survival-materials,terrain-survival --mode sp` → `PASS`。
+Run: `python -m tools.p4.p4_scenarios --only survival-materials,terrain-survival --mode sp` → `PASS`。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/construction/core tools/p4
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/construction/core の下の、このタスクで作った・変えたファイルを1つずつ>
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: サバイバルの材料(持ち物と補給チェストからの消費・不足で停止・補給で自動再開・整地の資源の受け渡し)を追加(自然言語→工場建設 P4 Task 27)
+
+Implemented-by: SWE-2 via Devin CLI
+```
+
+コントローラ(Claude。Devinのコミットの後):
+```bash
+git add tools/p4
+git commit -m "$(cat <<'MSG'
+test: Task 27の実機の自動確認のシナリオ・証拠の手順を追加(自然言語→工場建設 P4 Task 27)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 MSG
@@ -9779,6 +10828,8 @@ MSG
 
 ### Task 28: ロールバック(`RollbackPlanner`・`ROLLBACK`ジョブ・区画の解放)と、取消・ロールバックの自動確認
 
+**担当**: Java(`src/`)とそのコミットはDevin。台本(`tools/p4`)・devkit・`docs/`・実機の確認とそのコミットはコントローラ(Claude)(Global Constraintsの「担当の分け方」)。
+
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/RollbackPlanner.java`、`tools/p4/scenarios_rollback.py`
 - Modify: `src/main/java/io/github/khayashi4337/micradrone/construction/core/JobService.java`(`rollback`)、`src/main/java/io/github/khayashi4337/micradrone/construction/{ConstructionRuntime,BuildCommands}.java`(`rollback <claimId> [confirm]`)、devkit(`/build/rollback`)
@@ -9786,7 +10837,7 @@ MSG
 
 **Interfaces:**
 - Produces:
-  - `RollbackPlanner.plan(PlacedRegistry registry, BiFunction<String,Integer,Set<String>> volatileOfPlacer) → List<RestoreItem>`(`01` 4.1・F-14: 設置の記録のすべての位置を、**上から下**(y降順、同じ高さはz→x昇順)に、`expectedNow`=今置いてあるはずのブロック、`restoreTo`=施工前のブロック、材料の返却は置いた人の台帳のキー、`dropContents`は常に`true`(このプロジェクトが置いたブロックだけなので、コンテナなら中身を落とす。D-25))。`volatileOfPlacer.apply(jobId, ledgerKey)`は、置いたジョブの施工リストの番号(`ledgerKey % JobProgram.LEDGER_ROUND_STRIDE`)の節の部品の`volatileProps`
+  - `RollbackPlanner.plan(PlacedRegistry registry, BiFunction<String,Integer,Set<String>> volatileOfPlacer) → List<RestoreItem>`(`01` 4.1・F-14: 設置の記録のすべての位置を、`Attachments.REMOVAL_ORDER`の順に(**付いている物(扉・看板・たいまつ・ランタンなど)が先、扉の上下は続けて、残りは上から下**(y降順、同じ高さはz→x昇順))。付いている物を後に回すと、支えを戻した時に隣の更新でアイテムを落として外れる(P4レビューG-2。Task 9・15)、`expectedNow`=今置いてあるはずのブロック、`restoreTo`=施工前のブロック、材料の返却は置いた人の台帳のキー、`dropContents`は常に`true`(このプロジェクトが置いたブロックだけなので、コンテナなら中身を落とす。D-25))。`volatileOfPlacer.apply(jobId, ledgerKey)`は、置いたジョブの施工リストの番号(`ledgerKey % JobProgram.LEDGER_ROUND_STRIDE`)の節の部品の`volatileProps`
   - `ControlResult JobService.rollback(String claimId, UUID requester, boolean op, String newJobId, long tick)`: 区画が有効・所有者かOP・区画の中に終わっていないジョブが無い→`ROLLBACK`ジョブ(`parentJobId`=区画の最後のジョブ、`manifestHash`=その施工リスト、手順=`RollbackPlanner.plan`)。完了で`VERIFIED`になれば、区画の他のジョブが`ROLLED_BACK`になり、区画が解放され、`PlacedRegistry`が捨てられる(Task 13の`finishRollback`)。`Conflict`は触らずに報告。
   - コマンド`/micradrone build rollback <claimId>`は、まず「撤去するブロックN個、中身がM個ドロップします」を見せ(Task 30で中身の数を足す)、`/micradrone build rollback <claimId> confirm`で実行する(F-5: 撤去の承認画面の代わり)。
 
@@ -9822,6 +10873,24 @@ class RollbackPlannerTest {
         assertTrue(items.stream().allMatch(RestoreItem::dropContents));
         assertEquals("job-1", items.get(1).sourceJobId());
         assertEquals(2, items.get(1).sourceLedgerKey());
+    }
+
+    @Test
+    void aDoorsHalvesGoTogetherAndASignGoesBeforeItsWall() {
+        PlacedRegistry reg = new PlacedRegistry("claim-a");
+        IntPos wall = new IntPos(0, 65, 0);
+        IntPos sign = new IntPos(0, 65, 1);
+        IntPos lower = new IntPos(2, 64, 0);
+        IntPos upper = new IntPos(2, 65, 0);
+        IntPos roof = new IntPos(0, 67, 0);
+        reg.apply("job-1", new JournalRecord(0, wall, BlockSpec.AIR, false, BlockSpec.of("minecraft:stone_bricks"), 0));
+        reg.apply("job-1", new JournalRecord(1, sign, BlockSpec.AIR, false, BlockSpec.of("minecraft:oak_wall_sign", "facing", "south"), 1));
+        reg.apply("job-1", new JournalRecord(2, lower, BlockSpec.AIR, false, BlockSpec.of("minecraft:oak_door", "half", "lower"), 2));
+        reg.apply("job-1", new JournalRecord(3, upper, BlockSpec.AIR, false, BlockSpec.of("minecraft:oak_door", "half", "upper"), 3));
+        reg.apply("job-1", new JournalRecord(4, roof, BlockSpec.AIR, false, BlockSpec.of("minecraft:oak_planks"), 4));
+        List<IntPos> order = RollbackPlanner.plan(reg, (job, key) -> Set.of()).stream().map(RestoreItem::pos).toList();
+        assertEquals(List.of(upper, lower, sign, roof, wall), order,
+                "attached blocks first (the door's halves back to back), then the rest top-down");
     }
 }
 ```
@@ -9913,6 +10982,8 @@ public final class RollbackPlanner {
             out.add(new RestoreItem(e.getKey(), p.placed(), volatileOfPlacer.apply(p.jobId(), p.placementIndex()), p.before(),
                     p.jobId(), p.placementIndex(), true));
         }
+        // stable: ties keep the top-down order above
+        out.sort(Attachments.REMOVAL_ORDER);
         return out;
     }
 }
@@ -9923,19 +10994,37 @@ public final class RollbackPlanner {
 
 Run: `./gradlew test --console=plain` → `BUILD SUCCESSFUL`、失敗0件。
 
-`tools/p4/scenarios_rollback.py`:
+`tools/p4/scenarios_rollback.py`(どれも`mode="sp"`。このタスクのシナリオを足すコミットで、`PENDING_CONDITIONS`から条件4・7・14を消す):
 1. `cancel`(条件4): 大きめの小屋を建て始め、半分で`micradrone build cancel <jobId>`→`CANCELLED`・読み戻しで置いた分が残っている(撤去しない)・区画は有効のまま(`Intruder`の重なる提出が`E-CLAIM-OVERLAP`)。
-2. `rollback`(条件4・14): 草の地面の上に`submit-here`で小屋(整地あり)→`VERIFIED`→壁の1つを`setblock gold_block`→`micradrone build rollback <claimId>`(撤去の数が出る)→`... confirm`→`ROLLBACK`ジョブが`VERIFIED`→**建てる前に読んでおいた全位置の状態**(台本が承認の前に`/build/read-blocks`で`before.json`に取る)と、今の状態が、金の壁の1位置を除いて全部一致(**置換したすべてのブロックが、設置前のブロックとブロック状態に戻る**)→金のブロックは残り`conflicts == 1`→区画が解放され、`Intruder`が同じ場所に提出すると`E-CLAIM-OVERLAP`が出ない→ジョブのファイル(`/build/files`)が、次の起動の孤児の掃除で消える(起動し直して確かめる)。
+2. `rollback`(条件4・14): 草の地面の上に`submit-here`で小屋(整地あり)→`VERIFIED`→壁の1つを`setblock gold_block`→`micradrone build rollback <claimId>`(撤去の数が出る)→`... confirm`→`ROLLBACK`ジョブが`VERIFIED`→**建てる前に読んでおいた全位置の状態**(台本が承認の前に`/build/read-blocks`で`before.json`に取る)と、今の状態が、金の壁の1位置を除いて全部一致(**置換したすべてのブロックが、設置前のブロックとブロック状態に戻る**)→金のブロックは残り`conflicts == 1`→**`/build/entities {type: "minecraft:item", box: 区画}`の数が0**(扉の上下・付いている物を戻しても、アイテムが落ちていない。P4レビューG-2。クリエイティブなので返却の品物も落ちない)→区画が解放され、`Intruder`が同じ場所に提出すると`E-CLAIM-OVERLAP`が出ない→ジョブのファイル(`/build/files`)が、次の起動の孤児の掃除で消える(起動し直して確かめる)。
 3. `rollback-return`(条件7): サバイバルで建てた小屋をロールバック→持ち物に、材料表のとおりの個数が1回だけ戻る(2回目の`rollback`は`control.wrong_state`)。整地の地面は、切った分の土を持ち物から取り返してから草の地面に戻す(土が足りなければ`MATERIALS_MISSING`で止まり、補給で再開)。
 
-Run: `python tools/p4/p4_scenarios.py --only cancel,rollback,rollback-return --mode sp` → `PASS`(証拠: `before.json`・`after.json`・`compare.json`・`status.json`・`inventory-*.json`)。
+4. `crash-window-rollback`(条件4・D-25。Task 25の`crash-window`の続き): `crash-window`で引き取った小屋の区画を`rollback ... confirm`→全位置が`before.json`(`crash-window`の承認の前に取った物)と一致=**引き取った位置も撤去される**。アイテムの落下0。
+5. `s9-protection-rollback`(S-9): `/spike/protect-box`で建てた小屋の壁の3ブロックを`cancelBreak: true`で守り、ロールバック→その3位置は`BreakEvent`がキャンセルされて残り(`skipped`が`denied`)、他は撤去。`/spike/protect-log`の記録を`docs/investigations/spk_s9_place_event.md`の4節に足す。
+
+Run: `python -m tools.p4.p4_scenarios --only cancel,rollback,rollback-return,crash-window,crash-window-rollback,s9-protection-rollback --mode sp` → `PASS`(証拠: `before.json`・`after.json`・`compare.json`・`status.json`・`entities.json`・`inventory-*.json`・`protect-log.json`)。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/construction/core tools/p4
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/construction/core の下の、このタスクで作った・変えたファイルを1つずつ>
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: ロールバック(設置の記録から上から下へ施工前に戻す・区画の解放・消費した分だけ返す)と、取消・ロールバックの自動確認を追加(自然言語→工場建設 P4 Task 28)
+
+Implemented-by: SWE-2 via Devin CLI
+```
+
+コントローラ(Claude。Devinのコミットの後):
+```bash
+git add tools/p4
+git commit -m "$(cat <<'MSG'
+test: Task 28の実機の自動確認のシナリオ・証拠の手順を追加(自然言語→工場建設 P4 Task 28)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 MSG
@@ -9946,9 +11035,11 @@ MSG
 
 ### Task 29: 建てた後の変更(`MODIFY`)— `ManifestDiff`から手順を作り、手で置き換えた位置は`Conflict`として触らない
 
+**担当**: Java(`src/`)とそのコミットはDevin。台本(`tools/p4`)・devkit・`docs/`・実機の確認とそのコミットはコントローラ(Claude)(Global Constraintsの「担当の分け方」)。
+
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{ModifyPlan,ModifyPlanner}.java`、`tools/p4/scenarios_modify.py`
-- Modify: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{ConstructionExecutor,JobOutcome,JobService,SubmitOutcome,JobViews}.java`、`src/main/java/io/github/khayashi4337/micradrone/construction/{ConstructionRuntime,BuildCommands,ServerSurveyor}.java`、devkit(`/build/modify`)
+- Modify: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{JobService,JobRecord,RollbackPlanner,SubmitOutcome,JobViews}.java`(`RollbackPlanner.TOP_DOWN`を公開、`JobRecord`に置く位置の集合)、`src/main/java/io/github/khayashi4337/micradrone/construction/{ConstructionRuntime,BuildCommands,ServerSurveyor}.java`、devkit(`/build/modify`)、`tools/p4/p4_scenarios.py`、`tools/p4/plans.py`
 - Test: `src/test/java/io/github/khayashi4337/micradrone/construction/core/{ModifyPlannerTest,JobServiceModifyTest}.java`
 
 **Interfaces:**
@@ -9957,7 +11048,7 @@ MSG
   - `record ModifyPlan(JobProgram program, int removals, int additions, int changes, int notOurs /*撤去の対象だが、このプロジェクトが置いていない位置。触らない*/)`
   - `ModifyPlanner.plan(PlacementManifest from, PlacementManifest to, PlacedRegistry registry, BiFunction<String,Integer,Set<String>> volatileOfPlacer) → ModifyPlan`: `ManifestDiffer.diff(from, to, pos -> registry.at(pos).map(PlacedEntry::before).orElse(BlockSpec.AIR))`。撤去と変更の位置のうち設置の記録に載る物だけを`RestoreItem`(`expectedNow`=差分の`expectedNow`、`restoreTo`=施工前、材料は置いた人の台帳へ返す、`dropContents=true`)にして**上から下**に並べ、次に、追加と変更の新しい配置を`PutItem`(`index`=新しい施工リストの番号・台帳のキー=同じ)として新しい施工リストの順に並べる。
   - `int ModifyPlanner.conflictPreview(ModifyPlan, PlacementSurvey)`: 撤去・変更の位置のうち、今の状態が`expectedNow`と合わない(`Conflicts.detect`)数。承認の前に見せる(`03` 0.4: 「`Conflict`の予告」)
-  - `ConstructionExecutor`の置く手順: **同じジョブの中で`Conflict`になった位置には置かない**(`JobOutcome.hasConflictAt(IntPos)`なら`SkippedPlacement.CONFLICT`で飛ばす。変更の撤去が`Conflict`で止まった位置に、新しいブロックを上書きしないため)
+  - `ConstructionExecutor`の置く手順は**変えない**: 「同じジョブの撤去で`Conflict`になった位置には置かない」はTask 9で入れてある(`JobOutcome.hasRestoreConflictAt`。撤去の`Conflict`だけを見る。調査の後で置けなくなった位置(`SITE_CHANGED`)の`Conflict`は、邪魔な物がどかされれば置き、報告も消える。P4レビューB-4: 両方を同じ集合で見ると、スキップなしで再開した位置が永久に飛ばされ、3ラウンドの後に`PARTIAL`になる)
   - `JobService`: `MODIFY`のジョブの検査では、置く位置でもある撤去の位置を「戻っているか」の確認から外す(変更は、撤去の後に新しいブロックを置くので)
   - `ServerSurveyor`: `MODIFY`の調査では、設置の記録に載る位置を、その施工前のブロックとして読む(自分の建物を地面と見なさない)
   - コマンド`/micradrone build modify <jobId> <source:greedy>`(`jobId`=変更したい建物のジョブ。新しい計画を`PlanSubmission(plan, EMPTY, MODIFY, jobId, そのジョブの区画)`で提出し、いつもの`approve`で承認)。保留の返事に「こわす N こ、たす N こ、かえる N こ、だれかが かえた ところ N こ(さわらない)」
@@ -10093,7 +11184,7 @@ Expected: FAIL。
             undo.add(c.old().pos());
             expected.put(c.old().pos(), c.expectedNow());
         }
-        undo.sort(TOP_DOWN);
+        undo.sort(RollbackPlanner.TOP_DOWN);
         for (IntPos pos : undo) {
             Optional<PlacedEntry> e = registry.at(pos);
             if (e.isEmpty()) {
@@ -10103,6 +11194,8 @@ Expected: FAIL。
             restores.add(new RestoreItem(pos, expected.get(pos), volatileOfPlacer.apply(e.get().jobId(), e.get().placementIndex()),
                     e.get().before(), e.get().jobId(), e.get().placementIndex(), true));
         }
+        // attached blocks first, a door's halves back to back (Task 9's Attachments; the sort is stable)
+        restores.sort(Attachments.REMOVAL_ORDER);
         List<Placement> news = new ArrayList<>(diff.additions());
         for (PlacementChange c : diff.changes()) {
             news.add(c.now());
@@ -10116,34 +11209,44 @@ Expected: FAIL。
                 diff.changes().size(), notOurs);
     }
 ```
-(`TOP_DOWN`は`RollbackPlanner`と同じ比較。**重複させず**、`RollbackPlanner.TOP_DOWN`を`public static final`にして使う。)
+(`TOP_DOWN`は`RollbackPlanner`と同じ比較。**重複させず**、`RollbackPlanner.TOP_DOWN`を`public static final`にして使う。撤去の並びの規則(付いている物が先)も`Attachments.REMOVAL_ORDER`を共有する。)
 `conflictPreview`: `program().restores()`の各位置について、`survey.cells()`の観測があり、`Conflicts.detect(pos, expectedNow, observed, volatileProps)`が空でなければ数える。
 
-`ConstructionExecutor.put`の、世界を読んだ直後に次を足す(Task 9のコードに挿入):
-```java
-        if (ctx.outcome().hasConflictAt(p.pos())) {
-            ctx.outcome().skip(new SkippedPlacement(item.index(), p.pos(), SkippedPlacement.CONFLICT));
-            return Step.NEXT;
-        }
-```
-`JobOutcome.hasConflictAt(IntPos)`は`conflicts.containsKey(pos)`。`JobService.verifyWindow`の撤去の確認に「その位置が施工リストの配置の位置なら飛ばす」を足す(`Set<IntPos> putPositions`を`JobRecord`で1回だけ作る)。
+`ConstructionExecutor`・`JobOutcome`はこのタスクでは変えない(撤去の`Conflict`の位置を飛ばす規則は、Task 9の`hasRestoreConflictAt`がすでに行う)。`JobService.verifyWindow`の撤去の確認に「その位置が施工リストの配置の位置なら飛ばす」を足す(`Set<IntPos> putPositions`を`JobRecord`で1回だけ作る)。
 
 `ServerSurveyor`の`MODIFY`の読み方、コマンド`modify`、保留の返事は「Produces」のとおり。`ConstructionRuntime.approve`で`MODIFY`が承認されたら、`ModifyPlanner.plan(親の施工リスト, 新しい施工リスト, registry, volatileOfPlacer)`の手順で`JobService.admitApproved`する(`total`は手順の長さ。Task 12の注)。
 
 - [ ] **Step 4: テストと実機の自動確認**
 
-Run: `./gradlew test --console=plain` → `BUILD SUCCESSFUL`、失敗0件(Task 9の実行のテストを含む。`Conflict`の位置を飛ばす規則は、`BUILD`の`skipSiteChanges`の既存のテストでも同じ結果になる)。
+Run: `./gradlew test --console=plain` → `BUILD SUCCESSFUL`、失敗0件(Task 9の実行のテストと、Task 13の`afterTheObstacleIsRemovedAResumeWithoutSkipBuildsThereAndDropsTheConflict`を含む)。
 
-`tools/p4/scenarios_modify.py`の`modify-conflict`(条件3・13の一部): 小屋を建てて`VERIFIED`→プレイヤーの変更として壁の1つを`setblock gold_block`→`plans.hut_with_extra_wall_patch()`(壁を1枚足し、別の壁の素材を石レンガに変え、ランタンを外した計画)で`micradrone build modify <jobId> plans/modify1.json`→保留の`modify`の欄(こわす・たす・かえる・`conflictPreview == 1`)→承認→`VERIFIED`→読み戻しで、足した壁と変えた素材が新しい施工リストどおり、外したランタンの位置が施工前(空気)、金のブロックはそのまま・`status.conflicts == 1`→`/client/chat-log`に「だれかが かえた ところが 1 こ あったから、さわらずに のこしたよ」。
+`tools/p4/scenarios_modify.py`の`modify-conflict`(条件3・13の一部): 小屋を建てて`VERIFIED`→プレイヤーの変更として壁の1つを`setblock gold_block`→`plans.hut_with_extra_wall_patch()`(壁を1枚足し、別の壁の素材を石レンガに変え、ランタンを外した計画)を台本が`run-p4/client/micradrone/plans/modify1.json`に書き、`micradrone build modify <jobId> modify1.json`(`PlanSource`は`micradrone/plans`の下を指すので、`plans/`を付けない。P4レビューB-15)→保留の`modify`の欄(こわす・たす・かえる・`conflictPreview == 1`)→承認→`VERIFIED`→読み戻しで、足した壁と変えた素材が新しい施工リストどおり、外したランタンの位置が施工前(空気)、金のブロックはそのまま・`status.conflicts == 1`→`/client/chat-log`に「だれかが かえた ところが 1 こ あったから、さわらずに のこしたよ」。
 
-Run: `python tools/p4/p4_scenarios.py --only modify-conflict --mode sp` → `PASS`。
+同じシナリオで、変更の撤去に扉を含め(計画から扉を外す)、承認→`VERIFIED`の後に`/build/entities {type: "minecraft:item"}`が0(撤去でアイテムが落ちない。P4レビューG-2)。このタスクのシナリオを足すコミットで、`PENDING_CONDITIONS`から条件3を消す。
+
+Run: `python -m tools.p4.p4_scenarios --only modify-conflict --mode sp` → `PASS`。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/construction/core tools/p4
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/construction/core の下の、このタスクで作った・変えたファイルを1つずつ>
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: 建てた後の変更(MODIFY。差分から撤去→追加の手順、手で置き換えた位置はConflictとして触らない、承認前の予告)を追加(自然言語→工場建設 P4 Task 29)
+
+Implemented-by: SWE-2 via Devin CLI
+```
+
+コントローラ(Claude。Devinのコミットの後):
+```bash
+git add tools/p4
+git commit -m "$(cat <<'MSG'
+test: Task 29の実機の自動確認のシナリオ・証拠の手順を追加(自然言語→工場建設 P4 Task 29)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 MSG
@@ -10152,20 +11255,25 @@ MSG
 
 ---
 
-### Task 30: ブロックエンティティ(元からある物は触らない・このプロジェクトが置いたコンテナは中身を落として撤去)
+### Task 30: ブロックエンティティ(元からある物は触らない・このプロジェクトが置いた保管庫・デポ・樽は中身を落として撤去)
 
-完了条件13と8(ブロックエンティティを含む置換不可)。純Javaの規則はTask 4(`ReplaceRules`: 元からあるブロックエンティティは`FOREIGN_BLOCK_ENTITY`、空のコンテナだけ確認つきで置換)とTask 28・29(撤去は`dropContents=true`)で済んでいる。ここでは**撤去の前に「中身がN個ドロップします」を見せる**ことと、実機の自動確認を足す。
+**担当**: Step 1〜3とそのコミットはDevin(Java・言語ファイル)。Step 4の実機の自動確認とそのコミットはコントローラ(Claude)。
+
+完了条件13と8(ブロックエンティティを含む置換不可)。純Javaの規則はTask 4(`ReplaceRules`: 元からあるブロックエンティティは`FOREIGN_BLOCK_ENTITY`、空のコンテナだけ確認つきで置換)とTask 28・29(撤去は`dropContents=true`)で済み、中身の落とし方はTask 15の`PlacementGuard.dropContents`(**アイテムの能力`Capabilities.ItemHandler.BLOCK`で取り出す。Createの`item_vault`・`depot`もバニラの樽・チェストも同じ道。Createのクラスはimportしない**)。ここでは、**撤去の前に「中身がN個ドロップします」「液体・燃えている燃料は戻らない」を見せる**ことと、**Createの保管庫・デポを本当に置いて撤去する**実機の自動確認を足す(P4レビューA1-3: 条件13は「保管庫・デポ」と書いている。樽だけで代えない)。
 
 **Files:**
-- Create: `src/main/java/io/github/khayashi4337/micradrone/construction/ContainerPreview.java`、`src/main/java/io/github/khayashi4337/micradrone/construction/core/RemovalPreview.java`、`tools/p4/scenarios_blockentities.py`
-- Modify: `src/main/java/io/github/khayashi4337/micradrone/construction/{BuildCommands,ConstructionRuntime}.java`(`rollback`の予告・`modify`の保留に中身の数)、`src/main/resources/assets/micradrone/lang/{ja_jp,en_us}.json`(`micradrone.build.rollback.preview`・`micradrone.build.rollback.started`)、`src/main/java/io/github/khayashi4337/micradrone/construction/core/ChildMessages.java`(2つのキー)
+- Create: `src/main/java/io/github/khayashi4337/micradrone/construction/ContainerPreview.java`、`src/main/java/io/github/khayashi4337/micradrone/construction/core/{RemovalPreview,HeldContents}.java`、`tools/p4/scenarios_blockentities.py`
+- Modify: `src/main/java/io/github/khayashi4337/micradrone/construction/{BuildCommands,ConstructionRuntime}.java`(`rollback`の予告・`modify`の保留に中身の数)、`src/main/resources/assets/micradrone/lang/{ja_jp,en_us}.json`(`micradrone.build.rollback.preview`・`micradrone.build.rollback.lost`・`micradrone.build.rollback.started`)、`src/main/java/io/github/khayashi4337/micradrone/construction/core/ChildMessages.java`(3つのキー: `ROLLBACK_PREVIEW`・`ROLLBACK_LOST`・`ROLLBACK_STARTED`。P4レビューB-16)、`tools/p4/p4_scenarios.py`
 - Test: `src/test/java/io/github/khayashi4337/micradrone/construction/core/RemovalPreviewTest.java`
 
 **Interfaces:**
-- Produces: `record RemovalPreview(int blocks, int containers, int items)` + `static RemovalPreview of(List<RestoreItem> items, Map<IntPos,Integer> itemsInContainers)`(撤去するブロックの数、そのうち中身のあるコンテナの数と中身の総数)。`ContainerPreview.count(ServerLevel, List<IntPos>) → Map<IntPos,Integer>`(アダプタ: その位置のブロックエンティティが`Container`なら、空でないスロットのアイテムの数の合計)。液体・燃料(Createのタンク・ブレイズバーナー)の失われる量はP10の部品で足す(P4の部品は液体を持たない。F-5の表の「流体・燃料など回収できない物は失われる」は、P4ではバニラのコンテナだけが対象で、その中身は全部アイテムとして落ちる)。
-- 文言: `ja_jp`の`"micradrone.build.rollback.preview": "こわす ブロック %1$s こ(いれものの なかみ %2$s こは じめんに おとすよ)。いいなら おなじ コマンドに confirm を つけてね"`、`"micradrone.build.rollback.started": "もとに もどしはじめるよ(しごと %1$s)"`、英語も同じ意味で。
+- Produces:
+  - `record HeldContents(int items, long fluidMillibuckets, boolean burningFuel)` + `NONE`(ある位置の入れ物が持っている物。純Java)
+  - `record RemovalPreview(int blocks, int containers, int items, long lostFluidMillibuckets, int burningFuelBlocks)` + `static RemovalPreview of(List<RestoreItem> items, Map<IntPos,HeldContents> held)`(撤去するブロックの数、そのうち中身のある入れ物の数と、落ちるアイテムの総数、戻らない液体の量(ミリバケツ)、燃えている燃料のブロックの数)
+  - `ContainerPreview.read(ServerLevel, List<IntPos>) → Map<IntPos,HeldContents>`(アダプタ): アイテムは`level.getCapability(Capabilities.ItemHandler.BLOCK, pos, null)`の全スロットの`getStackInSlot(i).getCount()`の合計(能力が無ければ`Container`のスロットの合計)、液体は`Capabilities.FluidHandler.BLOCK`の全タンクの`getFluidInTank(i).getAmount()`の合計(NeoForgeは大釜にもこの能力を付ける。`CauldronFluidContent.java` 168〜170行)、燃料は状態に`lit`があり`true`のとき(かまど・溶鉱炉・燻製器。Createのブレイズバーナーの燃料はP10の部品で扱う)。
+- 文言(`ja_jp`): `"micradrone.build.rollback.preview": "こわす ブロック %1$s こ(いれものの なかみ %2$s こは じめんに おとすよ)。いいなら おなじ コマンドに confirm を つけてね"`、`"micradrone.build.rollback.lost": "みずなどの えきたい %1$s と、もえている ねんりょうは もどらないよ"`(液体か燃料があるときだけ、予告の次の行に出す)、`"micradrone.build.rollback.started": "もとに もどしはじめるよ(しごと %1$s)"`。英語も同じ意味で。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [ ] **Step 1: 失敗するテストを書く**(担当: Devin)
 
 `RemovalPreviewTest.java`:
 ```java
@@ -10181,39 +11289,61 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class RemovalPreviewTest {
+    private static RestoreItem undo(int x, String id) {
+        return new RestoreItem(new IntPos(x, 64, 0), BlockSpec.of(id), Set.of(), BlockSpec.AIR, "j", x, true);
+    }
+
     @Test
-    void theOwnerIsToldHowManyItemsWillDrop() {
-        RestoreItem wall = new RestoreItem(new IntPos(0, 64, 0), BlockSpec.of("minecraft:stone"), Set.of(), BlockSpec.AIR, "j", 0, true);
-        RestoreItem barrel = new RestoreItem(new IntPos(1, 64, 0), BlockSpec.of("minecraft:barrel"), Set.of(), BlockSpec.AIR, "j", 1,
-                true);
-        RemovalPreview p = RemovalPreview.of(List.of(wall, barrel), Map.of(new IntPos(1, 64, 0), 17));
-        assertEquals(new RemovalPreview(2, 1, 17), p);
+    void theOwnerIsToldHowManyItemsWillDropAndWhatIsLost() {
+        List<RestoreItem> items = List.of(undo(0, "minecraft:stone"), undo(1, "create:item_vault"), undo(2, "create:depot"),
+                undo(3, "minecraft:water_cauldron"), undo(4, "minecraft:furnace"));
+        Map<IntPos, HeldContents> held = Map.of(
+                new IntPos(1, 64, 0), new HeldContents(17, 0, false),
+                new IntPos(2, 64, 0), new HeldContents(1, 0, false),
+                new IntPos(3, 64, 0), new HeldContents(0, 1000, false),
+                new IntPos(4, 64, 0), new HeldContents(3, 0, true));
+        assertEquals(new RemovalPreview(5, 3, 21, 1000, 1), RemovalPreview.of(items, held));
+        assertEquals(new RemovalPreview(1, 0, 0, 0, 0), RemovalPreview.of(List.of(undo(0, "minecraft:stone")), Map.of()),
+                "a position without an entry holds nothing");
     }
 }
 ```
 
-- [ ] **Step 2〜3: 失敗を確かめ、実装する**
+- [ ] **Step 2〜3: 失敗を確かめ、実装する**(担当: Devin)
 
-Run: `./gradlew test --tests "io.github.khayashi4337.micradrone.construction.core.RemovalPreviewTest" --console=plain` → FAIL。`RemovalPreview.of`は、`items`の数と、`itemsInContainers`で0より大きい位置の数と合計。`ChildMessagesTest`が新しい2つのキーの存在を検査する(`ChildMessages.FIXED`に足す)。
+Run: `./gradlew test --tests "io.github.khayashi4337.micradrone.construction.core.RemovalPreviewTest" --console=plain` → FAIL。`RemovalPreview.of`は、`items`の数と、`held`でアイテムが0より大きい位置の数とその合計、液体の合計、`burningFuel`の数。`ChildMessagesTest`が新しい3つのキーの存在を検査する(`ChildMessages.FIXED`に足す)。`ConstructionRuntime`の`rollback`の予告と`modify`の保留は、撤去の手順の位置を`ContainerPreview.read`で読んでから`RemovalPreview.of`を作り、`ROLLBACK_PREVIEW`(と、液体か燃料があれば`ROLLBACK_LOST`)を送る。
 
 - [ ] **Step 4: テストと実機の自動確認**
 
-Run: `./gradlew test --console=plain` → `BUILD SUCCESSFUL`、失敗0件。
+Run: `./gradlew test --console=plain` → `BUILD SUCCESSFUL`、失敗0件。(担当: Devin。ここまでで1つ目のコミット)
 
-`tools/p4/scenarios_blockentities.py`の`block-entities`(条件13・8):
+`tools/p4/scenarios_blockentities.py`の`block-entities`(条件13・8、`mode="sp"`。担当: コントローラ):
 1. 中身の入ったチェスト(プレイヤーの物)を、小屋の基礎の位置に置く→提出→保留に`E-SITE-BLOCKED`(`foreign_block_entity`)で、承認が`BLOCKING_ISSUES`→チェストと中身はそのまま(読み戻しと`data get block`の出力)。
 2. 同じ位置の空のチェスト→`confirmDestructive`なしで`DESTRUCTIVE_UNCONFIRMED`→確認つきで承認→建つ。ロールバックで**空のチェストとして戻る**(`01`・F-5の例外)。
-3. `dock_pad`つきの計画(`plans.py`: 貨物の樽を置く発着場)を建てる→樽に`item replace block ... container.0 with minecraft:apple 17`→`rollback <claimId>`の予告に「なかみ 17 こ」→`confirm`→樽は撤去され、`/build/entities {type: "minecraft:item"}`で、樽の位置の周りにリンゴ17個の落ちたアイテムがある(**消さずに落とす**)。
+3. **保管庫・デポ・樽**(条件13の本体): devkitの`/build/inject-manifest`(Task 18。開発専用。P4の部品には保管庫・デポを置く物が無いため)で、`create:item_vault`・`create:depot`・`minecraft:barrel`・`minecraft:water_cauldron[level=3]`を並べて置くジョブを入れ→`VERIFIED`(4つが「このプロジェクトが置いた物」として`PlacedRegistry`に載る)→`/build/fill-container`で保管庫にリンゴ17個・デポに鉄のインゴット1個・樽に丸石5個を入れる(`inserted`がそれぞれ17・1・5)→`rollback <claimId>`の予告に「なかみ 23 こ」と、液体の行(「みずなどの えきたい 1000 …」)→`confirm`→4つとも撤去され(読み戻しが施工前)、`/build/entities {type: "minecraft:item"}`で、その周りにリンゴ17・鉄1・丸石5の落ちたアイテムがあり、**それ以外の品物(保管庫・デポ自身の品物など)は増えていない**(クリエイティブで置いた物なので、撤去は品物を返さない)。`inject.json`に注入の中身を残す。
 4. `MODIFY`で樽を外す計画でも、同じく中身が落ちる。
 
-Run: `python tools/p4/p4_scenarios.py --only block-entities --mode sp` → `PASS`。
+このタスクのシナリオを足すコミットで、`PENDING_CONDITIONS`から条件8・13を消す。
+
+Run: `python -m tools.p4.p4_scenarios --only block-entities --mode sp` → `PASS`。
 
 - [ ] **Step 5: コミット**
 
+Devin(Step 1〜4の単体テストまで):
+```text
+git add <Filesの src の各ファイルを1つずつ>
+git commit -F <scratch>\commit_msg.txt
+```
+```text
+feat: 撤去の前にコンテナの中身・戻らない液体と燃料を見せる予告を追加(自然言語→工場建設 P4 Task 30)
+
+Implemented-by: SWE-2 via Devin CLI
+```
+コントローラ(実機の自動確認):
 ```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/main/resources/assets/micradrone/lang src/test/java/io/github/khayashi4337/micradrone/construction/core tools/p4
+git add tools/p4
 git commit -m "$(cat <<'MSG'
-feat: 撤去の前にコンテナの中身の数を見せる予告と、ブロックエンティティ(元からある物は触らない・置いた物は中身を落とす)の自動確認を追加(自然言語→工場建設 P4 Task 30)
+test: ブロックエンティティ(元からある物は触らない・置いた保管庫・デポ・樽は中身を落とす)の実機の自動確認を追加(自然言語→工場建設 P4 Task 30)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 MSG
@@ -10224,13 +11354,15 @@ MSG
 
 ### Task 31: チャンクとオフライン(F-13)— 読み込まれていなければ止まり、戻れば再開、設定でチャンクを保持
 
+**担当**: Java(`src/`)とそのコミットはDevin。台本(`tools/p4`)・devkit・`docs/`・実機の確認とそのコミットはコントローラ(Claude)(Global Constraintsの「担当の分け方」)。
+
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/ChunkSet.java`、`src/main/java/io/github/khayashi4337/micradrone/construction/ChunkKeeper.java`、`tools/p4/scenarios_offline.py`
-- Modify: `src/main/java/io/github/khayashi4337/micradrone/construction/ConstructionRuntime.java`(`RegisterTicketControllersEvent`の登録、ジョブの状態に合わせたチャンクの保持と解放)
+- Modify: `src/main/java/io/github/khayashi4337/micradrone/MicraDrone.java`(`RegisterTicketControllersEvent`の登録。**modのバス**)、`src/main/java/io/github/khayashi4337/micradrone/construction/ConstructionRuntime.java`(ジョブの状態に合わせたチャンクの保持と解放)、`tools/p4/p4_scenarios.py`
 - Test: `src/test/java/io/github/khayashi4337/micradrone/construction/core/ChunkSetTest.java`
 
 **Interfaces:**
-- Consumes: NeoForge: `RegisterTicketControllersEvent`(`net/neoforged/neoforge/common/world/chunk/RegisterTicketControllersEvent.java`)、`TicketController(ResourceLocation)`・`forceChunk(ServerLevel, UUID owner, int chunkX, int chunkZ, boolean add, boolean ticking)`(`TicketController.java`の67行)
+- Consumes: NeoForge: `RegisterTicketControllersEvent`(`net/neoforged/neoforge/common/world/chunk/RegisterTicketControllersEvent.java`。**`IModBusEvent`なので、modのバスで受ける**: `MicraDrone`のコンストラクタで`modEventBus.addListener(RegisterTicketControllersEvent.class, e -> e.register(ChunkKeeper.CONTROLLER))`。ゲームのバス(`NeoForge.EVENT_BUS`、`ConstructionRuntime.Events`)に登録すると、`IModBusEvent`は受け付けられず例外になる(`RegisterTicketControllersEvent.java` 16行、`NeoForge.java` 17〜20行。P4レビューD-4))、`TicketController(ResourceLocation)`・`forceChunk(ServerLevel, UUID owner, int chunkX, int chunkZ, boolean add, boolean ticking)`(`TicketController.java`の67行)
 - Produces:
   - `ChunkSet.of(Box worldBox) → SortedSet<Long>`(箱にかかるチャンクの座標。`ChunkSet.pack(int cx, int cz)`・`unpackX`・`unpackZ`。`cx = x >> 4`)
   - `ChunkKeeper`: `TicketController`の`micradrone:construction`。設定`chunks.continueWhileOffline`が`true`のときだけ、終わっていないジョブの区画の`worldBox`のチャンクを`forceChunk(level, ownerUuid, cx, cz, true, true)`で保持し、ジョブが終わる(`terminal()`)か`PAUSED(USER|RECOVERY_NEEDED|SITE_CHANGED)`になったら外す。**既定はOFF**(F-13の「強制読み込みは既定でオフ」)。OFFのときは、所有者が離れれば`PAUSED(OWNER_OFFLINE)`、チャンクが読み込まれていなければ`PAUSED(CHUNK_UNLOADED)`(Task 9・13)で、戻れば自動で再開(Task 13の`RETRY_INTERVAL_TICKS`)。
@@ -10267,16 +11399,33 @@ Run: `./gradlew test --tests "io.github.khayashi4337.micradrone.construction.cor
 Run: `./gradlew test --console=plain` → `BUILD SUCCESSFUL`、失敗0件。
 
 `tools/p4/scenarios_offline.py`(専用サーバー+クライアント、`--mode mp`):
-1. `offline-chunk`(F-13・条件4の再開): (a)大きめの小屋を建て始め、`tp Dev +1000 ~ ~`(チャンクが外れる距離)→`status.pause == CHUNK_UNLOADED`か`OWNER_OFFLINE`でないこと(所有者はいる)を確かめ、30秒の間`cursor`が進まない→`tp`で戻る→2秒以内に`RUNNING`に戻り、`VERIFIED`。(b)建てている途中で`/client/disconnect`→`OWNER_OFFLINE`→`/client/connect 127.0.0.1 25565`→再開→`VERIFIED`。(c)`micradrone-server.toml`の`continueWhileOffline=true`(台本がサーバーを止めて書き換え、起動し直す)で、途中で`/client/disconnect`しても`RUNNING`のまま進み、`VERIFIED`(主体は`FakePlayer`。`s9-protection`の(b)と同じ仕組み)。すべての場合で読み戻しの照合が不一致0件。
+1. `offline-chunk`(F-13・条件4の再開): (a)大きめの小屋を建て始め、`tp Dev +1000 ~ ~`(チャンクが外れる距離)→`status.pause == CHUNK_UNLOADED`であること(所有者はいるので`OWNER_OFFLINE`ではない)を確かめ、30秒の間`cursor`が進まない→`tp`で戻る→2秒以内に`RUNNING`に戻り、`VERIFIED`。(b)建てている途中で`/client/disconnect`→`OWNER_OFFLINE`→`/client/connect 127.0.0.1 25565`→再開→`VERIFIED`。(c)`run-p4/server/world/serverconfig/micradrone-server.toml`の`continueWhileOffline=true`(台本がサーバーを止めて書き換え、起動し直す。専用サーバーの設定の場所。P4レビューF-9)で、途中で`/client/disconnect`しても`RUNNING`のまま進み、`VERIFIED`(主体は`FakePlayer`。`s9-protection-offline`と同じ仕組み)。すべての場合で読み戻しの照合が不一致0件。
 
-Run: `python tools/p4/p4_scenarios.py --only offline-chunk --mode mp` → `PASS`。
+2. `s9-protection-offline`(S-9、`mode="mp"`。Task 26から分けた物): `continueWhileOffline=true`のまま、`/spike/protect-box`で小屋の壁の3ブロックを囲って有効にし、建て始めて`/client/disconnect`→所有者がいない間に置かれる位置の主体が`FakePlayer`(`/spike/protect-log`の`fakePlayer: true`)で、囲った3位置が`denied`で残らない。結果を`docs/investigations/spk_s9_place_event.md`の4節に足す。
+
+Run: `python -m tools.p4.p4_scenarios --only offline-chunk,s9-protection-offline --mode mp` → `PASS`(EULAが無ければ`NOT-RUN(eula)`。Task 19)。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/construction/core/ChunkSetTest.java tools/p4
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add src/test/java/io/github/khayashi4337/micradrone/construction/core/ChunkSetTest.java
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: チャンクとオフライン(読み込まれていなければ止まる・戻れば再開・設定でチャンクを保持)と自動確認を追加(自然言語→工場建設 P4 Task 31)
+
+Implemented-by: SWE-2 via Devin CLI
+```
+
+コントローラ(Claude。Devinのコミットの後):
+```bash
+git add tools/p4
+git commit -m "$(cat <<'MSG'
+test: Task 31の実機の自動確認のシナリオ・証拠の手順を追加(自然言語→工場建設 P4 Task 31)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 MSG
@@ -10287,10 +11436,12 @@ MSG
 
 ### Task 32: 分割ペイロード(30KBのチャンク・全体2MB・ハッシュ検証)、承認のペイロード、問い合わせ経路(F-8)、クライアントのデバッグコマンド、S-6の測定
 
+**担当**: Java(`src/`)とそのコミットはDevin。台本(`tools/p4`)・devkit・`docs/`・実機の確認とそのコミットはコントローラ(Claude)(Global Constraintsの「担当の分け方」)。
+
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/{UploadChunk,UploadResult,UploadAssembler,PlanChunker,QueryKind,PendingQueries,SurveyCodec}.java`、`src/main/java/io/github/khayashi4337/micradrone/construction/net/{SubmitPlanPayload,PlanPreviewPayload,ApprovePlanPayload,JobStatusPayload,QueryRequestPayload,QueryResponsePayload,BuildNetHandlers}.java`、`src/main/java/io/github/khayashi4337/micradrone/client/build/{ClientBuildCommands,ClientUploads,ClientQueries}.java`、`tools/p4/scenarios_net.py`
-- Modify: `src/main/java/io/github/khayashi4337/micradrone/MicraDrone.java`(ペイロードの登録。既存の登録は変えない)、`src/main/java/io/github/khayashi4337/micradrone/MicraDroneClient.java`(クライアントのコマンド・受信)、`src/main/java/io/github/khayashi4337/micradrone/construction/ConstructionRuntime.java`(`lastUploadTree`)、devkit(`/client/upload`・`/client/approve-remote`・`/spike/send-probe`の実装)、`docs/investigations/spk_s6_payload_limits.md`(5節の結果)
-- Test: `src/test/java/io/github/khayashi4337/micradrone/construction/core/{PlanChunkerTest,UploadAssemblerTest,PendingQueriesTest,SurveyCodecTest}.java`
+- Modify: `src/main/java/io/github/khayashi4337/micradrone/MicraDrone.java`(ペイロードの登録。既存の登録は変えない)、`src/main/java/io/github/khayashi4337/micradrone/MicraDroneClient.java`(クライアントのコマンド・受信)、`src/main/java/io/github/khayashi4337/micradrone/construction/ConstructionRuntime.java`(`lastUploadTree`)、`src/main/java/io/github/khayashi4337/micradrone/build/model/Hashing.java`(`sha256Hex(byte[])`)、devkit(`/client/upload`・`/client/approve-remote`の実装。`/spike/send-probe`はTask 18で作ってある)、`docs/investigations/spk_s6_payload_limits.md`(5節の結果)、`tools/p4/p4_scenarios.py`、`tools/p4/plans.py`(`many_parts_patch(n)`: 柱をn本並べた計画。P4レビューB-11)
+- Test: `src/test/java/io/github/khayashi4337/micradrone/construction/core/{PlanChunkerTest,UploadAssemblerTest,PendingQueriesTest,SurveyCodecTest,QueryArgsTest}.java`
 
 **Interfaces:**
 - Produces:
@@ -10300,6 +11451,7 @@ MSG
   - `UploadAssembler`: `UPLOAD_START_COOLDOWN_TICKS = 100`(新しい送信を始められる間隔=5秒。F-3の「レート制限あり」の値。設計に数値なし)、`UPLOAD_IDLE_TIMEOUT_TICKS = 600`(30秒チャンクが来なければ捨てる。設計に数値なし)、`UploadResult accept(UUID player, UploadChunk chunk, long tick)`(プレイヤーごとに同時1件、`seq`の範囲・`total`と`sha256`の一致・大きさ・同じ`seq`の重複(同じ中身は無視、違う中身は拒否)・全体の上限・完成時のハッシュ検証)、`void expire(long tick)`
   - `enum QueryKind {SITE_SURVEY, JOB_STATUS, JOBS, MANIFEST, PENDING}`、`QUERY_ARGS_MAX_BYTES = 30 * 1024`(F-8)、`PendingQueries`(クライアント側): `QUERY_TIMEOUT_MS = 5_000`(F-8)、`CompletableFuture<String> register(String requestId, long nowMillis)`、`void complete(String requestId, String json)`、`void expire(long nowMillis)`(期限切れは`TimeoutException`で失敗)
   - `SurveyCodec`(`SiteSurvey`↔木。クライアントが同じ調査でコンパイルし直すため)
+  - `QueryArgs.check(String kind, String argsJson) → Optional<String>`(サーバー側の問い合わせの検査。F-8: 知らない`kind`、`QUERY_ARGS_MAX_BYTES`を超える引数、`SITE_SURVEY`の範囲が`SafetyLimits`の最大の箱を超える要求は、理由を返して答えない。答えが30KBを超えれば`PlanChunker.split`で分けて送る。P4レビューA1-10)
   - ペイロード(`construction.net`。`TYPE`は`micradrone:build_submit`などの名前付き定数): `SubmitPlanPayload(String uploadId, int seq, int total, String sha256, byte[] bytes)`(C2S。**計画の本文だけ**を運ぶ。展開結果・施工リストの欄は無い=サーバーはクライアントの計算を受け取れない。F-3)、`PlanPreviewPayload(byte[] json)`(S2C。`JobViews.submitTree`)、`ApprovePlanPayload(String manifestHash, List<String> acceptedRiskIds, boolean confirmTerraform, boolean confirmDestructive, String ownerName)`(C2S)、`JobStatusPayload(byte[] json)`(S2C)、`QueryRequestPayload(String requestId, String kind, String argsJson)`(C2S。`argsJson`は30KBまで)、`QueryResponsePayload(String requestId, int seq, int total, byte[] bytes)`(S2C。`PlanChunker`で分けて送る)。本文は`ByteBufCodecs.byteArray(上限)`(Task 1: 文字列の32,767文字の上限を避ける)
   - `BuildNetHandlers`: 受信の検査(大きさ・IDの形・プレイヤーがいること。F-22)の後、`UploadAssembler`→`Complete`なら`PlanFileReader.read`→`ConstructionRuntime.submit`→保留ができたら`PlanPreviewPayload`を返す。`ApprovePlanPayload`→`ConstructionRuntime.approve`(承認者の今のディメンションで。D-27)→`JobStatusPayload`。`QueryRequestPayload`→`kind`ごとの`JobViews`・`SurveyCodec`のJSON→`QueryResponsePayload`。
   - クライアントのコマンド(`RegisterClientCommandsEvent`。サーバーの`/micradrone`と重ならないよう`/micradrone-client`): `build upload <path>`(`<gameDir>/micradrone/plans/`の中のファイルを`PlanChunker.split`で送る。`PlanSource.resolve`で同じ検査)、`build approve-remote <hash> [flags]`(`ApproveArgs`で解釈し`ApprovePlanPayload`を送る)。`PlanPreviewPayload`を受けたら、`QueryRequestPayload(SITE_SURVEY, 保留の調査のダイジェスト)`で調査を取り寄せ、**クライアントでも同じ計画を同じ調査でコンパイルし(作業スレッド)、サーバーのハッシュと比べる**(D-6)。一致しなければ`E-REGISTRY-VERSION`の子供向けの文(「ぶひんの リストの バージョンが ちがうよ」)を出す。
@@ -10403,7 +11555,7 @@ class UploadAssemblerTest {
     }
 }
 ```
-`PendingQueriesTest.java`(`register`→`complete`で値が届く、`expire(now + QUERY_TIMEOUT_MS + 1)`で`TimeoutException`で失敗、知らない`requestId`の`complete`は無視)。`SurveyCodecTest.java`(`SiteSurvey.flat(...).withColumn(...)`が木を往復して同じ`digest`)。
+`PendingQueriesTest.java`(`register`→`complete`で値が届く、`expire(now + QUERY_TIMEOUT_MS + 1)`で`TimeoutException`で失敗、知らない`requestId`の`complete`は無視)。`QueryArgsTest.java`(30KB+1バイトの引数・知らない`kind`・129ブロック幅の`SITE_SURVEY`の範囲がそれぞれ理由つきで断られ、小屋の範囲の`SITE_SURVEY`と`JOB_STATUS`は通る)。`SurveyCodecTest.java`(`SiteSurvey.flat(...).withColumn(...)`が木を往復して同じ`digest`)。
 
 - [ ] **Step 2: テストが失敗することを確かめる**
 
@@ -10529,14 +11681,31 @@ Run: `./gradlew test --console=plain` → `BUILD SUCCESSFUL`、失敗0件。
 3. `dimension-bound`(条件5・D-27): オーバーワールドで提出→`execute in minecraft:the_nether run tp Dev 0 100 0`→正しいハッシュで`approve-remote`→`reject.dimension_mismatch`→オーバーワールドに戻って承認→承認できる。
 4. `s6-payload-limits`(S-6の測定): Task 1の4の手順。`--mode sp`と`--mode mp`で1回ずつ。結果を`docs/investigations/spk_s6_payload_limits.md`の5節に書く(`run-evidence`の`s6-payload-limits.json`を表にする)。
 
-Run: `python tools/p4/p4_scenarios.py --only payload-30kb,fake-approval,dimension-bound,s6-payload-limits --mode both` → `PASS`。
+このタスクのシナリオを足すコミットで、`PENDING_CONDITIONS`から条件9を消す。
+
+Run: `python -m tools.p4.p4_scenarios --only payload-30kb,fake-approval,dimension-bound,s6-payload-limits --mode all` → `PASS`(`mp`の分はEULAが無ければ`NOT-RUN(eula)`)。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone tools/p4 src/test/java/io/github/khayashi4337/micradrone/construction/core docs/investigations/spk_s6_payload_limits.md
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/test/java/io/github/khayashi4337/micradrone/construction/core の下の、このタスクで作った・変えたファイルを1つずつ>
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: 計画の分割送信(30KB・全体2MB・ハッシュ検証)と承認・状態・問い合わせのペイロード、クライアントでのハッシュの照合、S-6の測定を追加(自然言語→工場建設 P4 Task 32)
+
+Implemented-by: SWE-2 via Devin CLI
+```
+
+コントローラ(Claude。Devinのコミットの後):
+```bash
+git add tools/p4 docs/investigations/spk_s6_payload_limits.md
+git commit -m "$(cat <<'MSG'
+test: Task 32の実機の自動確認のシナリオ・証拠の手順を追加(自然言語→工場建設 P4 Task 32)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 MSG
@@ -10547,13 +11716,16 @@ MSG
 
 ### Task 33: 性能の線(MSPT)と同時ジョブ・自動減速の自動確認
 
+**担当**: Java(`src/`)とそのコミットはDevin。台本(`tools/p4`)・devkit・`docs/`・実機の確認とそのコミットはコントローラ(Claude)(Global Constraintsの「担当の分け方」)。
+
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/MsptStats.java`、`tools/p4/scenarios_perf.py`
-- Modify: `src/main/java/io/github/khayashi4337/micradrone/construction/{ConstructionRuntime,BuildCommands}.java`(`perf`)、devkit(`/spike/load {msPerTick}`: サーバーのtickの終わりに、指定のミリ秒だけ待って重さを作る開発専用の道具。`0`で止める)
+- Modify: `src/main/java/io/github/khayashi4337/micradrone/construction/{ConstructionRuntime,BuildCommands}.java`(`perf`・`perfTree()`。P4レビューB-13: `MsptStats`が要るのでTask 16ではなくここ)、devkit(`/spike/load {msPerTick}`: **`ServerTickEvent.Pre`で**、指定のミリ秒だけ待って重さを作る開発専用の道具。`0`で止める。`Pre`はtickの時間を測る窓の中にある。P4レビューD-1。`/build/perf`もここで足す)、`tools/p4/p4_scenarios.py`、`tools/p4/plans.py`(`big_block_patch(n)`: ちょうどn配置の計画。P4レビューB-11)
 - Test: `src/test/java/io/github/khayashi4337/micradrone/construction/core/MsptStatsTest.java`
 
 **Interfaces:**
-- Produces: `MsptStats`: `WINDOW = 100`(バニラの`MinecraftServer.tickTimesNanos`と同じ100tickの窓)、`void sample(double mspt, boolean constructionActive)`、`double idleMean()`・`double activeMean()`・`double activeMax()`、`double increase()`(`activeMean - idleMean`)。コマンド`/micradrone build perf`と`perfTree()`: 今の平均、施工が無い間の平均、施工中の平均と最大、`slowed`、動いているジョブの数、待っているジョブの数。
+- Produces: `MsptStats`: `WINDOW = 100`(バニラの`MinecraftServer.tickTimesNanos`と同じ100tickの窓)、`void sample(double mspt, boolean constructionActive, double workMs)`(`workMs`はTask 16の`lastTickWorkNanos()`をミリ秒にした物=このランタイムの処理そのものの時間)、`double idleMean()`・`double activeMean()`・`double activeMax()`、`double increase()`(`activeMean - idleMean`)、`double workMean()`・`double workMax()`(施工中のランタイムの処理の時間)。コマンド`/micradrone build perf`と`perfTree()`: 今の平均、施工が無い間の平均、施工中の平均と最大、ランタイムの処理の平均と最大、`slowed`、動いているジョブの数、待っているジョブの数。
+- **測り方**(P4レビューD-1): 施工の仕事は`ServerTickEvent.Pre`で行う(Task 16)ので、`getAverageTickTimeNanos()`に施工の時間が入る。サーバー全体の増加(`increase`)で完了条件10を判定し、ランタイム自身の時間(`workMean`・`workMax`)も並べて記録する(増加の原因が施工か、それ以外かを見分けるため)。
 
 - [ ] **Step 1: 失敗するテストを書く**
 
@@ -10591,7 +11763,7 @@ class MsptStatsTest {
 
 - [ ] **Step 2〜3: 失敗を確かめ、実装する**
 
-Run: `./gradlew test --tests "io.github.khayashi4337.micradrone.construction.core.MsptStatsTest" --console=plain` → FAIL。`MsptStats`は、施工中と施工の無い間の、それぞれ最後の`WINDOW`個の標本(`ArrayDeque<Double>`)。ランタイムは毎tick、`server.getAverageTickTimeNanos() / NANOS_PER_MILLI`を、ジョブが`RUNNING`・`VERIFYING`・`REPAIRING`の間か否かで入れる。
+Run: `./gradlew test --tests "io.github.khayashi4337.micradrone.construction.core.MsptStatsTest" --console=plain` → FAIL。`MsptStats`は、施工中と施工の無い間の、それぞれ最後の`WINDOW`個の標本(`ArrayDeque<Double>`)。ランタイムは毎tick、`server.getAverageTickTimeNanos() / NANOS_PER_MILLI`を、ジョブが`RUNNING`・`VERIFYING`・`REPAIRING`の間か否かと、`lastTickWorkNanos() / NANOS_PER_MILLI`と一緒に入れる。
 
 - [ ] **Step 4: テストと実機の自動確認**
 
@@ -10601,14 +11773,31 @@ Run: `./gradlew test --console=plain` → `BUILD SUCCESSFUL`、失敗0件。
 1. `perf-20000`: `plans.big_block_patch(20_000)`(20,000配置ちょうどの計画。3階建ての大きな建物など。上限の中)を用意→施工の無い状態で60秒、`/build/perf`を1秒ごとに記録(基準)→提出(**このとき、コンパイルがワーカーで走り、提出から保留までの間のサーバーの1tickの時間の最大が50msを超えない**=メインスレッドを止めない)→承認(クリエイティブ、既定の速度)→`VERIFIED`まで記録→**施工中の平均MSPTの増加が5ms以内、最大の増加が15ms以内**(`perf.json`に基準・施工中の標本・判定)。合格しないときは、証拠を添えて、原因(何のtickが重いか。`/build/perf`の内訳と、サーバーのログのプロファイル)を調べて直す(設計の数値を緩める場合は、理由を記録して林さんに報告する。`07`の「数値の合格線について」)。
 2. `four-jobs`: `continueWhileOffline=true`で、`Dev`と`Intruder1〜3`(devkitの`/server/run-as`)が離れた4か所に小屋を提出・承認→4つが同時に`RUNNING`、5つ目(`Intruder4`)は`QUEUED`で`status.pause == SERVER_BUSY`→その間のサーバー全体の平均MSPTが45ms以内→`/spike/load {msPerTick: 60}`で重さを作る→`/build/perf`の`slowed: true`・動いているジョブの`status.pause == SERVER_BUSY`→`/spike/load {msPerTick: 0}`→40msを下回った後に`slowed: false`→全部`VERIFIED`。
 
-Run: `python tools/p4/p4_scenarios.py --only perf-20000,four-jobs --mode mp` → `PASS`。
+このタスクのシナリオを足すコミットで、`PENDING_CONDITIONS`から条件10を消す。
+
+Run: `python -m tools.p4.p4_scenarios --only perf-20000,four-jobs --mode mp` → `PASS`(EULAが無ければ`NOT-RUN(eula)`)。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/construction/core/MsptStatsTest.java tools/p4
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add src/test/java/io/github/khayashi4337/micradrone/construction/core/MsptStatsTest.java
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: 施工中のMSPTの計測(perf)と、20,000設置の性能の線・4ジョブ同時と自動減速の自動確認を追加(自然言語→工場建設 P4 Task 33)
+
+Implemented-by: SWE-2 via Devin CLI
+```
+
+コントローラ(Claude。Devinのコミットの後):
+```bash
+git add tools/p4
+git commit -m "$(cat <<'MSG'
+test: Task 33の実機の自動確認のシナリオ・証拠の手順を追加(自然言語→工場建設 P4 Task 33)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 MSG
@@ -10618,6 +11807,8 @@ MSG
 ---
 
 ### Task 34: ログと診断(F-17)・マルチプレイ(F-16)・専用サーバーとクライアント2つの自動確認
+
+**担当**: Java(`src/`)とそのコミットはDevin。台本(`tools/p4`)・devkit・`docs/`・実機の確認とそのコミットはコントローラ(Claude)(Global Constraintsの「担当の分け方」)。
 
 **Files:**
 - Create: `src/main/java/io/github/khayashi4337/micradrone/construction/core/JobEventLog.java`、`tools/p4/scenarios_multiplayer.py`
@@ -10671,16 +11862,33 @@ Run: `./gradlew test --tests "io.github.khayashi4337.micradrone.construction.cor
 
 Run: `./gradlew test --console=plain` → `BUILD SUCCESSFUL`、失敗0件。
 
-`tools/p4/scenarios_multiplayer.py`の`dedicated-two-clients`(条件6・F-16。`--mode mp2`): `serverP4`+`clientMpP4`(`Dev`、OP。台本が`ops.json`に書く)+`client2P4`(`Dev2`、OPでない)。**空きメモリが`MIN_FREE_MEMORY_GIB_TWO_CLIENTS`より少なければ、`SKIPPED(resource)`と測った数値を証拠に書き、`permissions-single`(Task 26、偽のプレイヤーで同じ論理を確かめた物)を代わりの根拠として`summary.json`に明記する**(黙って飛ばさない)。手順: (1)`Dev`が小屋を建てる→`Dev2`の`/micradrone build list`(`/server/run-as`ではなく**`Dev2`のクライアントのチャット経由**: devkitの2つ目のクライアントAPI(47393)の`/client/chat-log`で見る)に`Dev`のジョブが見える。(2)`Dev2`がクライアントから`/micradrone-client build approve-remote <Devの保留のハッシュ> owner=Dev`→`reject.not_owner`。(3)`Dev2`が`/micradrone build cancel <Devのジョブ>`(サーバーのコマンドをクライアントから打つのは、devkitのクライアントAPIに`/client/send-command {command}`を足して`Minecraft.player.connection.sendCommand`で送る。**キーボードの合成入力ではない**)→`control.not_allowed`。(4)`Dev2`がDevの区画に重なる計画を提出→`E-CLAIM-OVERLAP`。(5)`Dev2`がスポーンから16ブロック以内に小屋を提出→承認→スポーン保護で置けない位置が`denied`→`PARTIAL`(理由`blocked=N`)。(6)`Dev`(OP)は`Dev2`のジョブを取消できる。(7)両方のクライアントの`/client/chat-log`とスクリーンショットを証拠に。
+`tools/p4/scenarios_multiplayer.py`の`dedicated-two-clients`(条件6・F-16。`--mode mp2`): `serverP4`+`clientMpP4`(`Dev`、OP。台本が`ops.json`に書く)+`client2P4`(`Dev2`、OPでない)。**空きメモリが`harness.required_free_gib(3)`(3つのJVMの`-Xmx3G`から求めた数。Task 19)より少なければ、`NOT-RUN(resource)`と、必要な数・空きの数・メモリの多いプロセスを証拠に書く。`NOT-RUN`は合格ではなく、代わりの根拠も立てない**(P4レビューA1-4。`permissions-single`は1つのクライアントの論理の確認で、条件6の「クライアント2つ」の代わりにならない)。Task 38は`NOT-RUN`が残る限り失敗する。手順: (1)`Dev`が小屋を建てる→`Dev2`の`/micradrone build list`(`/server/run-as`ではなく**`Dev2`のクライアントのチャット経由**: devkitの2つ目のクライアントAPI(47393)の`/client/chat-log`で見る)に`Dev`のジョブが見える。(2)`Dev2`がクライアントから`/micradrone-client build approve-remote <Devの保留のハッシュ> owner=Dev`→`reject.not_owner`。(3)`Dev2`が`/micradrone build cancel <Devのジョブ>`(サーバーのコマンドをクライアントから打つのは、devkitのクライアントAPIに`/client/send-command {command}`を足して`Minecraft.player.connection.sendCommand`で送る。**キーボードの合成入力ではない**)→`control.not_allowed`。(4)`Dev2`がDevの区画に重なる計画を提出→`E-CLAIM-OVERLAP`。(5)`Dev2`がスポーンから16ブロック以内に小屋を提出→承認→スポーン保護で置けない位置が`denied`→`PARTIAL`(理由`blocked=N`)。(6)`Dev`(OP)は`Dev2`のジョブを取消できる。(7)両方のクライアントの`/client/chat-log`とスクリーンショットを証拠に。
 
-Run: `python tools/p4/p4_scenarios.py --only dedicated-two-clients --mode mp2` → `PASS`か、理由と数値つきの`SKIPPED(resource)`。
+このタスクのシナリオを足すコミットで、`PENDING_CONDITIONS`から条件6を消す。
+
+Run: `python -m tools.p4.p4_scenarios --only dedicated-two-clients --mode mp2` → `PASS`。`NOT-RUN(resource)`・`NOT-RUN(eula)`なら、その理由をTask 38の報告に書く(合格として数えない)。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/main/java/io/github/khayashi4337/micradrone/construction src/test/java/io/github/khayashi4337/micradrone/construction/core/JobEventLogTest.java tools/p4
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add src/test/java/io/github/khayashi4337/micradrone/construction/core/JobEventLogTest.java
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 feat: ジョブの出来事のログと状態の診断、他人のジョブの表示と、専用サーバー+クライアント2つの自動確認を追加(自然言語→工場建設 P4 Task 34)
+
+Implemented-by: SWE-2 via Devin CLI
+```
+
+コントローラ(Claude。Devinのコミットの後):
+```bash
+git add tools/p4
+git commit -m "$(cat <<'MSG'
+test: Task 34の実機の自動確認のシナリオ・証拠の手順を追加(自然言語→工場建設 P4 Task 34)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 MSG
@@ -10693,11 +11901,13 @@ MSG
 
 ### Task 35: ドキュメントの同時更新(F-19)と、設計図の整合、既存の権限の穴のIssue
 
+**担当**: コントローラ(Claude)が設計図・README・CurseForgeの説明・Issueを行う。ゲーム内のヘルプ(`BuildCommands`・`ChildMessages`・言語ファイル)のJavaとJSONはDevinが行い、別のコミットにする(Step 1の前半)。
+
 **Files:**
 - Modify: `README.md`(「建設(開発中): `/micradrone build ...`」の節。コマンドの一覧・見本の小屋の建て方・サバイバルでは材料が要ること・補給チェスト)、`docs/curseforge_description.md`(同じ内容の短い版)、`src/main/java/io/github/khayashi4337/micradrone/construction/BuildCommands.java`(`/micradrone build help`: 子供向けの翻訳キーでコマンドの一覧を出す)、`src/main/resources/assets/micradrone/lang/{ja_jp,en_us}.json`(`micradrone.build.help.*`)、`src/main/java/io/github/khayashi4337/micradrone/construction/core/ChildMessages.java`(`help`のキー)、設計図`docs/design/nl_factory_builder/{00_index_and_principles,01_data_model,04_foundations,05_parts_and_analyzers,07_phases_and_verification}.md`
 - Test: 既存の`ChildMessagesTest`(新しいキーの存在)
 
-- [ ] **Step 1: ゲーム内のヘルプとREADME・CurseForgeの説明**
+- [ ] **Step 1: ゲーム内のヘルプ(Devin)とREADME・CurseForgeの説明(コントローラ)**
 
 `/micradrone build help`は`micradrone.build.help.submit`・`.approve`・`.status`・`.cancel`・`.resume`・`.verify`・`.rollback`・`.modify`・`.supply`・`.recover`・`.perf`・`.check`の各行を出す(ひらがな中心。`ChildMessagesTest`の漢字の割合の検査を通る)。README・CurseForgeは、この計画書のコマンドの一覧と同じ内容を大人向けに書く(「開発中のデバッグ機能」と明記)。
 
@@ -10706,16 +11916,17 @@ MSG
 1. `01` 8節: `PauseReason`の`SITE_CHANGED`、`ConstructionJob.acceptedRiskIds`(Task 3で済み。重複して直さない)、`ApprovalRequest`を`(manifestHash, dimension, playerUuid, acceptedRisks, confirmations)`に(期限は`PendingApproval`が持つ)、`ObservedBlock`(実装は`block`の名前。設計の`spec`を`block`に)、`MaterialLedger`の欄を`consumed`・`returned`・`yielded`・`reclaimed`に(設計の`reserved`は、設置ごとの消費では生じない。返却と整地の受け渡しの冪等な記録が要る)、`CompareScope`に`IndexRange`、`JournalRecord`(`UndoEntry`に置いた物と、台帳のキー)。
 2. `01` 7節・11節: `SiteSurvey`に`dimension`を足す(D-27: 調査もディメンションに縛る)。置き場を`build.compile`に(12節の表)。`ReplacePolicy`に`Terraform`。
 3. `01` 12節: `build.verify`・`build.analyze`の行(Task 3で済み)に、`SnapshotCollector`・`VolatileProps`・`VoxelGridFiller`を足す。`build.compile`の行に`BlockMatch`・`BlockToItem`・`ItemCount`・`SiteSurvey`・`SiteSurveyBuilder`・`TerrainPrep`・`PhaseRanges`。
-4. `04` F-2: ジョブの記録と台帳は「`LevelEvent.Save`で書く(`SavedData`→記録の順)。記録がカーソルより遅れていれば`RECOVERY_NEEDED`、先に進んでいれば冪等に再開」。自動減速の戻りの線40ms(`RECOVER_BELOW_MSPT`)。`ServerWorkerPool`の既定(2スレッド・待ち8件)。調査の1tickの列の数(1,024)。`JobService.RETRY_INTERVAL_TICKS`(20)。L7の修復は同じジョブの中の`REPAIRING`で行い、`JobKind.REPAIR`は「建てた後の点検」(`verify`)と復旧(a)のジョブに使う。
+4. `04` F-2: ジョブの記録と台帳は「`LevelEvent.Save`で書く」。**保存の順序の事実**(Task 24の節をそのまま写す: 呼ぶ順はプレイヤー(同期)→`SavedData`→チャンク→`LevelEvent.Save`だが、`SavedData`とチャンクはI/Oのスレッドで非同期に書かれ、チャンクは読み込みから外れた時にも書かれる。出どころの行番号つき)。落ちた後は、記録がカーソルより進む(冪等に再開)・遅れる・**世界が記録より進む**のどれも起こりうるので、復旧したジョブは最初に**引き取り**(`AdoptPass`: 承認の時の調査で置き換えてよかった位置に、施工リストどおりのブロックがあれば、このジョブの物として記録に入れる。台帳は付けない)を行い、その後でカーソルより前の記録がそろっていなければ`RECOVERY_NEEDED`。承認の時の調査を`jobs/<id>/survey.bin`に残す。**施工の仕事は`ServerTickEvent.Pre`で行い**(`Post`は`getAverageTickTimeNanos()`の窓の外なので、自動減速も性能の線も施工の重さを見られない)、ランタイム自身の処理の時間を`System.nanoTime()`で測って`MsptStats`に別に記録する。自動減速の戻りの線40ms(`RECOVER_BELOW_MSPT`)。`ServerWorkerPool`の既定(2スレッド・待ち8件)。調査の1tickの列の数(1,024)。`JobService.RETRY_INTERVAL_TICKS`(20)。L7の修復は同じジョブの中の`REPAIRING`で行い、`JobKind.REPAIR`は「建てた後の点検」(`verify`)と復旧(a)のジョブに使う。
 5. `04` F-3: 分割の送信の`UPLOAD_START_COOLDOWN_TICKS`(100)・`UPLOAD_IDLE_TIMEOUT_TICKS`(600)。クライアント側のコマンドの根は`/micradrone-client`。
 6. `04` F-4: 補給チェストの指定方法(`/micradrone build supply add <pos>`、区画の中のコンテナ)。`permissions.largeJobPlacements`(既定20,000)。承認で他人の保留を名指す`owner=<名前>`。
-7. `04` F-5: 撤去の承認画面の代わりに、`rollback <claimId>`の予告と`confirm`。P4のコンテナはバニラのアイテムだけ(液体・燃料の損失の表示はP10の部品で)。OPの緩和は設定の`safety.opMax*`。
+7. `04` F-5: 撤去の承認画面の代わりに、`rollback <claimId>`の予告と`confirm`。入れ物の中身は、アイテムの能力(`Capabilities.ItemHandler.BLOCK`)で取り出して落とす(Createの保管庫・デポも、Createのクラスをimportせずに同じ道)。液体(`Capabilities.FluidHandler.BLOCK`)と燃えている燃料は戻らないので、予告の文で先に知らせる。OPの緩和は設定の`safety.opMax*`。
+7b. `04` F-14(撤去の書き方): 撤去は`Block.UPDATE_CLIENTS | UPDATE_KNOWN_SHAPE | UPDATE_SUPPRESS_DROPS`(2|16|32)で1位置ずつ静かに変え、1つの部品(扉の上下)を戻し終えたら隣の更新をまとめて行う(`Level.markAndNotifyBlock`が形の更新のフラグから32を消すので、32だけではアイテムが落ちる)。撤去の順は「付いている物(扉・看板・たいまつ・ランタンなど)が先、扉の上下は続けて、残りは上から下」(`Attachments.REMOVAL_ORDER`)。「戻す先の状態がすでにある」位置は、済んだものとして記録する。設置はバニラの`BlockItem`と同じく、スナップショットを捕まえてから設置のイベントで決め、通ったものだけ`onPlace`と隣の更新を行う(`CommonHooks.onPlaceItemIntoWorld`と同じ形)。
 8. `04` F-5の整地の行: 切る範囲は「施工リストの足跡の列で、その列の一番下の置く位置から建物全体の最上段まで(地面の高さまで)」、盛るのは「一番下の置く位置の下から地面まで」。建物ごとの高さで切る規則はP6の`SemanticMap`が入るときに見直す。
 8b. `04` F-7: 整地で切った地面の渡し方(`BlockToItem.cutYield`: 草の地面→土、石→丸石 など、素手でない普通の採掘と同じ)。ロールバックで地面を戻すときは、渡した分を取り返す(足りなければ`MATERIALS_MISSING`)。
 9. `04` F-13: `ChunkKeeper`(`TicketController`)と設定`continueWhileOffline`。
-10. `05` 1.1.1節の注: `EXACT`と`STATE_SUBSET`は、P4の比較では同じ(期待に書いた状態だけ比べる)。状態を持たないブロックは`EXACT`なので違いが出ない。
+10. `05` 1.1.1節: **直さない**(P4は設計どおり、`EXACT`は観測と期待の状態を全部比べ、`STATE_SUBSET`は期待に書いた状態だけを比べる。前の版の計画書にあった「P4では同じ」は取り消した。P4レビューA1/G-5)。
 11. `05` 4.1節: `E-CLAIM-OVERLAP`・`E-CLAIM-LIMIT`・`E-REPLACE-UNCONFIRMED`・`E-PERMISSION-DENIED`(Task 11・12・26で済み)。
-12. `07` P4: 完了条件の確かめ方を「実機の自動確認(devkitと台本)と子供ペルソナの確認」に(オーナーの指示 2026-09-30)。S-6・S-9の行(Task 1・2で済み)。`07` 4節のテスト戦略の「実機確認」の行を「devkitと台本で自動。見た目の判断は視覚のパスとペルソナ。オーナーだけの項目は理由つきの最小限」に。新しい設計の文書`09_personas_and_playtest.md`(Task 36)を`00`の表に足す。
+12. `07` P4: 完了条件の確かめ方を「実機の自動確認(devkitと台本)と子供ペルソナの確認」に(オーナーの指示 2026-09-30)。自動確認の状態は`PASS`・`FAIL`・`NOT-RUN`の3つで、**`NOT-RUN`(メモリ不足・EULAが無い など)は合格として数えない**。シングルプレイの確認はEULAに依存しない(devkitの`/client/create-world`で世界を作る)。S-6・S-9の行(Task 1・2で済み)。`07` 4節のテスト戦略の「実機確認」の行を「devkitと台本で自動。見た目の判断は視覚のパスとペルソナ。オーナーだけの項目は理由つきの最小限」に。新しい設計の文書`09_personas_and_playtest.md`(Task 36)を`00`の表に足す。
 13. `07` P4の「作る物」の`F-23の一部`: P4の分は「ジョブをIDで引ける状態の問い合わせ」(Task 34)であることを書く。
 14. `02` N-29: 読み取りのロジックは`BlockRangeDescription`と共有しない(あちらは名前を短くするので、完全なIDが要る`ServerStateReader`とは共有できない。`BlockRangeDescription`は変更しない)。
 15. `00`の変更履歴に「**第8版**(2026-09-30、P4の計画): 上の各項目と、なぜ直したか」を1項目で足す。
@@ -10728,10 +11939,25 @@ Run: `git diff --stat docs/design`で、意図した6ファイル(`00`・`01`・
 
 - [ ] **Step 4: コミット**
 
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add <src/main/java/io/github/khayashi4337/micradrone/construction の下の、このタスクで作った・変えたファイルを1つずつ>
+git add <src/main/resources/assets/micradrone/lang の下の、このタスクで作った・変えたファイルを1つずつ>
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
+feat: ゲーム内の建設のヘルプ(/micradrone build help)を追加(自然言語→工場建設 P4 Task 35)
+
+Implemented-by: SWE-2 via Devin CLI
+```
+
+コントローラ(Claude。Devinのコミットの後):
 ```bash
-git add README.md docs/curseforge_description.md docs/design/nl_factory_builder src/main/java/io/github/khayashi4337/micradrone/construction src/main/resources/assets/micradrone/lang
+git add README.md docs/curseforge_description.md docs/design/nl_factory_builder
 git commit -m "$(cat <<'MSG'
-docs: P4で確定した設計を設計図に反映し、README・CurseForgeの説明・ゲーム内の建設のヘルプを更新(自然言語→工場建設 P4 Task 35)
+docs: P4で確定した設計を設計図に反映し、README・CurseForgeの説明を更新(自然言語→工場建設 P4 Task 35)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 MSG
@@ -10741,6 +11967,8 @@ MSG
 ---
 
 ### Task 36: 子供ペルソナとプレイテストの手順(`09_personas_and_playtest.md`)と、ペルソナに渡す資料の束
+
+**担当: コントローラ(Claude)**。設計図とPythonなので、Devinには渡さない。
 
 オーナーの代わりに、**子供の目で**見える物を確かめる仕組み。人は入らない: 新しいサブエージェントが、子供が見る物**だけ**を渡されてペルソナを演じ、分かったこと・つまずいた所・次にやりそうなこと・楽しかったかを書く。別の視覚のパスが、スクリーンショットを見て「頼んだ小屋に見えるか」を判定する。失敗は、つまずいた所の引用つきで直す課題になる。
 
@@ -10766,7 +11994,7 @@ MSG
 
 - [ ] **Step 2: 資料の束を作る道具**
 
-`tools/p4/persona_bundle.py`: `build_bundle(run_dir, out_dir)`が、上の(a)の物だけを`out_dir/bundle.md`と画像に集める。**入れてはいけない物の検査**: 束の文字列に`E-`で始まる問題のコード・`jobId`以外の内部のID(`claim-`・ハッシュの64桁)・`.java`・`{`で始まるJSONが入っていないこと(入っていれば例外。子供が見る文にこれらが混ざっていたら、それ自体が直す課題)。`tools/p4/tests/test_persona_bundle.py`: 偽の実行フォルダ(チャットの文と画像1枚)から束ができ、内部の値の混入で例外になること。
+`tools/p4/persona_bundle.py`: `build_bundle(run_dir, out_dir)`が、上の(a)の物だけを`out_dir/bundle.md`と画像に集める。**灰色の問題のコードの扱い**(P4レビューB-12): `ServerMessages.issueLine`(Task 16)は、子供向けの文の後に灰色で` (E-…)`を付ける(大人が調べるための印)。束を作る時は、行の終わりの` (E-[A-Z-]+)`だけを取り除いてから入れる(子供の文ではないので、ペルソナには渡さない。`09`にこの扱いを書く)。**入れてはいけない物の検査**(取り除いた後で): 束の文字列に`E-`で始まる問題のコード・`jobId`以外の内部のID(`claim-`・ハッシュの64桁)・`.java`・`{`で始まるJSONが入っていないこと(入っていれば例外。子供が見る文の本文にこれらが混ざっていたら、それ自体が直す課題)。`tools/p4/tests/test_persona_bundle.py`: 偽の実行フォルダ(チャットの文と画像1枚)から束ができ、行の終わりの` (E-SITE-BLOCKED)`は取り除かれて例外にならず、文の途中の`E-SITE-BLOCKED`・64桁のハッシュ・`{"a":1}`の混入では例外になること。
 
 Run: `python -m unittest discover -s tools/p4/tests -t . -v` → `OK`。
 
@@ -10785,6 +12013,8 @@ MSG
 ---
 
 ### Task 37: 回帰(既存の畑ドローン)・書き込みの経路の構造検査・配布用のjar
+
+**担当**: Step 1(`WorldWritePathTest`)とそのコミットはDevin。Step 2〜4(全部のテスト・変えてはいけないファイルの確認・実機・jar)とシナリオのコミットはコントローラ(Claude)。
 
 **Files:**
 - Create: `src/test/java/io/github/khayashi4337/micradrone/construction/WorldWritePathTest.java`、`tools/p4/scenarios_regression.py`
@@ -10837,19 +12067,35 @@ Run: `git diff --stat main...HEAD -- src/main/java/io/github/khayashi4337/micrad
 
 `tools/p4/scenarios_regression.py`: `run-command`で`drone_controller`と`corner_marker`を置き(区画から離れた場所。既存の`CornerMarkerScan`の対角の規則どおり)、耕せる土を用意→devkitの既存のエンドポイントで`/open-ide {x,y,z}`→`/set-editor-text {text: <既存のSampleScriptsの耕して植える見本の本文>}`→`/save`→`/run`→`/state`の`debugState`が`idle`に戻るまで待つ→`/build/read-blocks`で区画の土が`farmland`になり作物が植わっていること→`/close-screen`→スクリーンショット。**このシナリオは建設のジョブが動いている間にも1回行い**、畑の`PacedActionQueue`と建設の`JobService`が干渉しないことを確かめる。
 
-Run: `python tools/p4/p4_scenarios.py --only farm-regression --mode sp` → `PASS`。
+このタスクのシナリオを足すコミットで、`PENDING_CONDITIONS`から条件11を消す(これで空になる)。
+
+Run: `python -m tools.p4.p4_scenarios --only farm-regression --mode sp` → `PASS`。
 
 - [ ] **Step 4: 配布用のjar**
 
 Run: `./gradlew.bat jar --console=plain`
-Expected: `BUILD SUCCESSFUL`、`build/libs/micradrone-<版>.jar`。大きさとSHA-256を`run-evidence/p4/<runId>/jar.json`に記録する(`certutil -hashfile <jar> SHA256`の出力)。**林さんの普段のStore版ランチャーの`.minecraft/mods`には入れない**(入れて起動するにはランチャーの画面の操作が要り、OSの合成入力を使わない約束のため。下の「オーナーだけができる項目」)。
+Expected: `BUILD SUCCESSFUL`、`build/libs/micradrone-<版>.jar`。大きさとSHA-256を`run-evidence/p4/<runId>/jar.json`に記録する(`certutil -hashfile <jar> SHA256`の出力)。`build/libs`の追跡されているファイルが変わっていれば、コミットの前に`git checkout -- build/libs`で戻す。**林さんの普段のStore版ランチャーの`.minecraft/mods`には入れない**(入れて起動するにはランチャーの画面の操作が要り、OSの合成入力を使わない約束のため。下の「オーナーだけができる項目」)。
 
 - [ ] **Step 5: コミット**
 
-```bash
-git add src/test/java/io/github/khayashi4337/micradrone/construction/WorldWritePathTest.java tools/p4
-git commit -m "$(cat <<'MSG'
+Devin(PowerShellで1行ずつ。`git add`はファイルごとに1回):
+```text
+git add src/test/java/io/github/khayashi4337/micradrone/construction/WorldWritePathTest.java
+git status --short
+git commit -F <作業用フォルダ>\commit_msg.txt
+```
+`commit_msg.txt`の中身:
+```text
 test: 世界を書き換える経路が1本であることの構造検査と、既存の畑ドローンの実機の自動確認を追加(自然言語→工場建設 P4 Task 37)
+
+Implemented-by: SWE-2 via Devin CLI
+```
+
+コントローラ(Claude。Devinのコミットの後):
+```bash
+git add tools/p4
+git commit -m "$(cat <<'MSG'
+test: Task 37の実機の自動確認のシナリオ・証拠の手順を追加(自然言語→工場建設 P4 Task 37)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 MSG
@@ -10860,22 +12106,29 @@ MSG
 
 ### Task 38: P4の自動確認と子供ペルソナ確認(完了条件ごとの証拠)
 
+**担当: コントローラ(Claude)**。
+
 最後のタスク。**林さんへの最終報告は証拠そのもの**で、クリックのお願いではない。
 
 **Files:**
 - Create: `docs/investigations/p4_auto_verification_2026-09-30.md`(日付は実行日。証拠の表)、`docs/investigations/p4_persona_<実行日>.md`(ペルソナの記録)
-- Modify: `tools/p4/p4_scenarios.py`(`PENDING_CONDITIONS`を空にする)
+- Modify: `tools/p4/tests/test_registry.py`(`test_no_pending_conditions_remain`を足す。`PENDING_CONDITIONS`はTask 37で空になっている)
 
 - [ ] **Step 1: すべてを1つのコマンドで走らせる**
 
-Run: `python -m unittest discover -s tools/p4/tests -t . -v` → `OK`(`test_registry`で、**`PENDING_CONDITIONS`が空**で、完了条件1〜16のすべてにシナリオがあること)。
+`test_registry.py`に足す:
+```python
+    def test_no_pending_conditions_remain(self):
+        self.assertEqual({}, p4_scenarios.PENDING_CONDITIONS, "every completion condition has its scenarios (Task 38)")
+```
+Run: `python -m unittest discover -s tools/p4/tests -t . -v` → `OK`(**`PENDING_CONDITIONS`が空**で、完了条件1〜16のすべてにシナリオがあること)。
 Run: `./gradlew test --console=plain` → `BUILD SUCCESSFUL`、失敗0件。
-Run: `python tools/p4/p4_scenarios.py --all --mode both`
-Expected: `summary.json`で全シナリオが`PASS`(`dedicated-two-clients`だけは、空きメモリが足りなければ数値つきの`SKIPPED(resource)`で、代わりの根拠が`permissions-single`と明記されている)。起動したプロセスが残っておらず、`run-p4/`が消えている。**`FAIL`があれば、完了を宣言しない**: 証拠を読み、原因を調べて直し(テストを先に)、同じコマンドでもう一度走らせる。
+Run: `python -m tools.p4.p4_scenarios --all --mode all`
+Expected: `summary.json`で全シナリオが`PASS`。起動したプロセスが残っていない(ゲームのフォルダ`run-p4/`は次の実行のために残る。世界は次の実行の始めに消える)。**`FAIL`か`NOT-RUN`が1つでもあれば、完了を宣言しない**(P4レビューA1-4): `FAIL`は証拠を読み、原因を調べて直し(テストを先に)、同じコマンドでもう一度走らせる。`NOT-RUN(eula)`は林さんのEULAの1行(末尾の「オーナーだけができる項目」)を待つ。`NOT-RUN(resource)`は、証拠のメモリの数値を添えて報告し、空きができてから走らせ直す。どちらの場合も、報告は「未完了(理由)」であり、合格とは書かない。
 
 - [ ] **Step 2: 子供ペルソナのプレイテスト**
 
-`python tools/p4/persona_bundle.py run-evidence/p4/<runId> run-evidence/p4/<runId>/persona`で束を作り、`09_personas_and_playtest.md`の手順どおり、ハナ・ソウタ・リンの3人をそれぞれ新しいサブエージェントで演じさせ(束だけを渡す)、視覚のパスも別のサブエージェントで行う。結果を`docs/investigations/p4_persona_<実行日>.md`に表で書く。不合格の場面は、引用された文を直して(`ja_jp.json`・`ChildMessagesTest`)、Step 1の台本を走らせ直して束を作り直し、プレイテストをやり直す(**合格するまで。同じ直し方を2回試して通らなければ、深く考えるルールに従い、原因を分析してから次の手を打つ**)。
+`python -m tools.p4.persona_bundle run-evidence/p4/<runId> run-evidence/p4/<runId>/persona`で束を作り、`09_personas_and_playtest.md`の手順どおり、ハナ・ソウタ・リンの3人をそれぞれ新しいサブエージェントで演じさせ(束だけを渡す)、視覚のパスも別のサブエージェントで行う。結果を`docs/investigations/p4_persona_<実行日>.md`に表で書く。不合格の場面は、引用された文を直して(`ja_jp.json`・`ChildMessagesTest`)、Step 1の台本を走らせ直して束を作り直し、プレイテストをやり直す(**合格するまで。同じ直し方を2回試して通らなければ、深く考えるルールに従い、原因を分析してから次の手を打つ**)。
 
 - [ ] **Step 3: 完了条件ごとの証拠の表を作る**
 
@@ -10886,16 +12139,16 @@ Expected: `summary.json`で全シナリオが`PASS`(`dedicated-two-clients`だ�
 | 1 | 小屋がドローン演出つきで建つ | `hut-golden`・`hut-here`・`drone-show` | `hut-golden/compare.json`(238件・不一致0)、`drone-show/drones.json`、`drone-show/drone-mid.png` | S1、視覚のパス(小屋に見える・建てている途中に見える) | |
 | 2 | 状態まで検査・直る・直らなければPARTIALと理由 | `l7-repair`・`l7-partial` | `l7-repair/compare.json`、`l7-partial/status.json`・`chat.json` | S6 | |
 | 3 | MODIFYが差分どおり・置き換えはConflictで触らない | `modify-conflict` | `modify-conflict/compare.json`・`status.json` | S4 | |
-| 4 | 再起動で10秒以内に再開・取消・ロールバック・記録の欠落で復旧待ち | `restart-resume`・`cancel`・`rollback`・`missing-journal`・`crash-window` | `restart-resume/resume.json`(秒)、`rollback/compare.json`、`missing-journal/status-*.json` | S5・S7 | |
+| 4 | 再起動で10秒以内に再開・取消・ロールバック・記録の欠落で復旧待ち | `restart-resume`・`cancel`・`rollback`・`missing-journal`・`crash-window`・`crash-window-rollback`・`offline-chunk` | `restart-resume/resume.json`(秒)、`rollback/compare.json`・`entities.json`(落ちたアイテム0)、`missing-journal/status-*.json`、`crash-window/timeline.json`(`SITE_CHANGED`が無い) | S5・S7 | |
 | 5 | 偽のハッシュ・サーバーの作り直し・別ディメンション | `fake-approval`・`hut-golden`(金のハッシュ)・`dimension-bound` | 各`chat.json`・`status.json`、`hut-golden/pending.json` | — | |
-| 6 | 専用サーバー+クライアント2つで他人が操作できない | `dedicated-two-clients`(または理由つきSKIPPEDと`permissions-single`) | 両クライアントの`chat.json` | S8・S9 | |
+| 6 | 専用サーバー+クライアント2つで他人が操作できない | `dedicated-two-clients`(`NOT-RUN`は合格にしない)、`permissions-single`(1つのクライアントでの論理) | 両クライアントの`chat.json`、`permissions-single/outputs.json` | S8・S9 | |
 | 7 | 材料(消費・停止・再開・取消で返さない・ロールバックで返す・二重にしない) | `survival-materials`・`rollback-return` | `inventory-*.json` | S3 | |
 | 8 | 安全枠の`Issue`(ブロックエンティティを含む) | `safety-limits`・`block-entities` | 各`pending.json` | — | |
 | 9 | 30KB超の分割送信とハッシュ検証 | `payload-30kb` | `payload-30kb/upload.json`・`chat.json` | — | |
 | 10 | 性能の線・4ジョブ・自動減速 | `perf-20000`・`four-jobs` | `perf.json` | — | |
 | 11 | 既存の畑ドローン・`get_block_snapshot` | `farm-regression`、`./gradlew test` | `farm-regression/read.json`、テストの出力 | — | |
 | 12 | 整地の個数・確認・資源が消えも増えもしない | `hut-here`・`terrain-slope`・`terrain-survival` | `pending.json`・`inventory-*.json`・`world-count-*.json` | S2 | |
-| 13 | 置いたコンテナの中身を落として撤去・元からのチェストは触らない | `block-entities` | `block-entities/entities.json`・`pending.json` | — | |
+| 13 | 置いた保管庫・デポ(と樽)の中身を落として撤去・元からのチェストは触らない | `block-entities`(Createの`item_vault`・`depot`を注入して撤去) | `block-entities/inject.json`・`entities.json`(リンゴ17・鉄1・丸石5)・`pending.json`(液体の予告) | — | |
 | 14 | 区画の存続と`journal`の保持 | `permissions-single`・`rollback` | `pending.json`(`E-CLAIM-OVERLAP`)、`files-*.json` | S8 | |
 | 15 | `volatileProps`を戻さない・別のブロックは上書きしない | `l7-repair` | `l7-repair/compare.json`(扉が開いたまま・金のブロックが残る) | — | |
 | 16 | 調査の固定 | `survey-pinned` | `survey-pinned/status.json` | — | |
@@ -10921,42 +12174,47 @@ MSG
 ## フェーズ末のゲート(タスクではない。全タスクの完了後、実装者とは別のエージェントで、読み取り専用で走らせる)
 
 1. **`pr-review-toolkit:type-design-analyzer`**: `construction.core`・`build.verify`の新しい`record`と`sealed interface`。設計`01`の不変条件(`ConstructionJob`の状態と理由、`Journal`の最初の1件、台帳の冪等、`PlacedRegistry`の`before`)で見る。
-2. **`pr-review-toolkit:silent-failure-hunter`**: `JobService`・`ConstructionExecutor`・`JobFiles`・`RecoveryPlanner`・`UploadAssembler`・`PlacementGuard`・`ConstructionRuntime`の、失敗の握りつぶし(`catch`・既定値へのフォールバック・`Optional.empty()`の黙殺)。「推測でOKにしない」「黙って再実行しない」で見る。
-3. **`pr-review-toolkit:pr-test-analyzer`**: ローカルの差分(`git diff main...HEAD`)で、テストの穴。特にReview Focusの5つ(施工中の変更・きれいに止まらなかったサーバー・同じtickの重なる承認・所有者が抜ける/移る・材料の数え方)に、テストがあるか。
+2. **`pr-review-toolkit:silent-failure-hunter`**: `JobService`・`ConstructionExecutor`・`AdoptPass`・`JobFiles`・`RecoveryPlanner`・`UploadAssembler`・`PlacementGuard`・`ConstructionRuntime`の、失敗の握りつぶし(`catch`・既定値へのフォールバック・`Optional.empty()`の黙殺)。「推測でOKにしない」「黙って再実行しない」で見る。
+3. **`pr-review-toolkit:pr-test-analyzer`**: ローカルの差分(`git diff main...HEAD`)で、テストの穴。特にReview Focusの5つ(施工中の変更・きれいに止まらなかったサーバー・同じtickの重なる承認・所有者が抜ける/移る・材料の数え方と撤去で落ちるアイテム)に、テストがあるか。
 4. **`/codex:adversarial-review`**: 先にコミットしてから`--base main --scope branch`。focus文に私の仮説は書かない(バグ探索型のレビューはフラットに頼む)。
 5. **Opus 5.5のコードレビュー**(別のエージェント): 設計図(第8版)とこの計画書を渡し、実装との食い違いを探させる。
-6. **範囲の判断の相談**(`codex:codex-rescue`で1回。私の見解を先に書いてから): 論点は(a)`EXACT`と`STATE_SUBSET`をP4では同じ比べ方にしたこと、(b)組み立て(`ASSEMBLE`)を含む施工リストを`ASSEMBLY_NOT_AVAILABLE`で断ること(組み立てはP10・P13の担当)、(c)`dedicated-two-clients`を空きメモリ不足のときに`SKIPPED(resource)`にし、`permissions-single`を代わりの根拠にすること。これは範囲を狭める判断に当たりうるので、Codexと一致すればそのまま、一致しなければ再検討して林さんに報告する。
 
 各ゲートの指摘は、(a)事実を裏取りし、(b)実害があれば直し(テストを先に)、(c)反映しない物は理由を書く。PRの作成・マージ・pushは、林さんの号令があった時だけ。
 
+**範囲の判断の相談は、フェーズの末ではなく、実装に入る前に行う**(P4レビューG-5): コントローラは、Task 3に入る前に、`codex:codex-rescue`で1回、私の見解を先に書いてから相談する。論点は、この計画で「後のフェーズの担当」とした2つ(どちらも設計が後のフェーズに置いた物で、P4で削った物ではない、というのが私の見解): (a)組み立て(`ASSEMBLE`)を含む施工リストを`ASSEMBLY_NOT_AVAILABLE`で断ること(実行はP10・P13。設計`07`のL7の行)、(b)Createのブレイズバーナーの燃料の失われる量の表示(P10の部品。P4は`lit`の状態を持つバニラのかまどの類と、液体の能力を持つ入れ物を表示する)。一致すればそのまま進め、一致しなければ再検討して林さんに報告する。**この改訂で、前の版の3つの範囲の判断(`EXACT`と`STATE_SUBSET`を同じにする・`dedicated-two-clients`を省けること・保管庫とデポを樽で代えること)は取り消した**(林さんの判断 2026-09-30: 何も狭めない)。
+
 ## 自己点検(この計画書を書いた側のチェック)
 
-- **完了条件と基盤の網羅**: 設計図07のP4の完了条件16個は、冒頭の「完了条件×タスク」の表で、純Javaのテスト・実機の自動確認・ペルソナの3列に割り当てた。F-1〜F-8・F-13〜F-17・F-19〜F-23とD-1・D-3・D-4・D-6・D-11・D-12・D-14・D-21〜D-27、L7、N-26・N-27・N-29、S-6・S-9も、2つ目の表で空欄なし。D-26はP8の担当(`07` 5節の表のとおり)なので、P4の表では「P8」と書いた。
-- **「対象外」「後回し」は無い**: 組み立て(`ASSEMBLING`)は状態機械と承認の検査まで作り、実行はP10・P13の担当(設計`07`のL7の行: P10=風車、P13=飛行船)。部品の作用範囲(`EffectSpec`)の検査はD-24のとおりP10・P13。液体・燃料の損失の表示は、液体を持つ部品が入るP10。いずれも設計が後のフェーズに置いた物で、P4の範囲から削った物ではない。
-- **未確認のまま計画に入れた物(実機で測る)**: S-6の実際の上限(Task 1・32)、S-9の保護のイベントの実際の振る舞い(Task 2・26)、MSPTの線(Task 33)、専用サーバーの`isUnderSpawnProtection`(Task 34)、`BlockStateParser`で作れない状態が実際に出るか(Task 19の読み戻し)、調査の走査の重さ(Task 16・33)。どれも台本の証拠で確かめる。
-- **既存コードの変更**: `ObservedBlock`(欄を足す。1引数のコンストラクタは残す)、`Conflicts`(`BlockMatch`を使う。挙動は同じ)、`BomCalculator`(`BlockToItem`を使う。挙動は同じ)、`PlanCompiler`(`PhaseRanges`を使う。挙動は同じ)、`ReplacePolicy`(`Terraform`を足す)、`IssueCode`(4つ足す)、`Hashing`(バイト列の版を足す)、`BlockForms`(定数の可視性)、`MicraDrone`・`MicraDroneClient`(登録を足す)、`build.gradle`(実行設定を足す)。変えないファイルはTask 37 Step 2で機械的に確かめる。
+- **完了条件と基盤の網羅**: 設計図07のP4の完了条件16個は、冒頭の「完了条件×タスク」の表で、純Javaのテスト・実機の自動確認・ペルソナの3列に割り当てた。F-1〜F-8・F-13〜F-17・F-19〜F-23とD-1・D-3・D-4・D-6・D-11・D-12・D-14・D-21〜D-27、L7、N-26・N-27・N-29、S-6・S-9も、2つ目の表で空欄なし。D-26はP8の担当(`07` 5節の表のとおり)なので、P4の表では「P8」と書いた。F-15(設定)の担当は設計`07`ではP7で、P4はTask 16で設定の器(`ConstructionConfig`)を作るだけ。
+- **「対象外」「後回し」は無い**: 組み立て(`ASSEMBLING`)は状態機械と承認の検査まで作り、実行はP10・P13の担当(設計`07`のL7の行: P10=風車、P13=飛行船)。部品の作用範囲(`EffectSpec`)の検査はD-24のとおりP10・P13。完了条件13の保管庫・デポは、Createのブロックを本当に置いて撤去する(Task 30。開発専用の注入はdevkitの中だけで、配布するjarには無い)。液体と燃えている燃料の損失は、P4で予告の文に出す(Task 30)。ブレイズバーナーの燃料だけはP10の部品。`dedicated-two-clients`は`NOT-RUN`を合格にしない。
+- **この改訂で直した物(P4レビュー 2026-09-30、BLOCKER 10・IMPORTANT 26・MINOR 16)**: コンパイルできないテスト2件(B-1・E-2)、`SiteSurvey`の空気の列の整地(E-3)、`BuildPurityTest`の`ALLOWED`(C-1)、施工の仕事を`ServerTickEvent.Pre`にし自分の時間も測る(D-1)、保存の順序の事実と引き取り(D-2・G-1)、撤去で落ちるアイテムと撤去の順(G-2)、設置の捕まえ方(D-3)、チケットのmodのバス(D-4)、自動確認の起動の詰まり(F-1〜F-10)、台本のPythonの形(E-5〜E-7)、`PENDING_CONDITIONS`(B-3)、修復の手順が止まっても残る(B-5)、撤去の`Conflict`だけで置くのを止める(B-4)、その他B-6〜B-16・C-2〜C-4・A1-5〜A1-10。**検証**: Task 3〜13(とTask 24の引き取りの部分)のJavaのコードとテストを全部、リポジトリの外に取り出して`build/classes`とJUnit 5.11.3でコンパイルし、全部のテストを走らせて全部通ることを確かめた(文だけで書かれた型は、文のとおりにスタブを書いた)。
+- **未確認のまま計画に入れた物(実機で測る)**: S-6の実際の上限(Task 1・32)、S-9の保護のイベントの実際の振る舞い(Task 2・26・28・31)、MSPTの線(Task 33)、専用サーバーのスポーン保護(ソースで読めたので、Task 34で結果を見るだけ)、`BlockStateParser`で作れない状態が実際に出るか(Task 19の読み戻し)、調査の走査の重さ(Task 16・33)、`WorldDataConfiguration.DEFAULT`で作った世界でmicradroneのデータパックが有効か(Task 19の`hut-here`)、3つのJVMの実際のメモリ(Task 19・34の証拠)。どれも台本の証拠で確かめる。
+- **既存コードの変更**: `ObservedBlock`(欄を足す。1引数のコンストラクタは残す)、`Conflicts`(`BlockMatch`を使う。挙動は同じ)、`BomCalculator`(`BlockToItem`を使う。挙動は同じ)、`PlanCompiler`(`PhaseRanges`を使う。挙動は同じ)、`ReplacePolicy`(`Terraform`を足す)、`IssueCode`(4つ足す)、`Hashing`(バイト列の版を足す)、`MicraDrone`・`MicraDroneClient`(登録を足す)、`build.gradle`(実行設定を足す)、`BuildPurityTest`(`ALLOWED`を`Map.ofEntries`にし、`build.verify`・`build.analyze`の行を足す)。変えないファイルはTask 37 Step 2で機械的に確かめる。
 
 ## オーナーだけができる項目(理由つき。最小限)
 
-1. **Minecraft EULAへの同意**(`run-p4/server/eula.txt`の`eula=true`。台本はそのために`tools/p4/eula_ack.txt`を探す): 同意はMinecraftのアカウントの持ち主の意思表示なので、AIが代わりに書かない。1回だけ。
+1. **Minecraft EULAへの同意**(マルチプレイの確認`mp`・`mp2`にだけ要る。シングルプレイの確認は要らない): **することは1行**: `tools/p4/eula_ack.txt`というファイルを作り、中身を`eula=true`の1行にする。台本はそれを見つけたら`run-p4/server/eula.txt`に写す。理由: 同意はMinecraftのアカウントの持ち主の意思表示なので、AIが代わりに書かない。1回だけ。これが無い間は、マルチプレイのシナリオ(条件6・10と、条件4・5・9の一部)が`NOT-RUN(eula)`になり、Task 38は完了を宣言しない。
 2. **林さんの普段の環境(Store版ランチャー・シェーダー込み)での起動**(任意): ランチャーの画面は隠れて再表示できず、起動にはOSの合成入力が要るので、自動化しない約束(合成入力の禁止)に当たる。P4の確認は、同じjarを`gradlew runClientP4`で起動して自動で行うので、この項目は完了条件の判定には使わない。
 3. **子供ペルソナで確かめられない「本物の子供が楽しいか」**: ペルソナのプレイテストは代わりの根拠であり、本物の子供の反応ではない。P4の完了条件には含まれないが、判断の限界として書いておく。
+4. (項目ではなく前提)**自動確認の間、画面のロックされていないデスクトップのセッション**が要る(描画とスクリーンショットのため)。空きメモリが足りなければ`mp2`は`NOT-RUN(resource)`になるので、そのときは他のアプリを閉じてから走らせ直す。
 
 ## 設計図との食い違い(この計画書で見つけ、Task 35で設計図に反映する物)
 
 (Task 35 Step 2の1〜15と同じ内容。ここでは要点だけ)
 - S-6: 設計は「バニラで約32KBが上限」と理解していたが、ソースでは32,767は**登録されていない**ペイロードの読み捨て用で、登録済みのペイロードはNeoForgeの`GenericPacketSplitter`が分割する。文字列は`FriendlyByteBuf.MAX_STRING_LENGTH=32767`文字の上限があるので、本文はバイト列で送る。
-- S-9: プレイヤー主体の`EntityPlaceEvent`は「既に置いた状態」を読むので、`setBlock`の後に投げてキャンセルなら`BlockSnapshot.restore()`で戻す順が必要。
+- S-9と設置の書き方: プレイヤー主体の`EntityPlaceEvent`は「既に置いた状態」を読む。バニラの`BlockItem`は`captureBlockSnapshots`でスナップショットを捕まえてから設置のイベントで決め、通ったものだけ`onPlace`と隣の更新を行う(`CommonHooks.onPlaceItemIntoWorld`)。P4の設置も同じ形にする(Task 15)。
+- **撤去の書き方(新)**: 普通の`setBlock(..., 3)`で撤去すると、隣の形の更新で扉のもう片方や壁の看板がアイテムを落として外れる(`Level.markAndNotifyBlock`は形の更新のフラグから32を消す)。撤去は2|16|32で静かに行い、部品ごとに隣の更新をまとめる。撤去の順は付いている物が先(Task 9・15・28・29)。
+- **入れ物の中身(新)**: 中身はアイテムの能力で取り出して落とす(Createの保管庫・デポも同じ道)。液体・燃えている燃料は戻らないので予告で知らせる(Task 15・30)。
+- **施工の仕事のtick(新)**: `ServerTickEvent.Post`は`getAverageTickTimeNanos()`の窓の外なので、施工の仕事は`Pre`で行い、自分の処理の時間も測る(Task 16・33)。
 - `01` 8節の`ObservedBlock(spec, hasBlockEntity, blockEntityType)`: 実装(P3)は`ObservedBlock(block)`だけだった→欄を足し、名前は`block`。
 - `01` 8節の`ApprovalRequest(... expiresTick)`: 期限は`PendingApproval`が持つ。要求には受け入れたリスク(F-3)と確認(F-5)が要る。
 - `01` 8節の`MaterialLedger(consumedByPlacementIndex, reserved)`: 設置ごとの消費では予約が生じない。返却・整地の受け渡しの冪等な記録が要る→`consumed`・`returned`・`yielded`・`reclaimed`。
-- `01` 8節の`PauseReason`に「位置が置けなくなった」理由が無い(F-3は`PAUSED`と`E-SITE-CHANGED`を求める)→`SITE_CHANGED`。
+- `01` 8節の`PauseReason`に「位置が置けなくなった」理由が無い(F-3は`PAUSED`と`E-SITE-CHANGED`を求める)→`SITE_CHANGED`(ジョブの`lastError`に`E-SITE-CHANGED`のIDを入れる)。
 - `01` 8節の`CompareScope`: 20,000を超える施工リスト(OPの緩和)を`SparseSnapshot`の上限の中で比べるには窓が要る→`IndexRange`。
-- `01` 7節の`SiteSurvey`にディメンションが無い(D-27と固定した調査の組み合わせ)→足す。
+- `01` 7節の`SiteSurvey`にディメンションが無い(D-27と固定した調査の組み合わせ)→足す。地面の無い(空気の)列は整地しない(`hasGround`)。
 - `02` N-29「読み取りのロジックは`BlockRangeDescription`と共有」: あちらは`SenseNames.simplify`で名前を短くし、変更も禁止なので、完全なIDが要る`ServerStateReader`とは共有できない。
-- `04` F-2「原子的な書き込み」: いつ書くかが書かれていない。`MinecraftServer.saveEverything`の順(プレイヤー→`SavedData`→チャンク→`LevelEvent.Save`)に合わせて`LevelEvent.Save`で書き、「記録がカーソルより遅れた」だけを復旧待ちにする。
-- `05` 1.1.1節の`EXACT`/`STATE_SUBSET`: 純Javaは既定値を知らないので、P4の比較では同じになる(期待に書いた状態だけ)。
-- L7の「`REPAIR`ジョブ」: 同じジョブの中の`REPAIRING`で行い、`JobKind.REPAIR`は建てた後の点検と復旧のジョブに使う(同時ジョブの上限・区画・台帳を二重に扱わないため)。
+- `04` F-2「原子的な書き込み」: いつ書くか・落ちた後に何が起こりうるかが書かれていない。**保存は呼ぶ順(プレイヤー→`SavedData`→チャンク→`LevelEvent.Save`)と、ディスクに届く順が違う**(`SavedData`とチャンクは非同期、チャンクは外れた時にも書かれる)。だから、記録の進み・遅れに加えて「世界が記録より進む」も起こり、復旧したジョブは**引き取り**(`AdoptPass`)をしてから、記録の遅れを確かめる。承認の時の調査を残す(`survey.bin`)。
+- L7の「`REPAIR`ジョブ」: 同じジョブの中の`REPAIRING`で行い、`JobKind.REPAIR`は建てた後の点検と復旧のジョブに使う(同時ジョブの上限・区画・台帳を二重に扱わないため)。修復の手順は一時停止をまたいで残る。
 - `07` P4「F-23の一部」: F-23はプロジェクトとチャットの結び付け(P7)。P4の分は「ジョブをIDで引ける状態の問い合わせ」。
-- 数値が設計に無かった物(名前付き定数にして設計に書く): 自動減速の戻りの線40ms、ワーカーの2スレッド・待ち8件、調査の1tickの列1,024、止まったジョブの見直しの間隔20tick、送信の開始の間隔100tick・放置の打ち切り600tick、設置音の1tickの上限4、出来事のログの1ジョブ1,000行、大規模ジョブの閾値(既定20,000)。
-- オーナーの指示(2026-09-30)による確認の方法の変更: 設計`07`の「実機確認=林さんに見てもらう」を、devkitと台本による自動確認と子供ペルソナの確認に置き換える(Task 35・36)。
+- 数値が設計に無かった物(名前付き定数にして設計に書く): 自動減速の戻りの線40ms、ワーカーの2スレッド・待ち8件、調査の1tickの列1,024、止まったジョブの見直しの間隔20tick、送信の開始の間隔100tick・放置の打ち切り600tick、設置音の1tickの上限4、出来事のログの1ジョブ1,000行、大規模ジョブの閾値(既定20,000)、自動確認のJVMの`-Xmx3G`。
+- オーナーの指示(2026-09-30)による確認の方法の変更: 設計`07`の「実機確認=林さんに見てもらう」を、devkitと台本による自動確認と子供ペルソナの確認に置き換える。状態は`PASS`・`FAIL`・`NOT-RUN`で、`NOT-RUN`は合格にしない(Task 35・36)。
