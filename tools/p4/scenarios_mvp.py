@@ -40,6 +40,10 @@ def _wait_flow(ctx, wanted, timeout):
         if name == "FAILED":
             raise AssertionError(f"the flow failed while waiting for {wanted}: {st.get('buildTranscript')!r}")
         if time.monotonic() > deadline:
+            try:
+                ctx.save_json("stuck-jobs.json", ctx.server.post("/build/jobs", {}))
+            except Exception as unreachable:  # the evidence is best effort, the failure below is what matters
+                ctx.save_json("stuck-jobs.json", {"error": str(unreachable)})
             raise AssertionError(f"flow stuck at {name} (seen {seen}), waiting for {wanted}: {st.get('buildTranscript')!r}")
         time.sleep(POLL_S)
 
@@ -49,6 +53,7 @@ def mvp_japanese_hut(ctx):
     if CONSENT_FILE.exists():
         CONSENT_FILE.unlink()  # the first request must ask for consent, like a child's first time
     _prepare_view(ctx)
+    chat_since = ctx.client.post("/chat-log", {})["next"]
     sx, sy, sz = MVP_STAND
     _teleport(ctx, sx, sy, sz, FACE_NORTH, 20)
     time.sleep(2)
@@ -88,6 +93,13 @@ def mvp_japanese_hut(ctx):
     leaks = LEAK_PATTERN.findall(final_text)
     assert not leaks, f"child-visible text leaks technical words {leaks}: {final_text!r}"
     assert "できあがり" in final_text, f"the child was never told it is done: {final_text!r}"
+    # the game's ordinary chat overlay shows through behind the IDE: it must not carry commands, hashes or job ids either
+    vanilla = ctx.client.post("/chat-log", {"since": chat_since})
+    ctx.save_json("vanilla-chat.json", vanilla)
+    files.append(ctx.out("vanilla-chat.json"))
+    vanilla_leaks = [(line["text"], LEAK_PATTERN.findall(line["text"])) for line in vanilla["lines"]
+                     if LEAK_PATTERN.search(line["text"])]
+    assert not vanilla_leaks, f"the vanilla chat leaks technical words to a child who used the buttons: {vanilla_leaks[:3]}"
 
     # the server side: the job finished VERIFIED and every placement reads back as planned
     jobs = ctx.server.post("/build/jobs", {})["jobs"]
@@ -105,4 +117,38 @@ def mvp_japanese_hut(ctx):
     ctx.save_json("roof-materials.json", {"reddish": reddish, "allIds": sorted(ids)})
     files.append(ctx.out("roof-materials.json"))
     assert reddish, f"the plan for 「{REQUEST}」 contains no reddish block: {sorted(ids)}"
+    return files
+
+
+def mvp_cli_missing(ctx):
+    """No `claude` on the game's PATH (harness mode `none`): after the consent the panel must say, in Japanese and without
+    technical words, that the AI is not ready, and nothing must be built."""
+    if CONSENT_FILE.exists():
+        CONSENT_FILE.unlink()
+    _prepare_view(ctx)
+    sx, sy, sz = MVP_STAND
+    _teleport(ctx, sx + 40, sy, sz, FACE_NORTH, 20)
+    time.sleep(2)
+    cx, cy, cz = sx + 40, sy, sz + CONTROLLER_OFFSET[2]
+    ctx.server.post("/server/run-command", {"command": f"setblock {cx} {cy} {cz} micradrone:drone_controller"})
+    time.sleep(1)
+    ctx.client.post("/open-ide", {"x": cx, "y": cy, "z": cz})
+    ctx.client.post("/build-mode", {"enabled": True})
+    ctx.client.post("/send-message", {"text": REQUEST})
+    _wait_flow(ctx, {"NEED_CONSENT"}, FLOW_STEP_TIMEOUT_S)
+    ctx.client.post("/build-press", {"kind": "CONSENT_YES"})
+    deadline = time.monotonic() + FLOW_STEP_TIMEOUT_S
+    while True:
+        st = _state(ctx)
+        if st["buildFlowState"] == "FAILED":
+            break
+        assert time.monotonic() < deadline, f"the flow never failed: {st['buildFlowState']}"
+        time.sleep(POLL_S)
+    text = st["buildTranscript"]
+    ctx.save_json("flow.json", {"state": st["buildFlowState"], "transcript": text})
+    files = [ctx.out("flow.json"), _screenshot(ctx, "mvp-cli-missing")]
+    assert "じゅんびが まだ" in text, f"the child was not told, in Japanese, that the AI is not ready: {text!r}"
+    assert not LEAK_PATTERN.findall(text), f"technical words in the child-visible text: {text!r}"
+    pending = ctx.server.post("/build/pending", {"player": PLAYER})
+    assert pending["state"] == "NONE", f"nothing may be submitted when the AI is missing: {pending}"
     return files

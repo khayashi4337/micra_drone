@@ -54,6 +54,7 @@ DEV_LAUNCH_MAIN = "net.neoforged.devlaunch.Main"
 WM_CLOSE = 0x0010
 CLAUDE_STUB = "stub"
 CLAUDE_REAL = "real"
+CLAUDE_NONE = "none"  # no claude on PATH at all: the panel must say so in Japanese
 STUB_BIN_DIR = Path(__file__).resolve().parent / "stub_bin"
 
 
@@ -228,6 +229,10 @@ class Game:
         env = os.environ.copy()
         if self.claude_mode == CLAUDE_STUB:
             env["PATH"] = str(STUB_BIN_DIR) + os.pathsep + env.get("PATH", "")
+        elif self.claude_mode == CLAUDE_NONE:
+            kept = [d for d in env.get("PATH", "").split(os.pathsep)
+                    if d and not any((Path(d) / f"claude{ext}").exists() for ext in ("", ".cmd", ".exe", ".bat", ".ps1"))]
+            env["PATH"] = os.pathsep.join(kept)
         return env
 
     # ---- start / wait / close ----
