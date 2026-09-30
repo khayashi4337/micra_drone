@@ -195,7 +195,7 @@
   "micradrone.build.chat.offer": "The plan is ready! %1$s blocks, about %2$s seconds.",
   "micradrone.build.chat.offer_terrain": "It will cut %1$s blocks of ground and fill %2$s.",
   "micradrone.build.chat.place_in_front": "It will be built in front of you. If that is OK, press Build.",
-  "micradrone.build.chat.building": "Building (%1$s%)",
+  "micradrone.build.chat.building": "Building (%1$s％)",
   "micradrone.build.chat.done": "Finished! Everything was built.",
   "micradrone.build.chat.partial": "Almost done - %1$s places could not be built.",
   "micradrone.build.chat.busy": "I am still working on another request. Please wait for it.",

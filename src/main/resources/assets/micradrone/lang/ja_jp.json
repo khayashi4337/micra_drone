@@ -80,7 +80,7 @@
   "micradrone.build.chat.offer": "けいかくが できたよ! ブロック %1$s こ、やく %2$s びょう かかるよ",
   "micradrone.build.chat.offer_terrain": "じめんを けずるのが %1$s こ、うめるのが %2$s こ あるよ",
   "micradrone.build.chat.place_in_front": "きみの まえの ばしょに たてるよ。いいなら 「つくる」を おしてね",
-  "micradrone.build.chat.building": "つくっているよ (%1$s%)",
+  "micradrone.build.chat.building": "つくっているよ (%1$s％)",
   "micradrone.build.chat.done": "できあがり! ぜんぶ たてたよ",
   "micradrone.build.chat.partial": "ほとんど できたよ。おけなかった ところが %1$s こ あったよ",
   "micradrone.build.chat.busy": "いま べつの おねがいの とちゅうだよ。おわるまで まってね",
