@@ -70,6 +70,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.GameProfileCache;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
@@ -600,6 +601,12 @@ public final class ConstructionRuntime {
                 instance = null;
                 r.shutdown();
             }
+        }
+
+        /** The debug commands are registered on the dispatcher, independent of the runtime's lifetime. */
+        @SubscribeEvent
+        public static void onRegisterCommands(RegisterCommandsEvent event) {
+            BuildCommands.register(event.getDispatcher());
         }
 
         @SubscribeEvent
