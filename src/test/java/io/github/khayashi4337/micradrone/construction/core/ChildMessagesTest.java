@@ -95,6 +95,13 @@ class ChildMessagesTest {
     }
 
     @Test
+    void theBuildChatLinesAreRegisteredKeys() {
+        for (String key : io.github.khayashi4337.micradrone.build.ai.BuildChatFlow.CHAT_MESSAGE_KEYS) {
+            assertTrue(ChildMessages.allKeys().contains(key), key);
+        }
+    }
+
+    @Test
     void theLinesBuiltForAChildNeverCarryAnIssueCode() {
         for (IssueCode c : IssueCode.values()) {
             MessageKey line = ChildMessages.issueLine(Issue.of(c, java.util.List.of("wall-n"), "x"));

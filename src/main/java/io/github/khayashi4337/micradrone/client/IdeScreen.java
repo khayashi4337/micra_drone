@@ -655,6 +655,38 @@ public class IdeScreen extends Screen {
         chatPanel.compact();
     }
 
+    // ---- build-mode ("けんちく") probes (P4 task M3) -------------------------------------------
+
+    /** Same effect as pressing the bottom-row けんちく toggle (the Chat tab is opened first). */
+    public void setBuildModeForTesting(boolean on) {
+        openChatTabForTesting();
+        chatPanel.setBuildMode(on);
+    }
+
+    public boolean isBuildModeForTesting() {
+        return chatPanel.isBuildMode();
+    }
+
+    /** The build flow's state name: IDLE, NEED_CONSENT, ASKING_AI, WAITING_OFFER, OFFERED, BUILDING, DONE or FAILED. */
+    public String buildFlowStateForTesting() {
+        return chatPanel.buildFlowState();
+    }
+
+    /** The build buttons currently shown in the insert row, as their ButtonKind names. */
+    public List<String> buildButtonsForTesting() {
+        return chatPanel.buildButtonKinds();
+    }
+
+    /** Same effect as clicking the insert-row build button of this kind (a ButtonKind name). */
+    public void pressBuildButtonForTesting(String kind) {
+        chatPanel.pressBuildButton(kind);
+    }
+
+    /** Only the child-visible "けんちく:" lines, joined by newlines - script turns are not included. */
+    public String buildTranscriptForTesting() {
+        return chatPanel.buildTranscriptText();
+    }
+
     /** The lines carrying a red gutter dot, ascending. */
     public List<Integer> getBreakpointsForTesting() {
         return breakpoints.stream().sorted().toList();

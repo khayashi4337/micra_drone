@@ -1,22 +1,38 @@
 package io.github.khayashi4337.micradrone.client;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
+import io.github.khayashi4337.micradrone.MicraDrone;
+import io.github.khayashi4337.micradrone.build.ai.BuildChatFlow;
+import io.github.khayashi4337.micradrone.build.parts.BuildingParts;
+import io.github.khayashi4337.micradrone.build.parts.SchemaGenerator;
+import io.github.khayashi4337.micradrone.build.parts.SchemaLimits;
 import io.github.khayashi4337.micradrone.chat.ChatCompactor;
 import io.github.khayashi4337.micradrone.chat.ChatContextBuilder;
 import io.github.khayashi4337.micradrone.chat.ChatHistoryStore;
 import io.github.khayashi4337.micradrone.chat.ChatMessage;
 import io.github.khayashi4337.micradrone.chat.ChatSession;
 import io.github.khayashi4337.micradrone.chat.ClaudeCliBridge;
+import io.github.khayashi4337.micradrone.chat.ClaudeStageRunner;
 import io.github.khayashi4337.micradrone.chat.CodeBlockParser;
 import io.github.khayashi4337.micradrone.chat.ControllerKey;
+import io.github.khayashi4337.micradrone.chat.MiniJson;
+import io.github.khayashi4337.micradrone.construction.ClientBuildState;
+import io.github.khayashi4337.micradrone.construction.net.BuildApprovePayload;
+import io.github.khayashi4337.micradrone.construction.net.BuildCancelPayload;
+import io.github.khayashi4337.micradrone.construction.net.BuildPlanPayload;
 import io.github.khayashi4337.micradrone.drone.CommandsHelpDoc;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
 import io.github.khayashi4337.micradrone.drone.UnlockShop;
@@ -34,6 +50,7 @@ import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.storage.LevelResource;
+import net.neoforged.neoforge.network.PacketDistributor;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -107,6 +124,18 @@ final class IdeChatPanel {
     private static final int CANCEL_HINT_COLOR = 0xFF9A9A9A;
     private static final int CLI_MISSING_COLOR = 0xFFFF6060;
 
+    // ---- "けんちく" build mode (P4 task M3) ---------------------------------------------------
+    // Every build-mode decision lives in the pure-Java BuildChatFlow; this panel only executes the
+    // returned actions (packets, translated lines, buttons). The AI call goes through a separate
+    // ClaudeStageRunner so a build round trip never touches the script chat's ClaudeCliBridge, and
+    // a build reply never triggers the script chat's automatic code review.
+    private static final String BUILD_LINE_PREFIX = "けんちく: ";
+    /** <gameDir>/micradrone/build_consent.txt - the exact text "yes" marks stored consent. */
+    private static final String BUILD_CONSENT_FILE = "build_consent.txt";
+    private static final String BUILD_CONSENT_VALUE = "yes";
+    private static final String SAMPLE_PLAN_RESOURCE = "/data/micradrone/build_samples/hut.json";
+    private static final String PALETTE_RESOURCE = "/data/micradrone/tags/block/palette_allowed.json";
+
     private final Host host;
     private final ClaudeCliBridge claudeCliBridge = new ClaudeCliBridge(CLAUDE_EXECUTABLE);
     private boolean open = false;
@@ -130,6 +159,19 @@ final class IdeChatPanel {
     private Boolean cliAvailable;
     private String cliVersion = "";
     private boolean cliProbeStarted;
+
+    // build mode's own state (the flow itself is created lazily - the prompt parts read packaged
+    // resources, which only pays off when the child actually turns けんちく on)
+    private boolean buildMode;
+    private BuildChatFlow buildFlow;
+    private ClaudeStageRunner buildStageRunner;
+    private BuildChatFlow.PromptParts buildPromptParts;
+    private List<BuildChatFlow.ButtonKind> buildButtons = List.of();
+    /** Child-facing build lines ("けんちく: …") - kept apart from the ChatMessage transcript on purpose. */
+    private final List<String> buildTranscript = new ArrayList<>();
+    /** The last offer/progress documents handed to the flow; identical JSON is never fed twice. */
+    private String lastOfferJson;
+    private String lastProgressJson;
 
     IdeChatPanel(Host host) {
         this.host = host;
@@ -167,10 +209,21 @@ final class IdeChatPanel {
         logBox = new MultiLineEditBox(host.font(), rightX, topY, rightW, logHeight,
                 Component.translatable("gui.micradrone.ide_screen.chat_log_placeholder"),
                 Component.translatable("gui.micradrone.ide_screen.chat_log"));
-        logBox.setValue(transcriptText());
+        logBox.setValue(displayText());
         host.addWidget(logBox);
 
-        if (host.isReviewing()) {
+        if (buildMode && !buildButtons.isEmpty()) {
+            // Build mode's buttons (consent pair / つくる+やめる) reuse the insert row: it is free
+            // because a build reply never opens the script's code review.
+            int width = (rightW - (buildButtons.size() - 1) * ROW_GAP) / buildButtons.size();
+            for (int i = 0; i < buildButtons.size(); i++) {
+                BuildChatFlow.ButtonKind kind = buildButtons.get(i);
+                host.addWidget(Button.builder(Component.translatable(buildButtonLabelKey(kind)),
+                                b -> pressBuildButton(kind))
+                        .bounds(rightX + i * (width + ROW_GAP), insertRowY, width, INSERT_ROW_HEIGHT)
+                        .build());
+            }
+        } else if (host.isReviewing()) {
             // The review verdict row (Cursor's Accept / Reject pair). A reply's code lands in the
             // editor as a pending diff on its own (see onChatResult), so there is no Insert button:
             // Accept applies whatever blocks haven't been rejected individually in the editor,
@@ -202,15 +255,52 @@ final class IdeChatPanel {
                 .build());
         sendButton.active = !sendInFlight;
 
+        // The bottom row splits in half: script-chat's Compact keeps the left side, the
+        // けんちく-mode toggle takes the right (16px rows, same ROW_GAP as everything else).
+        int halfWidth = (rightW - ROW_GAP) / 2;
         compactButton = host.addWidget(Button.builder(Component.translatable("gui.micradrone.ide_screen.chat_compact"),
                         b -> compact())
-                .bounds(rightX, toggleRowY, rightW, TOGGLE_ROW_HEIGHT).build());
+                .bounds(rightX, toggleRowY, halfWidth, TOGGLE_ROW_HEIGHT).build());
         compactButton.active = !sendInFlight;
+        host.addWidget(Button.builder(buildModeLabel(), b -> setBuildMode(!buildMode))
+                .bounds(rightX + halfWidth + ROW_GAP, toggleRowY, rightW - halfWidth - ROW_GAP,
+                        TOGGLE_ROW_HEIGHT).build());
     }
 
-    /** Once per client tick (from IdeScreen#tick): advances the thinking-dots animation. */
+    private Component buildModeLabel() {
+        return Component.translatable(buildMode
+                ? "gui.micradrone.ide_screen.build_mode_on" : "gui.micradrone.ide_screen.build_mode_off");
+    }
+
+    private static String buildButtonLabelKey(BuildChatFlow.ButtonKind kind) {
+        return switch (kind) {
+            case CONSENT_YES -> "gui.micradrone.ide_screen.build_consent_yes";
+            case CONSENT_NO -> "gui.micradrone.ide_screen.build_consent_no";
+            case BUILD -> "gui.micradrone.ide_screen.build_build";
+            case CANCEL -> "gui.micradrone.ide_screen.build_cancel";
+        };
+    }
+
+    /**
+     * Once per client tick (from IdeScreen#tick): advances the thinking-dots animation and hands
+     * the flow each NEW offer/progress document the server pushed into ClientBuildState - the
+     * holder keeps only the newest doc, so an unchanged string must not re-drive the state machine.
+     */
     void tick() {
         animationTicks++;
+        if (!buildMode || buildFlow == null) {
+            return;
+        }
+        String offer = ClientBuildState.offerJson();
+        if (offer != null && !offer.equals(lastOfferJson)) {
+            lastOfferJson = offer;
+            runActions(buildFlow.offer(offer));
+        }
+        String progress = ClientBuildState.progressJson();
+        if (progress != null && !progress.equals(lastProgressJson)) {
+            lastProgressJson = progress;
+            runActions(buildFlow.progress(progress));
+        }
     }
 
     /**
@@ -308,17 +398,23 @@ final class IdeChatPanel {
     void cancelRoundTrip() {
         if (sendInFlight) {
             claudeCliBridge.cancel();
+            if (buildStageRunner != null) {
+                buildStageRunner.cancel();
+            }
         }
     }
 
     /**
      * Called from {@link IdeScreen#removed} when the IDE screen closes: cancels any in-flight CLI
-     * round trip and shuts down the bridge's background executor so repeated open/close cycles
+     * round trip and shuts down the bridges' background executors so repeated open/close cycles
      * don't accumulate idle threads.
      */
     void close() {
         cancelRoundTrip();
         claudeCliBridge.close();
+        if (buildStageRunner != null) {
+            buildStageRunner.close();
+        }
     }
 
     /** Loads this controller's chat history on first use (resume across screen reopens - see ChatHistoryStore). */
@@ -383,9 +479,169 @@ final class IdeChatPanel {
                 .collect(Collectors.joining("\n\n"));
     }
 
+    /**
+     * What the transcript box shows: the script-chat transcript plus the build mode's own
+     * "けんちく:" lines appended after it. Build lines are deliberately NOT ChatMessages - the
+     * ChatHistoryStore format has no role for them (brief M3-UI), so they live in their own list.
+     */
+    private String displayText() {
+        String base = transcriptText();
+        if (buildTranscript.isEmpty()) {
+            return base;
+        }
+        String buildLines = String.join("\n", buildTranscript);
+        return base.isEmpty() ? buildLines : base + "\n\n" + buildLines;
+    }
+
     private void refreshTranscript() {
         if (logBox != null) {
-            logBox.setValue(transcriptText());
+            logBox.setValue(displayText());
+        }
+    }
+
+    /**
+     * Build mode's send: the input is the child's Japanese request. {@link BuildChatFlow#request}
+     * decides what happens next (consent question first, or straight to the AI); this method only
+     * clears the box once the request was accepted - a busy line leaves the text in place.
+     */
+    private void sendBuildMessage(String request) {
+        ensureBuildFlow();
+        List<BuildChatFlow.Action> actions = buildFlow.request(request);
+        if (buildFlow.state() == BuildChatFlow.State.ASKING_AI
+                || buildFlow.state() == BuildChatFlow.State.NEED_CONSENT) {
+            inputBox.setValue(""); // accepted - an empty box reads as "the request went out"
+        }
+        runActions(actions);
+    }
+
+    /**
+     * Executes one batch of flow actions: {@code AskAi} goes through the stage runner (result comes
+     * back as {@code aiReply} on the render thread, like {@link #onChatResult}), {@code Send*} map
+     * to the M2 payloads, {@code Say} appends a translated けんちく line, {@code ShowButtons}
+     * re-fills the insert row.
+     */
+    private void runActions(List<BuildChatFlow.Action> actions) {
+        for (BuildChatFlow.Action action : actions) {
+            if (action instanceof BuildChatFlow.AskAi ask) {
+                setRoundTripInFlight(true); // the same Esc-to-cancel and "thinking" row as a send
+                buildStageRunner().run(ask.prompt())
+                        .thenAccept(result -> Minecraft.getInstance().execute(() -> {
+                            setRoundTripInFlight(false);
+                            if (buildFlow != null) {
+                                runActions(buildFlow.aiReply(result));
+                            }
+                        }));
+            } else if (action instanceof BuildChatFlow.SendPlan sendPlan) {
+                // here=true relocates the plan's site under the player's feet (see
+                // BuildNetwork.handlePlan) - the offer line told the child it builds "in front".
+                PacketDistributor.sendToServer(new BuildPlanPayload(
+                        UUID.randomUUID().toString(), 0, 1, sendPlan.json(), true));
+            } else if (action instanceof BuildChatFlow.SendApprove sendApprove) {
+                PacketDistributor.sendToServer(new BuildApprovePayload(sendApprove.hash(),
+                        sendApprove.confirmTerraform(), sendApprove.confirmDestructive()));
+            } else if (action instanceof BuildChatFlow.SendCancel sendCancel) {
+                PacketDistributor.sendToServer(new BuildCancelPayload(sendCancel.jobId()));
+            } else if (action instanceof BuildChatFlow.Say say) {
+                buildTranscript.add(BUILD_LINE_PREFIX
+                        + Component.translatable(say.key(), say.args().toArray()).getString());
+                refreshTranscript();
+            } else if (action instanceof BuildChatFlow.ShowButtons showButtons) {
+                buildButtons = showButtons.buttons();
+                refreshAfterTurn();
+            }
+        }
+    }
+
+    /** One build-mode button press: consent writes the consent file, the rest just feed the flow. */
+    private void pressBuildButton(BuildChatFlow.ButtonKind kind) {
+        if (buildFlow == null) {
+            return;
+        }
+        switch (kind) {
+            case CONSENT_YES -> {
+                saveBuildConsent();
+                runActions(buildFlow.consent(true));
+            }
+            case CONSENT_NO -> runActions(buildFlow.consent(false));
+            case BUILD -> runActions(buildFlow.approve());
+            case CANCEL -> runActions(buildFlow.cancel());
+        }
+    }
+
+    private void ensureBuildFlow() {
+        if (buildFlow == null) {
+            buildFlow = new BuildChatFlow(loadBuildConsent(), promptParts());
+        }
+    }
+
+    private ClaudeStageRunner buildStageRunner() {
+        if (buildStageRunner == null) {
+            buildStageRunner = new ClaudeStageRunner(CLAUDE_EXECUTABLE);
+        }
+        return buildStageRunner;
+    }
+
+    /**
+     * The three texts {@link BuildPromptBuilder} needs: the packaged sample plan, the generated
+     * parts schema (the same {@code forLimit} call the M1 schema tests use), and the palette tag's
+     * values list. Resource failures degrade to empty text rather than killing the toggle.
+     */
+    private BuildChatFlow.PromptParts promptParts() {
+        if (buildPromptParts == null) {
+            buildPromptParts = new BuildChatFlow.PromptParts(
+                    readBuildResource(SAMPLE_PLAN_RESOURCE), partsCatalogText(), paletteText());
+        }
+        return buildPromptParts;
+    }
+
+    private static String partsCatalogText() {
+        return SchemaGenerator.forLimit(BuildingParts.registry(), null,
+                SchemaLimits.CLAUDE_EXE_MAX_SCHEMA_CHARS).json();
+    }
+
+    private static String paletteText() {
+        try {
+            Object tree = MiniJson.parse(readBuildResource(PALETTE_RESOURCE));
+            if (tree instanceof Map<?, ?> map && map.get("values") instanceof List<?> values) {
+                return values.stream().map(String::valueOf).collect(Collectors.joining(", "));
+            }
+        } catch (RuntimeException unreadable) {
+            // fall through: the empty block list still produces a well-formed prompt
+        }
+        return "";
+    }
+
+    private static String readBuildResource(String path) {
+        try (InputStream in = IdeChatPanel.class.getResourceAsStream(path)) {
+            return in == null ? "" : new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException unreadable) {
+            return "";
+        }
+    }
+
+    /** micradrone/build_consent.txt under the game directory (client-local, like the chat history). */
+    private Path consentFile() {
+        return host.minecraft().gameDirectory.toPath()
+                .resolve("micradrone").resolve(BUILD_CONSENT_FILE);
+    }
+
+    private boolean loadBuildConsent() {
+        try {
+            // An unreadable consent file is "not consented" - never silently yes.
+            return Files.readString(consentFile(), StandardCharsets.UTF_8).trim()
+                    .equals(BUILD_CONSENT_VALUE);
+        } catch (IOException | RuntimeException unreadable) {
+            return false;
+        }
+    }
+
+    private void saveBuildConsent() {
+        try {
+            Files.createDirectories(consentFile().getParent());
+            Files.writeString(consentFile(), BUILD_CONSENT_VALUE, StandardCharsets.UTF_8);
+        } catch (IOException | RuntimeException unwritable) {
+            // Consent survives in memory only; the child is asked again on the next game start.
+            MicraDrone.LOGGER.warn("MicraDrone: could not write {}", consentFile());
         }
     }
 
@@ -396,11 +652,20 @@ final class IdeChatPanel {
      */
     private void sendMessage() {
         Minecraft minecraft = host.minecraft();
-        if (sendInFlight || inputBox == null || minecraft == null || minecraft.level == null) {
+        if (inputBox == null || minecraft == null || minecraft.level == null) {
             return;
         }
         String question = inputBox.getValue().trim();
         if (question.isEmpty()) {
+            return;
+        }
+        if (buildMode) {
+            // sendInFlight does not short-circuit here: the flow itself answers a mid-round
+            // request with the "busy" line, which reads better than a silently dead Send key.
+            sendBuildMessage(question);
+            return;
+        }
+        if (sendInFlight) {
             return;
         }
         ensureSessionLoaded();
@@ -585,6 +850,48 @@ final class IdeChatPanel {
     }
 
     // ---- state readers / setters used by IdeScreen's devkit test hooks ------------------------
+
+    /**
+     * Turns けんちく (build) mode on/off - the bottom-row toggle and {@code setBuildModeForTesting}
+     * share this. Switching on creates the flow lazily; switching off drops the visible buttons
+     * (the flow's own state survives, so coming back picks the round up where it was).
+     */
+    void setBuildMode(boolean on) {
+        if (buildMode == on) {
+            return;
+        }
+        buildMode = on;
+        if (on) {
+            ensureBuildFlow();
+        } else {
+            buildButtons = List.of();
+        }
+        refreshAfterTurn(); // the insert row and the toggle's own label both follow buildMode
+    }
+
+    boolean isBuildMode() {
+        return buildMode;
+    }
+
+    /** The flow's state name for the devkit's probe; IDLE until the flow exists. */
+    String buildFlowState() {
+        return buildFlow == null ? BuildChatFlow.State.IDLE.name() : buildFlow.state().name();
+    }
+
+    /** The kinds of the buttons currently in the insert row, e.g. ["BUILD","CANCEL"]. */
+    List<String> buildButtonKinds() {
+        return buildButtons.stream().map(Enum::name).toList();
+    }
+
+    /** Same effect as clicking the insert-row button of {@code kind} (a ButtonKind name). */
+    void pressBuildButton(String kind) {
+        pressBuildButton(BuildChatFlow.ButtonKind.valueOf(kind));
+    }
+
+    /** Only the "けんちく:" lines - the script transcript (You:/AI:) is not part of this. */
+    String buildTranscriptText() {
+        return String.join("\n", buildTranscript);
+    }
 
     boolean isSendInFlight() {
         return sendInFlight;
