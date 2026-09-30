@@ -23,7 +23,7 @@ public final class ReplaceRules {
             throw new IllegalArgumentException("decide only on loaded positions; an unloaded one pauses the job");
         }
         BlockSpec now = cell.block();
-        if (journaled && BlockMatch.satisfies(now, p.block(), Set.of())) {
+        if (journaled && alreadyMatches(p, now)) {
             return new ReplaceDecision.AlreadyDone();
         }
         if (ownPlaced.isPresent() && ownPlaced.get().blockId().equals(now.blockId())) {
@@ -42,10 +42,33 @@ public final class ReplaceRules {
         return switch (p.replaces()) {
             case ReplacePolicy.AirOnly a -> now.isAir() ? new ReplaceDecision.Place(Destruction.NONE)
                     : new ReplaceDecision.Refused(Refusal.NOT_REPLACEABLE);
-            case ReplacePolicy.Expect e -> now.blockId().equals(e.blockId()) ? new ReplaceDecision.Place(Destruction.NONE)
-                    : new ReplaceDecision.Refused(Refusal.EXPECTED_OTHER);
+            case ReplacePolicy.Expect e -> {
+                if (!now.blockId().equals(e.blockId())) {
+                    yield new ReplaceDecision.Refused(Refusal.EXPECTED_OTHER);
+                }
+                // a matching block may still be a fluid or leaves the placement must clear (F-5 counting)
+                if (cell.traits().contains(CellTrait.FLUID)) {
+                    yield new ReplaceDecision.Place(Destruction.FLUID);
+                }
+                if (cell.traits().contains(CellTrait.LEAVES)) {
+                    yield new ReplaceDecision.Place(Destruction.LEAVES);
+                }
+                yield new ReplaceDecision.Place(Destruction.NONE);
+            }
             case ReplacePolicy.Replaceable r -> natural(cell, now, false);
             case ReplacePolicy.Terraform t -> natural(cell, now, true);
+        };
+    }
+
+    /**
+     * Whether the world already holds what the placement wants, under the placement's own verify mode. ASSEMBLED_AWAY
+     * keeps the subset check here: the air it stands for after assembly is the executor's concern (Task 9).
+     */
+    private static boolean alreadyMatches(Placement p, BlockSpec now) {
+        return switch (p.verify()) {
+            case EXACT -> BlockMatch.exact(now, p.block(), Set.of());
+            case BLOCK_ONLY -> now.blockId().equals(p.block().blockId());
+            case STATE_SUBSET, ASSEMBLED_AWAY -> BlockMatch.satisfies(now, p.block(), Set.of());
         };
     }
 

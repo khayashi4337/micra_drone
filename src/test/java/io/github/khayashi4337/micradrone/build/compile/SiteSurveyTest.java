@@ -45,6 +45,17 @@ class SiteSurveyTest {
     }
 
     @Test
+    void withColumnRejectsAColumnOutsideTheSurvey() {
+        SiteSurvey s = SiteSurvey.flat(TestManifests.DIM, BOX, 63, "minecraft:grass_block");
+        IllegalArgumentException low = assertThrows(IllegalArgumentException.class,
+                () -> s.withColumn(BOX.minA() - 1, 0, 64, "minecraft:stone"));
+        IllegalArgumentException high = assertThrows(IllegalArgumentException.class,
+                () -> s.withColumn(0, BOX.maxC() + 1, 64, "minecraft:stone"));
+        assertTrue(low.getMessage().contains("-3,0"), "the message names the column's coordinates");
+        assertTrue(high.getMessage().contains("0,5"), "the message names the column's coordinates");
+    }
+
+    @Test
     void airSurveyPutsTheSurfaceBelowTheBox() {
         SiteSurvey air = SiteSurvey.air(TestManifests.DIM, BOX);
         assertEquals(BOX.minB() - 1, air.surfaceAt(0, 0));

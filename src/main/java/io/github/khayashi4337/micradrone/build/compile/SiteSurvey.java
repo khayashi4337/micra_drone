@@ -65,6 +65,7 @@ public record SiteSurvey(String dimension, Box worldBounds, int[][] surfaceY, St
     }
 
     public SiteSurvey withColumn(int x, int z, int surface, String block) {
+        requireCovered(x, z);
         int[][] ys = surfaceY();
         String[][] blocks = surfaceBlock();
         ys[x - worldBounds.minA()][z - worldBounds.minC()] = surface;
@@ -77,18 +78,21 @@ public record SiteSurvey(String dimension, Box worldBounds, int[][] surfaceY, St
     }
 
     public int surfaceAt(int x, int z) {
-        if (!covers(x, z)) {
-            throw new IllegalArgumentException("column " + x + "," + z + " is outside the survey " + worldBounds);
-        }
+        requireCovered(x, z);
         return surfaceY[x - worldBounds.minA()][z - worldBounds.minC()];
     }
 
     /** False when the column holds no natural ground inside the box (the surveyor wrote air): nothing to cut or fill. */
     public boolean hasGround(int x, int z) {
+        requireCovered(x, z);
+        return !AIR.equals(surfaceBlock[x - worldBounds.minA()][z - worldBounds.minC()]);
+    }
+
+    /** Column-addressing entry points share this check: an outside column is the caller's error, not a bad index. */
+    private void requireCovered(int x, int z) {
         if (!covers(x, z)) {
             throw new IllegalArgumentException("column " + x + "," + z + " is outside the survey " + worldBounds);
         }
-        return !AIR.equals(surfaceBlock[x - worldBounds.minA()][z - worldBounds.minC()]);
     }
 
     public SurveyRef ref(long cachedUntilTick) {

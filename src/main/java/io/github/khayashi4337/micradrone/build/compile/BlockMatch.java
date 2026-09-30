@@ -16,6 +16,9 @@ public final class BlockMatch {
     }
 
     public static boolean satisfies(BlockSpec observed, BlockSpec expected, Set<String> ignoredProps) {
+        Objects.requireNonNull(observed, "observed");
+        Objects.requireNonNull(expected, "expected");
+        Objects.requireNonNull(ignoredProps, "ignoredProps");
         if (!observed.blockId().equals(expected.blockId())) {
             return false;
         }
@@ -32,6 +35,9 @@ public final class BlockMatch {
      * ones aside. A state the observation has but the plan did not list fails, unlike {@link #satisfies}.
      */
     public static boolean exact(BlockSpec observed, BlockSpec expected, Set<String> ignoredProps) {
+        Objects.requireNonNull(observed, "observed");
+        Objects.requireNonNull(expected, "expected");
+        Objects.requireNonNull(ignoredProps, "ignoredProps");
         if (!observed.blockId().equals(expected.blockId())) {
             return false;
         }

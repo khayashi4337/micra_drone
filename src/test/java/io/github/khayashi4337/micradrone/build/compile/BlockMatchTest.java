@@ -40,6 +40,18 @@ class BlockMatchTest {
     }
 
     @Test
+    void nullArgumentsAreRejectedEvenWithAnEmptyExpectation() {
+        BlockSpec plain = BlockSpec.of("minecraft:stone");
+        assertThrows(NullPointerException.class, () -> BlockMatch.satisfies(null, plain, Set.of()));
+        assertThrows(NullPointerException.class, () -> BlockMatch.satisfies(plain, null, Set.of()));
+        assertThrows(NullPointerException.class, () -> BlockMatch.satisfies(plain, plain, null),
+                "an empty expected state list must not skip the ignoredProps check");
+        assertThrows(NullPointerException.class, () -> BlockMatch.exact(null, plain, Set.of()));
+        assertThrows(NullPointerException.class, () -> BlockMatch.exact(plain, null, Set.of()));
+        assertThrows(NullPointerException.class, () -> BlockMatch.exact(plain, plain, null));
+    }
+
+    @Test
     void observedBlockCarriesTheBlockEntityFlag() {
         ObservedBlock plain = new ObservedBlock(BlockSpec.of("minecraft:stone"));
         assertFalse(plain.hasBlockEntity());

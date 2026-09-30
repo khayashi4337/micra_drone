@@ -21,7 +21,11 @@ class ReplaceRulesTest {
     private static final BlockSpec PLANKS = BlockSpec.of("minecraft:oak_planks");
 
     static Placement put(BlockSpec block, ReplacePolicy policy) {
-        return new Placement(0, POS, block, Map.of(), "wall-n", BuildPhase.STRUCTURE, PlacerId.SIMPLE, VerifyMode.EXACT,
+        return put(block, policy, VerifyMode.EXACT);
+    }
+
+    static Placement put(BlockSpec block, ReplacePolicy policy, VerifyMode verify) {
+        return new Placement(0, POS, block, Map.of(), "wall-n", BuildPhase.STRUCTURE, PlacerId.SIMPLE, verify,
                 policy, null);
     }
 
@@ -100,6 +104,54 @@ class ReplaceRulesTest {
         assertEquals(new ReplaceDecision.Place(Destruction.NONE),
                 ReplaceRules.decide(put(cobble, ReplacePolicy.REPLACEABLE), WorldCell.of(BlockSpec.AIR, CellTrait.REPLACEABLE),
                         true, Optional.of(cobble)), "a broken block of ours is air now, which anyone may fill");
+    }
+
+    @Test
+    void journaledExactMismatchIsNotAlreadyDone() {
+        BlockSpec stone = BlockSpec.of("minecraft:stone");
+        WorldCell now = WorldCell.of(stone.with("x", "1"));
+        assertEquals(new ReplaceDecision.Refused(Refusal.NOT_REPLACEABLE),
+                ReplaceRules.decide(put(stone, ReplacePolicy.AIR_ONLY), now, true, Optional.empty()),
+                "EXACT verification does not count an extra observed state as done");
+    }
+
+    @Test
+    void journaledBlockOnlyIgnoresStateDifferences() {
+        BlockSpec north = BlockSpec.of("minecraft:oak_stairs", "facing", "north");
+        WorldCell now = WorldCell.of(north.with("facing", "east"));
+        assertEquals(new ReplaceDecision.AlreadyDone(),
+                ReplaceRules.decide(put(north, ReplacePolicy.REPLACEABLE, VerifyMode.BLOCK_ONLY), now, true,
+                        Optional.empty()));
+    }
+
+    @Test
+    void journaledStateSubsetStillAcceptsExtraStates() {
+        BlockSpec stone = BlockSpec.of("minecraft:stone");
+        WorldCell now = WorldCell.of(stone.with("x", "1"));
+        assertEquals(new ReplaceDecision.AlreadyDone(),
+                ReplaceRules.decide(put(stone, ReplacePolicy.AIR_ONLY, VerifyMode.STATE_SUBSET), now, true,
+                        Optional.empty()), "STATE_SUBSET keeps the previous AlreadyDone behaviour");
+    }
+
+    @Test
+    void expectOnWaterKeepsTheFluidClassification() {
+        assertEquals(new ReplaceDecision.Place(Destruction.FLUID),
+                decide(new ReplacePolicy.Expect("minecraft:water"),
+                        WorldCell.of(BlockSpec.of("minecraft:water"), CellTrait.FLUID)),
+                "a matching fluid is still destruction that needs confirming");
+    }
+
+    @Test
+    void expectOnLeavesKeepsTheLeavesClassification() {
+        assertEquals(new ReplaceDecision.Place(Destruction.LEAVES),
+                decide(new ReplacePolicy.Expect("minecraft:oak_leaves"),
+                        WorldCell.of(BlockSpec.of("minecraft:oak_leaves"), CellTrait.LEAVES)));
+    }
+
+    @Test
+    void expectOnPlainMatchStaysNone() {
+        assertEquals(new ReplaceDecision.Place(Destruction.NONE),
+                decide(new ReplacePolicy.Expect("minecraft:stone"), WorldCell.of(BlockSpec.of("minecraft:stone"))));
     }
 
     @Test
