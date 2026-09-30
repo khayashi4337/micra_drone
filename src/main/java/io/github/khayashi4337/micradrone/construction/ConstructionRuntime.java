@@ -71,6 +71,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.GameProfileCache;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
+import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
@@ -134,6 +135,7 @@ public final class ConstructionRuntime {
     private final SurveyCache surveys;
     private final PlacementGuard guard;
     private final RuntimeJobWorld world;
+    private final DroneShow show = new DroneShow();
     private final ItemCatalog itemCatalog = id -> BuiltInRegistries.ITEM.containsKey(ResourceLocation.parse(id));
 
     private final Map<UUID, Submit> submissions = new LinkedHashMap<>();
@@ -482,6 +484,7 @@ public final class ConstructionRuntime {
         List<JobUpdate> updates = service.tick(new TickInput(now, server.getAverageTickTimeNanos() / NANOS_PER_MILLI),
                 world);
         notifyOwners(updates);
+        show.onUpdates(server, updates);
         checkpointIfWanted();
         lastTickWorkNanos = System.nanoTime() - t0;
     }
@@ -536,6 +539,7 @@ public final class ConstructionRuntime {
         workers.close();
         desk.dropAll();
         submissions.clear();
+        show.discardAll(server);
     }
 
     private static String dimensionId(ServerLevel level) {
@@ -615,6 +619,12 @@ public final class ConstructionRuntime {
             if (r != null) {
                 r.onLogout(event.getEntity().getUUID());
             }
+        }
+
+        /** A show drone reloaded from disk is a leftover of a previous run; it is refused (N-27). */
+        @SubscribeEvent
+        public static void onEntityJoinLevel(EntityJoinLevelEvent event) {
+            DroneShow.onEntityJoin(event);
         }
     }
 }
