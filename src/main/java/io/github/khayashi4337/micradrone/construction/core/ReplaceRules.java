@@ -45,6 +45,7 @@ public final class ReplaceRules {
             case ReplacePolicy.Expect e -> now.blockId().equals(e.blockId()) ? new ReplaceDecision.Place(Destruction.NONE)
                     : new ReplaceDecision.Refused(Refusal.EXPECTED_OTHER);
             case ReplacePolicy.Replaceable r -> natural(cell, now, false);
+            case ReplacePolicy.Terraform t -> natural(cell, now, true);
         };
     }
 

@@ -340,14 +340,7 @@ public final class PlanCompiler {
             placements.add(new Placement(i, frame.toWorld(c.pos()), worldBlock(c.block(), frame), c.blockEntity(),
                     c.ownerId(), c.phase(), owner.placer(), c.verify(), ReplacePolicy.REPLACEABLE, null));
         }
-        List<PhaseRange> phases = new ArrayList<>();
-        int start = 0;
-        for (int i = 1; i <= placements.size(); i++) {
-            if (i == placements.size() || placements.get(i).phase() != placements.get(start).phase()) {
-                phases.add(new PhaseRange(placements.get(start).phase(), start, i));
-                start = i;
-            }
-        }
+        List<PhaseRange> phases = PhaseRanges.of(placements);
         Map<String, Integer> bom = BomCalculator.bom(placements);
         Box worldBounds = worldBounds(frame, site.localBounds());
         String hash = ManifestJson.computeHash(site.dimension(), registry.version(), worldBounds, placements, List.of(), bom);
