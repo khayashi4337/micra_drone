@@ -34,7 +34,7 @@ class Devkit:
         return result
 
     def post(self, path, body=None):
-        data = json.dumps(body or {}).encode("utf-8")
+        data = json.dumps(body or {}, ensure_ascii=False).encode("utf-8")  # the devkit reads raw UTF-8; its JSON reader drops the backslash of XXXX escapes
         req = urllib.request.Request(self._url(path), data=data, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
             return self._decode(resp.read(), path)

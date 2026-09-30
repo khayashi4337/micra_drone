@@ -13,6 +13,8 @@ REPO = Path(__file__).resolve().parents[3]
 SAMPLE = REPO / "src" / "main" / "resources" / "data" / "micradrone" / "build_samples" / "hut.json"
 RED_ROOF = "minecraft:red_nether_bricks"
 SESSION_ID = "stub-session"
+LAST_PROMPT_LOG = Path(__file__).resolve().parent / "last_prompt.txt"  # diagnostics: what the game really sent (git-ignored)
+LOG_TAIL_CHARS = 400
 
 
 def canned_reply(prompt):
@@ -27,7 +29,12 @@ def canned_reply(prompt):
 
 
 def main():
+    if "--version" in sys.argv:  # the chat panel probes the CLI when it opens; that call carries no prompt
+        sys.stdout.write("0.0.0 (Claude Code stub)\n")
+        return
     raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")
+    with LAST_PROMPT_LOG.open("a", encoding="utf-8") as log:  # one entry per real request, newest last
+        log.write(f"--- argv={sys.argv[1:]} chars={len(raw)}\n...{raw[-LOG_TAIL_CHARS:]}\n")
     reply = {"type": "result", "is_error": False, "result": canned_reply(raw), "session_id": SESSION_ID}
     sys.stdout.write(json.dumps(reply, ensure_ascii=True))
     sys.stdout.flush()

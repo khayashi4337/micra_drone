@@ -16,11 +16,12 @@ SAMPLE_SCRIPTS = harness.REPO / "src" / "main" / "java" / "io" / "github" / "kha
 GRASS_Y = -60
 GROUND_Y = GRASS_Y - 1
 FARM_A = (1200, GRASS_Y, 0)
-FARM_B = (1240, GRASS_Y, 0)
+FARM_B = (1280, GRASS_Y, 10)  # within the 12-block reach of HUT_STAND (RunScriptPayload), south of the hut (it is built to the north)
 HUT_STAND = (1280, GRASS_Y, 0)
 MARKER_STEPS = 4
 PLOT_CELLS = MARKER_STEPS - 1
 FARM_TIMEOUT_S = 240
+FIRST_ATTEMPT_S = 90  # one silent non-start was seen in 1 of 3 real runs (script thread never printed): re-run once and RECORD it
 POLL_S = 2.0
 FACE_NORTH = 180
 
@@ -55,12 +56,20 @@ def _farmland_count(ctx, cells):
     return sum(1 for b in blocks if b["state"].startswith("minecraft:farmland")), blocks
 
 
-def _wait_farmland(ctx, cells):
-    deadline = time.monotonic() + FARM_TIMEOUT_S
+def _wait_farmland(ctx, cells, rerun=None, notes=None):
+    """Waits for every cell to become farmland. If a `rerun` callable is given and nothing happened within FIRST_ATTEMPT_S,
+    it is called once and the fact is appended to `notes` (evidence), never hidden."""
+    started = time.monotonic()
+    deadline = started + FARM_TIMEOUT_S
+    rerun_done = rerun is None
     while True:
         count, blocks = _farmland_count(ctx, cells)
         if count == len(cells):
             return blocks
+        if not rerun_done and count == 0 and time.monotonic() - started > FIRST_ATTEMPT_S:
+            rerun_done = True
+            notes.append(f"no cell changed within {FIRST_ATTEMPT_S}s: the script was started once more")
+            rerun()
         if time.monotonic() > deadline:
             raise AssertionError(f"only {count} of {len(cells)} cells became farmland: {[b['state'] for b in blocks]}")
         time.sleep(POLL_S)
@@ -72,8 +81,9 @@ def farm_regression(ctx):
     # (1) the farm script alone
     cells_a = _place_farm(ctx, FARM_A)
     _run_farm_script(ctx, FARM_A)
-    blocks_a = _wait_farmland(ctx, cells_a)
-    ctx.save_json("farm-alone.json", blocks_a)
+    notes = []
+    blocks_a = _wait_farmland(ctx, cells_a, rerun=lambda: _run_farm_script(ctx, FARM_A), notes=notes)
+    ctx.save_json("farm-alone.json", {"blocks": blocks_a, "notes": notes})
     files.append(ctx.out("farm-alone.json"))
     ctx.client.post("/close-screen", {})
     # (2) the farm script while a hut is being built
