@@ -2,7 +2,6 @@ package io.github.khayashi4337.micradrone.build.compile;
 
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.IntPos;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -34,16 +33,8 @@ public final class Conflicts {
         if (!expected.isAir() && actual.isAir()) {
             return Optional.of(new Conflict(pos, expected, observed, ConflictKind.MISSING));
         }
-        if (!actual.blockId().equals(expected.blockId())) {
+        if (!BlockMatch.satisfies(actual, expected, volatileProps)) {
             return Optional.of(new Conflict(pos, expected, observed, ConflictKind.PLAYER_MODIFIED));
-        }
-        for (Map.Entry<String, String> e : expected.properties().entrySet()) {
-            if (volatileProps.contains(e.getKey())) {
-                continue;
-            }
-            if (!e.getValue().equals(actual.get(e.getKey()))) {
-                return Optional.of(new Conflict(pos, expected, observed, ConflictKind.PLAYER_MODIFIED));
-            }
         }
         return Optional.empty();
     }
