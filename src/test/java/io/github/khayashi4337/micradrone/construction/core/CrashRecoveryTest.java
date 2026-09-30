@@ -1,6 +1,8 @@
 package io.github.khayashi4337.micradrone.construction.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.build.compile.Placement;
@@ -12,6 +14,9 @@ import io.github.khayashi4337.micradrone.build.compile.TestManifests;
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.Box;
 import io.github.khayashi4337.micradrone.build.model.IntPos;
+import io.github.khayashi4337.micradrone.build.parts.BuildPhase;
+import io.github.khayashi4337.micradrone.build.parts.PlacerId;
+import io.github.khayashi4337.micradrone.build.parts.VerifyMode;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -386,5 +391,48 @@ class CrashRecoveryTest {
             }
         }
         assertTrue(trials > 100, "every step was a crash point: " + trials);
+    }
+
+    @Test
+    void intentsJudgeALaterStepAtTheSamePositionAgainstWhatTheRunAlreadyWrote() {
+        // a ground cut and the foundation on it share one position inside one run's allowance
+        IntPos pos = new IntPos(1, 63, 1);
+        Placement cut = new Placement(0, pos, BlockSpec.AIR, Map.of(), TerrainPrep.SITE_PREP_NODE, BuildPhase.SITE_PREP,
+                PlacerId.SIMPLE, VerifyMode.EXACT, ReplacePolicy.TERRAFORM, null);
+        Placement foundation = new Placement(1, pos, BlockSpec.of(COBBLE), Map.of(), "found", BuildPhase.STRUCTURE,
+                PlacerId.SIMPLE, VerifyMode.EXACT, ReplacePolicy.TERRAFORM, null);
+        PlacementManifest m = TestManifests.of(SITE, List.of(cut, foundation));
+        FakeWorld w = new FakeWorld();
+        w.setBlock(pos, GRASS, CellTrait.TERRAFORMABLE);
+        FakeMaterials mats = new FakeMaterials().with(COBBLE, 1);
+        ExecutionContext c = ConstructionExecutorTest.ctx(
+                ConstructionExecutorTest.running(MaterialPolicy.SURVIVAL_CONSUME, 2), JobProgram.build(m), w, mats,
+                new Journal(), new LedgerBook(), new PlacedRegistry("claim-job-1"), new JobOutcome(), false);
+        assertNull(ConstructionExecutor.run(c, 0, 100).pause());
+        WriteAheadLog.MemorySink sink = (WriteAheadLog.MemorySink) c.wal().sink();
+        List<JournalRecord> planned = sink.durable.stream().filter(e -> e instanceof WalEntry.PlaceIntent)
+                .map(e -> ((WalEntry.PlaceIntent) e).record()).toList();
+        assertEquals(2, planned.size());
+        assertEquals(GRASS, planned.get(0).before(), "the cut sees the grass");
+        assertTrue(planned.get(0).terrainCut());
+        assertEquals(BlockSpec.AIR, planned.get(1).before(),
+                "the foundation's intent names the block its run wrote there, not the pre-run grass");
+        assertFalse(planned.get(1).terrainCut(), "the foundation cuts nothing: the run's own air is not terrain");
+
+        // a crash after the run's end, before the job files were saved: the durable log is all a restart knows
+        FakeMaterials after = mats.restart();
+        Journal journal = new Journal();
+        LedgerBook ledgers = new LedgerBook();
+        PlacedRegistry registry = new PlacedRegistry("claim-job-1");
+        WalRecovery.Result res = WalRecovery.recover("job-1", sink.durable, c.program(), journal, registry, ledgers, w,
+                after.durableTx(), WalRecovery.Resolution.NONE);
+        assertFalse(res.ambiguous(), "a run that wrote its end is not cut short");
+        ExecutionContext again = ConstructionExecutorTest.ctx(c.job(), c.program(), w, after, journal, ledgers, registry,
+                new JobOutcome(), false);
+        StepReport r = ConstructionExecutor.run(again, res.rewindTo(), 100);
+        assertNull(r.pause());
+        assertEquals(1, after.count(DIRT), "the cut ground is handed over exactly once");
+        assertEquals(0, after.count(COBBLE), "the foundation is charged exactly once");
+        assertEquals(BlockSpec.of(COBBLE), w.blockAt(pos));
     }
 }

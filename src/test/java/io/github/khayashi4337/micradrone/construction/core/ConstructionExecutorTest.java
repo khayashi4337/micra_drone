@@ -1,6 +1,7 @@
 package io.github.khayashi4337.micradrone.construction.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -296,5 +297,116 @@ class ConstructionExecutorTest {
         assertEquals(writes, w.log.size(), "never placed again, even by a step with no journal record of its own");
         assertEquals(BlockSpec.AIR, w.blockAt(pos));
         assertEquals(1, mats.count("minecraft:oak_planks"), "charged once");
+    }
+
+    @Test
+    void anOwedGiveWithNowhereToGoPausesNoRoomAndSettlesNothing() {
+        // an earlier run wrote the cut and charged for it, but the ground owed to the owner was not settled yet
+        IntPos pos = new IntPos(0, 63, 0);
+        Placement sunk = new Placement(0, pos, BlockSpec.of("minecraft:cobblestone"), Map.of(), "found",
+                BuildPhase.SITE_PREP, PlacerId.SIMPLE, VerifyMode.EXACT, ReplacePolicy.TERRAFORM, null);
+        PlacementManifest m = TestManifests.of(new Box(-1, 60, -1, 1, 70, 1), List.of(sunk));
+        FakeWorld w = new FakeWorld();
+        w.setBlock(pos, BlockSpec.of("minecraft:cobblestone"));
+        Journal journal = new Journal();
+        journal.record(new JournalRecord(0, pos, BlockSpec.of("minecraft:grass_block"), false,
+                BlockSpec.of("minecraft:cobblestone"), 0, true));
+        LedgerBook ledgers = new LedgerBook();
+        ledgers.of("job-1").recordConsumed(0, List.of(new ItemCount("minecraft:cobblestone", 1)));
+        PlacedRegistry registry = new PlacedRegistry("claim-job-1");
+        registry.apply("job-1", journal.at(0).orElseThrow());
+        FakeMaterials mats = new FakeMaterials().with("minecraft:cobblestone", 1);
+        mats.room = 1;
+        ExecutionContext c = ctx(running(MaterialPolicy.SURVIVAL_CONSUME, 1), JobProgram.build(m), w, mats, journal, ledgers,
+                registry, new JobOutcome(), false);
+        StepReport r = ConstructionExecutor.run(c, 0, PLENTY);
+        assertEquals(PauseReason.NO_ROOM, r.pause(), "the dirt owed has nowhere to go: not a shortage of materials");
+        assertEquals(List.of(new ItemCount("minecraft:dirt", 1)), r.shortage());
+        assertTrue(ledgers.of("job-1").yieldedView().isEmpty(), "the give was not settled");
+        assertEquals(1, journal.size(), "nothing new was written");
+        assertEquals("minecraft:cobblestone", w.blockAt(pos).blockId(), "the world was not touched");
+        mats.room = FakeMaterials.UNLIMITED;
+        assertNull(ConstructionExecutor.run(c, 0, PLENTY).pause());
+        assertEquals(1, mats.count("minecraft:dirt"), "the owed dirt is handed over once room frees up");
+    }
+
+    @Test
+    void aRunStoppedByMissingMaterialsStillWritesItsEnd() {
+        PlacementManifest m = TestManifests.of(new Box(-1, 60, -1, 2, 70, 1),
+                List.of(TestManifests.put(0, 64, 0, "minecraft:oak_planks")));
+        FakeWorld w = new FakeWorld();
+        ExecutionContext c = fresh(m, w, MaterialPolicy.SURVIVAL_CONSUME, new FakeMaterials());
+        StepReport r = ConstructionExecutor.run(c, 0, PLENTY);
+        assertEquals(PauseReason.MATERIALS_MISSING, r.pause());
+        WriteAheadLog.MemorySink sink = (WriteAheadLog.MemorySink) c.wal().sink();
+        assertTrue(sink.durable.get(0) instanceof WalEntry.RunStart, "the run opened the log");
+        assertTrue(sink.durable.get(sink.durable.size() - 1) instanceof WalEntry.RunEnd,
+                "the run ends on the log even though nothing changed: without it recovery reads it as cut short");
+        WalRecovery.Result res = WalRecovery.recover("job-1", sink.durable, c.program(), new Journal(),
+                new PlacedRegistry("claim-job-1"), new LedgerBook(), w, 0L, WalRecovery.Resolution.NONE);
+        assertFalse(res.ambiguous(), "a cleanly stopped run is not left for the owner to answer");
+        assertTrue(res.reasons().isEmpty());
+    }
+
+    @Test
+    void aRunStoppedForRoomStillWritesItsEnd() {
+        IntPos pos = new IntPos(0, 63, 0);
+        Placement cut = new Placement(0, pos, BlockSpec.of("minecraft:cobblestone"), Map.of(), "found",
+                BuildPhase.SITE_PREP, PlacerId.SIMPLE, VerifyMode.EXACT, ReplacePolicy.TERRAFORM, null);
+        PlacementManifest m = TestManifests.of(new Box(-1, 60, -1, 2, 70, 1), List.of(cut));
+        FakeWorld w = new FakeWorld();
+        w.setBlock(pos, BlockSpec.of("minecraft:grass_block"), CellTrait.TERRAFORMABLE);
+        FakeMaterials mats = new FakeMaterials().with("minecraft:cobblestone", 1);
+        mats.room = 1;
+        ExecutionContext c = fresh(m, w, MaterialPolicy.SURVIVAL_CONSUME, mats);
+        assertEquals(PauseReason.NO_ROOM, ConstructionExecutor.run(c, 0, PLENTY).pause());
+        WriteAheadLog.MemorySink sink = (WriteAheadLog.MemorySink) c.wal().sink();
+        assertTrue(sink.durable.get(0) instanceof WalEntry.RunStart);
+        assertTrue(sink.durable.get(sink.durable.size() - 1) instanceof WalEntry.RunEnd,
+                "the run ends on the log even though nothing changed");
+        assertFalse(WalRecovery.recover("job-1", sink.durable, c.program(), new Journal(), new PlacedRegistry("claim-job-1"),
+                new LedgerBook(), w, 0L, WalRecovery.Resolution.NONE).ambiguous());
+    }
+
+    @Test
+    void aRunWhereTheOnlyStepIsDeniedStillWritesItsEnd() {
+        PlacementManifest m = TestManifests.of(new Box(-1, 60, -1, 2, 70, 1),
+                List.of(TestManifests.put(0, 64, 0, "minecraft:oak_planks")));
+        FakeWorld w = new FakeWorld();
+        w.deny(new IntPos(0, 64, 0));
+        ExecutionContext c = fresh(m, w, MaterialPolicy.SURVIVAL_CONSUME,
+                new FakeMaterials().with("minecraft:oak_planks", 1));
+        StepReport r = ConstructionExecutor.run(c, 0, PLENTY);
+        assertNull(r.pause(), "a denial is a skip, not a pause");
+        assertEquals(1, r.cursor());
+        WriteAheadLog.MemorySink sink = (WriteAheadLog.MemorySink) c.wal().sink();
+        assertTrue(sink.durable.get(0) instanceof WalEntry.RunStart);
+        assertTrue(sink.durable.get(sink.durable.size() - 1) instanceof WalEntry.RunEnd,
+                "the run ends on the log even though nothing changed");
+        assertFalse(WalRecovery.recover("job-1", sink.durable, c.program(), new Journal(), new PlacedRegistry("claim-job-1"),
+                new LedgerBook(), w, 0L, WalRecovery.Resolution.NONE).ambiguous());
+    }
+
+    @Test
+    void aFailedApplyAfterTheWriteLeavesTheBlockJournaledAndPausesForRecovery() {
+        PlacementManifest m = TestManifests.of(new Box(-1, 60, -1, 2, 70, 1),
+                List.of(TestManifests.put(0, 64, 0, "minecraft:oak_planks")));
+        FakeWorld w = new FakeWorld();
+        FakeMaterials mats = new FakeMaterials().with("minecraft:oak_planks", 1);
+        mats.failNextApply = true;
+        ExecutionContext c = fresh(m, w, MaterialPolicy.SURVIVAL_CONSUME, mats);
+        IntPos pos = new IntPos(0, 64, 0);
+        StepReport r = ConstructionExecutor.run(c, 0, PLENTY);
+        assertEquals(PauseReason.RECOVERY_NEEDED, r.pause(), "the apply failed after the write: recover, do not crash");
+        assertEquals(0, r.cursor());
+        assertEquals(BlockSpec.of("minecraft:oak_planks"), w.blockAt(pos), "the block was really placed");
+        assertTrue(c.journal().at(0).isPresent(), "the write is journaled before the settle: a rollback can remove it");
+        assertTrue(c.registry().contains(pos), "the position is held as this job's");
+        assertFalse(c.ledgers().of("job-1").isConsumed(0), "nothing is claimed paid");
+        assertEquals(1, mats.count("minecraft:oak_planks"), "the refused apply changed nothing");
+        StepReport again = ConstructionExecutor.run(c, r.cursor(), PLENTY);
+        assertNull(again.pause());
+        assertEquals(0, mats.count("minecraft:oak_planks"), "the journaled charge is settled on the retry, once");
+        assertTrue(c.ledgers().of("job-1").isConsumed(0));
     }
 }

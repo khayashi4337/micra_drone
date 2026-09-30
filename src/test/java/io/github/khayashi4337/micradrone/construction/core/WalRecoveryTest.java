@@ -165,4 +165,14 @@ class WalRecoveryTest {
         assertTrue(journal.at(0).isPresent(), "a chunk is saved as one snapshot: the foundation there means the cut happened");
         assertEquals(List.of(0), registry.at(A).orElseThrow().earlierKeys());
     }
+
+    @Test
+    void aRunThatStoppedBeforeAnyChangeStillEnded() {
+        // a run that paused before its first write (short of materials, no room, denied) still wrote its end
+        List<WalEntry> log = List.of(new WalEntry.RunStart(JOB, 1), new WalEntry.RunEnd(JOB, 1, List.of(), List.of()));
+        WalRecovery.Result r = recover(log, new Journal(), new PlacedRegistry("claim-1"), new LedgerBook(), new FakeWorld(),
+                savedAt(0), WalRecovery.Resolution.NONE);
+        assertFalse(r.ambiguous(), "a run that wrote nothing is still a run that ended: not cut short");
+        assertTrue(r.reasons().isEmpty());
+    }
 }

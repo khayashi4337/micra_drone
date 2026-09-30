@@ -28,6 +28,8 @@ public final class FakeMaterials implements MaterialPort {
     };
     public boolean ownerOnline = true;
     public int room = UNLIMITED;
+    /** Test injection: the next {@link #apply} is refused and changes nothing (a post-check failure). */
+    public boolean failNextApply = false;
 
     public FakeMaterials() {
         live.put(INVENTORY, new TreeMap<>());
@@ -97,6 +99,10 @@ public final class FakeMaterials implements MaterialPort {
 
     @Override
     public boolean apply(List<Move> moves) {
+        if (failNextApply) {
+            failNextApply = false;
+            return false;
+        }
         hook.run();
         for (Move m : moves) {
             int have = live.computeIfAbsent(m.sourceId(), k -> new TreeMap<>()).getOrDefault(m.itemId(), 0);
