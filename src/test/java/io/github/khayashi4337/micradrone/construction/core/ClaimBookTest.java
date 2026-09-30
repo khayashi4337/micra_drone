@@ -81,4 +81,91 @@ class ClaimBookTest {
         assertEquals(IssueCode.E_CLAIM_OVERLAP,
                 book.check(B, OW, new Box(15, 60, 0, 16, 70, 5), null).get(0).code(), "the new part is claimed too");
     }
+
+    // Boxes are inclusive on both ends, so sharing exactly one layer (new.maxA == claim.minA) already overlaps,
+    // while sitting one block further out (new.maxA + 1 == claim.minA) shares no block and must pass. Each test
+    // below pins one of the six boundary comparisons in ClaimBook.overlaps (3 axes x both sides).
+
+    @Test
+    void boxesTouchingAtOneLayerOnAxisAFromBelowOverlap() {
+        ClaimBook book = new ClaimBook(ClaimBook.DEFAULT_MAX_CLAIMS_PER_OWNER);
+        book.reserve("claim-a", A, OW, HERE, HERE, 0L);
+        assertEquals(List.of(IssueCode.E_CLAIM_OVERLAP),
+                book.check(B, OW, new Box(-5, 60, 0, 0, 80, 10), null).stream().map(Issue::code).toList(),
+                "the layer a=0 belongs to both boxes");
+        assertTrue(book.check(B, OW, new Box(-5, 60, 0, -1, 80, 10), null).isEmpty(),
+                "adjacent boxes share no block");
+    }
+
+    @Test
+    void boxesTouchingAtOneLayerOnAxisAFromAboveOverlap() {
+        ClaimBook book = new ClaimBook(ClaimBook.DEFAULT_MAX_CLAIMS_PER_OWNER);
+        book.reserve("claim-a", A, OW, HERE, HERE, 0L);
+        assertEquals(List.of(IssueCode.E_CLAIM_OVERLAP),
+                book.check(B, OW, new Box(10, 60, 0, 15, 80, 10), null).stream().map(Issue::code).toList(),
+                "the layer a=10 belongs to both boxes");
+        assertTrue(book.check(B, OW, new Box(11, 60, 0, 15, 80, 10), null).isEmpty(),
+                "adjacent boxes share no block");
+    }
+
+    @Test
+    void boxesTouchingAtOneLayerOnAxisBFromBelowOverlap() {
+        ClaimBook book = new ClaimBook(ClaimBook.DEFAULT_MAX_CLAIMS_PER_OWNER);
+        book.reserve("claim-a", A, OW, HERE, HERE, 0L);
+        assertEquals(List.of(IssueCode.E_CLAIM_OVERLAP),
+                book.check(B, OW, new Box(0, 40, 0, 10, 60, 10), null).stream().map(Issue::code).toList(),
+                "the layer b=60 belongs to both boxes");
+        assertTrue(book.check(B, OW, new Box(0, 40, 0, 10, 59, 10), null).isEmpty(),
+                "adjacent boxes share no block");
+    }
+
+    @Test
+    void boxesTouchingAtOneLayerOnAxisBFromAboveOverlap() {
+        ClaimBook book = new ClaimBook(ClaimBook.DEFAULT_MAX_CLAIMS_PER_OWNER);
+        book.reserve("claim-a", A, OW, HERE, HERE, 0L);
+        assertEquals(List.of(IssueCode.E_CLAIM_OVERLAP),
+                book.check(B, OW, new Box(0, 80, 0, 10, 100, 10), null).stream().map(Issue::code).toList(),
+                "the layer b=80 belongs to both boxes");
+        assertTrue(book.check(B, OW, new Box(0, 81, 0, 10, 100, 10), null).isEmpty(),
+                "adjacent boxes share no block");
+    }
+
+    @Test
+    void boxesTouchingAtOneLayerOnAxisCFromBelowOverlap() {
+        ClaimBook book = new ClaimBook(ClaimBook.DEFAULT_MAX_CLAIMS_PER_OWNER);
+        book.reserve("claim-a", A, OW, HERE, HERE, 0L);
+        assertEquals(List.of(IssueCode.E_CLAIM_OVERLAP),
+                book.check(B, OW, new Box(0, 60, -5, 10, 80, 0), null).stream().map(Issue::code).toList(),
+                "the layer c=0 belongs to both boxes");
+        assertTrue(book.check(B, OW, new Box(0, 60, -5, 10, 80, -1), null).isEmpty(),
+                "adjacent boxes share no block");
+    }
+
+    @Test
+    void boxesTouchingAtOneLayerOnAxisCFromAboveOverlap() {
+        ClaimBook book = new ClaimBook(ClaimBook.DEFAULT_MAX_CLAIMS_PER_OWNER);
+        book.reserve("claim-a", A, OW, HERE, HERE, 0L);
+        assertEquals(List.of(IssueCode.E_CLAIM_OVERLAP),
+                book.check(B, OW, new Box(0, 60, 10, 10, 80, 15), null).stream().map(Issue::code).toList(),
+                "the layer c=10 belongs to both boxes");
+        assertTrue(book.check(B, OW, new Box(0, 60, 11, 10, 80, 15), null).isEmpty(),
+                "adjacent boxes share no block");
+    }
+
+    @Test
+    void theOperatingBoxIsGuardedOnAxisABeyondTheWorldBox() {
+        ClaimBook book = new ClaimBook(ClaimBook.DEFAULT_MAX_CLAIMS_PER_OWNER);
+        Box operating = new Box(-3, 0, 0, 13, 200, 10);
+        book.reserve("claim-a", A, OW, HERE, operating, 0L);
+        assertEquals(List.of(IssueCode.E_CLAIM_OVERLAP),
+                book.check(B, OW, new Box(-8, 60, 0, -3, 80, 10), null).stream().map(Issue::code).toList(),
+                "the operating box reaches a=-3 even though the world box starts at a=0");
+        assertTrue(book.check(B, OW, new Box(-8, 60, 0, -4, 80, 10), null).isEmpty(),
+                "adjacent to the operating box shares no block");
+        assertEquals(List.of(IssueCode.E_CLAIM_OVERLAP),
+                book.check(B, OW, new Box(13, 60, 0, 18, 80, 10), null).stream().map(Issue::code).toList(),
+                "the operating box reaches a=13 even though the world box ends at a=10");
+        assertTrue(book.check(B, OW, new Box(14, 60, 0, 18, 80, 10), null).isEmpty(),
+                "adjacent to the operating box shares no block");
+    }
 }
