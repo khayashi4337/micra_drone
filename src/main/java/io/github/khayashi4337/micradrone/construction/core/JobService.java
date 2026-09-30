@@ -21,6 +21,7 @@ import io.github.khayashi4337.micradrone.build.verify.SnapshotCollector;
 import io.github.khayashi4337.micradrone.build.verify.SnapshotDiff;
 import io.github.khayashi4337.micradrone.build.verify.VolatileProps;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -50,6 +51,8 @@ public final class JobService {
             PauseReason.NO_ROOM);
     private static final Set<JobState> ROLLBACKABLE = EnumSet.of(JobState.VERIFIED, JobState.PARTIAL, JobState.FAILED,
             JobState.CANCELLED);
+    /** The lastError prefix of a job whose log waits for the owner's answer; the reasons follow it. */
+    static final String RECOVERY_AMBIGUOUS = "recovery-ambiguous:";
 
     private final BudgetConfig budgetConfig;
     private final ConstructionBudget budget;
@@ -61,6 +64,8 @@ public final class JobService {
     private final WriteAheadLog wal;
     private final Map<String, PlacedRegistry> registries = new HashMap<>();
     private final LinkedHashMap<String, JobRecord> jobs = new LinkedHashMap<>();
+    /** Jobs whose manifest could not be read: no record to run, but the job stays on the list until the owner fails it. */
+    private final Map<String, ConstructionJob> brokenWithoutManifest = new HashMap<>();
     private long admissions;
     private boolean slowed;
 
@@ -490,7 +495,7 @@ public final class JobService {
         }
         boolean finished = p.state() == JobState.VERIFIED || p.state() == JobState.PARTIAL;
         boolean busyClaim = jobsInClaim(p.claimId()).stream().anyMatch(r -> !r.job().state().terminal());
-        if (!finished || busyClaim) {
+        if (!finished || busyClaim || claimAwaitsAnswer(p.claimId())) {
             return ControlResult.WRONG_STATE;
         }
         ConstructionJob job = ConstructionJob.create(newJobId, p.ownerUuid(), p.dimension(), p.manifestHash(),
@@ -503,17 +508,30 @@ public final class JobService {
     }
 
     /** Every repair round journals its own placements (keyed by ledger key), so room for all rounds. */
-    private static int journalCapacity(int programSize) {
+    static int journalCapacity(int programSize) {
         return Math.max(Journal.MAX_ENTRIES, programSize) * (1 + ConstructionJob.MAX_REPAIR_ROUNDS);
     }
 
     public Optional<JobStatus> status(String jobId) {
         JobRecord r = jobs.get(jobId);
-        return r == null ? Optional.empty() : Optional.of(statusOf(r));
+        if (r != null) {
+            return Optional.of(statusOf(r));
+        }
+        ConstructionJob lone = brokenWithoutManifest.get(jobId);
+        return lone == null ? Optional.empty() : Optional.of(statusOfLone(lone));
     }
 
     public List<JobStatus> statuses() {
-        return jobs.values().stream().map(this::statusOf).toList();
+        List<JobStatus> out = new ArrayList<>();
+        jobs.values().forEach(r -> out.add(statusOf(r)));
+        brokenWithoutManifest.values().forEach(j -> out.add(statusOfLone(j)));
+        return List.copyOf(out);
+    }
+
+    /** A broken job without a manifest has no record: its status is the job alone. */
+    private static JobStatus statusOfLone(ConstructionJob j) {
+        return new JobStatus(j.jobId(), j.ownerUuid(), j.kind(), j.state(), j.pauseReason(), j.cursor(), j.total(),
+                j.repairRound(), 0, 0, 0, j.lastError(), j.claimId(), j.dimension());
     }
 
     private JobStatus statusOf(JobRecord r) {
@@ -581,6 +599,182 @@ public final class JobService {
 
     public boolean slowed() {
         return slowed;
+    }
+
+    /**
+     * What start-up recovery found: for each job that still waits for its owner's answer, the part of the write-ahead
+     * log it kept (pendingLogs), and one line per ambiguous job saying why (reasons).
+     */
+    public record RecoveryReport(Map<String, List<WalEntry>> pendingLogs, List<String> reasons) {
+        public RecoveryReport {
+            TreeMap<String, List<WalEntry>> ordered = new TreeMap<>(pendingLogs);
+            ordered.replaceAll((k, v) -> List.copyOf(v));
+            pendingLogs = Collections.unmodifiableMap(ordered);
+            reasons = List.copyOf(reasons);
+        }
+    }
+
+    /**
+     * Start-up recovery (04 F-2): runs once, synchronously, before the first tick. The durable log is read once and every
+     * job marked {@link JobRecord#recoveryPending()} is folded against it. An ambiguous job keeps its part of the log
+     * ({@code pending_log.bin}) and waits for the owner's answer — never silently adopted or discarded; a decided job is
+     * folded into its journal, registry and ledgers, and its cursor rewound so the re-walk places again what the world
+     * lost without charging twice. The runtime saves the files afterwards and checkpoints the log ({@link #markDurable}).
+     */
+    public RecoveryReport recoverAll(JobWorld w) {
+        List<WalEntry> log = null;
+        Map<String, List<WalEntry>> pending = new TreeMap<>();
+        List<String> reasons = new ArrayList<>();
+        for (JobRecord r : List.copyOf(jobs.values())) {
+            if (!r.recoveryPending) {
+                continue;
+            }
+            if (log == null) {
+                log = wal.durable();
+            }
+            WalRecovery.Result x = recoverOne(r, log, w, WalRecovery.Resolution.NONE);
+            if (x.ambiguous()) {
+                pending.put(r.job().jobId(), r.pendingLog);
+                reasons.add(r.job().jobId() + " " + x.reasons());
+            }
+        }
+        return new RecoveryReport(pending, reasons);
+    }
+
+    /** Folds one job's log part in; an ambiguous job is parked for its owner's answer (its part is kept). */
+    private WalRecovery.Result recoverOne(JobRecord r, List<WalEntry> log, JobWorld w, WalRecovery.Resolution answer) {
+        ConstructionJob j = r.job();
+        long savedTx = w.materials(j.ownerUuid(), j.materialPolicy(), j.claimId()).durableTx();
+        WalRecovery.Result x = WalRecovery.recover(j.jobId(), log, r.program(), r.journal(), registry(j.claimId()), ledgers,
+                w.world(j.dimension()), savedTx, answer);
+        r.recoveryPending = false;
+        if (x.ambiguous()) {
+            r.pendingLog = WalRecovery.pendingPart(j.jobId(), log);
+            r.setJob(j.withLastError(RECOVERY_AMBIGUOUS + String.join(",", x.reasons())));
+            if (!j.state().terminal()) {
+                pauseForRecovery(r);
+            }
+            return x;
+        }
+        r.pendingLog = List.of();
+        r.possiblyLostDrops = x.possiblyLostDrops();
+        if (!j.state().terminal()) {
+            if (!RecoveryPlanner.settledUpTo(r, j.cursor(), x.explained())) {
+                // positions before the cursor that neither the files nor the log account for: never re-run silently
+                pauseForRecovery(r);
+                return x;
+            }
+            if (x.rewindTo() < j.cursor()) {
+                r.setJob(r.job().withCursor(x.rewindTo()));
+            }
+            // a crash inside a repair round is re-derived in the same round, so the round's ledger keys charge once
+            r.recoveredRound = j.repairRound() > 0;
+        }
+        return x;
+    }
+
+    private static void pauseForRecovery(JobRecord r) {
+        ConstructionJob j = r.job();
+        if (j.state() == JobState.PAUSED && j.pauseReason() == PauseReason.RECOVERY_NEEDED) {
+            return;
+        }
+        r.setJob((j.state() == JobState.PAUSED ? j.on(JobEvent.RESUME) : j).paused(PauseReason.RECOVERY_NEEDED));
+    }
+
+    /** Whether this job waits for its owner's ADOPT or DISCARD answer on part of the log. */
+    public boolean awaitsAnswer(String jobId) {
+        JobRecord r = jobs.get(jobId);
+        return r != null && !r.pendingLog.isEmpty();
+    }
+
+    /** Whether any job on the claim still waits for an answer: such a claim takes no new work (Task 21, 28, 29 gates). */
+    public boolean claimAwaitsAnswer(String claimId) {
+        return jobsInClaim(claimId).stream().anyMatch(r -> !r.pendingLog.isEmpty());
+    }
+
+    /**
+     * The owner's (or an operator's) answer for a recovery-paused job: ADOPT or DISCARD decides the waiting part of the
+     * log; REPAIR and FAIL end the job (a waiting part is discarded first — it was never proven), and REPAIR starts a
+     * REPAIR job that re-derives everything from the world, taking the pre-build blocks from the journal unless the
+     * files were broken.
+     */
+    public ControlResult recover(String jobId, UUID requester, boolean op, RecoveryChoice choice, String newJobId,
+                                 long tick, JobWorld w) {
+        JobRecord r = jobs.get(jobId);
+        if (r == null) {
+            return ControlResult.NOT_FOUND;
+        }
+        ConstructionJob j = r.job();
+        if (!j.ownerUuid().equals(requester) && !op) {
+            return ControlResult.NOT_ALLOWED;
+        }
+        boolean waiting = awaitsAnswer(jobId);
+        boolean recoveryPaused = j.state() == JobState.PAUSED && j.pauseReason() == PauseReason.RECOVERY_NEEDED;
+        if (!recoveryPaused && !waiting) {
+            return ControlResult.WRONG_STATE;
+        }
+        if (choice == RecoveryChoice.ADOPT || choice == RecoveryChoice.DISCARD) {
+            if (!waiting) {
+                return ControlResult.WRONG_STATE;
+            }
+            // a finished job keeps its state: the answer only settles the log part, so its claim unblocks
+            return answer(r, choice, w);
+        }
+        if (!recoveryPaused) {
+            return ControlResult.WRONG_STATE;
+        }
+        if (waiting) {
+            answer(r, RecoveryChoice.DISCARD, w);
+        }
+        r.setJob(r.job().on(JobEvent.FAIL));
+        if (choice == RecoveryChoice.REPAIR) {
+            ConstructionJob job = ConstructionJob.create(newJobId, j.ownerUuid(), j.dimension(), j.manifestHash(),
+                    JobKind.REPAIR, j.jobId(), 0, j.claimId(), j.materialPolicy(), tick, List.of());
+            JobRecord repair = new JobRecord(job, r.manifest(), r.nodeTypes(), new JobProgram(List.of(), List.of()),
+                    new Journal(journalCapacity(r.program().size())), new JobOutcome(), r.operatingBox());
+            if (!r.broken) {
+                repair.useBeforesFrom(r.journal());
+            }
+            add(repair);
+        }
+        return ControlResult.OK;
+    }
+
+    /** Folds the waiting part in under the owner's answer; the job resumes when its journal is settled again. */
+    private ControlResult answer(JobRecord r, RecoveryChoice choice, JobWorld w) {
+        WalRecovery.Resolution res = choice == RecoveryChoice.ADOPT ? WalRecovery.Resolution.ADOPT
+                : WalRecovery.Resolution.DISCARD;
+        WalRecovery.Result x = recoverOne(r, r.pendingLog, w, res);
+        if (x.ambiguous()) {
+            return ControlResult.WRONG_STATE;
+        }
+        ConstructionJob j = r.job();
+        r.setJob(j.withLastError(""));
+        if (j.state() == JobState.PAUSED && j.pauseReason() == PauseReason.RECOVERY_NEEDED
+                && RecoveryPlanner.settledUpTo(r, j.cursor())) {
+            r.setJob(r.job().on(JobEvent.RESUME));
+        }
+        return ControlResult.OK;
+    }
+
+    /**
+     * A job whose files could not be read (04 F-2): kept for the owner's decision, never run silently. Without a
+     * manifest no record can be built (the program and the operating box both need it); the bare job is kept so it is
+     * still listed and can be failed.
+     */
+    public void addBroken(ConstructionJob job, PlacementManifest manifestOrNull, Map<String, String> nodeTypes,
+                          Box operatingBox, List<String> reasons) {
+        ConstructionJob shown = job.withLastError(String.join("; ", reasons));
+        if (manifestOrNull == null) {
+            brokenWithoutManifest.put(shown.jobId(), shown);
+            return;
+        }
+        JobProgram program = job.kind() == JobKind.BUILD ? JobProgram.build(manifestOrNull)
+                : new JobProgram(List.of(), List.of());
+        JobRecord r = new JobRecord(shown, manifestOrNull, nodeTypes, program,
+                new Journal(journalCapacity(program.size())), new JobOutcome(), operatingBox);
+        r.broken = true;
+        add(r);
     }
 
     private List<JobRecord> inState(Set<JobState> states) {
