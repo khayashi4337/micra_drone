@@ -88,6 +88,8 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
 public final class ConstructionRuntime {
     /** Vanilla runs twenty ticks a second; the ETA the owner sees is in seconds. */
     private static final long TICKS_PER_SECOND = 20L;
+    /** One progress push a second per running job (20 vanilla ticks), on top of the state-change pushes. */
+    private static final long PROGRESS_INTERVAL_TICKS = 20L;
     /** {@code getAverageTickTimeNanos} reports nanoseconds; {@link TickInput} wants milliseconds. */
     private static final double NANOS_PER_MILLI = 1_000_000.0;
     /** P4 ships no bundled templates (P11); submissions verify against an empty table. */
@@ -177,7 +179,7 @@ public final class ConstructionRuntime {
             ServerMessages.send(player, MessageKey.of(ChildMessages.SUBMIT_BUSY));
             return;
         }
-        lastSubmits.put(owner, SubmitOutcome.working());
+        recordOutcome(owner, SubmitOutcome.working(), 0);
         ServerLevel level = player.serverLevel();
         Submit s = new Submit(submission, level, player.hasPermissions(Commands.LEVEL_GAMEMASTERS));
         Site site = submission.plan().site();
@@ -191,7 +193,7 @@ public final class ConstructionRuntime {
         if (!site.dimension().equals(dimensionId(level))) {
             // D-27: the plan's dimension must be the one the submitter stands in
             ServerMessages.send(player, ServerMessages.rejection(ApprovalRejection.DIMENSION_MISMATCH, List.of()));
-            lastSubmits.put(owner, SubmitOutcome.failed(List.of()));
+            recordOutcome(owner, SubmitOutcome.failed(List.of()), 0);
             return;
         }
         Box worldBox = OperatingBox.toWorld(site.frame(), site.localBounds());
@@ -237,7 +239,7 @@ public final class ConstructionRuntime {
                 result -> onCompiled(owner, s, result));
         if (!accepted) {
             submissions.remove(owner);
-            lastSubmits.put(owner, SubmitOutcome.failed(List.of()));
+            recordOutcome(owner, SubmitOutcome.failed(List.of()), 0);
             ServerMessages.send(server, owner, MessageKey.of(ChildMessages.SUBMIT_BUSY));
         }
     }
@@ -324,7 +326,8 @@ public final class ConstructionRuntime {
                 compiled.surveyDigest(), server.getTickCount());
         pendingOwners.put(pending.manifestHash(), owner);
         long eta = etaTicks(manifest);
-        lastSubmits.put(owner, SubmitOutcome.offered(pending, pending.issues(), safety.replacements(), eta));
+        recordOutcome(owner, SubmitOutcome.offered(pending, pending.issues(), safety.replacements(), eta),
+                manifest.placements().size());
         ServerPlayer to = server.getPlayerList().getPlayer(owner);
         ServerMessages.send(to, MessageKey.of(ChildMessages.SUBMIT_OK, manifest.placements().size(),
                 eta / TICKS_PER_SECOND, pending.manifestHash()));
@@ -341,9 +344,21 @@ public final class ConstructionRuntime {
     }
 
     private void finishFailed(UUID owner, List<Issue> issues) {
-        lastSubmits.put(owner, SubmitOutcome.failed(issues));
+        recordOutcome(owner, SubmitOutcome.failed(issues), 0);
         ServerMessages.send(server, owner, MessageKey.of(ChildMessages.SUBMIT_ISSUES, issues.size()));
         ServerMessages.sendIssues(server, owner, issues);
+    }
+
+    /**
+     * Records an owner's newest submit outcome and pushes it to their client the moment it leaves
+     * WORKING (M2's BuildOfferPayload). Each outcome object is written once, so each transition
+     * pushes exactly once; WORKING itself is not pushed.
+     */
+    private void recordOutcome(UUID owner, SubmitOutcome outcome, int blocks) {
+        lastSubmits.put(owner, outcome);
+        if (!SubmitOutcome.WORKING.equals(outcome.state())) {
+            BuildNetwork.pushOffer(server, owner, outcome, blocks);
+        }
     }
 
     /** The shared refusal for an unreadable site: E-SITE-BLOCKED on the manifest, keyed "unloaded". */
@@ -509,7 +524,7 @@ public final class ConstructionRuntime {
         advanceSubmissions(now);
         List<JobUpdate> updates = service.tick(new TickInput(now, server.getAverageTickTimeNanos() / NANOS_PER_MILLI),
                 world);
-        notifyOwners(updates);
+        notifyOwners(updates, now);
         show.onUpdates(server, updates);
         checkpointIfWanted();
         lastTickWorkNanos = System.nanoTime() - t0;
@@ -527,8 +542,13 @@ public final class ConstructionRuntime {
         }
     }
 
-    /** Tick step (4): the owner hears a state change once, plus shortages and fresh conflicts as they land. */
-    private void notifyOwners(List<JobUpdate> updates) {
+    /**
+     * Tick step (4): the owner hears a state change once, plus shortages and fresh conflicts as they
+     * land. The same changes go out as progress pushes (M2's BuildProgressPayload), and a RUNNING
+     * job pushes once a second even when its update list is empty - a job starved of allowance by
+     * the budget emits no update at all, so the interval reads the statuses, not the updates.
+     */
+    private void notifyOwners(List<JobUpdate> updates, long now) {
         for (JobUpdate u : updates) {
             ConstructionJob job = u.job();
             if (u.stateChanged()) {
@@ -542,6 +562,10 @@ public final class ConstructionRuntime {
                 } else if (status != null) {
                     ServerMessages.send(server, job.ownerUuid(), ServerMessages.status(status));
                 }
+                // the terminal transition pushes too, so the client always sees a job's last document
+                if (status != null) {
+                    BuildNetwork.pushProgress(server, job.ownerUuid(), status);
+                }
             }
             for (var item : u.shortage()) {
                 ServerMessages.send(server, job.ownerUuid(),
@@ -550,6 +574,13 @@ public final class ConstructionRuntime {
             if (!u.newConflicts().isEmpty()) {
                 ServerMessages.send(server, job.ownerUuid(),
                         MessageKey.of(ChildMessages.CONFLICTS, u.newConflicts().size()));
+            }
+        }
+        if (now % PROGRESS_INTERVAL_TICKS == 0) {
+            for (JobStatus status : service.statuses()) {
+                if (status.state() == JobState.RUNNING) {
+                    BuildNetwork.pushProgress(server, status.owner(), status);
+                }
             }
         }
     }
