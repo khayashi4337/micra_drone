@@ -9,7 +9,7 @@ import time
 import traceback
 from dataclasses import dataclass
 
-from tools.p4 import devkit_client, evidence, harness, scenarios_basic
+from tools.p4 import devkit_client, evidence, harness, scenarios_basic, scenarios_show
 
 MODES = ("sp", "mp", "mp2")
 RESTART_LIMIT = 1
@@ -28,6 +28,7 @@ SCENARIOS = {
     "hut-golden": Scenario(scenarios_basic.hut_golden, (1, 5), "sp"),
     "hut-here": Scenario(scenarios_basic.hut_here, (1, 12), "sp"),
     "bad-source": Scenario(scenarios_basic.bad_source, (), "sp"),
+    "drone-show": Scenario(scenarios_show.drone_show, (1,), "sp"),
 }
 
 # Design 07 completion conditions with no scenario yet -> the task that completes them.
