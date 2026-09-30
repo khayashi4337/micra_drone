@@ -24,6 +24,7 @@ import io.github.khayashi4337.micradrone.construction.core.ApprovalRejection;
 import io.github.khayashi4337.micradrone.construction.core.ApprovalRequest;
 import io.github.khayashi4337.micradrone.construction.core.Approver;
 import io.github.khayashi4337.micradrone.construction.core.Candidate;
+import io.github.khayashi4337.micradrone.construction.core.ChatChannel;
 import io.github.khayashi4337.micradrone.construction.core.ChildMessages;
 import io.github.khayashi4337.micradrone.construction.core.ClaimBook;
 import io.github.khayashi4337.micradrone.construction.core.CompiledPlan;
@@ -45,6 +46,7 @@ import io.github.khayashi4337.micradrone.construction.core.PendingApproval;
 import io.github.khayashi4337.micradrone.construction.core.PlacementSurvey;
 import io.github.khayashi4337.micradrone.construction.core.PlanCompilation;
 import io.github.khayashi4337.micradrone.construction.core.PlanSubmission;
+import io.github.khayashi4337.micradrone.construction.core.QuietPolicy;
 import io.github.khayashi4337.micradrone.construction.core.ReplacementSummary;
 import io.github.khayashi4337.micradrone.construction.core.SafetyEnvelope;
 import io.github.khayashi4337.micradrone.construction.core.SafetyReport;
@@ -65,6 +67,7 @@ import java.util.Optional;
 import java.util.UUID;
 import net.minecraft.commands.Commands;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -140,6 +143,8 @@ public final class ConstructionRuntime {
     private final RuntimeJobWorld world;
     private final DroneShow show = new DroneShow();
     private final ItemCatalog itemCatalog = id -> BuiltInRegistries.ITEM.containsKey(ResourceLocation.parse(id));
+    /** M2b: the path each owner's newest submission came in on; it gates {@link #tell}. */
+    private final ChatChannel chat = new ChatChannel();
 
     private final Map<UUID, Submit> submissions = new LinkedHashMap<>();
     private final Map<UUID, SubmitOutcome> lastSubmits = new HashMap<>();
@@ -169,6 +174,59 @@ public final class ConstructionRuntime {
         return r != null && r.server == server ? Optional.of(r) : Optional.empty();
     }
 
+    /** A submission over the build channel moves the owner's chat to the quiet panel view (M2b). */
+    public void markPanel(UUID owner) {
+        chat.markPanel(owner);
+    }
+
+    /** A submission over a {@code /micradrone build} command returns the owner's chat to the command lines. */
+    public void markCommand(UUID owner) {
+        chat.markCommand(owner);
+    }
+
+    /**
+     * The one door every child-facing chat line leaves through (M2b): an owner whose newest
+     * submission came over the panel misses the lines {@link QuietPolicy} names - the panel's own
+     * packets already show the same facts without the command machinery. Called only on the server
+     * main thread, which is the one thread {@link ChatChannel} is built for.
+     */
+    private void tell(UUID owner, MessageKey key) {
+        if (!chat.isPanel(owner) || !QuietPolicy.suppressForPanel(key.key())) {
+            ServerMessages.send(server, owner, key);
+        }
+    }
+
+    /**
+     * The same door for a line built as a {@link Component} (a status line, a rejection line);
+     * {@code key} is the {@link ChildMessages} key the line was built from, for the policy check.
+     */
+    private void tell(UUID owner, String key, Component component) {
+        if (!chat.isPanel(owner) || !QuietPolicy.suppressForPanel(key)) {
+            ServerMessages.send(server, owner, component);
+        }
+    }
+
+    /**
+     * Issue lines take the same door one by one: a suppressed line still gets the server-log entry
+     * {@link ServerMessages#sendIssues} would have written, so the log never loses a record.
+     */
+    private void tellIssues(UUID owner, List<Issue> issues) {
+        if (!chat.isPanel(owner)) {
+            ServerMessages.sendIssues(server, owner, issues);
+            return;
+        }
+        List<Issue> shown = new ArrayList<>(issues.size());
+        for (Issue issue : issues) {
+            if (QuietPolicy.suppressForPanel(ChildMessages.issueLine(issue).key())) {
+                // sendIssues is skipped for this line, so its usual log entry is written here
+                MicraDrone.LOGGER.info("construction issue {}: {}", issue.id(), issue.message());
+            } else {
+                shown.add(issue);
+            }
+        }
+        ServerMessages.sendIssues(server, owner, shown);
+    }
+
     /**
      * A new submission replaces any outcome display but never a running one: an owner has at most one
      * submit in flight (the worker's slot and the survey/read phases count alike).
@@ -176,7 +234,7 @@ public final class ConstructionRuntime {
     public void submit(ServerPlayer player, PlanSubmission submission) {
         UUID owner = player.getUUID();
         if (workers.busy(owner) || submissions.containsKey(owner)) {
-            ServerMessages.send(player, MessageKey.of(ChildMessages.SUBMIT_BUSY));
+            tell(owner, MessageKey.of(ChildMessages.SUBMIT_BUSY));
             return;
         }
         recordOutcome(owner, SubmitOutcome.working(), 0);
@@ -192,7 +250,8 @@ public final class ConstructionRuntime {
         }
         if (!site.dimension().equals(dimensionId(level))) {
             // D-27: the plan's dimension must be the one the submitter stands in
-            ServerMessages.send(player, ServerMessages.rejection(ApprovalRejection.DIMENSION_MISMATCH, List.of()));
+            tell(owner, ChildMessages.rejection(ApprovalRejection.DIMENSION_MISMATCH),
+                    ServerMessages.rejection(ApprovalRejection.DIMENSION_MISMATCH, List.of()));
             recordOutcome(owner, SubmitOutcome.failed(List.of()), 0);
             return;
         }
@@ -240,7 +299,7 @@ public final class ConstructionRuntime {
         if (!accepted) {
             submissions.remove(owner);
             recordOutcome(owner, SubmitOutcome.failed(List.of()), 0);
-            ServerMessages.send(server, owner, MessageKey.of(ChildMessages.SUBMIT_BUSY));
+            tell(owner, MessageKey.of(ChildMessages.SUBMIT_BUSY));
         }
     }
 
@@ -328,25 +387,24 @@ public final class ConstructionRuntime {
         long eta = etaTicks(manifest);
         recordOutcome(owner, SubmitOutcome.offered(pending, pending.issues(), safety.replacements(), eta),
                 manifest.placements().size());
-        ServerPlayer to = server.getPlayerList().getPlayer(owner);
-        ServerMessages.send(to, MessageKey.of(ChildMessages.SUBMIT_OK, manifest.placements().size(),
+        tell(owner, MessageKey.of(ChildMessages.SUBMIT_OK, manifest.placements().size(),
                 eta / TICKS_PER_SECOND, pending.manifestHash()));
         ReplacementSummary replacements = safety.replacements();
         if (replacements.needsTerraformConfirm()) {
-            ServerMessages.send(to, MessageKey.of(ChildMessages.TERRAIN_CONFIRM, replacements.terrainCut(),
+            tell(owner, MessageKey.of(ChildMessages.TERRAIN_CONFIRM, replacements.terrainCut(),
                     replacements.terrainFill()));
         }
         if (replacements.needsDestructiveConfirm()) {
-            ServerMessages.send(to, MessageKey.of(ChildMessages.DESTRUCTIVE_CONFIRM, replacements.fluids(),
+            tell(owner, MessageKey.of(ChildMessages.DESTRUCTIVE_CONFIRM, replacements.fluids(),
                     replacements.leaves(), replacements.emptyContainers()));
         }
-        ServerMessages.sendIssues(server, owner, pending.issues());
+        tellIssues(owner, pending.issues());
     }
 
     private void finishFailed(UUID owner, List<Issue> issues) {
         recordOutcome(owner, SubmitOutcome.failed(issues), 0);
-        ServerMessages.send(server, owner, MessageKey.of(ChildMessages.SUBMIT_ISSUES, issues.size()));
-        ServerMessages.sendIssues(server, owner, issues);
+        tell(owner, MessageKey.of(ChildMessages.SUBMIT_ISSUES, issues.size()));
+        tellIssues(owner, issues);
     }
 
     /**
@@ -384,26 +442,27 @@ public final class ConstructionRuntime {
             CompiledPlan compiled = approved.candidate().compiled();
             service.admitApproved(approved.job(), compiled.manifest(), compiled.nodeTypes(),
                     JobProgram.build(compiled.manifest()), compiled.operatingBox());
-            ServerMessages.send(player, MessageKey.of(ChildMessages.APPROVE_OK, approved.job().jobId()));
+            tell(player.getUUID(), MessageKey.of(ChildMessages.APPROVE_OK, approved.job().jobId()));
         } else if (decision instanceof ApprovalDecision.Rejected rejected) {
             for (Issue issue : rejected.blocking()) {
                 MicraDrone.LOGGER.info("approval refused by {}: {}", rejected.reason(), issue.id());
             }
-            ServerMessages.send(player, ServerMessages.rejection(rejected.reason(), rejected.blocking()));
+            tell(player.getUUID(), ChildMessages.rejection(rejected.reason()),
+                    ServerMessages.rejection(rejected.reason(), rejected.blocking()));
         }
         return decision;
     }
 
     public ControlResult cancel(UUID requester, boolean op, String jobId) {
         ControlResult result = service.cancel(jobId, requester, op);
-        ServerMessages.send(server, requester, result == ControlResult.OK
+        tell(requester, result == ControlResult.OK
                 ? MessageKey.of(ChildMessages.CANCELLED, jobId) : MessageKey.of(ChildMessages.control(result)));
         return result;
     }
 
     public ControlResult resume(UUID requester, boolean op, String jobId, boolean skipSiteChanges) {
         ControlResult result = service.resume(jobId, requester, op, skipSiteChanges);
-        ServerMessages.send(server, requester, result == ControlResult.OK
+        tell(requester, result == ControlResult.OK
                 ? MessageKey.of(ChildMessages.RESUMED, jobId) : MessageKey.of(ChildMessages.control(result)));
         return result;
     }
@@ -418,9 +477,9 @@ public final class ConstructionRuntime {
         ControlResult result = service.beginVerify(jobId, requester, op, newJobId, server.getTickCount());
         JobStatus created = result == ControlResult.OK ? service.status(newJobId).orElse(null) : null;
         if (created != null) {
-            ServerMessages.send(server, requester, ServerMessages.status(created));
+            tell(requester, ChildMessages.STATUS_LINE, ServerMessages.status(created));
         } else {
-            ServerMessages.send(server, requester, MessageKey.of(ChildMessages.control(result)));
+            tell(requester, MessageKey.of(ChildMessages.control(result)));
         }
         return result;
     }
@@ -554,13 +613,13 @@ public final class ConstructionRuntime {
             if (u.stateChanged()) {
                 JobStatus status = service.status(job.jobId()).orElse(null);
                 if (job.state() == JobState.VERIFIED) {
-                    ServerMessages.send(server, job.ownerUuid(), MessageKey.of(ChildMessages.DONE));
+                    tell(job.ownerUuid(), MessageKey.of(ChildMessages.DONE));
                 } else if (job.state() == JobState.PARTIAL) {
                     // skipped + conflicts + the deviations the last repair round gave up on (lastError's numbers)
                     int unplaced = status == null ? 0 : status.skipped() + status.conflicts() + status.unrepaired();
-                    ServerMessages.send(server, job.ownerUuid(), MessageKey.of(ChildMessages.PARTIAL, unplaced));
+                    tell(job.ownerUuid(), MessageKey.of(ChildMessages.PARTIAL, unplaced));
                 } else if (status != null) {
-                    ServerMessages.send(server, job.ownerUuid(), ServerMessages.status(status));
+                    tell(job.ownerUuid(), ChildMessages.STATUS_LINE, ServerMessages.status(status));
                 }
                 // the terminal transition pushes too, so the client always sees a job's last document
                 if (status != null) {
@@ -568,11 +627,11 @@ public final class ConstructionRuntime {
                 }
             }
             for (var item : u.shortage()) {
-                ServerMessages.send(server, job.ownerUuid(),
+                tell(job.ownerUuid(),
                         MessageKey.of(ChildMessages.SHORTAGE, item.itemId(), item.count()));
             }
             if (!u.newConflicts().isEmpty()) {
-                ServerMessages.send(server, job.ownerUuid(),
+                tell(job.ownerUuid(),
                         MessageKey.of(ChildMessages.CONFLICTS, u.newConflicts().size()));
             }
         }
@@ -591,6 +650,7 @@ public final class ConstructionRuntime {
         pendingOwners.values().removeIf(owner -> desk.pending(owner).isEmpty());
         workers.cancel(player);
         submissions.remove(player);
+        chat.forget(player);
     }
 
     void shutdown() {

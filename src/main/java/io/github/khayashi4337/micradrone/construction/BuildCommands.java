@@ -124,6 +124,8 @@ public final class BuildCommands {
         if (player == null || runtime == null) {
             return 0;
         }
+        // M2b: a submission over a command returns the owner's chat to the command lines
+        runtime.markCommand(player.getUUID());
         String json = readSource(player, server, StringArgumentType.getString(ctx, "source"));
         if (json == null) {
             return 0;

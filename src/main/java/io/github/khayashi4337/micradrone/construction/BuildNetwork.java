@@ -80,6 +80,8 @@ public final class BuildNetwork {
                 return;
             }
         }
+        // M2b: a submission over the panel moves the owner's chat to the quiet view
+        runtime.markPanel(player.getUUID());
         runtime.submit(player, submission);
     }
 
