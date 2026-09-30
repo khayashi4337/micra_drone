@@ -1534,6 +1534,6 @@ public class DroneControllerBlockEntity extends BlockEntity implements DroneGrid
         if (ownerUuid != null) {
             tag.putUUID("OwnerUuid", ownerUuid);
         }
-        tag.put("CurrentRod", currentRod.save(registries));
+        tag.put("CurrentRod", currentRod.saveOptional(registries));
     }
 }
