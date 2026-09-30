@@ -119,11 +119,23 @@ public final class MaterialLedger {
     /** Crash recovery: takes back the part of an operation that never became durable. */
     public void unrecord(MaterialOp op, int key, List<ItemCount> items) {
         TreeMap<Integer, List<ItemCount>> map = mapOf(op);
-        List<ItemCount> left = ItemCount.minus(map.getOrDefault(key, List.of()), items);
+        if (items == null || items.isEmpty()) {
+            throw new IllegalArgumentException("nothing to take back under ledger key " + key);
+        }
+        List<ItemCount> held = map.get(key);
+        if (held == null) {
+            throw new IllegalStateException("ledger key " + key + " holds no " + op + " record to take back");
+        }
+        if (!ItemCount.minus(items, held).isEmpty()) {
+            // taking back more than was recorded would erase the entry and let the operation settle again
+            throw new IllegalStateException("ledger key " + key + ": cannot unrecord " + items + ", only " + held
+                    + " is recorded");
+        }
+        List<ItemCount> left = ItemCount.minus(held, items);
         if (left.isEmpty()) {
             map.remove(key);
         } else {
-            map.put(key, left);
+            map.put(key, List.copyOf(left));
         }
     }
 
@@ -146,26 +158,27 @@ public final class MaterialLedger {
     }
 
     public SortedMap<Integer, List<ItemCount>> consumedView() {
-        return Collections.unmodifiableSortedMap(consumed);
+        return Collections.unmodifiableSortedMap(new TreeMap<>(consumed));
     }
 
     public SortedMap<Integer, List<ItemCount>> returnedView() {
-        return Collections.unmodifiableSortedMap(returned);
+        return Collections.unmodifiableSortedMap(new TreeMap<>(returned));
     }
 
     public SortedMap<Integer, List<ItemCount>> yieldedView() {
-        return Collections.unmodifiableSortedMap(yielded);
+        return Collections.unmodifiableSortedMap(new TreeMap<>(yielded));
     }
 
     public SortedMap<Integer, List<ItemCount>> reclaimedView() {
-        return Collections.unmodifiableSortedMap(reclaimed);
+        return Collections.unmodifiableSortedMap(new TreeMap<>(reclaimed));
     }
 
     private static void add(TreeMap<Integer, List<ItemCount>> map, int key, List<ItemCount> items) {
         if (items == null || items.isEmpty()) {
             throw new IllegalArgumentException("a ledger entry needs at least one item");
         }
-        map.put(key, ItemCount.plus(map.getOrDefault(key, List.of()), items));
+        // the stored list is immutable: a caller who empties a list it was handed must not settle the key twice
+        map.put(key, List.copyOf(ItemCount.plus(map.getOrDefault(key, List.of()), items)));
     }
 
     private static void requireWithin(List<ItemCount> items, List<ItemCount> owed, String what, int key) {

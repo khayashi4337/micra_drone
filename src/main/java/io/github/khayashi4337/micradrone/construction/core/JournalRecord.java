@@ -18,6 +18,10 @@ public record JournalRecord(int placementIndex, IntPos pos, BlockSpec before, bo
      * additions (new-manifest indexes) in the one journal.
      */
     public static int restoreIndex(int programIndex) {
+        if (programIndex < 0) {
+            // -1 - (-1) = 0 would collide with a real placement index in the one journal
+            throw new IllegalArgumentException("a removal's index needs a program position >= 0, not " + programIndex);
+        }
         return -1 - programIndex;
     }
 
@@ -25,6 +29,18 @@ public record JournalRecord(int placementIndex, IntPos pos, BlockSpec before, bo
         Objects.requireNonNull(pos, "pos");
         Objects.requireNonNull(before, "before");
         Objects.requireNonNull(placed, "placed");
+        if (placementIndex < 0) {
+            // a removal's record: a restoreIndex, no ledger key to settle, and it never cuts ground
+            if (ledgerKey != NO_LEDGER_KEY || terrainCut) {
+                throw new IllegalArgumentException("a removal record needs NO_LEDGER_KEY and no terrain cut, not "
+                        + "ledgerKey=" + ledgerKey + ", terrainCut=" + terrainCut);
+            }
+        } else if (ledgerKey != placementIndex) {
+            // a placement's record is indexed by its ledger key (a repair round's key is its own record's index,
+            // ConstructionExecutor.putRecord): one index, one settle chain
+            throw new IllegalArgumentException("a placement record needs placementIndex == ledgerKey >= 0, not "
+                    + placementIndex + " and " + ledgerKey);
+        }
     }
 
     /** A record of a placement that cut no ground, or of a removal. */

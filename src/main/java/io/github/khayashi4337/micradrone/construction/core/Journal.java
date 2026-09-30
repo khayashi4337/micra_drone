@@ -1,8 +1,11 @@
 package io.github.khayashi4337.micradrone.construction.core;
 
+import io.github.khayashi4337.micradrone.build.model.IntPos;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
 
@@ -27,8 +30,16 @@ public final class Journal {
     }
 
     public boolean record(JournalRecord r) {
-        if (byIndex.containsKey(r.placementIndex())) {
-            return false;
+        JournalRecord held = byIndex.get(r.placementIndex());
+        if (held != null) {
+            // a rerun logs the same record again (the write is not done twice); a different record under one index
+            // would overwrite this position's pre-build state, so it is a bug, not a rerun ('before' may differ: it
+            // is what the run saw, the first record's is the one the undo uses)
+            if (held.pos().equals(r.pos()) && held.placed().equals(r.placed()) && held.ledgerKey() == r.ledgerKey()
+                    && held.terrainCut() == r.terrainCut()) {
+                return false;
+            }
+            throw new IllegalStateException("journal index " + r.placementIndex() + " already holds a different record");
         }
         if (byIndex.size() >= maxEntries) {
             throw new IllegalStateException("the journal is full (" + maxEntries + " entries)");
@@ -50,10 +61,13 @@ public final class Journal {
     }
 
     public List<UndoEntry> undo() {
-        List<UndoEntry> out = new ArrayList<>();
+        // one entry per position, the first write's 'before': applying them top-down restores the pre-build block
+        // even where the job wrote the position twice (a foundation on its own ground cut)
+        Map<IntPos, UndoEntry> first = new LinkedHashMap<>();
         for (JournalRecord r : byIndex.values()) {
-            out.add(r.undo());
+            first.putIfAbsent(r.pos(), r.undo());
         }
+        List<UndoEntry> out = new ArrayList<>(first.values());
         out.sort(TOP_DOWN);
         return out;
     }

@@ -2,6 +2,7 @@ package io.github.khayashi4337.micradrone.construction.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.build.compile.PlacementManifest;
@@ -33,6 +34,36 @@ class JobProgramTest {
         assertEquals(3, r.put(0).index());
         assertEquals(2 * JobProgram.LEDGER_ROUND_STRIDE + 3, r.put(0).ledgerKey());
         assertTrue(JobProgram.LEDGER_ROUND_STRIDE > 20_000);
+    }
+
+    @Test
+    void aRepairProgramChecksItsIndexesAndRound() {
+        PlacementManifest m = TestManifests.smallHut();
+        assertThrows(IllegalArgumentException.class, () -> JobProgram.repair(m, List.of(3, 3), 1), "an index twice");
+        assertThrows(IllegalArgumentException.class, () -> JobProgram.repair(m, List.of(-1), 1));
+        assertThrows(IllegalArgumentException.class, () -> JobProgram.repair(m, List.of(m.placements().size()), 1));
+        assertThrows(IllegalArgumentException.class, () -> JobProgram.repair(m, List.of(0), 0),
+                "round 0 collides with the build's own keys");
+        assertThrows(IllegalArgumentException.class,
+                () -> JobProgram.repair(m, List.of(0), ConstructionJob.MAX_REPAIR_ROUNDS + 1));
+        assertThrows(IllegalArgumentException.class, () -> JobProgram.repair(m, List.of(0), Integer.MAX_VALUE),
+                "a round whose key would overflow the int range");
+        JobProgram built = JobProgram.build(m);
+        for (int round = 1; round <= ConstructionJob.MAX_REPAIR_ROUNDS; round++) {
+            for (PutItem put : JobProgram.repair(m, List.of(0, m.placements().size() - 1), round).puts()) {
+                assertTrue(built.puts().stream().noneMatch(b -> b.ledgerKey() == put.ledgerKey()),
+                        "round " + round + " keys never collide with the build keys");
+            }
+        }
+    }
+
+    @Test
+    void duplicateLedgerKeysInAProgramAreRejected() {
+        PlacementManifest m = TestManifests.smallHut();
+        List<PutItem> puts = List.of(new PutItem(0, 0, m.placements().get(0)),
+                new PutItem(1, 0, m.placements().get(1)));
+        assertThrows(IllegalArgumentException.class, () -> new JobProgram(List.of(), puts),
+                "two placements under one ledger key would settle the key twice");
     }
 
     @Test

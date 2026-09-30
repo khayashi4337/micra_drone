@@ -25,6 +25,34 @@ class JournalTest {
     }
 
     @Test
+    void undoUsesTheFirstBeforeOfEachPositionOnce() {
+        Journal j = new Journal();
+        IntPos p = new IntPos(0, 64, 0);
+        j.record(new JournalRecord(1, p, BlockSpec.of("minecraft:grass_block"), false, BlockSpec.AIR, 1, true));
+        j.record(new JournalRecord(10, p, BlockSpec.AIR, false, BlockSpec.of("minecraft:stone"), 10));
+        assertEquals(List.of(new UndoEntry(p, BlockSpec.of("minecraft:grass_block"))), j.undo(),
+                "a position the job wrote twice goes back to its first 'before', once");
+    }
+
+    @Test
+    void aConflictingReRecordIsRejectedButAnIdenticalRerunIsIgnored() {
+        Journal j = new Journal();
+        JournalRecord r = rec(0, 0, 64, 0, "minecraft:air", "minecraft:stone");
+        assertTrue(j.record(r));
+        assertFalse(j.record(r), "the same record again is a rerun");
+        assertThrows(IllegalStateException.class,
+                () -> j.record(rec(0, 1, 64, 0, "minecraft:air", "minecraft:stone")),
+                "another position under the same index would lose this one's 'before'");
+        assertThrows(IllegalStateException.class,
+                () -> j.record(rec(0, 0, 64, 0, "minecraft:air", "minecraft:oak_planks")),
+                "another block under the same index");
+        assertThrows(IllegalStateException.class,
+                () -> j.record(new JournalRecord(0, new IntPos(0, 64, 0), BlockSpec.AIR, false,
+                        BlockSpec.of("minecraft:stone"), 0, true)), "another terrain-cut flag under the same index");
+        assertEquals("minecraft:air", j.at(0).orElseThrow().before().blockId(), "the first record stands");
+    }
+
+    @Test
     void undoRunsTopDown() {
         Journal j = new Journal();
         j.record(rec(0, 1, 64, 0, "minecraft:air", "minecraft:stone"));
