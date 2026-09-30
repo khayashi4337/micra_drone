@@ -9,7 +9,7 @@ import time
 import traceback
 from dataclasses import dataclass
 
-from tools.p4 import devkit_client, evidence, harness, scenarios_basic, scenarios_l7, scenarios_show
+from tools.p4 import devkit_client, evidence, harness, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_show
 
 MODES = ("sp", "mp", "mp2")
 RESTART_LIMIT = 1
@@ -25,7 +25,8 @@ class Scenario:
 
 SCENARIOS = {
     "devkit-smoke": Scenario(scenarios_basic.devkit_smoke, (), "sp"),
-    "hut-golden": Scenario(scenarios_basic.hut_golden, (1, 5), "sp"),
+    "hut-golden": Scenario(scenarios_basic.hut_golden, (1,), "sp"),
+    "approve-guard": Scenario(scenarios_approval.approve_guard, (5,), "sp"),
     "hut-here": Scenario(scenarios_basic.hut_here, (1, 12), "sp"),
     "bad-source": Scenario(scenarios_basic.bad_source, (), "sp"),
     "drone-show": Scenario(scenarios_show.drone_show, (1,), "sp"),
@@ -41,6 +42,14 @@ SCENARIOS = {
 PENDING_CONDITIONS = {
     3: "Task 29", 4: "Task 28", 6: "Task 34", 7: "Task 28", 8: "Task 30", 9: "Task 32", 10: "Task 33",
     11: "Task 37", 13: "Task 30", 14: "Task 28",
+}
+
+
+# Conditions whose scenarios pass but do not cover the whole condition text -> what is missing and who adds it.
+# The condition shows as PARTIAL in summary.json until its task removes it here (Task 38 requires this to be empty).
+PARTIAL_CONDITIONS = {
+    8: "Task 30: block-entity blocks in general (only a chest with items is exercised so far)",
+    12: "Task 27: survival - cut blocks gathered to the owner, fill blocks consumed, nothing created or lost",
 }
 
 
@@ -101,7 +110,7 @@ def run_mode_sp(game, folder, names):
 def run(args):
     harness.main_guard()
     run_id = args.run_id or time.strftime("p4-%Y%m%d-%H%M%S")
-    folder = evidence.RunFolder(run_id)
+    folder = evidence.RunFolder(run_id, partial=PARTIAL_CONDITIONS)
     game = harness.Game(run_id, folder)
     names = _select(args)
     try:

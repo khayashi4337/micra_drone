@@ -18,6 +18,12 @@ class RegistryTest(unittest.TestCase):
         for condition, task in p4_scenarios.PENDING_CONDITIONS.items():
             self.assertTrue(task.startswith("Task "), (condition, task))
 
+    def test_partial_conditions_are_covered_and_name_the_task_that_finishes_them(self):
+        for condition, what in p4_scenarios.PARTIAL_CONDITIONS.items():
+            self.assertIn(condition, self.covered(), condition)
+            self.assertNotIn(condition, p4_scenarios.PENDING_CONDITIONS, condition)
+            self.assertTrue(what.startswith("Task "), (condition, what))
+
     def test_owner_only_scenarios_always_say_why(self):
         for name, s in p4_scenarios.SCENARIOS.items():
             if s.owner_only_reason is not None:

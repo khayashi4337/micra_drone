@@ -6,13 +6,16 @@ from pathlib import Path
 PASS = "PASS"
 FAIL = "FAIL"
 NOT_RUN = "NOT-RUN"
+# every scenario of the condition passed, but part of the condition text has no scenario yet
+PARTIAL = "PARTIAL"
 STATUSES = (PASS, FAIL, NOT_RUN)
 EVIDENCE_ROOT = Path("run-evidence") / "p4"
 
 
 class RunFolder:
-    def __init__(self, run_id, root=EVIDENCE_ROOT):
+    def __init__(self, run_id, root=EVIDENCE_ROOT, partial=None):
         self.run_id = run_id
+        self.partial = dict(partial or {})
         self.path = Path(root) / run_id
         self.path.mkdir(parents=True, exist_ok=True)
         self.scenarios = {}
@@ -56,12 +59,15 @@ class RunFolder:
                 out[condition] = FAIL
             elif NOT_RUN in seen:
                 out[condition] = NOT_RUN
+            elif condition in self.partial:
+                out[condition] = PARTIAL
             else:
                 out[condition] = PASS
         return out
 
     def write_summary(self):
         summary = {"runId": self.run_id, "scenarios": self.scenarios,
+                   "partialConditions": {str(k): v for k, v in sorted(self.partial.items())},
                    "conditions": {str(k): v for k, v in sorted(self.condition_states().items())}}
         self.write_json("summary.json", summary)
         return summary

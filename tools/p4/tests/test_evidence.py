@@ -27,6 +27,13 @@ class EvidenceTest(unittest.TestCase):
         self.assertEqual({1: "PASS", 2: "NOT-RUN", 3: "FAIL"}, f.condition_states())
         self.assertFalse(f.all_passed())
 
+    def test_a_passing_but_partial_condition_is_reported_as_partial(self):
+        f = evidence.RunFolder("p", root=Path(tempfile.mkdtemp()), partial={12: "Task 27: survival"})
+        f.record("a", [12, 1], evidence.PASS, "")
+        self.assertEqual({1: "PASS", 12: "PARTIAL"}, f.condition_states())
+        f.record("b", [12], evidence.FAIL, "boom")
+        self.assertEqual("FAIL", f.condition_states()[12])
+
     def test_summary_json_shape(self):
         f = self.folder()
         f.record("a", [1], evidence.PASS, "", files=["x.json"])
