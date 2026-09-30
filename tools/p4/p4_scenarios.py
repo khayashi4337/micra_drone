@@ -111,7 +111,7 @@ def run(args):
     harness.main_guard()
     run_id = args.run_id or time.strftime("p4-%Y%m%d-%H%M%S")
     folder = evidence.RunFolder(run_id, partial=PARTIAL_CONDITIONS)
-    game = harness.Game(run_id, folder)
+    game = harness.Game(run_id, folder, claude_mode=args.claude)
     names = _select(args)
     try:
         harness.preflight()
@@ -160,6 +160,8 @@ def main(argv=None):
     group.add_argument("--only", help="comma-separated scenario names")
     parser.add_argument("--mode", choices=("sp", "mp", "mp2", "all"), default="all")
     parser.add_argument("--run-id")
+    parser.add_argument("--claude", choices=(harness.CLAUDE_STUB, harness.CLAUDE_REAL), default=harness.CLAUDE_STUB,
+                        help="stub: a canned claude.cmd answers (deterministic); real: the installed Claude CLI answers")
     return run(parser.parse_args(argv))
 
 
