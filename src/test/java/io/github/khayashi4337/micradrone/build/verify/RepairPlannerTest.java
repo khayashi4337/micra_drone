@@ -7,10 +7,14 @@ import io.github.khayashi4337.micradrone.build.compile.ObservedBlock;
 import io.github.khayashi4337.micradrone.build.compile.PlacementManifest;
 import io.github.khayashi4337.micradrone.build.compile.TestManifests;
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
+import io.github.khayashi4337.micradrone.build.model.Box;
 import io.github.khayashi4337.micradrone.build.model.IntPos;
+import io.github.khayashi4337.micradrone.build.parts.BuildPhase;
+import io.github.khayashi4337.micradrone.build.parts.VerifyMode;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 
 class RepairPlannerTest {
@@ -60,6 +64,37 @@ class RepairPlannerTest {
                 i -> Optional.empty(), pos -> false, Set.of(3));
         assertEquals(List.of(), p.reapply());
         assertEquals(List.of(DeviationKind.BLOCKED), p.unfixable().stream().map(Deviation::kind).toList());
+    }
+
+    @Test
+    void aWrongStateRepairKeepsTheVolatileStateTheWorldShows() {
+        IntPos doorPos = new IntPos(0, 64, 0);
+        BlockSpec expected = BlockSpec.of("minecraft:oak_door", "facing", "north", "open", "false");
+        PlacementManifest door = TestManifests.of(new Box(-1, 60, -1, 1, 70, 1), List.of(
+                TestManifests.put(doorPos, expected, "door-1", BuildPhase.ENVELOPE, VerifyMode.STATE_SUBSET)));
+        BlockSpec observed = BlockSpec.of("minecraft:oak_door", "facing", "east", "open", "true");
+        Function<String, Set<String>> doorVolatile = node -> node.equals("door-1") ? Set.of("open", "powered")
+                : Set.of();
+        RepairPlan p = RepairPlanner.plan(door, List.of(new Deviation(0, expected, new ObservedBlock(observed),
+                        DeviationKind.WRONG_STATE)), i -> Optional.empty(), pos -> true, Set.of(), doorVolatile);
+        assertEquals(List.of(0), p.reapply());
+        // repair puts the expected non-volatile states back but keeps the volatile ones the world shows (07 P4 条件15)
+        assertEquals(BlockSpec.of("minecraft:oak_door", "facing", "north", "open", "true"),
+                p.reapplyBlocks().get(0), "the door stays open; only the wrong facing is put back");
+    }
+
+    @Test
+    void aVolatileStateMissingFromTheWorldKeepsTheExpectedOne() {
+        IntPos doorPos = new IntPos(0, 64, 0);
+        BlockSpec expected = BlockSpec.of("minecraft:oak_door", "facing", "north", "open", "false");
+        PlacementManifest door = TestManifests.of(new Box(-1, 60, -1, 1, 70, 1), List.of(
+                TestManifests.put(doorPos, expected, "door-1", BuildPhase.ENVELOPE, VerifyMode.STATE_SUBSET)));
+        BlockSpec observed = BlockSpec.of("minecraft:oak_door", "facing", "east");
+        RepairPlan p = RepairPlanner.plan(door, List.of(new Deviation(0, expected, new ObservedBlock(observed),
+                        DeviationKind.WRONG_STATE)), i -> Optional.empty(), pos -> true, Set.of(),
+                node -> node.equals("door-1") ? Set.of("open", "powered") : Set.of());
+        assertEquals(List.of(0), p.reapply());
+        assertEquals(expected, p.reapplyBlocks().get(0), "nothing observed to keep: the expected block goes in");
     }
 
     @Test

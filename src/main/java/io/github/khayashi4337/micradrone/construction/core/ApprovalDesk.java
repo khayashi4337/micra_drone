@@ -77,13 +77,21 @@ public final class ApprovalDesk {
         if (!req.manifestHash().equals(pa.manifestHash())) {
             return rejected(ApprovalRejection.HASH_MISMATCH);
         }
-        if (!approver.currentDimension().equals(pa.dimension()) || !req.dimension().equals(pa.dimension())) {
+        PlacementManifest m = cand.compiled().manifest();
+        // the dimension the approval binds to is the compiled manifest's own: the dimensions the offer and the
+        // request carried only serve as consistency checks against it (04 D-3)
+        if (!approver.currentDimension().equals(m.dimension()) || !req.dimension().equals(m.dimension())
+                || !pa.dimension().equals(m.dimension())) {
             return rejected(ApprovalRejection.DIMENSION_MISMATCH);
         }
-        PlacementManifest m = cand.compiled().manifest();
         if (!registryVersion.equals(m.registryVersion())) {
             return new ApprovalDecision.Rejected(ApprovalRejection.REGISTRY_CHANGED, List.of(Issue.of(IssueCode.E_REGISTRY_VERSION,
                     List.of(SUBJECT_MANIFEST), "部品の登録簿の版が変わりました。もう一度送ってください")));
+        }
+        // the approval's survey must be the very survey the manifest was compiled against: another survey, however
+        // fresh and pinned, means the blocks the manifest expects were never looked at (04 D-3)
+        if (!pa.surveyDigest().equals(cand.compiled().surveyDigest())) {
+            return rejected(ApprovalRejection.SURVEY_MISMATCH);
         }
         if (surveys.find(pa.surveyDigest(), now).isEmpty()) {
             return rejected(ApprovalRejection.SURVEY_EXPIRED);

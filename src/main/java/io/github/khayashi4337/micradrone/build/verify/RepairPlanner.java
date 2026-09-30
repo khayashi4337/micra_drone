@@ -3,13 +3,17 @@ package io.github.khayashi4337.micradrone.build.verify;
 import io.github.khayashi4337.micradrone.build.compile.BlockMatch;
 import io.github.khayashi4337.micradrone.build.compile.Conflict;
 import io.github.khayashi4337.micradrone.build.compile.ConflictKind;
+import io.github.khayashi4337.micradrone.build.compile.Placement;
 import io.github.khayashi4337.micradrone.build.compile.PlacementManifest;
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.IntPos;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.IntFunction;
 import java.util.function.Predicate;
 
@@ -24,11 +28,24 @@ public final class RepairPlanner {
 
     public static RepairPlan plan(PlacementManifest m, List<Deviation> deviations, IntFunction<Optional<BlockSpec>> journaledBefore,
                                   Predicate<IntPos> placedByProject, Set<Integer> denied) {
+        return plan(m, deviations, journaledBefore, placedByProject, denied, node -> Set.of());
+    }
+
+    /**
+     * {@code volatileOfNode}: the part's states that change while the world runs (design 01, section 3). A re-placed
+     * wrong-state block keeps the volatile values the world shows: the comparison never looked at them, so rolling
+     * them back would close a door the player opened (design 07, P4 condition 15).
+     */
+    public static RepairPlan plan(PlacementManifest m, List<Deviation> deviations, IntFunction<Optional<BlockSpec>> journaledBefore,
+                                  Predicate<IntPos> placedByProject, Set<Integer> denied,
+                                  Function<String, Set<String>> volatileOfNode) {
         List<Integer> reapply = new ArrayList<>();
         List<Conflict> conflicts = new ArrayList<>();
         List<Deviation> unfixable = new ArrayList<>();
+        Map<Integer, BlockSpec> reapplyBlocks = new HashMap<>();
         for (Deviation d : deviations) {
-            IntPos pos = m.placements().get(d.placementIndex()).pos();
+            Placement placement = m.placements().get(d.placementIndex());
+            IntPos pos = placement.pos();
             if (denied.contains(d.placementIndex()) || d.kind() == DeviationKind.BLOCKED) {
                 unfixable.add(new Deviation(d.placementIndex(), d.expected(), d.observed(), DeviationKind.BLOCKED));
                 continue;
@@ -38,6 +55,8 @@ public final class RepairPlanner {
                 case WRONG_STATE -> {
                     if (placedByProject.test(pos)) {
                         reapply.add(d.placementIndex());
+                        reapplyBlocks.put(d.placementIndex(), keepVolatile(d.expected(), d.observed().block(),
+                                volatileOfNode.apply(placement.partNodeId())));
                     } else {
                         conflicts.add(new Conflict(pos, d.expected(), d.observed(), ConflictKind.PLAYER_MODIFIED));
                     }
@@ -56,6 +75,18 @@ public final class RepairPlanner {
                 default -> unfixable.add(d);
             }
         }
-        return new RepairPlan(reapply, conflicts, unfixable);
+        return new RepairPlan(reapply, conflicts, unfixable, reapplyBlocks);
+    }
+
+    /** The expected block with the volatile states the world shows kept, where the world has one to keep. */
+    private static BlockSpec keepVolatile(BlockSpec expected, BlockSpec observed, Set<String> volatileProps) {
+        BlockSpec out = expected;
+        for (String key : volatileProps) {
+            String value = observed.get(key);
+            if (value != null) {
+                out = out.with(key, value);
+            }
+        }
+        return out;
     }
 }

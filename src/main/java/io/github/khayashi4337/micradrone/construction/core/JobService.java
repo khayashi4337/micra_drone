@@ -328,7 +328,8 @@ public final class JobService {
         if (win.fromIndex() < placements) {
             r.placementDeviations.addAll(SnapshotDiff.compare(r.manifest(), win.snapshot(),
                     new CompareScope.IndexRange(win.fromIndex(), Math.min(win.toIndexExclusive(), placements)),
-                    VolatileProps.of(r.nodeTypes(), registry)).deviations());
+                    VolatileProps.of(r.nodeTypes(), registry),
+                    registry(r.job().claimId()).assemblies().keySet()).deviations());
         }
         Set<IntPos> conflicted = new HashSet<>();
         for (Conflict c : r.outcome().conflicts()) {
@@ -348,7 +349,7 @@ public final class JobService {
         PlacedRegistry reg = registry(j.claimId());
         RepairPlan plan = j.kind() == JobKind.ROLLBACK ? new RepairPlan(List.of(), List.of(), List.of())
                 : RepairPlanner.plan(r.manifest(), r.placementDeviations, i -> r.beforeJournal().at(i).map(JournalRecord::before),
-                        reg::contains, r.outcome().deniedIndexes());
+                        reg::contains, r.outcome().deniedIndexes(), VolatileProps.of(r.nodeTypes(), registry));
         List<Conflict> fresh = new ArrayList<>();
         for (Conflict c : plan.conflicts()) {
             if (r.outcome().addConflict(c)) {
@@ -379,7 +380,8 @@ public final class JobService {
         r.recoveredRound = false;
         if (fixable && (sameRound || j.repairRound() < ConstructionJob.MAX_REPAIR_ROUNDS)) {
             int round = sameRound ? j.repairRound() : j.repairRound() + 1;
-            r.repair = new RepairQueue(new JobProgram(retry, JobProgram.repair(r.manifest(), plan.reapply(), round).puts()), 0);
+            r.repair = new RepairQueue(new JobProgram(retry,
+                    JobProgram.repair(r.manifest(), plan.reapply(), round, plan.reapplyBlocks()).puts()), 0);
             change(r, j.withRepairRound(round).on(JobEvent.NEED_REPAIR), updates, fresh);
             return;
         }

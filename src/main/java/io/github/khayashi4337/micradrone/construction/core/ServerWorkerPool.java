@@ -1,5 +1,7 @@
 package io.github.khayashi4337.micradrone.construction.core;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -138,8 +140,29 @@ public final class ServerWorkerPool implements AutoCloseable {
         });
     }
 
+    /**
+     * Cancels every token (a work loop that only polls its token still ends), interrupts the running threads, reports
+     * the queued jobs cancelled instead of dropping them silently, and waits a bounded time for the threads to stop.
+     */
     @Override
     public void close() {
-        pool.shutdownNow();
+        List<Job<?>> jobs;
+        synchronized (this) {
+            jobs = new ArrayList<>(active.values());
+        }
+        for (Job<?> job : jobs) {
+            job.token.cancelled.set(true);
+        }
+        for (Runnable queued : pool.shutdownNow()) {
+            finish((Job<?>) queued, new WorkResult.Cancelled<>());
+        }
+        try {
+            pool.awaitTermination(CLOSE_WAIT_MS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
+
+    /** Long enough for a token-polling loop to notice; a worker that never yields must not hold close() forever. */
+    private static final long CLOSE_WAIT_MS = 5_000;
 }

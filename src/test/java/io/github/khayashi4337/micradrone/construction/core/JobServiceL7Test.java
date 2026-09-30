@@ -3,10 +3,18 @@ package io.github.khayashi4337.micradrone.construction.core;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.khayashi4337.micradrone.build.compile.Placement;
 import io.github.khayashi4337.micradrone.build.compile.PlacementManifest;
+import io.github.khayashi4337.micradrone.build.compile.ReplacePolicy;
 import io.github.khayashi4337.micradrone.build.compile.TestManifests;
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
+import io.github.khayashi4337.micradrone.build.model.Box;
 import io.github.khayashi4337.micradrone.build.model.IntPos;
+import io.github.khayashi4337.micradrone.build.parts.BuildPhase;
+import io.github.khayashi4337.micradrone.build.parts.PlacerId;
+import io.github.khayashi4337.micradrone.build.parts.VerifyMode;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import static io.github.khayashi4337.micradrone.construction.core.JobServiceTest.A;
@@ -107,6 +115,34 @@ class JobServiceL7Test {
         JobRecord r = s.record("job-1").orElseThrow();
         assertEquals(ConstructionJob.MAX_REPAIR_ROUNDS, r.job().repairRound());
         assertTrue(r.job().lastError().contains("missing=1"), r.job().lastError());
+    }
+
+    @Test
+    void aRepairRoundPutsTheWrongStateBackAndKeepsTheVolatileOnes() {
+        JobService s = service();
+        JobServiceTest.Clock c = new JobServiceTest.Clock();
+        FakeJobWorld w = new FakeJobWorld();
+        w.online.add(A);
+        IntPos door = new IntPos(0, 64, 0);
+        PlacementManifest m = TestManifests.of(new Box(-1, 60, -1, 2, 70, 1), List.of(
+                new Placement(0, door, BlockSpec.of("minecraft:oak_door", "facing", "north", "open", "false"), Map.of(),
+                        "door-1", BuildPhase.ENVELOPE, PlacerId.SIMPLE, VerifyMode.STATE_SUBSET,
+                        ReplacePolicy.REPLACEABLE, null)));
+        // the player turns the door east and opens it; the wrong facing is ours to fix, the open state is not
+        boolean[] once = {false};
+        w.world.afterWrite = (pos, block) -> {
+            if (pos.equals(door) && !once[0]) {
+                once[0] = true;
+                w.world.setBlock(door, BlockSpec.of("minecraft:oak_door", "facing", "east", "open", "true"));
+            }
+        };
+        ConstructionJob job = approved("job-1", A, m, MaterialPolicy.CREATIVE_FREE);
+        s.admitApproved(job, m, Map.of("door-1", "micra:door"), JobProgram.build(m), m.worldBounds());
+        c.runUntil(s, w, "job-1", in(JobState.VERIFIED));
+        assertEquals(1, s.status("job-1").orElseThrow().repairRound(), "the wrong facing took one repair round");
+        BlockSpec fixed = w.world.blockAt(door);
+        assertEquals("north", fixed.get("facing"), "the non-volatile state is put back");
+        assertEquals("true", fixed.get("open"), "the volatile state stays as the world had it (07 P4 条件15)");
     }
 
     @Test

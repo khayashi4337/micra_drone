@@ -2,9 +2,11 @@ package io.github.khayashi4337.micradrone.construction.core;
 
 import io.github.khayashi4337.micradrone.build.compile.Placement;
 import io.github.khayashi4337.micradrone.build.compile.PlacementManifest;
+import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -36,6 +38,16 @@ public record JobProgram(List<RestoreItem> restores, List<PutItem> puts) {
     }
 
     public static JobProgram repair(PlacementManifest m, List<Integer> indexes, int round) {
+        return repair(m, indexes, round, Map.of());
+    }
+
+    /**
+     * {@code reapplyBlocks} overrides the block a re-placed index goes in with (RepairPlan): a repair of a wrong
+     * state writes the expected non-volatile states but keeps the volatile ones the world shows, so the ledger and
+     * the journal see the block that is really placed.
+     */
+    public static JobProgram repair(PlacementManifest m, List<Integer> indexes, int round,
+                                    Map<Integer, BlockSpec> reapplyBlocks) {
         // round 0 would charge under the build's own keys, a round past the maximum is not a repair (ConstructionJob)
         if (round < 1 || round > ConstructionJob.MAX_REPAIR_ROUNDS) {
             throw new IllegalArgumentException("repair round " + round + " must lie in 1.."
@@ -53,7 +65,11 @@ public record JobProgram(List<RestoreItem> restores, List<PutItem> puts) {
             }
             // exact arithmetic: a key past the int range must refuse, never wrap into another key's space
             int key = Math.addExact(Math.multiplyExact(round, LEDGER_ROUND_STRIDE), i);
-            puts.add(new PutItem(i, key, m.placements().get(i)));
+            Placement base = m.placements().get(i);
+            BlockSpec override = reapplyBlocks.get(i);
+            puts.add(new PutItem(i, key, override == null ? base
+                    : new Placement(base.index(), base.pos(), override, base.blockEntityConfig(), base.partNodeId(),
+                            base.phase(), base.placer(), base.verify(), base.replaces(), base.assemblyGroup())));
         }
         return new JobProgram(List.of(), puts);
     }

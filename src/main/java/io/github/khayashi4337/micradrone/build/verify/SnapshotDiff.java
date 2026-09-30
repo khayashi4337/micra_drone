@@ -5,15 +5,22 @@ import io.github.khayashi4337.micradrone.build.compile.ObservedBlock;
 import io.github.khayashi4337.micradrone.build.compile.Placement;
 import io.github.khayashi4337.micradrone.build.compile.PlacementManifest;
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
+import io.github.khayashi4337.micradrone.build.model.IntPos;
 import io.github.khayashi4337.micradrone.build.parts.VerifyMode;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 
 /**
- * The strict comparison of L7 (design 03): each placement in scope against the block read at its position, by its
- * VerifyMode, never comparing the part's volatile states. Unread positions are listed apart: unknown is not missing.
+ * The strict comparison of L7 (design 03): at each shared position only the in-scope placement with the highest
+ * index decides the expected block (a site-prep cut a later block covers is not a deviation). An ASSEMBLED_AWAY
+ * placement is checked like any other until its group is assembled; once assembled the position should be air again
+ * (its block moved into the contraption), so anything found there is EXTRA. Unread positions are listed apart:
+ * unknown is not missing. Volatile states are never compared.
  */
 public final class SnapshotDiff {
     public record Result(List<Deviation> deviations, List<Integer> unread) {
@@ -26,20 +33,41 @@ public final class SnapshotDiff {
     private SnapshotDiff() {
     }
 
+    /** No group assembled yet: every ASSEMBLED_AWAY placement is checked as still standing. */
     public static Result compare(PlacementManifest m, SparseSnapshot s, CompareScope scope,
                                  Function<String, Set<String>> volatileOfNode) {
-        List<Deviation> out = new ArrayList<>();
-        List<Integer> unread = new ArrayList<>();
+        return compare(m, s, scope, volatileOfNode, Set.of());
+    }
+
+    /**
+     * {@code assembledGroups}: the assembly groups already built (PlacedRegistry.assemblies). The comparison reads
+     * the world once per position, so deviations come out in placement-index order.
+     */
+    public static Result compare(PlacementManifest m, SparseSnapshot s, CompareScope scope,
+                                 Function<String, Set<String>> volatileOfNode, Set<String> assembledGroups) {
+        Map<IntPos, Placement> last = new HashMap<>();
         for (Placement p : m.placements()) {
-            if (!scope.includes(p) || p.verify() == VerifyMode.ASSEMBLED_AWAY) {
+            if (!scope.includes(p)) {
                 continue;
             }
+            Placement prev = last.get(p.pos());
+            if (prev == null || p.index() > prev.index()) {
+                last.put(p.pos(), p);
+            }
+        }
+        List<Placement> chosen = new ArrayList<>(last.values());
+        chosen.sort(Comparator.comparingInt(Placement::index));
+        List<Deviation> out = new ArrayList<>();
+        List<Integer> unread = new ArrayList<>();
+        for (Placement p : chosen) {
             ObservedBlock obs = s.blocks().get(p.pos());
             if (obs == null) {
                 unread.add(p.index());
                 continue;
             }
-            BlockSpec exp = p.block();
+            boolean assembled = p.verify() == VerifyMode.ASSEMBLED_AWAY && p.assemblyGroup() != null
+                    && assembledGroups.contains(p.assemblyGroup());
+            BlockSpec exp = assembled ? BlockSpec.AIR : p.block();
             BlockSpec o = obs.block();
             DeviationKind kind = null;
             if (exp.isAir()) {

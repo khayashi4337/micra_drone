@@ -70,7 +70,7 @@ public final class PlanCompilation {
             nodeTypes.put(n.id(), n.type());
         }
         return new CompiledPlan(terrain.manifest(), issues, terrain.summary(), nodeTypes,
-                OperatingBox.of(terrain.manifest(), plan));
+                OperatingBox.of(terrain.manifest(), plan), survey.digest());
     }
 
     private static boolean hasError(List<Issue> issues) {
@@ -78,6 +78,6 @@ public final class PlanCompilation {
     }
 
     private static CompiledPlan failed(List<Issue> issues) {
-        return new CompiledPlan(null, issues, NO_TERRAIN, Map.of(), null);
+        return new CompiledPlan(null, issues, NO_TERRAIN, Map.of(), null, null);
     }
 }

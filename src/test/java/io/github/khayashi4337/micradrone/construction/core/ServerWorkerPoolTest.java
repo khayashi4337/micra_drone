@@ -3,8 +3,10 @@ package io.github.khayashi4337.micradrone.construction.core;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -133,6 +135,28 @@ class ServerWorkerPoolTest {
             pool.cancel(A);
             pumpUntil(() -> got.size() == 1);
             assertInstanceOf(WorkResult.Cancelled.class, got.get(0), "the work stopped on its own at the token");
+        }
+    }
+
+    @Test
+    void closingCancelsRunningTokensAndAnswersQueuedWork() throws Exception {
+        try (ServerWorkerPool pool = new ServerWorkerPool(1, 4, main::add)) {
+            CountDownLatch started = new CountDownLatch(1);
+            List<WorkResult<Integer>> got = new ArrayList<>();
+            pool.<Integer>submit(A, token -> {
+                started.countDown();
+                while (!token.cancelled()) {
+                    Thread.onSpinWait(); // deaf to interrupts, like a long pure computation
+                }
+                return 1;
+            }, got::add);
+            assertTrue(started.await(WAIT_MS, TimeUnit.MILLISECONDS));
+            assertTrue(pool.submit(B, () -> 2, got::add), "the only thread is busy: B waits in the queue");
+            assertTimeoutPreemptively(Duration.ofSeconds(2), pool::close,
+                    "close() ends work that only polls its token and never interrupts cleanly");
+            pumpUntil(() -> got.size() == 2);
+            assertInstanceOf(WorkResult.Cancelled.class, got.get(0), "the running job ends cancelled");
+            assertInstanceOf(WorkResult.Cancelled.class, got.get(1), "a queued job gets its end result, not silence");
         }
     }
 }

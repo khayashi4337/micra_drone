@@ -9,6 +9,7 @@ import io.github.khayashi4337.micradrone.build.compile.PlacementManifest;
 import io.github.khayashi4337.micradrone.build.compile.SiteSurvey;
 import io.github.khayashi4337.micradrone.build.compile.TerrainSummary;
 import io.github.khayashi4337.micradrone.build.compile.TestManifests;
+import io.github.khayashi4337.micradrone.build.model.Box;
 import io.github.khayashi4337.micradrone.build.model.IntPos;
 import io.github.khayashi4337.micradrone.build.model.Issue;
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
@@ -31,12 +32,19 @@ class ApprovalDeskTest {
     private final SiteSurvey survey = SiteSurvey.air(OW, hut.worldBounds());
 
     private ApprovalDesk desk(List<Issue> issues, ReplacementSummary summary, PlacementManifest m) {
+        return desk(issues, summary, m, OW, survey.digest());
+    }
+
+    /** {@code dimension} and {@code offeredDigest} are what the caller claims; the compiled plan keeps its own. */
+    private ApprovalDesk desk(List<Issue> issues, ReplacementSummary summary, PlacementManifest m,
+                            String dimension, String offeredDigest) {
         surveys.pin(survey, NOW);
         ApprovalDesk d = new ApprovalDesk();
         CompiledPlan compiled = new CompiledPlan(m, List.of(), new TerrainSummary(summary.terrainCut(), summary.terrainFill()),
-                Map.of(), m.worldBounds());
-        d.offer(OWNER, OW, compiled, new SafetyReport(issues, summary),
-                new PlanSubmission(SemanticPlan.empty("p"), TemplateBundle.EMPTY, JobKind.BUILD, null, null), survey.digest(), NOW);
+                Map.of(), m.worldBounds(), survey.digest());
+        d.offer(OWNER, dimension, compiled, new SafetyReport(issues, summary),
+                new PlanSubmission(SemanticPlan.empty("p"), TemplateBundle.EMPTY, JobKind.BUILD, null, null),
+                offeredDigest, NOW);
         return d;
     }
 
@@ -86,6 +94,34 @@ class ApprovalDeskTest {
         Approver inNether = new Approver(OWNER, false, "minecraft:the_nether", true, null);
         assertEquals(ApprovalRejection.DIMENSION_MISMATCH, reason(approve(d, hut.hash(), inNether, Confirmations.NONE, List.of(),
                 NOW + 1)));
+    }
+
+    @Test
+    void anOfferInADimensionOtherThanTheManifestsIsRejected() {
+        ApprovalDesk d = desk(List.of(), nothing(), hut, "minecraft:the_nether", survey.digest());
+        Approver inNether = new Approver(OWNER, false, "minecraft:the_nether", true, null);
+        assertEquals(ApprovalRejection.DIMENSION_MISMATCH, reason(d.approve(
+                new ApprovalRequest(hut.hash(), "minecraft:the_nether", OWNER, List.of(), Confirmations.NONE),
+                inNether, TestManifests.REGISTRY_VERSION, surveys, NOW + 1, () -> "job-7")),
+                "the pending dimension is bound to the compiled manifest's own dimension");
+    }
+
+    @Test
+    void anOfferWhoseOwnDimensionDisagreesWithTheManifestIsRejected() {
+        ApprovalDesk d = desk(List.of(), nothing(), hut, "minecraft:the_nether", survey.digest());
+        assertEquals(ApprovalRejection.DIMENSION_MISMATCH, reason(approve(d, hut.hash(), owner(true), Confirmations.NONE,
+                List.of(), NOW + 1)),
+                "a pending offer recorded in the wrong dimension is inconsistent even for an owner in the right one");
+    }
+
+    @Test
+    void aSurveyDigestOtherThanTheCompilesIsRejected() {
+        SiteSurvey other = SiteSurvey.air(OW, new Box(1, 60, 1, 3, 70, 3));
+        surveys.pin(other, NOW);
+        ApprovalDesk d = desk(List.of(), nothing(), hut, OW, other.digest());
+        assertEquals(ApprovalRejection.SURVEY_MISMATCH, reason(approve(d, hut.hash(), owner(true), Confirmations.NONE,
+                List.of(), NOW + 1)),
+                "a live survey that is not the one the manifest was compiled from does not count");
     }
 
     @Test
