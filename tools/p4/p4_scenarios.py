@@ -9,7 +9,7 @@ import time
 import traceback
 from dataclasses import dataclass
 
-from tools.p4 import devkit_client, evidence, harness, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_mvp, scenarios_regression, scenarios_show
+from tools.p4 import devkit_client, evidence, harness, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_mvp, scenarios_regression, scenarios_restart, scenarios_show
 
 MODES = ("sp", "mp", "mp2")
 RESTART_LIMIT = 1
@@ -29,6 +29,9 @@ SCENARIOS = {
     "hut-golden": Scenario(scenarios_basic.hut_golden, (1,), "sp"),
     "approve-guard": Scenario(scenarios_approval.approve_guard, (5,), "sp"),
     "farm-regression": Scenario(scenarios_regression.farm_regression, (11,), "sp"),
+    "restart-resume": Scenario(scenarios_restart.restart_resume, (), "sp"),
+    "real-crash-sp": Scenario(scenarios_restart.real_crash_sp, (), "sp"),
+    "missing-journal": Scenario(scenarios_restart.missing_journal, (), "sp"),
     "mvp-japanese-hut": Scenario(scenarios_mvp.mvp_japanese_hut, (), "sp"),
     "mvp-site-blocked": Scenario(scenarios_mvp.mvp_site_blocked, (), "sp"),
     "mvp-japanese-hut-real": Scenario(scenarios_mvp.mvp_japanese_hut, (), "sp", claude=harness.CLAUDE_REAL),
