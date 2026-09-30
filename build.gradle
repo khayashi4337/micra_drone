@@ -98,6 +98,47 @@ neoForge {
             programArguments.addAll '--mod', project.mod_id, '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
         }
 
+        // P4 automated real-machine checks (tools/p4). -Xmx3G on every JVM: unset, each takes 1/4 of physical RAM.
+        clientP4 {
+            client()
+            gameDirectory = project.file('run-p4/client')
+            jvmArguments.addAll '-Xmx3G'
+            systemProperty 'micradrone.devkit.port', '47391'
+            systemProperty 'micradrone.devkit.runId', providers.gradleProperty('p4RunId').getOrElse('none')
+        }
+        clientLoadP4 {
+            client()
+            gameDirectory = project.file('run-p4/client')
+            jvmArguments.addAll '-Xmx3G'
+            programArguments.addAll '--quickPlaySingleplayer', 'p4-auto'
+            systemProperty 'micradrone.devkit.port', '47391'
+            systemProperty 'micradrone.devkit.runId', providers.gradleProperty('p4RunId').getOrElse('none')
+        }
+        clientMpP4 {
+            client()
+            gameDirectory = project.file('run-p4/client')
+            jvmArguments.addAll '-Xmx3G'
+            programArguments.addAll '--quickPlayMultiplayer', '127.0.0.1:25565'
+            systemProperty 'micradrone.devkit.port', '47391'
+            systemProperty 'micradrone.devkit.runId', providers.gradleProperty('p4RunId').getOrElse('none')
+        }
+        client2P4 {
+            client()
+            gameDirectory = project.file('run-p4/client2')
+            jvmArguments.addAll '-Xmx3G'
+            programArguments.addAll '--username', 'Dev2', '--quickPlayMultiplayer', '127.0.0.1:25565'
+            systemProperty 'micradrone.devkit.port', '47393'
+            systemProperty 'micradrone.devkit.runId', providers.gradleProperty('p4RunId').getOrElse('none')
+        }
+        serverP4 {
+            server()
+            gameDirectory = project.file('run-p4/server')
+            jvmArguments.addAll '-Xmx3G'
+            programArgument '--nogui'
+            systemProperty 'micradrone.devkit.serverPort', '47392'
+            systemProperty 'micradrone.devkit.runId', providers.gradleProperty('p4RunId').getOrElse('none')
+        }
+
         // applies to all the run configs above
         configureEach {
             // Recommended logging data for a userdev environment
@@ -120,6 +161,21 @@ neoForge {
         // multi mod projects should define one per mod
         "${mod_id}" {
             sourceSet(sourceSets.main)
+        }
+    }
+}
+
+// tools/p4 starts the games with `java` directly (no Gradle process stays alive next to a game). The
+// arg files under build/moddev do not carry the classpath or the mod-class environment, so dump them here.
+tasks.register('dumpP4LaunchInfo') {
+    notCompatibleWithConfigurationCache('reads sibling JavaExec tasks at execution time')
+    dependsOn 'prepareClientP4Run', 'prepareClientLoadP4Run', 'prepareClientMpP4Run', 'prepareClient2P4Run', 'prepareServerP4Run'
+    doLast {
+        ['runClientP4', 'runClientLoadP4', 'runClientMpP4', 'runClient2P4', 'runServerP4'].each { name ->
+            def t = tasks.getByName(name)
+            def info = [runtimeClasspath: sourceSets.main.runtimeClasspath.files*.absolutePath,
+                        jvmArgs: t.allJvmArgs.collect { String.valueOf(it) }]
+            file("build/moddev/${name}-launch.json").text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(info))
         }
     }
 }

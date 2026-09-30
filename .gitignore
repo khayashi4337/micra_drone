@@ -51,3 +51,7 @@ run/
 **/src/generated/**/.cache/
 repo/
 !**/src/**/repo/
+
+### P4 automated checks ###
+run-p4/
+run-evidence/
