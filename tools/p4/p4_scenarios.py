@@ -40,7 +40,7 @@ SCENARIOS = {
 # Design 07 completion conditions with no scenario yet -> the task that completes them.
 # A task that adds its scenario removes its own condition here in the same commit.
 PENDING_CONDITIONS = {
-    3: "Task 29", 4: "Task 28", 6: "Task 34", 7: "Task 28", 8: "Task 30", 9: "Task 32", 10: "Task 33",
+    3: "Task 29", 4: "Task 28", 6: "Task 34", 7: "Task 28", 9: "Task 32", 10: "Task 33",
     11: "Task 37", 13: "Task 30", 14: "Task 28",
 }
 
