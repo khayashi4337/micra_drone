@@ -21,35 +21,46 @@ import java.util.Objects;
 public record SiteSurvey(String dimension, Box worldBounds, int[][] surfaceY, String[][] surfaceBlock, boolean[][] water,
                          boolean[][] tree, String digest) {
     private static final String AIR = "minecraft:air";
+    /**
+     * Upper bound on the column count of one survey (04 F-5): the largest build region is 128x96x128, so the
+     * columns of a 128x128 site with headroom; a bigger box is refused before any array is sized.
+     */
+    public static final int MAX_SURVEY_COLUMNS = 1 << 20;
+    /** Marker for the factory paths below: the canonical constructor computes the digest from the copies itself. */
+    private static final String COMPUTE_DIGEST = new String("compute");
 
     public SiteSurvey {
         Objects.requireNonNull(dimension, "dimension");
         Objects.requireNonNull(worldBounds, "worldBounds");
-        int sx = worldBounds.maxA() - worldBounds.minA() + 1;
-        int sz = worldBounds.maxC() - worldBounds.minC() + 1;
+        int[] size = checkedColumns(worldBounds);
+        int sx = size[0];
+        int sz = size[1];
         surfaceY = copy(surfaceY, sx, sz);
         surfaceBlock = copy(surfaceBlock, sx, sz);
         water = copy(water, sx, sz);
         tree = copy(tree, sx, sz);
-        Objects.requireNonNull(digest, "digest");
+        // a caller-passed digest is verified against the defensive copies, not trusted
+        String computed = digestOf(dimension, worldBounds, surfaceY, surfaceBlock, water, tree);
+        if (digest == COMPUTE_DIGEST) {
+            digest = computed;
+        } else {
+            Objects.requireNonNull(digest, "digest");
+            if (!digest.equals(computed)) {
+                throw new IllegalArgumentException("the survey digest does not match the arrays");
+            }
+        }
     }
 
     public static SiteSurvey of(String dimension, Box worldBounds, int[][] surfaceY, String[][] surfaceBlock, boolean[][] water,
                                 boolean[][] tree) {
-        // the shape (and the non-null cells) is checked before the digest reads the arrays
-        int sx = worldBounds.maxA() - worldBounds.minA() + 1;
-        int sz = worldBounds.maxC() - worldBounds.minC() + 1;
-        copy(surfaceY, sx, sz);
-        copy(surfaceBlock, sx, sz);
-        copy(water, sx, sz);
-        copy(tree, sx, sz);
-        return new SiteSurvey(dimension, worldBounds, surfaceY, surfaceBlock, water, tree,
-                digestOf(dimension, worldBounds, surfaceY, surfaceBlock, water, tree));
+        // the canonical constructor shape-checks and copies the arrays once, then computes the digest from the copies
+        return new SiteSurvey(dimension, worldBounds, surfaceY, surfaceBlock, water, tree, COMPUTE_DIGEST);
     }
 
     public static SiteSurvey flat(String dimension, Box worldBounds, int surface, String block) {
-        int sx = worldBounds.maxA() - worldBounds.minA() + 1;
-        int sz = worldBounds.maxC() - worldBounds.minC() + 1;
+        int[] size = checkedColumns(worldBounds);
+        int sx = size[0];
+        int sz = size[1];
         int[][] ys = new int[sx][sz];
         String[][] blocks = new String[sx][sz];
         for (int i = 0; i < sx; i++) {
@@ -117,6 +128,17 @@ public record SiteSurvey(String dimension, Box worldBounds, int[][] surfaceY, St
     @Override
     public boolean[][] tree() {
         return copy(tree, tree.length, tree.length == 0 ? 0 : tree[0].length);
+    }
+
+    /** Column dimensions of the box as {sx, sz}, counted in long so an extreme box is refused before arrays are sized. */
+    private static int[] checkedColumns(Box worldBounds) {
+        long sx = (long) worldBounds.maxA() - worldBounds.minA() + 1;
+        long sz = (long) worldBounds.maxC() - worldBounds.minC() + 1;
+        if (sx * sz > MAX_SURVEY_COLUMNS) {
+            throw new IllegalArgumentException("survey of " + sx * sz + " columns exceeds the limit "
+                    + MAX_SURVEY_COLUMNS + ": " + worldBounds);
+        }
+        return new int[]{(int) sx, (int) sz};
     }
 
     private static String digestOf(String dimension, Box bounds, int[][] ys, String[][] blocks, boolean[][] water,

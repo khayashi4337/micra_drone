@@ -64,4 +64,31 @@ class SiteSurveyTest {
         assertThrows(IllegalArgumentException.class, () -> air.hasGround(5, 0));
         assertEquals(new SurveyRef(air.digest(), 7L), air.ref(7L));
     }
+
+    @Test
+    void theCanonicalConstructorRecomputesAndVerifiesTheDigest() {
+        Box b = new Box(0, 60, 0, 0, 70, 0);
+        int[][] ys = {{63}};
+        String[][] blocks = {{"minecraft:stone"}};
+        boolean[][] none = {{false}};
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> new SiteSurvey(TestManifests.DIM, b, ys, blocks, none, none, "same"));
+        assertTrue(e.getMessage().contains("digest"), e.getMessage());
+        SiteSurvey s = SiteSurvey.of(TestManifests.DIM, b, ys, blocks, none, none);
+        SiteSurvey direct = new SiteSurvey(TestManifests.DIM, b, ys, blocks, none, none, s.digest());
+        assertEquals(s.digest(), direct.digest());
+        assertEquals(63, direct.surfaceAt(0, 0));
+    }
+
+    @Test
+    void aSurveyWiderThanTheColumnLimitIsRefusedBeforeArraysAreSized() {
+        assertEquals(1 << 20, SiteSurvey.MAX_SURVEY_COLUMNS,
+                "the largest site is 128x96x128: 128x128 columns with headroom (04 F-5)");
+        Box huge = new Box(Integer.MIN_VALUE, 0, 0, Integer.MAX_VALUE, 1, 0);
+        assertThrows(IllegalArgumentException.class,
+                () -> SiteSurvey.flat(TestManifests.DIM, huge, 0, "minecraft:stone"));
+        assertThrows(IllegalArgumentException.class,
+                () -> new SiteSurvey(TestManifests.DIM, huge, new int[0][0], new String[0][0], new boolean[0][0],
+                        new boolean[0][0], "d"));
+    }
 }

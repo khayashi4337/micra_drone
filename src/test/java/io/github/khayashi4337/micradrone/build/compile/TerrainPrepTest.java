@@ -1,16 +1,21 @@
 package io.github.khayashi4337.micradrone.build.compile;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.build.model.Box;
 import io.github.khayashi4337.micradrone.build.model.IntPos;
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import io.github.khayashi4337.micradrone.build.parts.BuildPhase;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,7 +38,8 @@ class TerrainPrepTest {
         PlacementManifest m = TestManifests.smallHut();
         TerrainResult r = TerrainPrep.apply(m, SiteSurvey.flat(TestManifests.DIM, BOX, 63, "minecraft:grass_block"));
         assertEquals(new TerrainSummary(9, 0), r.summary());
-        assertEquals(m.placements().size(), r.manifest().placements().size());
+        assertEquals(m.placements().size() + 9, r.manifest().placements().size(),
+                "the surface cell of each footprint column is cut to air before the foundation lands");
         for (Placement p : r.manifest().placements()) {
             boolean underground = p.pos().y() <= 63;
             assertEquals(underground ? ReplacePolicy.TERRAFORM : ReplacePolicy.REPLACEABLE, p.replaces(), p.toString());
@@ -45,11 +51,11 @@ class TerrainPrepTest {
     void aHillInsideTheHutIsCutToAirFirst() {
         TerrainResult r = TerrainPrep.apply(TestManifests.smallHut(),
                 SiteSurvey.flat(TestManifests.DIM, BOX, 65, "minecraft:grass_block"));
-        assertEquals(new TerrainSummary(27, 0), r.summary(), "25 placements in the ground plus the 2 interior cells");
+        assertEquals(new TerrainSummary(27, 0), r.summary(), "3 cells y=63..65 in each of the 9 footprint columns");
         List<Placement> ps = r.manifest().placements();
-        assertEquals(27, ps.size());
-        assertEquals(new IntPos(1, 65, 1), ps.get(0).pos(), "cuts go top-down");
-        assertEquals(new IntPos(1, 64, 1), ps.get(1).pos());
+        assertEquals(27 + 25, ps.size());
+        assertEquals(new IntPos(0, 65, 0), ps.get(0).pos(), "cuts go top-down");
+        assertEquals(new IntPos(1, 65, 0), ps.get(1).pos());
         for (int i = 0; i < 2; i++) {
             assertTrue(ps.get(i).block().isAir());
             assertEquals(BuildPhase.SITE_PREP, ps.get(i).phase());
@@ -57,7 +63,7 @@ class TerrainPrepTest {
             assertEquals(TerrainPrep.SITE_PREP_NODE, ps.get(i).partNodeId());
             assertEquals(i, ps.get(i).index());
         }
-        assertEquals(List.of(new PhaseRange(BuildPhase.SITE_PREP, 0, 2), new PhaseRange(BuildPhase.STRUCTURE, 2, 27)),
+        assertEquals(List.of(new PhaseRange(BuildPhase.SITE_PREP, 0, 27), new PhaseRange(BuildPhase.STRUCTURE, 27, 52)),
                 r.manifest().phases());
     }
 
@@ -157,8 +163,7 @@ class TerrainPrepTest {
     void aHillTallerThanTheBuildingIsCutToItsSurface() {
         TerrainResult r = TerrainPrep.apply(TestManifests.smallHut(),
                 SiteSurvey.flat(TestManifests.DIM, BOX, 68, "minecraft:stone"));
-        assertEquals(new TerrainSummary(25 + 29, 0), r.summary(),
-                "25 sunk placements; cut: the interior column 64..68 and 66..68 over the 8 ring columns");
+        assertEquals(new TerrainSummary(54, 0), r.summary(), "6 cells y=63..68 in each of the 9 footprint columns");
         java.util.Set<IntPos> cut = new java.util.HashSet<>();
         for (Placement p : r.manifest().placements()) {
             if (p.phase() == BuildPhase.SITE_PREP) {
@@ -175,5 +180,81 @@ class TerrainPrepTest {
         TerrainResult r = TerrainPrep.apply(low, SiteSurvey.flat(TestManifests.DIM, BOX, 68, "minecraft:stone"));
         assertNull(r.manifest(), "the ground reaches y=68, the site only y=67");
         assertTrue(r.issues().get(0).id().endsWith("#terrain"));
+    }
+
+    @Test
+    void applyChecksTheSurveyAgainstThePinnedRef() {
+        PlacementManifest m = TestManifests.smallHut();
+        SiteSurvey s = SiteSurvey.flat(TestManifests.DIM, BOX, 63, "minecraft:grass_block");
+        TerrainResult r = TerrainPrep.apply(m, s, s.ref(0L));
+        assertNotNull(r.manifest());
+        assertEquals(new TerrainSummary(9, 0), r.summary());
+        SiteSurvey other = SiteSurvey.flat(TestManifests.DIM, BOX, 64, "minecraft:sand");
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> TerrainPrep.apply(m, s, other.ref(0L)));
+        assertTrue(e.getMessage().contains("pinned"), e.getMessage());
+    }
+
+    @Test
+    void theOccupiedCellsAreCutTooSoNoSandIsLeftBetweenFloorAndRoof() {
+        PlacementManifest m = TestManifests.of(BOX, List.of(
+                TestManifests.put(1, 63, 1, "minecraft:cobblestone"),
+                TestManifests.put(1, 68, 1, "minecraft:cobblestone")));
+        SiteSurvey s = SiteSurvey.flat(TestManifests.DIM, BOX, 68, "minecraft:sand");
+        TerrainResult r = TerrainPrep.apply(m, s, s.ref(0L));
+        assertNotNull(r.manifest());
+        List<IntPos> cuts = new ArrayList<>();
+        for (Placement p : r.manifest().placements()) {
+            if (p.phase() == BuildPhase.SITE_PREP) {
+                cuts.add(p.pos());
+            }
+        }
+        assertEquals(List.of(new IntPos(1, 68, 1), new IntPos(1, 67, 1), new IntPos(1, 66, 1), new IntPos(1, 65, 1),
+                new IntPos(1, 64, 1), new IntPos(1, 63, 1)), cuts,
+                "the whole column 63..68 is cut top-down, the cells the building will occupy included");
+        assertEquals(6, r.summary().cut(), "the cut count is the cut ground cells, not the rewritten policies");
+        Map<IntPos, String> world = new HashMap<>();
+        for (int y = BOX.minB(); y <= 68; y++) {
+            world.put(new IntPos(1, y, 1), "minecraft:sand");
+        }
+        applyWithGravity(r.manifest(), world);
+        for (Placement p : r.manifest().placements()) {
+            if (p.phase() != BuildPhase.SITE_PREP) {
+                world.put(p.pos(), p.block().blockId());
+            }
+        }
+        assertEquals("minecraft:cobblestone", world.get(new IntPos(1, 63, 1)));
+        assertEquals("minecraft:cobblestone", world.get(new IntPos(1, 68, 1)));
+        for (int y = 64; y <= 67; y++) {
+            assertEquals(AIR_ID, world.get(new IntPos(1, y, 1)), "no sand may be left inside at y=" + y);
+        }
+    }
+
+    @Test
+    void applyingToAnAlreadyTerrainPreparedManifestIsRefused() {
+        SiteSurvey s = SiteSurvey.flat(TestManifests.DIM, BOX, 65, "minecraft:grass_block");
+        PlacementManifest prepared = TerrainPrep.apply(TestManifests.smallHut(), s).manifest();
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> TerrainPrep.apply(prepared, s));
+        assertTrue(e.getMessage().contains("already"), e.getMessage());
+    }
+
+    @Test
+    void aSurveyedSurfaceBeyondTheSiteIsRefusedBeforeCellsAreListed() {
+        SiteSurvey s = SiteSurvey.flat(TestManifests.DIM, BOX, 63, "minecraft:grass_block")
+                .withColumn(1, 1, Integer.MAX_VALUE, "minecraft:stone");
+        TerrainResult r = assertTimeoutPreemptively(Duration.ofSeconds(2),
+                () -> TerrainPrep.apply(TestManifests.smallHut(), s));
+        assertNull(r.manifest());
+        assertEquals(IssueCode.E_OUT_OF_BOUNDS, r.issues().get(0).code());
+        assertTrue(r.issues().get(0).id().endsWith("#terrain"));
+        assertEquals("2147483577", r.issues().get(0).data().get("count"),
+                "y=71..2147483647 of the column lie above the site's top y=70, counted in long");
+    }
+
+    @Test
+    void summaryAnyDoesNotOverflow() {
+        assertTrue(new TerrainSummary(Integer.MAX_VALUE, 1).any());
+        assertFalse(new TerrainSummary(0, 0).any());
     }
 }
