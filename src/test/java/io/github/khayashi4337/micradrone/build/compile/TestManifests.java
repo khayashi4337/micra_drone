@@ -5,6 +5,7 @@ import io.github.khayashi4337.micradrone.build.model.Box;
 import io.github.khayashi4337.micradrone.build.model.BuildFrame;
 import io.github.khayashi4337.micradrone.build.model.Facing;
 import io.github.khayashi4337.micradrone.build.model.IntPos;
+import io.github.khayashi4337.micradrone.build.model.SemanticPlan;
 import io.github.khayashi4337.micradrone.build.parts.BuildPhase;
 import io.github.khayashi4337.micradrone.build.parts.PlacerId;
 import io.github.khayashi4337.micradrone.build.parts.VerifyMode;
@@ -49,6 +50,15 @@ public final class TestManifests {
     public static PlacementManifest hut() {
         try {
             return GoldenHutTest.compileHut(GoldenHutTest.hut()).manifest();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** The P3 golden hut's plan, patched from the golden JSON. */
+    public static SemanticPlan hutPlan() {
+        try {
+            return GoldenHutTest.hut();
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
