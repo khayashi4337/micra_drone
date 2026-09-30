@@ -85,6 +85,7 @@
   "micradrone.build.chat.partial": "ほとんど できたよ。おけなかった ところが %1$s こ あったよ",
   "micradrone.build.chat.busy": "いま べつの おねがいの とちゅうだよ。おわるまで まってね",
   "micradrone.build.chat.cancelled": "やめたよ",
+  "micradrone.build.chat.approve_refused": "つくれなかったよ。ばしょを かえて、もういちど ためしてね",
   "gui.micradrone.ide_screen.build_mode_on": "けんちく オン",
   "gui.micradrone.ide_screen.build_mode_off": "けんちく オフ",
   "gui.micradrone.ide_screen.build_consent_yes": "いいよ",

@@ -3,6 +3,7 @@ package io.github.khayashi4337.micradrone.build.ai;
 import io.github.khayashi4337.micradrone.chat.MiniJson;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -82,17 +83,31 @@ public final class BuildChatFlow {
     public static final String MSG_PARTIAL = "micradrone.build.chat.partial";
     public static final String MSG_BUSY = "micradrone.build.chat.busy";
     public static final String MSG_CANCELLED = "micradrone.build.chat.cancelled";
+    /** The approve was sent but the server turned it down (M3b: no job ever started). */
+    public static final String MSG_APPROVE_REFUSED = "micradrone.build.chat.approve_refused";
 
     /** Every child-facing key this flow can emit - ChildMessages registers all of them. */
     public static final Set<String> CHAT_MESSAGE_KEYS = Set.of(MSG_CONSENT, MSG_CLI_MISSING,
             MSG_AI_FAILED, MSG_PLAN_FAILED, MSG_SAYS, MSG_OFFER, MSG_OFFER_TERRAIN, MSG_PLACE_IN_FRONT,
-            MSG_BUILDING, MSG_DONE, MSG_PARTIAL, MSG_BUSY, MSG_CANCELLED);
+            MSG_BUILDING, MSG_DONE, MSG_PARTIAL, MSG_BUSY, MSG_CANCELLED, MSG_APPROVE_REFUSED);
 
     // The "state" values of the offer document (construction.core.OfferView writes these; the
     // strings are re-spelled here because build.* may not import construction.*).
     private static final String OFFER_OFFERED = "OFFERED";
     private static final String OFFER_REJECTED = "REJECTED";
     private static final String OFFER_FAILED = "FAILED";
+
+    /**
+     * The pause lines the status command already shows ({@code ChildMessages.pause(PauseReason)}
+     * builds the same keys); re-spelled here because build.* may not import construction.core. A
+     * pause name outside this set has no child-facing text and stays silent.
+     */
+    private static final String PAUSE_KEY_PREFIX = "micradrone.build.pause.";
+    private static final Set<String> PAUSE_KEYS = Set.of(
+            PAUSE_KEY_PREFIX + "owner_offline", PAUSE_KEY_PREFIX + "chunk_unloaded",
+            PAUSE_KEY_PREFIX + "materials_missing", PAUSE_KEY_PREFIX + "server_busy",
+            PAUSE_KEY_PREFIX + "recovery_needed", PAUSE_KEY_PREFIX + "user",
+            PAUSE_KEY_PREFIX + "site_changed", PAUSE_KEY_PREFIX + "no_room");
 
     /** The three texts {@link BuildPromptBuilder} needs - gathered once by the screen. */
     public record PromptParts(String sampleJson, String partsCatalog, String allowedBlocks) {
@@ -110,6 +125,8 @@ public final class BuildChatFlow {
     private String jobId;
     private int repairs;
     private long lastShownPercent = -1;
+    /** The pause reason last announced (null while unpaused) - the same one is not repeated. */
+    private String lastAnnouncedPause;
 
     public BuildChatFlow(boolean consentGiven, PromptParts parts) {
         this.consented = consentGiven;
@@ -192,7 +209,7 @@ public final class BuildChatFlow {
      * REJECTED/FAILED re-asks the AI with the technical messages up to {@link #MAX_REPAIRS} times).
      */
     public List<Action> offer(String offerJson) {
-        if (state != State.WAITING_OFFER) {
+        if (state != State.WAITING_OFFER && state != State.BUILDING) {
             return List.of();
         }
         Map<String, Object> tree;
@@ -201,10 +218,27 @@ public final class BuildChatFlow {
             tree = mapAt(MiniJson.parse(offerJson), "offer");
             offerState = stringAt(tree.get("state"), "state");
         } catch (RuntimeException malformed) {
-            // A doc that does not even carry its shape (no "state") cannot drive the flow - fail
-            // the round rather than let an IllegalArgumentException escape into a widget handler.
+            // A doc that does not even carry its shape (no "state") cannot drive the flow. While the
+            // offer is awaited that fails the round rather than letting an IllegalArgumentException
+            // escape into a widget handler; while BUILDING it proves nothing about the approval
+            // outcome, so it is dropped like every other unusable doc.
+            if (state == State.BUILDING) {
+                return List.of();
+            }
             state = State.FAILED;
             return List.of(say(MSG_PLAN_FAILED));
+        }
+        if (state == State.BUILDING) {
+            // Between SendApprove and the first progress doc the only offer still open is the
+            // approval itself, so REJECTED/FAILED here means the server turned the approve down:
+            // the round ends politely instead of leaving the panel on "building" forever (M3b).
+            // Once a jobId exists the doc is stale, and every other state is ignored as before.
+            if (jobId == null
+                    && (OFFER_REJECTED.equals(offerState) || OFFER_FAILED.equals(offerState))) {
+                state = State.FAILED;
+                return List.of(say(MSG_APPROVE_REFUSED), new ShowButtons(List.of()));
+            }
+            return List.of();
         }
         if (OFFER_OFFERED.equals(offerState)) {
             try {
@@ -288,7 +322,9 @@ public final class BuildChatFlow {
 
     /**
      * The server's newest progress document, read while BUILDING: {@code done}/{@code partial}
-     * end the round, otherwise a changed percent is spoken (the same percent is never repeated).
+     * end the round, a new {@code pause} reason is announced once (the same reason is not repeated,
+     * and a pause that cleared and returned is announced again), and a changed percent is spoken
+     * (the same percent is never repeated).
      */
     public List<Action> progress(String progressJson) {
         if (state != State.BUILDING) {
@@ -314,12 +350,26 @@ public final class BuildChatFlow {
                     + longOrZero(tree.get("conflicts"));
             return List.of(say(MSG_PARTIAL, missing));
         }
+        String pause = tree.get("pause") instanceof String s ? s : null;
+        List<Action> out = new ArrayList<>();
+        if (pause == null) {
+            lastAnnouncedPause = null; // unpaused: the same reason may be announced again later
+        } else {
+            if (!pause.equals(lastAnnouncedPause)) {
+                String pauseKey = PAUSE_KEY_PREFIX + pause.toLowerCase(Locale.ROOT);
+                if (PAUSE_KEYS.contains(pauseKey)) {
+                    out.add(say(pauseKey));
+                }
+            }
+            lastAnnouncedPause = pause;
+        }
         long percent = longOrZero(tree.get("percent"));
         if (percent == lastShownPercent) {
-            return List.of();
+            return out;
         }
         lastShownPercent = percent;
-        return List.of(say(MSG_BUILDING, percent));
+        out.add(say(MSG_BUILDING, percent));
+        return out;
     }
 
     private List<Action> ask(String childText) {
@@ -339,6 +389,7 @@ public final class BuildChatFlow {
         jobId = null;
         repairs = 0;
         lastShownPercent = -1;
+        lastAnnouncedPause = null;
     }
 
     /** The technical {@code message} texts of the offer's issues - for the repair prompt only. */

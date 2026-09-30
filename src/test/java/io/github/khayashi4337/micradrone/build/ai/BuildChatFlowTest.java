@@ -9,6 +9,8 @@ import io.github.khayashi4337.micradrone.build.ai.BuildChatFlow.Action;
 import io.github.khayashi4337.micradrone.build.ai.BuildChatFlow.ButtonKind;
 import io.github.khayashi4337.micradrone.build.ai.BuildChatFlow.State;
 import io.github.khayashi4337.micradrone.chat.MiniJson;
+import io.github.khayashi4337.micradrone.construction.core.ChildMessages;
+import io.github.khayashi4337.micradrone.construction.core.PauseReason;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -97,6 +99,22 @@ class BuildChatFlowTest {
         return MiniJson.write(t);
     }
 
+    /** A mid-flight progress doc with an explicit {@code pause} name (null = not paused). */
+    private static String pausedProgressJson(String jobId, long percent, String pause) {
+        Map<String, Object> t = new LinkedHashMap<>();
+        t.put("jobId", jobId);
+        t.put("state", pause == null ? "RUNNING" : "PAUSED");
+        t.put("cursor", percent);
+        t.put("total", 100L);
+        t.put("percent", percent);
+        t.put("pause", pause);
+        t.put("unrepaired", 0L);
+        t.put("conflicts", 0L);
+        t.put("done", false);
+        t.put("partial", false);
+        return MiniJson.write(t);
+    }
+
     private static StageResult aiOk(String reply) {
         return new StageResult(true, reply, null, false);
     }
@@ -115,6 +133,14 @@ class BuildChatFlowTest {
         BuildChatFlow flow = atWaitingOffer();
         flow.offer(offerJson("OFFERED", "hash-1", 5, 20, 0, 0, false, false, List.of()));
         assertEquals(State.OFFERED, flow.state());
+        return flow;
+    }
+
+    /** Drives a flow to BUILDING right after つくる: SendApprove is out, no jobId seen yet. */
+    private static BuildChatFlow atBuilding() {
+        BuildChatFlow flow = atOffered();
+        flow.approve();
+        assertEquals(State.BUILDING, flow.state());
         return flow;
     }
 
@@ -468,5 +494,100 @@ class BuildChatFlowTest {
         List<Action> actions = flow.request("もういちど こや");
         assertEquals(State.ASKING_AI, flow.state());
         assertTrue(askAi(actions).prompt().contains("もういちど こや"));
+    }
+
+    // ---- (g) M3b: an approve the server turned down, and pauses while building ------------------------
+
+    @Test
+    void aRejectedOfferWhileWaitingForTheApproveFailsPolitely() {
+        BuildChatFlow flow = atBuilding();
+        List<Action> actions = flow.offer(offerJson("REJECTED", null, 0, 0, 0, 0, false, false,
+                List.of(issueEntry("micradrone.build.reject.blocking_issues",
+                        "approval refused by BLOCKING_ISSUES: E-SITE-BLOCKED:spot#not_terraformable"))));
+        assertEquals(State.FAILED, flow.state());
+        assertEquals(2, actions.size());
+        assertEquals(BuildChatFlow.MSG_APPROVE_REFUSED,
+                actionAt(actions, 0, BuildChatFlow.Say.class).key());
+        assertTrue(actionAt(actions, 1, BuildChatFlow.ShowButtons.class).buttons().isEmpty(),
+                "the refusal leaves the button row hidden - there is nothing left to approve");
+        for (String text : allSayText(actions)) {
+            assertFalse(text.contains("not_terraformable"), "the technical reason leaked: " + text);
+            assertFalse(text.contains("E-SITE-BLOCKED"), "the issue code leaked: " + text);
+        }
+        List<Action> again = flow.request("べつの ばしょで たてて");
+        assertEquals(State.ASKING_AI, flow.state(), "a fresh request is accepted after the refusal");
+        assertTrue(askAi(again).prompt().contains("べつの ばしょで たてて"));
+    }
+
+    @Test
+    void aFailedOfferWhileWaitingForTheApproveAlsoEndsTheRound() {
+        BuildChatFlow flow = atBuilding();
+        List<Action> actions = flow.offer(offerJson("FAILED", null, 0, 0, 0, 0, false, false,
+                List.of(issueEntry(null, "internal detail"))));
+        assertEquals(State.FAILED, flow.state());
+        assertEquals(BuildChatFlow.MSG_APPROVE_REFUSED,
+                actionAt(actions, 0, BuildChatFlow.Say.class).key());
+    }
+
+    @Test
+    void anOfferAfterTheJobStartedIsIgnoredEvenWhenRejected() {
+        BuildChatFlow flow = atBuilding();
+        flow.progress(progressJson("job-9", 5, false, false, 0, 0)); // the job exists now
+        assertEquals(List.of(), flow.offer(offerJson("REJECTED", null, 0, 0, 0, 0, false, false,
+                List.of(issueEntry(null, "late refusal")))));
+        assertEquals(State.BUILDING, flow.state());
+    }
+
+    @Test
+    void anOfferedDocWhileWaitingForTheApproveIsIgnored() {
+        BuildChatFlow flow = atBuilding();
+        assertEquals(List.of(),
+                flow.offer(offerJson("OFFERED", "h", 1, 1, 0, 0, false, false, List.of())));
+        assertEquals(State.BUILDING, flow.state());
+    }
+
+    @Test
+    void aMalformedOfferWhileWaitingForTheApproveIsDropped() {
+        BuildChatFlow flow = atBuilding();
+        assertEquals(List.of(), flow.offer("this is not json"));
+        assertEquals(State.BUILDING, flow.state());
+    }
+
+    @Test
+    void aPauseIsAnnouncedOnceAndAgainAfterItClears() {
+        BuildChatFlow flow = atBuilding();
+        List<Action> first = flow.progress(pausedProgressJson("job-1", 0, "CHUNK_UNLOADED"));
+        assertEquals(List.of("micradrone.build.pause.chunk_unloaded"), sayKeys(first));
+        assertEquals(List.of(), flow.progress(pausedProgressJson("job-1", 0, "CHUNK_UNLOADED")),
+                "the same pause is not repeated");
+        assertEquals(List.of(), flow.progress(pausedProgressJson("job-1", 0, null)),
+                "the pause clearing speaks nothing by itself");
+        List<Action> again = flow.progress(pausedProgressJson("job-1", 0, "CHUNK_UNLOADED"));
+        assertEquals(List.of("micradrone.build.pause.chunk_unloaded"), sayKeys(again),
+                "a pause that came back is announced again");
+    }
+
+    @Test
+    void aDifferentPauseIsAnnouncedAgain() {
+        BuildChatFlow flow = atBuilding();
+        flow.progress(pausedProgressJson("job-1", 0, "CHUNK_UNLOADED"));
+        List<Action> second = flow.progress(pausedProgressJson("job-1", 0, "MATERIALS_MISSING"));
+        assertEquals(List.of("micradrone.build.pause.materials_missing"), sayKeys(second));
+    }
+
+    @Test
+    void aPauseNameTheServerNeverWritesStaysSilent() {
+        BuildChatFlow flow = atBuilding();
+        assertEquals(List.of(), flow.progress(pausedProgressJson("job-1", 0, "NOT_A_REASON")),
+                "only the registered pause keys may reach a child line");
+    }
+
+    @Test
+    void everyPauseReasonMapsToTheRegisteredPauseKey() {
+        BuildChatFlow flow = atBuilding();
+        for (PauseReason r : PauseReason.values()) {
+            List<Action> actions = flow.progress(pausedProgressJson("job-1", 0, r.name()));
+            assertEquals(List.of(ChildMessages.pause(r)), sayKeys(actions), r.name());
+        }
     }
 }

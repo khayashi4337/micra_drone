@@ -199,5 +199,6 @@
   "micradrone.build.chat.done": "Finished! Everything was built.",
   "micradrone.build.chat.partial": "Almost done - %1$s places could not be built.",
   "micradrone.build.chat.busy": "I am still working on another request. Please wait for it.",
-  "micradrone.build.chat.cancelled": "Cancelled."
+  "micradrone.build.chat.cancelled": "Cancelled.",
+  "micradrone.build.chat.approve_refused": "Could not build here. Move somewhere else and try again"
 }
