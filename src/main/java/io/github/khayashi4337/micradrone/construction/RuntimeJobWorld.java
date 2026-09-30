@@ -12,16 +12,23 @@ import io.github.khayashi4337.micradrone.construction.core.PlaceResult;
 import io.github.khayashi4337.micradrone.construction.core.Stock;
 import io.github.khayashi4337.micradrone.construction.core.WorldCell;
 import io.github.khayashi4337.micradrone.construction.core.WorldPort;
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import net.minecraft.core.SectionPos;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtAccounter;
+import net.minecraft.nbt.NbtIo;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.storage.LevelResource;
 
 /**
  * The {@link JobWorld} of a live server (F-1: everything here runs on the main thread): dimension ids resolve
@@ -109,5 +116,125 @@ final class RuntimeJobWorld implements JobWorld {
     @Override
     public boolean mayRunWithoutOwner(ConstructionJob job) {
         return false;
+    }
+
+    /** The tag {@code Entity#getPersistentData} is written under in a player's saved {@code playerdata/<uuid>.dat}. */
+    static final String TX_TAG = "NeoForgeData";
+    /**
+     * The durable transaction id of the owner's saved materials ({@code micradrone:lastTx}). Task 27's
+     * InventoryMaterials writes it through {@code persist(tx)}; recovery only reads it, to tell which WAL runs
+     * the inventory on disk already holds.
+     */
+    static final String TX_KEY = "micradrone:lastTx";
+
+    /**
+     * The {@link JobWorld} of start-up recovery and of the recover command (Task 25). It differs from the live
+     * world in the three places evidence is gathered: reads force-load the chunk they need (a position the world
+     * saved but has not loaded must not look unwritten), every write is refused (recovery never changes the world),
+     * and the owner's durable transaction id is read from the saved playerdata file - the owner may be offline.
+     */
+    static JobWorld recovery(MinecraftServer server) {
+        return new JobWorld() {
+            @Override
+            public WorldPort world(String dimension) {
+                ServerLevel level = server.getLevel(
+                        ResourceKey.create(Registries.DIMENSION, ResourceLocation.parse(dimension)));
+                return level == null ? MISSING_WORLD : new RecoveryWorldPort(level);
+            }
+
+            @Override
+            public MaterialPort materials(UUID owner, MaterialPolicy policy, String claimId) {
+                return policy == MaterialPolicy.CREATIVE_FREE ? MaterialPort.FREE : new RecoveryMaterials(server, owner);
+            }
+
+            @Override
+            public boolean ownerOnline(UUID owner) {
+                return server.getPlayerList().getPlayer(owner) != null;
+            }
+
+            @Override
+            public boolean mayRunWithoutOwner(ConstructionJob job) {
+                return false;
+            }
+        };
+    }
+
+    /** Reads only: the chunk is brought up before the read, every world change is denied. */
+    private static final class RecoveryWorldPort implements WorldPort {
+        private final ServerLevel level;
+
+        RecoveryWorldPort(ServerLevel level) {
+            this.level = level;
+        }
+
+        @Override
+        public WorldCell read(IntPos pos) {
+            try {
+                // a saved block in an unloaded chunk must still count as present
+                level.getChunk(SectionPos.blockToSectionCoord(pos.x()), SectionPos.blockToSectionCoord(pos.z()));
+            } catch (RuntimeException e) {
+                // an unreachable chunk reads as unloaded; the evidence then cannot decide and the owner is asked
+            }
+            return ServerStateReader.read(level, pos);
+        }
+
+        @Override
+        public PlaceResult place(IntPos pos, BlockSpec block, Map<String, String> blockEntityConfig, UUID actor) {
+            return PlaceResult.DENIED;
+        }
+
+        @Override
+        public PlaceResult restore(IntPos pos, BlockSpec block, UUID actor, boolean dropContentsFirst) {
+            return PlaceResult.DENIED;
+        }
+
+        @Override
+        public void settle(List<IntPos> positions) {
+        }
+    }
+
+    /**
+     * The owner's materials as the saved files prove them: only {@link #durableTx} carries information for
+     * recovery, everything else is denied.
+     */
+    private static final class RecoveryMaterials implements MaterialPort {
+        private final long savedTx;
+
+        RecoveryMaterials(MinecraftServer server, UUID owner) {
+            Path file = server.getWorldPath(LevelResource.PLAYER_DATA_DIR).resolve(owner + ".dat");
+            long tx = NO_TX;
+            try {
+                CompoundTag tag = NbtIo.readCompressed(file, NbtAccounter.unlimitedHeap());
+                tx = tag.getCompound(TX_TAG).getLong(TX_KEY);
+            } catch (IOException | RuntimeException e) {
+                // no saved file, a torn one, or no transaction inside: none is provable, so none is claimed
+            }
+            this.savedTx = tx;
+        }
+
+        @Override
+        public List<Stock> stocks(Collection<String> itemIds) {
+            return List.of();
+        }
+
+        @Override
+        public Optional<String> giveTarget(List<ItemCount> items) {
+            return Optional.empty();
+        }
+
+        @Override
+        public boolean apply(List<Move> moves) {
+            return false;
+        }
+
+        @Override
+        public void persist(long tx) {
+            throw new UnsupportedOperationException("recovery never saves an owner's inventory");
+        }
+
+        @Override
+        public long durableTx() {
+            return savedTx;
+        }
     }
 }

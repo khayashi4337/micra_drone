@@ -42,6 +42,7 @@ class QuietPolicyTest {
         t.put(ChildMessages.ISSUE_SITE_UNLOADED, false);// "come closer and send again"
         t.put(ChildMessages.DRONE_ARRIVED, false);      // "ドローンが きたよ!"
         t.put(ChildMessages.RECOVER_ASK, true);         // job id + "/micradrone build recover … adopt/discard"
+        t.put(ChildMessages.HALTED, false);             // "きろくが かけないので とめたよ" - a plain reason
         for (JobState s : JobState.values()) {
             // a bare state word ("たてているよ"); it only ever rides inside STATUS_LINE, which is suppressed
             t.put(ChildMessages.state(s), false);

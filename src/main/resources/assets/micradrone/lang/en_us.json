@@ -134,6 +134,7 @@
   "micradrone.build.issue.site_unloaded": "the spot is not loaded yet. Go closer and send it again.",
   "micradrone.build.drone.arrived": "The drone is here!",
   "micradrone.build.recover.ask": "Job %1$s: I cannot tell whether %2$s happened before it stopped. If it did, choose /micradrone build recover %1$s adopt; if not, choose discard.",
+  "micradrone.build.halted": "I could not write my notes down, so I stopped working.",
   "micradrone.build.state.pending_approval": "waiting for approval",
   "micradrone.build.state.queued": "waiting in line",
   "micradrone.build.state.running": "building",

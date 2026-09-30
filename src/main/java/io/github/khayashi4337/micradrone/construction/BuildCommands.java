@@ -26,6 +26,7 @@ import io.github.khayashi4337.micradrone.construction.core.PlanFileOpener;
 import io.github.khayashi4337.micradrone.construction.core.PlanFileReader;
 import io.github.khayashi4337.micradrone.construction.core.PlanSource;
 import io.github.khayashi4337.micradrone.construction.core.PlanSubmission;
+import io.github.khayashi4337.micradrone.construction.core.RecoveryChoice;
 import io.github.khayashi4337.micradrone.construction.core.SiteRelocation;
 import io.github.khayashi4337.micradrone.construction.core.WorldCell;
 import java.io.IOException;
@@ -100,7 +101,18 @@ public final class BuildCommands {
                 .then(Commands.literal("verify")
                         .requires(src -> src.getPlayer() != null)
                         .then(Commands.argument("jobId", StringArgumentType.word())
-                                .executes(BuildCommands::verify)))));
+                                .executes(BuildCommands::verify)))
+                .then(Commands.literal("recover")
+                        .requires(src -> src.getPlayer() != null)
+                        .then(Commands.argument("jobId", StringArgumentType.word())
+                                .then(Commands.literal("adopt")
+                                        .executes(ctx -> recover(ctx, RecoveryChoice.ADOPT)))
+                                .then(Commands.literal("discard")
+                                        .executes(ctx -> recover(ctx, RecoveryChoice.DISCARD)))
+                                .then(Commands.literal("repair")
+                                        .executes(ctx -> recover(ctx, RecoveryChoice.REPAIR)))
+                                .then(Commands.literal("fail")
+                                        .executes(ctx -> recover(ctx, RecoveryChoice.FAIL)))))));
     }
 
     /** permissions.level of micradrone-server.toml (F-4(d)): ALL opens submit/approve to every player. */
@@ -255,6 +267,9 @@ public final class BuildCommands {
             source.sendFailure(Component.literal("construction runtime is not running"));
             return 0;
         }
+        if (runtime.halted()) {
+            source.sendSystemMessage(ServerMessages.of(MessageKey.of(ChildMessages.HALTED)));
+        }
         List<JobStatus> visible = runtime.jobs().statuses().stream()
                 .filter(st -> mayInspect(source, st.owner()))
                 .toList();
@@ -279,6 +294,9 @@ public final class BuildCommands {
         if (status.isEmpty() || !mayInspect(source, status.get().owner())) {
             notFound(source);
             return 0;
+        }
+        if (runtime.halted()) {
+            source.sendSystemMessage(ServerMessages.of(MessageKey.of(ChildMessages.HALTED)));
         }
         source.sendSystemMessage(ServerMessages.status(status.get()));
         return Command.SINGLE_SUCCESS;
@@ -367,6 +385,19 @@ public final class BuildCommands {
         }
         runtime.verify(player.getUUID(), player.hasPermissions(Commands.LEVEL_GAMEMASTERS),
                 StringArgumentType.getString(ctx, "jobId"));
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /** Owner-or-operator is judged by {@code JobService.recover} itself (D-12); the command only relays. */
+    private static int recover(CommandContext<CommandSourceStack> ctx, RecoveryChoice choice) {
+        CommandSourceStack source = ctx.getSource();
+        ServerPlayer player = source.getPlayer();
+        ConstructionRuntime runtime = ConstructionRuntime.of(source.getServer()).orElse(null);
+        if (player == null || runtime == null) {
+            return 0;
+        }
+        runtime.recover(player.getUUID(), player.hasPermissions(Commands.LEVEL_GAMEMASTERS),
+                StringArgumentType.getString(ctx, "jobId"), choice);
         return Command.SINGLE_SUCCESS;
     }
 }

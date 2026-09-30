@@ -52,7 +52,7 @@ public final class JobService {
     private static final Set<JobState> ROLLBACKABLE = EnumSet.of(JobState.VERIFIED, JobState.PARTIAL, JobState.FAILED,
             JobState.CANCELLED);
     /** The lastError prefix of a job whose log waits for the owner's answer; the reasons follow it. */
-    static final String RECOVERY_AMBIGUOUS = "recovery-ambiguous:";
+    public static final String RECOVERY_AMBIGUOUS = "recovery-ambiguous:";
 
     private final BudgetConfig budgetConfig;
     private final ConstructionBudget budget;
@@ -68,6 +68,11 @@ public final class JobService {
     private final Map<String, ConstructionJob> brokenWithoutManifest = new HashMap<>();
     private long admissions;
     private boolean slowed;
+    /**
+     * The record whose executor run is on the stack right now. {@link WriteAheadLog.Barrier#at(String)} carries only a
+     * point name, so the development barrier reads the running job's kind here; empty outside {@link #place}'s run.
+     */
+    private JobRecord placing;
 
     public JobService(BudgetConfig budgetConfig, ClaimBook claims, PartTypeRegistry registry, boolean fastStructure,
                       boolean continueWhileOffline) {
@@ -109,6 +114,26 @@ public final class JobService {
         if (jobs.putIfAbsent(r.job().jobId(), r) != null) {
             throw new IllegalStateException("job " + r.job().jobId() + " exists already");
         }
+    }
+
+    /**
+     * A job read back from its files at start-up (04 F-2). The record goes in carrying the job the planner decided
+     * on (a job that was moving is re-paused by it), with the pending part of the log its file kept, marked for the
+     * {@link #recoverAll} fold when {@code fromLog}, and its saved ledger put back under its job id.
+     */
+    public void addLoaded(ConstructionJob job, JobLoad.Loaded load, boolean fromLog) {
+        JobRecord loaded = load.record();
+        JobRecord r = loaded.job().equals(job) ? loaded
+                : new JobRecord(job, loaded.manifest(), loaded.nodeTypes(), loaded.program(), loaded.journal(),
+                        loaded.outcome(), loaded.operatingBox());
+        if (r != loaded) {
+            r.pendingLog = loaded.pendingLog;
+        }
+        if (fromLog) {
+            r.requireRecovery();
+        }
+        ledgers.put(job.jobId(), load.ledger());
+        add(r);
     }
 
     public List<JobUpdate> tick(TickInput in, JobWorld w) {
@@ -215,7 +240,13 @@ public final class JobService {
         ExecutionContext ctx = new ExecutionContext(j, program, w.world(j.dimension()),
                 w.materials(j.ownerUuid(), j.materialPolicy(), j.claimId()), r.journal(), ledgers, registry(j.claimId()),
                 r.outcome(), r.skipSiteChanges, wal);
-        StepReport rep = ConstructionExecutor.run(ctx, cursor, steps);
+        placing = r;
+        StepReport rep;
+        try {
+            rep = ConstructionExecutor.run(ctx, cursor, steps);
+        } finally {
+            placing = null;
+        }
         r.lastRun = wal.lastRun();
         if (repairing) {
             r.repair = new RepairQueue(program, rep.cursor());
@@ -575,6 +606,15 @@ public final class JobService {
 
     public List<JobRecord> records() {
         return List.copyOf(jobs.values());
+    }
+
+    /**
+     * The job whose executor run is on the stack right now, for the development barrier's per-kind arming. Empty
+     * between runs, in tests, and while the service is doing anything but placing.
+     */
+    public Optional<ConstructionJob> placingJob() {
+        JobRecord r = placing;
+        return Optional.ofNullable(r == null ? null : r.job());
     }
 
     public List<JobRecord> jobsInClaim(String claimId) {
