@@ -52,6 +52,7 @@ class BuildPurityTest {
             entry("build.model", Set.of()),
             entry("build.parts", Set.of("build.model")),
             entry("build.plan", Set.of("build.model", "build.parts", "lang")),
+            entry("build.analyze", Set.of("build.model")),
             entry("build.compile.gen", Set.of("build.model", "build.parts")),
             entry("build.compile", Set.of("build.model", "build.parts", "build.plan", "build.compile.gen")),
             entry("build.script", Set.of("build.model", "build.parts", "lang", "lang.ast")),
