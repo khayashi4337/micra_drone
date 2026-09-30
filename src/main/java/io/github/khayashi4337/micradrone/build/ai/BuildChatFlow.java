@@ -358,7 +358,10 @@ public final class BuildChatFlow {
             if (!pause.equals(lastAnnouncedPause)) {
                 String pauseKey = PAUSE_KEY_PREFIX + pause.toLowerCase(Locale.ROOT);
                 if (PAUSE_KEYS.contains(pauseKey)) {
-                    out.add(say(pauseKey));
+                    // pause.site_changed's text takes the job id as %1$s, the same way
+                    // ServerMessages renders it; an early doc without a jobId passes "" rather
+                    // than leaving a literal "%1$s" in the child's line.
+                    out.add(say(pauseKey, jobId == null ? "" : jobId));
                 }
             }
             lastAnnouncedPause = pause;

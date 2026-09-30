@@ -590,4 +590,14 @@ class BuildChatFlowTest {
             assertEquals(List.of(ChildMessages.pause(r)), sayKeys(actions), r.name());
         }
     }
+
+    @Test
+    void theSiteChangedPauseCarriesTheJobIdForItsPlaceholder() {
+        BuildChatFlow flow = atBuilding();
+        List<Action> actions = flow.progress(pausedProgressJson("job-42", 0, "SITE_CHANGED"));
+        BuildChatFlow.Say say = only(actions, BuildChatFlow.Say.class);
+        assertEquals("micradrone.build.pause.site_changed", say.key());
+        assertEquals(List.of("job-42"), say.args(),
+                "the pause line's %1$s is the job id, the same way ServerMessages renders it");
+    }
 }
