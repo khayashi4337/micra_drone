@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
@@ -59,6 +60,24 @@ class ChildMessagesTest {
         }
         assertEquals(ChildMessages.ISSUE_OTHER, ChildMessages.issue(IssueCode.E_ROT_CONFLICT), "not a P4 message: generic");
         assertEquals("micradrone.build.issue.e_site_blocked", ChildMessages.issue(IssueCode.E_SITE_BLOCKED));
+    }
+
+    @Test
+    void anUnloadedSiteIssueGetsTheComeCloserLineNotTheBlockedOne() {
+        Issue unloaded = Issue.of(IssueCode.E_SITE_BLOCKED, SafetyEnvelope.KEY_UNLOADED, List.of("manifest"), "x");
+        assertEquals("micradrone.build.issue.site_unloaded", ChildMessages.issueLine(unloaded).key(),
+                "an unloaded chunk is not a block in the way");
+        Issue blocked = Issue.of(IssueCode.E_SITE_BLOCKED, "not_replaceable", List.of("wall-1"), "x");
+        assertEquals("micradrone.build.issue.e_site_blocked", ChildMessages.issueLine(blocked).key(),
+                "a real obstruction keeps the blocked message");
+    }
+
+    @Test
+    void theSiteChangedPauseTellsTheRealSkipCommand() throws IOException {
+        String text = (String) lang("ja_jp.json").get("micradrone.build.pause.site_changed");
+        assertTrue(text.contains("skip-conflicts"),
+                "a plain resume stops again on the conflict: the text must name the skip-conflicts form");
+        assertTrue(text.contains("%1$s"), "the job id goes in as the first argument");
     }
 
     @Test

@@ -15,19 +15,20 @@ class JobViewsTest {
     @Test
     void aStatusIsPlainJsonWithEveryField() {
         JobStatus st = new JobStatus("job-1", new UUID(0, 1), JobKind.BUILD, JobState.PAUSED, PauseReason.MATERIALS_MISSING, 3, 25, 0,
-                1, 2, "", "claim-job-1", "minecraft:overworld");
+                1, 2, 0, "", "claim-job-1", "minecraft:overworld");
         Map<String, Object> t = JobViews.statusTree(st);
         assertEquals("PAUSED", t.get("state"));
         assertEquals("MATERIALS_MISSING", t.get("pause"));
         assertEquals(3, ((Number) t.get("cursor")).intValue());
         assertEquals(25, ((Number) t.get("total")).intValue());
+        assertEquals(0, ((Number) t.get("unrepaired")).intValue());
         String json = MiniJson.write(t);
         assertEquals(t.get("jobId"), ((Map<?, ?>) MiniJson.parse(json)).get("jobId"), "round-trips through the JSON writer");
     }
 
     @Test
     void aRunningJobHasNoPauseAndIssuesKeepTheirIds() {
-        JobStatus st = new JobStatus("job-1", new UUID(0, 1), JobKind.BUILD, JobState.RUNNING, null, 3, 25, 0, 0, 0, "", "c",
+        JobStatus st = new JobStatus("job-1", new UUID(0, 1), JobKind.BUILD, JobState.RUNNING, null, 3, 25, 0, 0, 0, 0, "", "c",
                 "minecraft:overworld");
         assertNull(JobViews.statusTree(st).get("pause"));
         Issue i = Issue.of(IssueCode.E_SITE_BLOCKED, "unloaded", List.of("manifest"), "x");
@@ -35,6 +36,7 @@ class JobViewsTest {
         assertEquals("E-SITE-BLOCKED:manifest#unloaded", it.get("id"));
         assertEquals("E-SITE-BLOCKED", it.get("code"));
         assertEquals(false, it.get("acceptable"));
-        assertEquals(ChildMessages.issue(IssueCode.E_SITE_BLOCKED), it.get("childKey"));
+        assertEquals("micradrone.build.issue.site_unloaded", it.get("childKey"),
+                "the child-facing key is the one issueLine picks: an unloaded spot is not a blockage");
     }
 }

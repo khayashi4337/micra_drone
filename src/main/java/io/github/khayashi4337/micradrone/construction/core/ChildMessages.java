@@ -30,6 +30,8 @@ public final class ChildMessages {
     public static final String TERRAIN_CONFIRM = PREFIX + "confirm.terrain";
     public static final String DESTRUCTIVE_CONFIRM = PREFIX + "confirm.destructive";
     public static final String ISSUE_OTHER = PREFIX + "issue.other";
+    /** E-SITE-BLOCKED keyed "unloaded": the spot is not loaded yet, not blocked by an unmoving block. */
+    public static final String ISSUE_SITE_UNLOADED = PREFIX + "issue.site_unloaded";
     public static final String DRONE_ARRIVED = PREFIX + "drone.arrived";
     /** A job whose log after the last durable point waits for its owner's answer (adopt or discard). Task 24. */
     public static final String RECOVER_ASK = PREFIX + "recover.ask";
@@ -40,7 +42,9 @@ public final class ChildMessages {
             IssueCode.E_SITE_MISSING, IssueCode.E_PARAM_RANGE, IssueCode.E_UNKNOWN_PART);
     private static final Set<String> FIXED = Set.of(SUBMIT_OK, SUBMIT_ISSUES, SUBMIT_BUSY, SUBMIT_BAD_SOURCE, APPROVE_OK,
             PROGRESS, DONE, PARTIAL, CONFLICTS, SHORTAGE, CANCELLED, RESUMED, STATUS_LINE, NO_JOBS, TERRAIN_CONFIRM,
-            DESTRUCTIVE_CONFIRM, ISSUE_OTHER, DRONE_ARRIVED, RECOVER_ASK);
+            DESTRUCTIVE_CONFIRM, ISSUE_OTHER, ISSUE_SITE_UNLOADED, DRONE_ARRIVED, RECOVER_ASK);
+    /** An issue's id carries its key after this marker (see {@code Issue.of}). */
+    private static final String ID_KEY_MARKER = "#";
 
     private ChildMessages() {
     }
@@ -74,6 +78,11 @@ public final class ChildMessages {
      * {@code /micradrone build status <jobId> --debug}, never into a child's chat.
      */
     public static MessageKey issueLine(Issue issue) {
+        // a site that is only not loaded yet is not "a block in the way": the child is asked to come closer
+        if (issue.code() == IssueCode.E_SITE_BLOCKED
+                && issue.id().endsWith(ID_KEY_MARKER + SafetyEnvelope.KEY_UNLOADED)) {
+            return MessageKey.of(ISSUE_SITE_UNLOADED);
+        }
         return MessageKey.of(issue(issue.code()));
     }
 

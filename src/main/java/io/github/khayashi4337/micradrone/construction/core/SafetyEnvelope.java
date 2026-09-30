@@ -30,7 +30,8 @@ public final class SafetyEnvelope {
     static final String KEY_SIZE = "size";
     static final String KEY_HEIGHT = "height";
     static final String KEY_BOUNDS = "bounds";
-    static final String KEY_UNLOADED = "unloaded";
+    /** Also the key ConstructionRuntime puts on the pre-survey unload refusal and ChildMessages matches on. */
+    public static final String KEY_UNLOADED = "unloaded";
     static final String DATA_COUNT = "count";
     static final String DATA_LIMIT = "limit";
     static final String DATA_FIRST = "first";
@@ -51,16 +52,8 @@ public final class SafetyEnvelope {
                     Map.of(DATA_COUNT, String.valueOf(n), DATA_LIMIT, String.valueOf(limits.maxPlacements())), List.of()));
         }
         Box b = m.worldBounds();
-        long sx = (long) b.maxA() - b.minA() + 1;
-        long sy = (long) b.maxB() - b.minB() + 1;
-        long sz = (long) b.maxC() - b.minC() + 1;
-        if (sx > limits.maxSizeX() || sy > limits.maxSizeY() || sz > limits.maxSizeZ()) {
-            String size = sx + "x" + sy + "x" + sz;
-            String max = limits.maxSizeX() + "x" + limits.maxSizeY() + "x" + limits.maxSizeZ();
-            issues.add(Issue.of(IssueCode.E_OUT_OF_BOUNDS, KEY_SIZE, List.of(SUBJECT_MANIFEST),
-                    "施工の範囲が大きすぎます(" + size + "。上限は" + max + ")", Map.of(DATA_COUNT, size, DATA_LIMIT, max),
-                    List.of()));
-        }
+        // the same check runs before the survey on the site box: SiteBoxLimits owns the shared size rule
+        SiteBoxLimits.check(b, limits).ifPresent(issues::add);
         int outsideHeight = 0;
         IntPos firstOutside = null;
         TreeSet<String> outsideHeightParts = new TreeSet<>();

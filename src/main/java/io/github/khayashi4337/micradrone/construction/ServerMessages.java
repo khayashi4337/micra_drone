@@ -35,7 +35,9 @@ public final class ServerMessages {
     /** The {@code status.line} view: job id, translated state, cursor/total, and the pause text when paused. */
     public static Component status(JobStatus status) {
         Component state = Component.translatable(ChildMessages.state(status.state()));
-        Object pause = status.shownPause() == null ? "" : Component.translatable(ChildMessages.pause(status.shownPause()));
+        // the job id goes to every pause text: texts that name a command (site_changed) use it, the rest ignore it
+        Object pause = status.shownPause() == null ? ""
+                : Component.translatable(ChildMessages.pause(status.shownPause()), status.jobId());
         return Component.translatable(ChildMessages.STATUS_LINE, status.jobId(), state, status.cursor(), status.total(),
                 pause);
     }
@@ -82,7 +84,7 @@ public final class ServerMessages {
     public static void sendIssues(MinecraftServer server, UUID playerId, List<Issue> issues) {
         for (Issue issue : issues) {
             MicraDrone.LOGGER.info("construction issue {}: {}", issue.id(), issue.message());
-            send(server, playerId, MessageKey.of(ChildMessages.issue(issue.code())));
+            send(server, playerId, ChildMessages.issueLine(issue));
         }
     }
 }

@@ -49,6 +49,7 @@ import io.github.khayashi4337.micradrone.construction.core.ReplacementSummary;
 import io.github.khayashi4337.micradrone.construction.core.SafetyEnvelope;
 import io.github.khayashi4337.micradrone.construction.core.SafetyReport;
 import io.github.khayashi4337.micradrone.construction.core.ServerWorkerPool;
+import io.github.khayashi4337.micradrone.construction.core.SiteBoxLimits;
 import io.github.khayashi4337.micradrone.construction.core.SubmitOutcome;
 import io.github.khayashi4337.micradrone.construction.core.SurveyCache;
 import io.github.khayashi4337.micradrone.construction.core.TickInput;
@@ -92,7 +93,7 @@ public final class ConstructionRuntime {
     /** P4 ships no bundled templates (P11); submissions verify against an empty table. */
     private static final Map<String, String> BUNDLED_TEMPLATE_HASHES = Map.of();
     /** Issue key matching SafetyEnvelope's unloaded-subject convention. */
-    private static final String KEY_UNLOADED = "unloaded";
+    private static final String KEY_UNLOADED = SafetyEnvelope.KEY_UNLOADED;
     /** The subject every site-level issue names. */
     private static final String SUBJECT_MANIFEST = "manifest";
 
@@ -194,6 +195,14 @@ public final class ConstructionRuntime {
             return;
         }
         Box worldBox = OperatingBox.toWorld(site.frame(), site.localBounds());
+        // the site-box size is checked BEFORE the chunk scan and the survey: a localBounds at the coordinate
+        // limit would otherwise make allLoaded or the survey walk an absurd box on the main thread
+        Optional<Issue> sizeIssue = SiteBoxLimits.check(worldBox, ConstructionConfig.limits(level, s.op));
+        if (sizeIssue.isPresent()) {
+            submissions.remove(owner);
+            finishFailed(owner, List.of(sizeIssue.get()));
+            return;
+        }
         if (!ServerSurveyor.allLoaded(level, worldBox)) {
             submissions.remove(owner);
             finishFailed(owner, List.of(unloadedIssue()));
@@ -527,7 +536,8 @@ public final class ConstructionRuntime {
                 if (job.state() == JobState.VERIFIED) {
                     ServerMessages.send(server, job.ownerUuid(), MessageKey.of(ChildMessages.DONE));
                 } else if (job.state() == JobState.PARTIAL) {
-                    int unplaced = status == null ? 0 : status.skipped() + status.conflicts();
+                    // skipped + conflicts + the deviations the last repair round gave up on (lastError's numbers)
+                    int unplaced = status == null ? 0 : status.skipped() + status.conflicts() + status.unrepaired();
                     ServerMessages.send(server, job.ownerUuid(), MessageKey.of(ChildMessages.PARTIAL, unplaced));
                 } else if (status != null) {
                     ServerMessages.send(server, job.ownerUuid(), ServerMessages.status(status));

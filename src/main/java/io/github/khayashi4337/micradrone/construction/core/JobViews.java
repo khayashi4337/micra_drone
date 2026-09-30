@@ -32,6 +32,7 @@ public final class JobViews {
         t.put("repairRound", (long) s.repairRound());
         t.put("conflicts", (long) s.conflicts());
         t.put("skipped", (long) s.skipped());
+        t.put("unrepaired", (long) s.unrepaired());
         t.put("lastError", s.lastError());
         t.put("claimId", s.claimId());
         t.put("dimension", s.dimension());
@@ -109,7 +110,7 @@ public final class JobViews {
         t.put("subjects", i.subjects());
         t.put("message", i.message());
         t.put("data", i.data());
-        t.put("childKey", ChildMessages.issue(i.code()));
+        t.put("childKey", ChildMessages.issueLine(i).key());
         return t;
     }
 }

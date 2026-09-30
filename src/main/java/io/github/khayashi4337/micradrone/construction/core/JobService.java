@@ -523,7 +523,32 @@ public final class JobService {
             shown = j.state() == JobState.QUEUED && inState(ACTIVE).isEmpty() ? null : PauseReason.SERVER_BUSY;
         }
         return new JobStatus(j.jobId(), j.ownerUuid(), j.kind(), j.state(), shown, j.cursor(), j.total(), j.repairRound(),
-                r.outcome().conflicts().size(), r.outcome().skipped().size(), j.lastError(), j.claimId(), j.dimension());
+                r.outcome().conflicts().size(), r.outcome().skipped().size(), unrepaired(r), j.lastError(),
+                j.claimId(), j.dimension());
+    }
+
+    /**
+     * The positions the last verification gave up on, minus the ones already counted elsewhere: a skipped
+     * placement keeps its own count, and a position named by a live conflict is not counted a second time.
+     * With skipped and conflicts this makes the PARTIAL count agree with {@code lastError}.
+     */
+    private static int unrepaired(JobRecord r) {
+        if (r.remaining.isEmpty()) {
+            return 0;
+        }
+        Set<IntPos> conflicted = new HashSet<>();
+        for (Conflict c : r.outcome().conflicts()) {
+            conflicted.add(c.pos());
+        }
+        int n = 0;
+        for (Deviation d : r.remaining) {
+            if (r.outcome().isSkipped(d.placementIndex())
+                    || conflicted.contains(r.manifest().placements().get(d.placementIndex()).pos())) {
+                continue;
+            }
+            n++;
+        }
+        return n;
     }
 
     public Optional<JobRecord> record(String jobId) {

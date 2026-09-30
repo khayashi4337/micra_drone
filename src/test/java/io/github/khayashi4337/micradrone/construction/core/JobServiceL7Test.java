@@ -95,6 +95,10 @@ class JobServiceL7Test {
         assertEquals(1, r.remaining().size());
         assertTrue(r.job().lastError().contains("blocked=1"), r.job().lastError());
         assertEquals(0, r.job().repairRound(), "nothing to retry: protection is not L7's to fix");
+        JobStatus st = s.status("job-1").orElseThrow();
+        assertEquals(0, st.unrepaired(), "the denied position is already counted once, as skipped");
+        assertEquals(1, st.skipped() + st.conflicts() + st.unrepaired(),
+                "the PARTIAL count must say one unplaceable spot, matching lastError's blocked=1");
     }
 
     @Test
@@ -115,6 +119,9 @@ class JobServiceL7Test {
         JobRecord r = s.record("job-1").orElseThrow();
         assertEquals(ConstructionJob.MAX_REPAIR_ROUNDS, r.job().repairRound());
         assertTrue(r.job().lastError().contains("missing=1"), r.job().lastError());
+        JobStatus st = s.status("job-1").orElseThrow();
+        assertEquals(1, st.unrepaired(), "the position the last round still could not fix is counted");
+        assertEquals(1, st.skipped() + st.conflicts() + st.unrepaired());
     }
 
     @Test

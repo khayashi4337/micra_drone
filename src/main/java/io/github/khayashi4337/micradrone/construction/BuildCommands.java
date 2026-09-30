@@ -17,6 +17,7 @@ import io.github.khayashi4337.micradrone.build.verify.SparseSnapshot;
 import io.github.khayashi4337.micradrone.build.verify.VolatileProps;
 import io.github.khayashi4337.micradrone.construction.core.ApproveArgs;
 import io.github.khayashi4337.micradrone.construction.core.ChildMessages;
+import io.github.khayashi4337.micradrone.construction.core.CommandAccess;
 import io.github.khayashi4337.micradrone.construction.core.ControlResult;
 import io.github.khayashi4337.micradrone.construction.core.JobRecord;
 import io.github.khayashi4337.micradrone.construction.core.JobStatus;
@@ -32,9 +33,11 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Function;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -214,6 +217,21 @@ public final class BuildCommands {
         return Command.SINGLE_SUCCESS;
     }
 
+    /**
+     * The inspection rule of F-4/D-12: the owner or an operator may look at a job, and anyone else's answer is
+     * the same "not found" a missing id gets, so a stranger never learns the job exists at all. A non-player
+     * source (the console) carries a null viewer; its operator permission decides.
+     */
+    private static boolean mayInspect(CommandSourceStack source, UUID owner) {
+        ServerPlayer player = source.getPlayer();
+        return CommandAccess.mayInspect(player == null ? null : player.getUUID(),
+                source.hasPermission(Commands.LEVEL_GAMEMASTERS), owner);
+    }
+
+    private static void notFound(CommandSourceStack source) {
+        source.sendSystemMessage(ServerMessages.of(MessageKey.of(ChildMessages.control(ControlResult.NOT_FOUND))));
+    }
+
     private static int statusAll(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
         ConstructionRuntime runtime = ConstructionRuntime.of(source.getServer()).orElse(null);
@@ -221,11 +239,14 @@ public final class BuildCommands {
             source.sendFailure(Component.literal("construction runtime is not running"));
             return 0;
         }
-        if (runtime.jobs().statuses().isEmpty()) {
+        List<JobStatus> visible = runtime.jobs().statuses().stream()
+                .filter(st -> mayInspect(source, st.owner()))
+                .toList();
+        if (visible.isEmpty()) {
             source.sendSystemMessage(ServerMessages.of(MessageKey.of(ChildMessages.NO_JOBS)));
             return 0;
         }
-        for (JobStatus status : runtime.jobs().statuses()) {
+        for (JobStatus status : visible) {
             source.sendSystemMessage(ServerMessages.status(status));
         }
         return Command.SINGLE_SUCCESS;
@@ -239,8 +260,8 @@ public final class BuildCommands {
             return 0;
         }
         Optional<JobStatus> status = runtime.jobs().status(StringArgumentType.getString(ctx, "jobId"));
-        if (status.isEmpty()) {
-            source.sendSystemMessage(ServerMessages.of(MessageKey.of(ChildMessages.control(ControlResult.NOT_FOUND))));
+        if (status.isEmpty() || !mayInspect(source, status.get().owner())) {
+            notFound(source);
             return 0;
         }
         source.sendSystemMessage(ServerMessages.status(status.get()));
@@ -287,8 +308,8 @@ public final class BuildCommands {
             return 0;
         }
         JobRecord record = runtime.jobs().record(StringArgumentType.getString(ctx, "jobId")).orElse(null);
-        if (record == null) {
-            source.sendSystemMessage(ServerMessages.of(MessageKey.of(ChildMessages.control(ControlResult.NOT_FOUND))));
+        if (record == null || !mayInspect(source, record.job().ownerUuid())) {
+            notFound(source);
             return 0;
         }
         PlacementManifest manifest = record.manifest();

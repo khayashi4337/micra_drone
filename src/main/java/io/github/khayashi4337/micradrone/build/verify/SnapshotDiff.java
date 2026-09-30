@@ -16,8 +16,9 @@ import java.util.Set;
 import java.util.function.Function;
 
 /**
- * The strict comparison of L7 (design 03): at each shared position only the in-scope placement with the highest
- * index decides the expected block (a site-prep cut a later block covers is not a deviation). An ASSEMBLED_AWAY
+ * The strict comparison of L7 (design 03): at each shared position the manifest's last placement decides the
+ * expected block, and a window answers the position only when that last placement is in scope — a ground cut
+ * in an earlier window must not flag the finished foundation as EXTRA. An ASSEMBLED_AWAY
  * placement is checked like any other until its group is assembled; once assembled the position should be air again
  * (its block moved into the contraption), so anything found there is EXTRA. Unread positions are listed apart:
  * unknown is not missing. Volatile states are never compared.
@@ -45,17 +46,21 @@ public final class SnapshotDiff {
      */
     public static Result compare(PlacementManifest m, SparseSnapshot s, CompareScope scope,
                                  Function<String, Set<String>> volatileOfNode, Set<String> assembledGroups) {
+        // the last placement per position is chosen from the WHOLE manifest: picking it inside the scope lets
+        // an early window take a site-prep cut as the answer and misjudge the later finished block as EXTRA
         Map<IntPos, Placement> last = new HashMap<>();
         for (Placement p : m.placements()) {
-            if (!scope.includes(p)) {
-                continue;
-            }
             Placement prev = last.get(p.pos());
             if (prev == null || p.index() > prev.index()) {
                 last.put(p.pos(), p);
             }
         }
-        List<Placement> chosen = new ArrayList<>(last.values());
+        List<Placement> chosen = new ArrayList<>();
+        for (Placement p : last.values()) {
+            if (scope.includes(p)) {
+                chosen.add(p);
+            }
+        }
         chosen.sort(Comparator.comparingInt(Placement::index));
         List<Deviation> out = new ArrayList<>();
         List<Integer> unread = new ArrayList<>();

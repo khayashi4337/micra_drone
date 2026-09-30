@@ -124,17 +124,44 @@ class SnapshotDiffTest {
     }
 
     @Test
-    void aScopeSeesOnlyTheLastPlacementInsideIt() {
+    void aScopeSkipsAPositionWhoseLastPlacementIsOutsideIt() {
         IntPos pos = new IntPos(0, 64, 0);
         PlacementManifest m = TestManifests.of(new Box(-1, 60, -1, 1, 70, 1), List.of(
                 TestManifests.put(pos, BlockSpec.AIR, "site", BuildPhase.SITE_PREP, VerifyMode.EXACT),
                 TestManifests.put(pos, BlockSpec.of("minecraft:stone"), "w", BuildPhase.STRUCTURE, VerifyMode.EXACT)));
         CompareScope upToTheCut = new CompareScope.UpToCursor(1);
-        // the stone is not built yet: the cut alone decides what the position should look like now
+        // the stone's placement is beyond the cursor, so this scope does not judge the position at all:
+        // a window answers a position only when the manifest's last placement there is inside it
         assertEquals(List.of(), SnapshotDiff.compare(m, new SparseSnapshot(Map.of(pos,
                 new ObservedBlock(BlockSpec.AIR))), upToTheCut, NONE).deviations());
-        assertEquals(List.of(DeviationKind.EXTRA), kinds(SnapshotDiff.compare(m, new SparseSnapshot(Map.of(pos,
-                new ObservedBlock(BlockSpec.of("minecraft:stone")))), upToTheCut, NONE)));
+        assertEquals(List.of(), kinds(SnapshotDiff.compare(m, new SparseSnapshot(Map.of(pos,
+                new ObservedBlock(BlockSpec.of("minecraft:stone")))), upToTheCut, NONE)),
+                "not an EXTRA yet: the scope holding the last placement will compare it");
+    }
+
+    @Test
+    void aSharedPositionAcrossTheWindowBoundaryIsNotAFalseExtra() {
+        IntPos pos = new IntPos(0, 64, 0);
+        PlacementManifest m = TestManifests.of(new Box(-1, 60, -1, 1, 70, 1), List.of(
+                TestManifests.put(pos, BlockSpec.AIR, "site", BuildPhase.SITE_PREP, VerifyMode.EXACT),
+                TestManifests.put(new IntPos(1, 64, 0), BlockSpec.of("minecraft:oak_planks"), "w",
+                        BuildPhase.STRUCTURE, VerifyMode.EXACT),
+                TestManifests.put(pos, BlockSpec.of("minecraft:stone"), "w", BuildPhase.STRUCTURE, VerifyMode.EXACT)));
+        // a ground cut at index 0 and its foundation at index 2 sit on different sides of a snapshot
+        // window's edge (windows are SparseSnapshot.MAX_POSITIONS wide); the built world shows the stone
+        SparseSnapshot built = new SparseSnapshot(Map.of(
+                pos, new ObservedBlock(BlockSpec.of("minecraft:stone")),
+                new IntPos(1, 64, 0), new ObservedBlock(BlockSpec.of("minecraft:oak_planks"))));
+        SnapshotDiff.Result firstWindow = SnapshotDiff.compare(m, built, new CompareScope.IndexRange(0, 2), NONE);
+        assertEquals(List.of(), firstWindow.deviations(),
+                "the first window must not pick the cut as the last placement and flag the finished foundation");
+        assertEquals(List.of(), SnapshotDiff.compare(m, built, new CompareScope.IndexRange(2, 3), NONE).deviations());
+        // the final placement's window does compare it: a missing foundation is found there
+        assertEquals(List.of(DeviationKind.MISSING), kinds(SnapshotDiff.compare(m,
+                new SparseSnapshot(Map.of(pos, new ObservedBlock(BlockSpec.AIR))),
+                new CompareScope.IndexRange(2, 3), NONE)));
+        // CompareScope.All is unchanged: the last placement of the whole manifest still decides
+        assertEquals(List.of(), SnapshotDiff.compare(m, built, CompareScope.ALL, NONE).deviations());
     }
 
     @Test
