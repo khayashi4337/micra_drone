@@ -50,8 +50,8 @@ import net.minecraft.world.level.Level;
 
 /**
  * The debug commands of the construction runtime (Task 17, F-18/F-22): {@code /micradrone build submit},
- * {@code submit-here}, {@code approve}, {@code status}, {@code list}, {@code cancel}, {@code resume} and
- * {@code check}. Every decision lives in the pure core or in {@link ConstructionRuntime}; this class only reads
+ * {@code submit-here}, {@code approve}, {@code status}, {@code list}, {@code cancel}, {@code resume}, {@code check}
+ * and {@code verify}. Every decision lives in the pure core or in {@link ConstructionRuntime}; this class only reads
  * files, translates arguments and relays the runtime's own messages (D-1: the adapter never places a block).
  * Registered from {@link ConstructionRuntime.Events} on {@code RegisterCommandsEvent}.
  */
@@ -93,7 +93,11 @@ public final class BuildCommands {
                                         .executes(ctx -> resume(ctx, true)))))
                 .then(Commands.literal("check")
                         .then(Commands.argument("jobId", StringArgumentType.word())
-                                .executes(BuildCommands::check)))));
+                                .executes(BuildCommands::check)))
+                .then(Commands.literal("verify")
+                        .requires(src -> src.getPlayer() != null)
+                        .then(Commands.argument("jobId", StringArgumentType.word())
+                                .executes(BuildCommands::verify)))));
     }
 
     /** permissions.level of micradrone-server.toml (F-4(d)): ALL opens submit/approve to every player. */
@@ -314,5 +318,18 @@ public final class BuildCommands {
         }
         source.sendSystemMessage(ServerMessages.of(MessageKey.of(ChildMessages.CONFLICTS, deviations)));
         return deviations;
+    }
+
+    /** Owner-or-operator is judged by {@code JobService.beginVerify} itself (D-12); the command only relays. */
+    private static int verify(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        ServerPlayer player = source.getPlayer();
+        ConstructionRuntime runtime = ConstructionRuntime.of(source.getServer()).orElse(null);
+        if (player == null || runtime == null) {
+            return 0;
+        }
+        runtime.verify(player.getUUID(), player.hasPermissions(Commands.LEVEL_GAMEMASTERS),
+                StringArgumentType.getString(ctx, "jobId"));
+        return Command.SINGLE_SUCCESS;
     }
 }

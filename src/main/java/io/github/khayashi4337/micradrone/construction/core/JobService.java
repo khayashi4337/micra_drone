@@ -91,8 +91,7 @@ public final class JobService {
         if (job.state() != JobState.PENDING_APPROVAL) {
             throw new IllegalArgumentException("only a freshly approved job can be admitted: " + job.state());
         }
-        // every repair round journals its own placements (keyed by ledger key), so room for all rounds
-        Journal journal = new Journal(Math.max(Journal.MAX_ENTRIES, program.size()) * (1 + ConstructionJob.MAX_REPAIR_ROUNDS));
+        Journal journal = new Journal(journalCapacity(program.size()));
         JobOutcome outcome = new JobOutcome();
         for (Conflict c : knownConflicts) {
             // kept for good: never resolved by a later placement, counted by status, and it makes the job PARTIAL
@@ -472,6 +471,40 @@ public final class JobService {
         r.skipSiteChanges = skipSiteChanges;
         r.setJob(r.job().on(JobEvent.RESUME));
         return ControlResult.OK;
+    }
+
+    /**
+     * The owner's ask to re-check a finished job (03 0.4: a REPAIR needs no approval): allowed only while the parent
+     * is VERIFIED or PARTIAL and no job still moves on its claim. The new job gets its own journal — a re-placement
+     * of a position must not reuse the parent's record of that same position — and reads the pre-build blocks from
+     * the parent's journal ({@link JobRecord#useBeforesFrom}).
+     */
+    public ControlResult beginVerify(String jobId, UUID requester, boolean op, String newJobId, long tick) {
+        JobRecord parent = jobs.get(jobId);
+        if (parent == null) {
+            return ControlResult.NOT_FOUND;
+        }
+        ConstructionJob p = parent.job();
+        if (!p.ownerUuid().equals(requester) && !op) {
+            return ControlResult.NOT_ALLOWED;
+        }
+        boolean finished = p.state() == JobState.VERIFIED || p.state() == JobState.PARTIAL;
+        boolean busyClaim = jobsInClaim(p.claimId()).stream().anyMatch(r -> !r.job().state().terminal());
+        if (!finished || busyClaim) {
+            return ControlResult.WRONG_STATE;
+        }
+        ConstructionJob job = ConstructionJob.create(newJobId, p.ownerUuid(), p.dimension(), p.manifestHash(),
+                JobKind.REPAIR, p.jobId(), 0, p.claimId(), p.materialPolicy(), tick, List.of());
+        JobRecord repair = new JobRecord(job, parent.manifest(), parent.nodeTypes(), new JobProgram(List.of(), List.of()),
+                new Journal(journalCapacity(parent.program().size())), new JobOutcome(), parent.operatingBox());
+        repair.useBeforesFrom(parent.journal());
+        add(repair);
+        return ControlResult.OK;
+    }
+
+    /** Every repair round journals its own placements (keyed by ledger key), so room for all rounds. */
+    private static int journalCapacity(int programSize) {
+        return Math.max(Journal.MAX_ENTRIES, programSize) * (1 + ConstructionJob.MAX_REPAIR_ROUNDS);
     }
 
     public Optional<JobStatus> status(String jobId) {

@@ -384,6 +384,23 @@ public final class ConstructionRuntime {
         return result;
     }
 
+    /**
+     * The owner's ask to re-check a finished job (03 0.4: the REPAIR it makes needs no approval). The new job's id
+     * comes from {@link #nextJobId} like an approval's, and the answer line is the new job's own status line, so
+     * the owner can follow it with {@code status}.
+     */
+    public ControlResult verify(UUID requester, boolean op, String jobId) {
+        String newJobId = nextJobId();
+        ControlResult result = service.beginVerify(jobId, requester, op, newJobId, server.getTickCount());
+        JobStatus created = result == ControlResult.OK ? service.status(newJobId).orElse(null) : null;
+        if (created != null) {
+            ServerMessages.send(server, requester, ServerMessages.status(created));
+        } else {
+            ServerMessages.send(server, requester, MessageKey.of(ChildMessages.control(result)));
+        }
+        return result;
+    }
+
     /** The newest submit outcome of an owner (null when this server run has seen none). */
     public SubmitOutcome lastSubmit(UUID owner) {
         return lastSubmits.get(owner);
