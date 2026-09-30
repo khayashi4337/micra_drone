@@ -159,6 +159,8 @@ public final class ConstructionRuntime {
     private final MinecraftServer server;
     private final PartTypeRegistry registry;
     private final ClaimBook claims;
+    /** What the claim book looked like when it was last written (see {@link #saveClaimsIfChanged}). */
+    private String savedClaimsDigest = "";
     private final NioFileSystem fs;
     private final JobFiles files;
     private final WriteAheadLog wal;
@@ -415,6 +417,26 @@ public final class ConstructionRuntime {
 
     private void saveJob(String jobId) {
         saveJob(service.record(jobId).orElse(null));
+    }
+
+    /**
+     * The claim book goes to the disk the tick it changes (a claim is reserved or released), not only at save events:
+     * a job file whose claim is not on the disk cannot be recovered without asking the owner ("claim: missing"), which
+     * a real kill of the game a few seconds after the approval produced. The window left is the one tick in which the
+     * claim was reserved and the first runs were already logged.
+     */
+    private void saveClaimsIfChanged() {
+        String digest = claims.all().stream().map(c -> c.claimId() + (c.released() ? "-" : "+")).sorted()
+                .collect(java.util.stream.Collectors.joining(","));
+        if (digest.equals(savedClaimsDigest)) {
+            return;
+        }
+        try {
+            files.saveClaims(claims);
+            savedClaimsDigest = digest;
+        } catch (IOException | RuntimeException e) {
+            haltRecording("the claims could not be saved", e);
+        }
     }
 
     /**
@@ -924,6 +946,7 @@ public final class ConstructionRuntime {
                 // a WAL write that did not go through stops construction, it never silently runs on
                 haltRecording("a job's run could not be recorded", e);
             }
+            saveClaimsIfChanged();
             for (JobUpdate u : updates) {
                 // a state change is a new job.bin before the owner hears of it
                 if (u.stateChanged()) {
