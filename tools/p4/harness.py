@@ -194,6 +194,9 @@ class Game:
     def place_config(self, name):
         base = RUN_DIR / name
         (base / "config").mkdir(parents=True, exist_ok=True)
+        # NeoForge 21.1 keeps the mod's SERVER config in <gameDir>/config here (measured: run-p4/client/config/
+        # micradrone-server.toml), so the raised claim cap for test worlds is written there before every start
+        shutil.copyfile(GAME_CONFIG_DIR / "micradrone-server.toml", base / "config" / "micradrone-server.toml")
         if name != "server":
             shutil.copyfile(GAME_CONFIG_DIR / "options.txt", base / "options.txt")
             shutil.copyfile(GAME_CONFIG_DIR / "neoforge-client.toml", base / "config" / "neoforge-client.toml")
