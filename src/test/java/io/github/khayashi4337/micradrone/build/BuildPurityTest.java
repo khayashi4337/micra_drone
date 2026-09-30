@@ -1,5 +1,6 @@
 package io.github.khayashi4337.micradrone.build;
 
+import static java.util.Map.entry;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -47,15 +48,16 @@ class BuildPurityTest {
      * The measured edges. Every package of {@code build.*}/{@code lang*} must appear as a key; the value is the
      * exact set of internal packages it may import (itself excluded - a package may always use itself).
      */
-    private static final Map<String, Set<String>> ALLOWED = Map.of(
-            "build.model", Set.of(),
-            "build.parts", Set.of("build.model"),
-            "build.plan", Set.of("build.model", "build.parts", "lang"),
-            "build.compile.gen", Set.of("build.model", "build.parts"),
-            "build.compile", Set.of("build.model", "build.parts", "build.plan", "build.compile.gen"),
-            "build.script", Set.of("build.model", "build.parts", "lang", "lang.ast"),
-            "lang", Set.of("lang.ast", "build.model", "build.parts"),
-            "lang.ast", Set.of());
+    private static final Map<String, Set<String>> ALLOWED = Map.ofEntries(
+            entry("build.model", Set.of()),
+            entry("build.parts", Set.of("build.model")),
+            entry("build.plan", Set.of("build.model", "build.parts", "lang")),
+            entry("build.compile.gen", Set.of("build.model", "build.parts")),
+            entry("build.compile", Set.of("build.model", "build.parts", "build.plan", "build.compile.gen")),
+            entry("build.script", Set.of("build.model", "build.parts", "lang", "lang.ast")),
+            entry("build.verify", Set.of("build.model", "build.parts", "build.compile")),
+            entry("lang", Set.of("lang.ast", "build.model", "build.parts")),
+            entry("lang.ast", Set.of()));
 
     private static List<Path> javaFiles(Path dir) throws IOException {
         try (Stream<Path> s = Files.walk(dir)) {
