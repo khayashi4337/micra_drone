@@ -30,7 +30,8 @@ public final class OperatingBox {
         return out;
     }
 
-    private static Box toWorld(BuildFrame frame, Box local) {
+    /** The two-corner mapping from a local box to its world box (shared with the submit path's site box). */
+    public static Box toWorld(BuildFrame frame, Box local) {
         IntPos a = frame.toWorld(new LocalPos(local.minA(), local.minB(), local.minC()));
         IntPos b = frame.toWorld(new LocalPos(local.maxA(), local.maxB(), local.maxC()));
         return Box.of(a.x(), a.y(), a.z(), b.x(), b.y(), b.z());
