@@ -30,6 +30,7 @@ SCENARIOS = {
     "approve-guard": Scenario(scenarios_approval.approve_guard, (5,), "sp"),
     "farm-regression": Scenario(scenarios_regression.farm_regression, (11,), "sp"),
     "mvp-japanese-hut": Scenario(scenarios_mvp.mvp_japanese_hut, (), "sp"),
+    "mvp-site-blocked": Scenario(scenarios_mvp.mvp_site_blocked, (), "sp"),
     "mvp-japanese-hut-real": Scenario(scenarios_mvp.mvp_japanese_hut, (), "sp", claude=harness.CLAUDE_REAL),
     "mvp-cli-missing": Scenario(scenarios_mvp.mvp_cli_missing, (), "sp", claude=harness.CLAUDE_NONE),
     "hut-here": Scenario(scenarios_basic.hut_here, (1, 12), "sp"),

@@ -12,10 +12,13 @@ from tools.p4.scenarios_basic import PLAYER, _prepare_view, _read_back_and_compa
 
 REQUEST = "屋根が赤い小屋を建てて"
 MVP_STAND = (1400, -60, 0)
+REAL_STAND = (1500, -60, 0)  # the real-CLI run builds elsewhere: a second hut on the stub run's site is (rightly) refused
+OTHER_REQUEST = "おおきな小屋を建てて"  # no 赤: the stub answers with an oak roof, which cannot replace the red one
 CONTROLLER_OFFSET = (0, 0, 9)  # south of the standing point; the hut is built to the north
 FACE_NORTH = 180
 FLOW_STEP_TIMEOUT_S = 240  # the real CLI's own timeout is 120 s per call, and a repair may add one more call
 BUILD_TIMEOUT_S = 300
+BLOCKED_TIMEOUT_S = 60  # a refused approval is answered at once; anything slower is a stuck panel
 POLL_S = 0.5
 REDDISH = ("red_nether_brick", "red_sandstone", "red_terracotta", "red_wool", "red_concrete", "minecraft:bricks", "brick_")
 # what a child must never read: error codes, hashes, internal ids, command names
@@ -54,7 +57,7 @@ def mvp_japanese_hut(ctx):
         CONSENT_FILE.unlink()  # the first request must ask for consent, like a child's first time
     _prepare_view(ctx)
     chat_since = ctx.client.post("/chat-log", {})["next"]
-    sx, sy, sz = MVP_STAND
+    sx, sy, sz = REAL_STAND if ctx.game.claude_mode == harness.CLAUDE_REAL else MVP_STAND
     _teleport(ctx, sx, sy, sz, FACE_NORTH, 20)
     time.sleep(2)
     cx, cy, cz = sx + CONTROLLER_OFFSET[0], sy + CONTROLLER_OFFSET[1], sz + CONTROLLER_OFFSET[2]
@@ -151,4 +154,47 @@ def mvp_cli_missing(ctx):
     assert not LEAK_PATTERN.findall(text), f"technical words in the child-visible text: {text!r}"
     pending = ctx.server.post("/build/pending", {"player": PLAYER})
     assert pending["state"] == "NONE", f"nothing may be submitted when the AI is missing: {pending}"
+    return files
+
+
+def mvp_site_blocked(ctx):
+    """A second, different hut on the site of the first one: the server refuses the approval (another building stands
+    there). The panel must not stay at "building" forever: it must say, in Japanese, that it could not be built."""
+    _prepare_view(ctx)
+    sx, sy, sz = MVP_STAND
+    _teleport(ctx, sx, sy, sz, FACE_NORTH, 20)
+    time.sleep(2)
+    cx, cy, cz = sx + CONTROLLER_OFFSET[0], sy + CONTROLLER_OFFSET[1], sz + CONTROLLER_OFFSET[2]
+    ctx.server.post("/server/run-command", {"command": f"setblock {cx} {cy} {cz} micradrone:drone_controller"})
+    time.sleep(1)
+    ctx.client.post("/open-ide", {"x": cx, "y": cy, "z": cz})
+    ctx.client.post("/build-mode", {"enabled": True})
+    chat_since = ctx.client.post("/chat-log", {})["next"]
+    ctx.client.post("/send-message", {"text": OTHER_REQUEST})
+    st, _ = _wait_flow(ctx, {"NEED_CONSENT", "OFFERED"}, FLOW_STEP_TIMEOUT_S)
+    if st["buildFlowState"] == "NEED_CONSENT":
+        ctx.client.post("/build-press", {"kind": "CONSENT_YES"})
+        _wait_flow(ctx, {"OFFERED"}, FLOW_STEP_TIMEOUT_S)
+    ctx.client.post("/build-press", {"kind": "BUILD"})
+    deadline = time.monotonic() + BLOCKED_TIMEOUT_S
+    while True:
+        st = _state(ctx)
+        if st["buildFlowState"] in ("FAILED", "DONE"):
+            break
+        assert time.monotonic() < deadline, f"the panel is stuck at {st['buildFlowState']}: {st['buildTranscript']!r}"
+        time.sleep(POLL_S)
+    text = st["buildTranscript"]
+    ctx.save_json("flow.json", {"state": st["buildFlowState"], "transcript": text})
+    files = [ctx.out("flow.json"), _screenshot(ctx, "mvp-site-blocked")]
+    assert st["buildFlowState"] == "FAILED", f"the refused approval should end FAILED: {st['buildFlowState']}"
+    assert "つくれなかった" in text, f"the child was not told it could not be built: {text!r}"
+    assert not LEAK_PATTERN.findall(text), f"technical words in the child-visible text: {text!r}"
+    jobs = ctx.server.post("/build/jobs", {})["jobs"]
+    ctx.save_json("jobs.json", jobs)
+    files.append(ctx.out("jobs.json"))
+    vanilla = ctx.client.post("/chat-log", {"since": chat_since})
+    ctx.save_json("vanilla-chat.json", vanilla)
+    files.append(ctx.out("vanilla-chat.json"))
+    leaks = [line["text"] for line in vanilla["lines"] if LEAK_PATTERN.search(line["text"])]
+    assert not leaks, f"the refusal leaks technical words into the vanilla chat: {leaks[:3]}"
     return files
