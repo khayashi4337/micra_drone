@@ -13,6 +13,7 @@ import io.github.khayashi4337.micradrone.build.parts.BuildPhase;
 import io.github.khayashi4337.micradrone.build.parts.PlacerId;
 import io.github.khayashi4337.micradrone.build.parts.VerifyMode;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class ReplaceRulesTest {
@@ -25,7 +26,7 @@ class ReplaceRulesTest {
     }
 
     private static ReplaceDecision decide(ReplacePolicy policy, WorldCell cell) {
-        return ReplaceRules.decide(put(PLANKS, policy), cell, false, false);
+        return ReplaceRules.decide(put(PLANKS, policy), cell, false, Optional.empty());
     }
 
     @Test
@@ -78,19 +79,32 @@ class ReplaceRulesTest {
     void aJournaledPositionThatAlreadyHoldsTheBlockIsDoneAndOurOwnBlocksMayBeOverwritten() {
         WorldCell planks = WorldCell.of(PLANKS);
         assertEquals(new ReplaceDecision.AlreadyDone(),
-                ReplaceRules.decide(put(PLANKS, ReplacePolicy.REPLACEABLE), planks, true, true));
+                ReplaceRules.decide(put(PLANKS, ReplacePolicy.REPLACEABLE), planks, true, Optional.of(PLANKS)));
         assertEquals(new ReplaceDecision.Refused(Refusal.NOT_REPLACEABLE),
-                ReplaceRules.decide(put(PLANKS, ReplacePolicy.REPLACEABLE), planks, false, false),
+                ReplaceRules.decide(put(PLANKS, ReplacePolicy.REPLACEABLE), planks, false, Optional.empty()),
                 "somebody else's planks are not ours to overwrite");
+        BlockSpec north = BlockSpec.of("minecraft:oak_stairs", "facing", "north");
         WorldCell turned = WorldCell.of(BlockSpec.of("minecraft:oak_stairs", "facing", "east"));
         assertEquals(new ReplaceDecision.Place(Destruction.NONE),
-                ReplaceRules.decide(put(BlockSpec.of("minecraft:oak_stairs", "facing", "north"), ReplacePolicy.REPLACEABLE),
-                        turned, true, true), "the project's own block may be re-placed (repair, modify)");
+                ReplaceRules.decide(put(north, ReplacePolicy.REPLACEABLE), turned, true, Optional.of(north)),
+                "the project's own block may be re-placed (repair, modify), even in another state");
+    }
+
+    @Test
+    void aRegisteredPositionThatNowHoldsSomethingElseIsNotOursAnyMore() {
+        BlockSpec cobble = BlockSpec.of("minecraft:cobblestone");
+        WorldCell gold = WorldCell.of(BlockSpec.of("minecraft:gold_block"));
+        assertEquals(new ReplaceDecision.Refused(Refusal.NOT_REPLACEABLE),
+                ReplaceRules.decide(put(cobble, ReplacePolicy.REPLACEABLE), gold, true, Optional.of(cobble)),
+                "the registry still lists our cobblestone, but a player put gold there: never overwritten");
+        assertEquals(new ReplaceDecision.Place(Destruction.NONE),
+                ReplaceRules.decide(put(cobble, ReplacePolicy.REPLACEABLE), WorldCell.of(BlockSpec.AIR, CellTrait.REPLACEABLE),
+                        true, Optional.of(cobble)), "a broken block of ours is air now, which anyone may fill");
     }
 
     @Test
     void anUnloadedCellIsNotDecided() {
-        assertThrows(IllegalArgumentException.class,
-                () -> ReplaceRules.decide(put(PLANKS, ReplacePolicy.REPLACEABLE), WorldCell.unloaded(), false, false));
+        assertThrows(IllegalArgumentException.class, () -> ReplaceRules.decide(put(PLANKS, ReplacePolicy.REPLACEABLE),
+                WorldCell.unloaded(), false, Optional.empty()));
     }
 }
