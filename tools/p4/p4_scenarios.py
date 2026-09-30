@@ -9,7 +9,7 @@ import time
 import traceback
 from dataclasses import dataclass
 
-from tools.p4 import devkit_client, evidence, harness, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_show
+from tools.p4 import devkit_client, evidence, harness, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_regression, scenarios_show
 
 MODES = ("sp", "mp", "mp2")
 RESTART_LIMIT = 1
@@ -27,6 +27,7 @@ SCENARIOS = {
     "devkit-smoke": Scenario(scenarios_basic.devkit_smoke, (), "sp"),
     "hut-golden": Scenario(scenarios_basic.hut_golden, (1,), "sp"),
     "approve-guard": Scenario(scenarios_approval.approve_guard, (5,), "sp"),
+    "farm-regression": Scenario(scenarios_regression.farm_regression, (11,), "sp"),
     "hut-here": Scenario(scenarios_basic.hut_here, (1, 12), "sp"),
     "bad-source": Scenario(scenarios_basic.bad_source, (), "sp"),
     "drone-show": Scenario(scenarios_show.drone_show, (1,), "sp"),
@@ -41,7 +42,7 @@ SCENARIOS = {
 # A task that adds its scenario removes its own condition here in the same commit.
 PENDING_CONDITIONS = {
     3: "Task 29", 4: "Task 28", 6: "Task 34", 7: "Task 28", 9: "Task 32", 10: "Task 33",
-    11: "Task 37", 13: "Task 30", 14: "Task 28",
+    13: "Task 30", 14: "Task 28",
 }
 
 
