@@ -161,6 +161,9 @@ def real_crash_sp(ctx):
     st, seconds = _wait_running_state(ctx, job_id, samples, wanted)
     answered = None
     if st.get("pause") == "RECOVERY_NEEDED":
+        # a kill a few seconds after the approval must not leave the job without its claim on the disk (found in the real
+        # crash run: the claim book was only written at save events): that is a durability hole, not a question for the owner
+        assert "claim: missing" not in (st.get("lastError") or ""), f"the claim book was not durable: {st}"
         answered = ctx.server.post("/build/recover", {"player": PLAYER, "jobId": job_id, "choice": "discard"})
     ctx.save_json("resume.json", {"secondsToFirstState": round(seconds, 2), "firstState": st.get("state"), "pause": st.get("pause"),
                                   "answered": answered, "samples": samples})

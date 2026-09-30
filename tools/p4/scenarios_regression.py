@@ -94,10 +94,11 @@ def farm_regression(ctx):
     approval = ctx.server.post("/build/approve", {"player": PLAYER, "hash": pending["hash"], "confirmTerraform": True})
     assert approval["approved"] is True, approval
     _run_farm_script(ctx, FARM_B)
-    blocks_b = _wait_farmland(ctx, cells_b)
+    notes_b = []
+    blocks_b = _wait_farmland(ctx, cells_b, rerun=lambda: _run_farm_script(ctx, FARM_B), notes=notes_b)
     final, seen = ctx.server.poll("/build/status", {"jobId": approval["jobId"]}, lambda r: r["state"] in TERMINAL_STATES,
                                   harness.JOB_TIMEOUT_S)
-    ctx.save_json("farm-with-build.json", {"farm": blocks_b, "job": final})
+    ctx.save_json("farm-with-build.json", {"farm": blocks_b, "job": final, "notes": notes_b})
     files.append(ctx.out("farm-with-build.json"))
     assert final["state"] == "VERIFIED", f"the build must still finish while the farm runs: {final}"
     ctx.client.post("/close-screen", {})
