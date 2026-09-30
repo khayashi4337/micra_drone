@@ -147,7 +147,9 @@ public final class NioFileSystem implements FileSystemPort {
 
     @Override
     public List<String> list(String relDir) throws IOException {
-        Path dir = resolve(relDir);
+        // directories are named with a trailing slash everywhere ("jobs/", "claims/"); a file path never ends in one, so the
+        // safe-path rule for files must not see it
+        Path dir = resolve(relDir.endsWith("/") ? relDir.substring(0, relDir.length() - 1) : relDir);
         if (!Files.isDirectory(dir)) {
             return List.of();
         }
