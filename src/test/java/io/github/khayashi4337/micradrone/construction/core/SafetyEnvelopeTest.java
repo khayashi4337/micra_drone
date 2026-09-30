@@ -14,9 +14,12 @@ import io.github.khayashi4337.micradrone.build.model.Box;
 import io.github.khayashi4337.micradrone.build.model.IntPos;
 import io.github.khayashi4337.micradrone.build.model.Issue;
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
+import io.github.khayashi4337.micradrone.build.parts.BuildPhase;
+import io.github.khayashi4337.micradrone.build.parts.VerifyMode;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -59,7 +62,8 @@ class SafetyEnvelopeTest {
         SafetyReport r = SafetyEnvelope.check(m, NO_TERRAIN, airAt(m, Map.of()), tiny, PlaceableBlockPolicy.builtin(),
                 ItemCatalog.ANY, pos -> Optional.empty());
         assertEquals(List.of("E-OUT-OF-BOUNDS:manifest#placements", "E-OUT-OF-BOUNDS:manifest#size",
-                "E-OUT-OF-BOUNDS:manifest#height"), ids(r));
+                "E-OUT-OF-BOUNDS:found#height"), ids(r));
+        assertEquals(List.of("found"), r.issues().get(2).subjects(), "the issue names the part that is out of range");
         assertEquals("9", r.issues().get(2).data().get("count"), "the 9 foundation cells lie below y=64");
     }
 
@@ -147,12 +151,81 @@ class SafetyEnvelopeTest {
 
     @Test
     void aPlacementOutsideTheSiteBoxIsRefusedBeforeTheSurveyIsAsked() {
-        List<Placement> ps = new ArrayList<>(TestManifests.smallHut().placements());
-        ps.add(TestManifests.put(1000, 64, 1000, "minecraft:oak_planks"));
-        PlacementManifest m = TestManifests.of(TestManifests.smallHut().worldBounds(), ps);
-        SafetyReport r = check(m, airAt(m, Map.of()));
-        assertEquals(List.of("E-OUT-OF-BOUNDS:manifest#bounds"), ids(r), "not an unread survey cell: a position off the site");
+        PlacementManifest hut = TestManifests.smallHut();
+        List<Placement> ps = new ArrayList<>(hut.placements());
+        ps.add(TestManifests.put(new IntPos(1000, 64, 1000), BlockSpec.of("minecraft:gold_block"), "tower",
+                BuildPhase.STRUCTURE, VerifyMode.EXACT));
+        PlacementManifest m = TestManifests.of(hut.worldBounds(), ps);
+        // the survey holds no cell for the off-site position (a lookup would report it as unloaded), and the
+        // catalog and ownership callbacks must never see an off-site position or the item of its block
+        SafetyReport r = SafetyEnvelope.check(m, NO_TERRAIN, airAt(hut, Map.of()), LIMITS, PlaceableBlockPolicy.builtin(),
+                id -> {
+                    if (id.equals("minecraft:gold_block")) {
+                        throw new AssertionError("the item catalog was asked about an off-site block");
+                    }
+                    return true;
+                },
+                pos -> {
+                    if (!hut.worldBounds().contains(pos.x(), pos.y(), pos.z())) {
+                        throw new AssertionError("ownership was asked about an off-site position: " + pos);
+                    }
+                    return Optional.empty();
+                });
+        assertEquals(List.of("E-OUT-OF-BOUNDS:tower#bounds"), ids(r), "not an unread survey cell: a position off the site");
+        assertEquals(List.of("tower"), r.issues().get(0).subjects());
+        assertEquals("1", r.issues().get(0).data().get("count"));
         assertEquals("1000,64,1000", r.issues().get(0).data().get("first"));
+    }
+
+    @Test
+    void positionsOutsideTheSiteNameTheirPartsInOrder() {
+        List<Placement> ps = List.of(
+                TestManifests.put(new IntPos(0, 64, 0), BlockSpec.of("minecraft:oak_planks"), "wall",
+                        BuildPhase.STRUCTURE, VerifyMode.EXACT),
+                TestManifests.put(new IntPos(0, 65, 0), BlockSpec.of("minecraft:oak_planks"), "roof",
+                        BuildPhase.STRUCTURE, VerifyMode.EXACT));
+        PlacementManifest m = TestManifests.of(new Box(10, 60, 10, 20, 70, 20), ps);
+        SafetyReport r = check(m, new PlacementSurvey(Map.of()));
+        assertEquals(List.of("E-OUT-OF-BOUNDS:roof,wall#bounds"), ids(r));
+        Issue issue = r.issues().get(0);
+        assertEquals(List.of("roof", "wall"), issue.subjects(), "distinct part ids, sorted");
+        assertEquals("2", issue.data().get("count"), "the count is the number of positions, not of parts");
+    }
+
+    @Test
+    void thePartListOfAnOutOfBoundsIssueIsCapped() {
+        List<Placement> ps = new ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            ps.add(TestManifests.put(new IntPos(0, 64, i), BlockSpec.of("minecraft:oak_planks"),
+                    String.format(Locale.ROOT, "p%02d", i), BuildPhase.STRUCTURE, VerifyMode.EXACT));
+        }
+        PlacementManifest m = TestManifests.of(new Box(10, 60, 10, 20, 70, 20), ps);
+        SafetyReport r = check(m, new PlacementSurvey(Map.of()));
+        Issue issue = r.issues().get(0);
+        assertEquals(SafetyEnvelope.MAX_ISSUE_SUBJECTS, issue.subjects().size());
+        assertEquals("p00", issue.subjects().get(0));
+        assertEquals("p15", issue.subjects().get(SafetyEnvelope.MAX_ISSUE_SUBJECTS - 1));
+        assertEquals("20", issue.data().get("count"), "count keeps the real number of positions");
+    }
+
+    @Test
+    void positionsOutsideTheBuildHeightNameTheirPartsAndSkipTheQueries() {
+        List<Placement> ps = List.of(
+                TestManifests.put(new IntPos(0, 400, 0), BlockSpec.of("minecraft:gold_block"), "wall",
+                        BuildPhase.STRUCTURE, VerifyMode.EXACT),
+                TestManifests.put(new IntPos(1, 400, 0), BlockSpec.of("minecraft:gold_block"), "antenna",
+                        BuildPhase.STRUCTURE, VerifyMode.EXACT));
+        PlacementManifest m = TestManifests.of(new Box(-1, 340, -1, 3, 435, 1), ps);
+        SafetyReport r = SafetyEnvelope.check(m, NO_TERRAIN, new PlacementSurvey(Map.of()), LIMITS,
+                PlaceableBlockPolicy.builtin(),
+                id -> {
+                    throw new AssertionError("the item catalog was asked about an out-of-height block: " + id);
+                },
+                pos -> {
+                    throw new AssertionError("ownership was asked about an out-of-height position: " + pos);
+                });
+        assertEquals(List.of("E-OUT-OF-BOUNDS:antenna,wall#height"), ids(r));
+        assertEquals("2", r.issues().get(0).data().get("count"));
     }
 
     @Test

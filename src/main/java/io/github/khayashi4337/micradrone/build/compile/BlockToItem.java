@@ -33,7 +33,8 @@ public final class BlockToItem {
             "_wall_skull", "_skull");
     /** Two-block plants whose upper half drops nothing (the lower half drops the item). */
     private static final java.util.Set<String> TALL_PLANTS = java.util.Set.of("minecraft:sunflower", "minecraft:lilac",
-            "minecraft:rose_bush", "minecraft:peony", "minecraft:tall_grass", "minecraft:large_fern");
+            "minecraft:rose_bush", "minecraft:peony", "minecraft:tall_grass", "minecraft:large_fern",
+            "minecraft:pitcher_plant");
     private static final String PROP_PART = "part";
     private static final String BED_HEAD = "head";
     private static final String BED_SUFFIX = "_bed";
@@ -86,12 +87,10 @@ public final class BlockToItem {
     }
 
     public static List<ItemCount> merge(List<ItemCount> items) {
-        TreeMap<String, Integer> sum = new TreeMap<>();
-        for (ItemCount c : items) {
-            sum.merge(c.itemId(), c.count(), Integer::sum);
-        }
+        TreeMap<String, Long> sum = new TreeMap<>();
+        ItemCount.addAll(sum, items);
         List<ItemCount> out = new ArrayList<>();
-        sum.forEach((id, n) -> out.add(new ItemCount(id, n)));
+        sum.forEach((id, n) -> out.add(new ItemCount(id, n.intValue())));
         return out;
     }
 }

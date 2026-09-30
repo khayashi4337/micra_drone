@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -56,7 +57,19 @@ class BlockToItemTest {
         assertTrue(BlockToItem.cost(BlockSpec.of("minecraft:sunflower", "half", "upper")).isEmpty());
         assertEquals(Optional.of(new ItemCount("minecraft:sunflower", 1)),
                 BlockToItem.cost(BlockSpec.of("minecraft:sunflower", "half", "lower")));
+        assertEquals(Optional.of(new ItemCount("minecraft:pitcher_plant", 1)),
+                BlockToItem.cost(BlockSpec.of("minecraft:pitcher_plant", "half", "lower")));
+        assertTrue(BlockToItem.cost(BlockSpec.of("minecraft:pitcher_plant", "half", "upper")).isEmpty(),
+                "a pitcher plant is one two-block plant: its upper half drops nothing");
         assertTrue(BlockToItem.cost(BlockSpec.of("minecraft:red_bed", "part", "head")).isEmpty());
         assertEquals(Optional.of(new ItemCount("minecraft:red_bed", 1)), BlockToItem.cost(BlockSpec.of("minecraft:red_bed", "part", "foot")));
+    }
+
+    @Test
+    void aPitcherPlantPairCostsOneItemInTheBillOfMaterials() {
+        List<Placement> ps = List.of(
+                TestManifests.put(0, 64, 0, "minecraft:pitcher_plant", "half", "lower"),
+                TestManifests.put(0, 65, 0, "minecraft:pitcher_plant", "half", "upper"));
+        assertEquals(Map.of("minecraft:pitcher_plant", 1), BomCalculator.bom(ps));
     }
 }

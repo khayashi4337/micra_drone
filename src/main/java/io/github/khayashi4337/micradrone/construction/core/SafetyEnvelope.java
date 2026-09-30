@@ -34,6 +34,8 @@ public final class SafetyEnvelope {
     static final String DATA_COUNT = "count";
     static final String DATA_LIMIT = "limit";
     static final String DATA_FIRST = "first";
+    /** A range issue names the offending parts; the cap keeps a huge manifest from growing an issue id without bound. */
+    static final int MAX_ISSUE_SUBJECTS = 16;
 
     private SafetyEnvelope() {
     }
@@ -61,8 +63,10 @@ public final class SafetyEnvelope {
         }
         int outsideHeight = 0;
         IntPos firstOutside = null;
+        TreeSet<String> outsideHeightParts = new TreeSet<>();
         int outsideSite = 0;
         IntPos firstOutsideSite = null;
+        TreeSet<String> outsideSiteParts = new TreeSet<>();
         Map<String, TreeSet<String>> forbidden = new TreeMap<>();
         Map<String, TreeSet<String>> unknownItems = new TreeMap<>();
         Map<String, int[]> blockedCount = new TreeMap<>();
@@ -78,12 +82,16 @@ public final class SafetyEnvelope {
             if (!b.contains(pos.x(), pos.y(), pos.z())) {
                 // the site box is what the claim, the survey and the size limits cover: nothing is placed outside it
                 outsideSite++;
+                outsideSiteParts.add(p.partNodeId());
                 firstOutsideSite = firstOutsideSite == null ? pos : firstOutsideSite;
                 continue;
             }
             if (pos.y() < limits.minBuildY() || pos.y() >= limits.maxBuildYExclusive()) {
+                // the world cannot hold a block at this height: no world, item or ownership query is done for it
                 outsideHeight++;
+                outsideHeightParts.add(p.partNodeId());
                 firstOutside = firstOutside == null ? pos : firstOutside;
+                continue;
             }
             String id = p.block().blockId();
             if (policy.isAlwaysForbidden(id)) {
@@ -117,12 +125,12 @@ public final class SafetyEnvelope {
             }
         }
         if (outsideSite > 0) {
-            issues.add(Issue.of(IssueCode.E_OUT_OF_BOUNDS, KEY_BOUNDS, List.of(SUBJECT_MANIFEST),
+            issues.add(Issue.of(IssueCode.E_OUT_OF_BOUNDS, KEY_BOUNDS, partSubjects(outsideSiteParts),
                     "敷地の範囲の外に、置く位置が" + outsideSite + "個あります",
                     Map.of(DATA_COUNT, String.valueOf(outsideSite), DATA_FIRST, text(firstOutsideSite)), List.of()));
         }
         if (outsideHeight > 0) {
-            issues.add(Issue.of(IssueCode.E_OUT_OF_BOUNDS, KEY_HEIGHT, List.of(SUBJECT_MANIFEST),
+            issues.add(Issue.of(IssueCode.E_OUT_OF_BOUNDS, KEY_HEIGHT, partSubjects(outsideHeightParts),
                     "ワールドの建てられる高さの外に、" + outsideHeight + "個のブロックがあります",
                     Map.of(DATA_COUNT, String.valueOf(outsideHeight), DATA_FIRST, text(firstOutside)), List.of()));
         }
@@ -144,6 +152,11 @@ public final class SafetyEnvelope {
                     Map.of(DATA_COUNT, String.valueOf(unloaded), DATA_FIRST, text(firstUnloaded)), List.of()));
         }
         return new SafetyReport(issues, new ReplacementSummary(fluids, leaves, empty, terrain.cut(), terrain.fill(), sample));
+    }
+
+    /** The part node ids that broke a range rule: sorted, deduplicated, capped at {@link #MAX_ISSUE_SUBJECTS}. */
+    private static List<String> partSubjects(TreeSet<String> parts) {
+        return parts.stream().limit(MAX_ISSUE_SUBJECTS).toList();
     }
 
     static String text(IntPos p) {

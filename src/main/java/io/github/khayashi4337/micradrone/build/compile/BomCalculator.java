@@ -14,10 +14,12 @@ public final class BomCalculator {
     }
 
     public static Map<String, Integer> bom(List<Placement> placements) {
-        TreeMap<String, Integer> out = new TreeMap<>();
+        TreeMap<String, Long> sum = new TreeMap<>();
         for (Placement p : placements) {
-            BlockToItem.cost(p.block()).ifPresent(c -> out.merge(c.itemId(), c.count(), Integer::sum));
+            BlockToItem.cost(p.block()).ifPresent(c -> ItemCount.addTo(sum, c));
         }
+        TreeMap<String, Integer> out = new TreeMap<>();
+        sum.forEach((id, n) -> out.put(id, n.intValue()));
         return Collections.unmodifiableSortedMap(out);
     }
 }
