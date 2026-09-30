@@ -10,4 +10,14 @@ public interface MainThreadGateway {
 
     /** Current server tick count. */
     long currentTick();
+
+    /**
+     * True if the calling thread already is the main thread. Lets a caller that needs a result
+     * back (unlike {@link #runOnMainThread}, which is fire-and-forget) run inline when it's already
+     * safe to, instead of queuing behind whatever the main thread is currently doing and waiting on
+     * a timeout for its own turn - see {@code ServerBlockSnapshotReader} for why that distinction
+     * matters (a review found calling it from the main thread during another task could otherwise
+     * make it wrongly report "world state unavailable" after stalling out).
+     */
+    boolean isOnMainThread();
 }

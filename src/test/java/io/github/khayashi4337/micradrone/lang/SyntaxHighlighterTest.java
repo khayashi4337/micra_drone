@@ -92,6 +92,19 @@ class SyntaxHighlighterTest {
     }
 
     @Test
+    void aCommandNameListCanBeGivenSoConstructionCommandsHighlightAsBuiltins() {
+        assertEquals(Kind.CALL, kindAt("wall()", 0), "the farm highlighter does not know construction commands");
+        var spans = SyntaxHighlighter.highlight("wall()", CommandNames.PLAN_VISIBLE);
+        assertEquals(Kind.BUILTIN, spans.get(0).kind());
+        assertEquals(Kind.BUILTIN, SyntaxHighlighter.highlight("harvest()").get(0).kind(), "the one-argument form still uses the farm list");
+        assertEquals(Kind.CALL, SyntaxHighlighter.highlight("harvest()", CommandNames.PLAN_VISIBLE).get(0).kind(),
+                "the construction list leaves the farm commands out");
+        for (String command : CommandNames.PLAN_VISIBLE) {
+            assertEquals(Kind.BUILTIN, SyntaxHighlighter.highlight(command + "()", CommandNames.PLAN_VISIBLE).get(0).kind(), command);
+        }
+    }
+
+    @Test
     void aWordIsOnlyACallWhenAParenFollows() {
         assertEquals(Kind.DEFAULT, kindOf("harvest = 1", "harvest"));
         // Blanks between the name and the paren still make it a call - matches how the lexer reads it.

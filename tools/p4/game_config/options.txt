@@ -1,0 +1,7 @@
+onboardAccessibility:false
+pauseOnLostFocus:false
+lang:ja_jp
+tutorialStep:none
+joinedFirstServer:true
+skipMultiplayerWarning:true
+narrator:0

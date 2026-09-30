@@ -1,0 +1,277 @@
+# 04 横断基盤
+
+ノードやループの下にある、すべてが乗る土台。番号は`F-n`。既存コードの実態(実際に読んだもの)を出発点にする。
+
+---
+
+## F-1 サーバー権威と実行境界
+
+- **世界を書き換えるのは、サーバーのメインスレッドだけ**。経路は1本: `承認された施工リスト → ConstructionJob → サーバーtickで1個ずつ設置`(D-1)。
+- スレッド分担:
+  | スレッド | してよいこと |
+  |---|---|
+  | クライアントの描画スレッド | 画面・ホログラム・撮影。世界の状態を変えない |
+  | クライアントの作業スレッド(`MicraDrone-ClaudeCli`、Codex用、解析用) | CLI呼び出し、純Javaの解析、ファイル入出力。**Minecraftのオブジェクトに触れない** |
+  | MCPサーバーのスレッド(`MicraDrone-McpToolServer`) | クライアントの`ClientMainThreadDispatch`経由でのみ`ClientLevel`を読む。サーバーの情報は問い合わせ経路(F-8)で得る |
+  | サーバーのメインスレッド | **ワールドへの読み書きだけ**: 承認の最終確認、ジョブの設置、状態の読み取り(`ServerStateReader`)、ドローン演出、試運転の入出力 |
+  | サーバーのワーカー(`ServerWorkerPool`。有界・取消可能・プレイヤーごとに同時1件) | **重い純Javaの計算**: 計画の展開(`PlanExpander`、Routerを含む)、コンパイル、各アナライザ。メインスレッドで**不変の入力(地形調査`SiteSurvey`、登録簿、テンプレート)を取り出してから**ワーカーへ渡し、結果はメインスレッドへ投げ返す。20,000配置・3D経路探索・工場解析を1tickの中では行わない |
+- 既存の`drone/MainThreadGateway.java`(`isOnMainThread()`を追加済み)を使う。既存の`drone/ServerBlockSnapshotReader.java`(Phase 2で追加済み)は、文字列でブロック名だけを返す既存の契約(クライアント実装・MCPと共有)なので**変更せず**、L7と意味解析には別契約の`construction/ServerStateReader`を新設する(`01` 8節)。スクリプト実行用スレッド(`DroneScriptRunner`)は建設の経路に使わない。
+
+## F-2 施工ジョブの永続化
+
+- `ConstructionJobStore`(NeoForgeの`SavedData`、ディメンションごと)には、**小さな状態だけ**を保存する: ジョブのID・状態・カーソル・修復ラウンド・各ファイルへの参照(`01` 8節の`ConstructionJob`)。大きな物は別ファイルに置く: **施工リスト本体**=`<world>/data/micradrone/manifests/<hash>.bin`(パレット圧縮)、**取り消し用の記録**(`UndoEntry`、最大20,000件)=`<world>/data/micradrone/jobs/<jobId>/journal.bin`、**材料台帳**(`MaterialLedger`)=`.../ledger.bin`。SavedDataを肥大させない。
+- **ファイルの書き込みは原子的**(一時ファイルに書いてからリネーム)。読み込み時に、ハッシュまたは末尾の検査値が合わない・欠けているファイルは、**そのジョブを`PAUSED(RECOVERY_NEEDED)`のまま「復旧待ち」にして所有者に通知**する(黙って再実行しない)。復旧の選択肢: (a)世界の現状を`SparseSnapshot`で読み、施工リストとの差分から`REPAIR`ジョブを作る(施工リストが在る場合)、(b)ジョブを`FAILED`にして手動の後始末に任せる。
+- **`journal`(施工前のブロックの記録)と`PlacedRegistry`は、区画が解放されるまで保持する**(D-23。後の`MODIFY`・`ROLLBACK`で、元の地形に戻すのに要る)。区画が解放された後に、どのジョブからも参照されない`journal`・`ledger`・施工リストを、起動時に削除する(孤児の掃除)。終端のジョブの`ledger`は、返却の上限の根拠(F-7)なので、区画の解放まで残す。
+- サーバー再起動・ワールド再読込で、`RUNNING`だったジョブは`PAUSED`で復元し、所有者がオンラインでチャンクが読み込まれれば、自動で再開する。
+- **`PacedActionQueue`は使わない**(D-11)。既存の実装はメモリ上の`ConcurrentLinkedQueue`だけで、停止すると保留中の処理が消える/後で実行されるため、永続すべきジョブに向かない。
+- 1tickの上限: 既定で**ドローン1機あたり4tickに1個**(既存の`LiveDroneApi.ACTION_DELAY_TICKS=4`と同じ間隔、見せ場のため)。構造(`SITE_PREP`〜`ENVELOPE`)は、設定で**毎tick最大N個**(既定16)の高速施工にできる。ドローンの数は`clamp(ceil(総数/300), 1, 6)`。所要時間の見積もりは、承認画面に出す。
+- **サーバー全体の施工予算(`ConstructionBudget`)**: マルチプレイで複数人が同時に施工しても、サーバーが重くならないようにする。(a)サーバー全体の**同時に動くジョブは最大4**(設定)。超えた分は待機列に入り、公平に(到着順に)順番が来る。(b)**サーバー全体で1tickに置く数の上限**(既定32)を、動いているジョブで分け合う。(c)**自動減速**: 直近の平均tick時間(`MSPT`)が閾値(既定45ms)を超えたら、設置の速度を半分にし、回復したら戻す。(d)減速・待機の理由は、所有者に`PAUSED(SERVER_BUSY)`として表示する。
+
+## F-3 承認と改ざん防止(D-3)
+
+```
+[クライアント]                                   [サーバー]
+ PlanPatch/SemanticPlan を確定
+ ── SubmitPlanPayload(uploadId, seq, total, bytes) × n ──▶  再組み立て・サイズ検査・ハッシュ検査
+                                                  **ワーカーで**、サーバー自身が展開→コンパイル→アナライザを実行
+                                                    (PlanExpander → PlanCompiler → BlueprintAnalyzer/FactoryAnalyzer)
+                                                  → PendingApproval(hash, owner, expiresTick)
+ ◀── PlanPreviewPayload(hash, issues, bom, eta) ──
+ ホログラム表示(クライアント自身のコンパイル結果のハッシュと比較)
+ ── ApprovePlanPayload(hash) ──▶                       PendingApprovalと一致・所有者・期限・権限を確認 → ConstructionJob作成
+ ◀── JobStatusPayload(jobId, state, progress) ──
+```
+
+- **承認・施工は、ディメンションにも拘束される**(D-27): `Site.dimension`を施工リストのハッシュに含め、承認の時点でプレイヤーが同じディメンションにいることを確認する。
+- **検証パイプライン(`AnalysisPipeline`)は、フェーズごとに載る物が増える登録式**: P4=展開・コンパイル・安全枠、P6=+Blueprint Analyzer、P11=+Factory Analyzer。`ProcessGraph`は任意の欄で、無ければ工程の検査は行わない(P4の承認経路は、P11の部品に依存しない)。
+- **クライアントが送るのは、`SemanticPlan`(`LogisticsPlan`を含む)・`ProcessGraph`(任意)・`TemplateBundle`だけ**(`SubmitPlanPayload`の中身)。展開結果(`ExpandedPlan`)や経路(Routerの出力)や施工リストは、**サーバーが手持ちのコードと、手持ちの同梱テンプレートで、決定論的に作り直す**。同梱テンプレートは、IDとハッシュが一致しなければ拒否。プレイヤーが昇格させたテンプレートは、`TemplateBundle`に本体を含めて送り、サーバーが**静的検証を通す**(通らなければ`E-TEMPLATE-UNVERIFIED`で拒否)。
+- **サーバーが自分で作り直した施工リストのハッシュだけが承認できる**。クライアントが送った物をそのまま実行しない。クライアントとサーバーのハッシュが一致しなければ、承認ボタンを無効にして「バージョンの不一致」を表示(`E-REGISTRY-VERSION`)。
+- **ペイロードの大きさ**: バニラの`ServerboundCustomPayloadPacket.MAX_PAYLOAD_SIZE=32767`は登録されていないペイロードの読み捨て用の値で、登録済みのペイロードはNeoForgeの`GenericPacketSplitter`が分割する(ソースで確認。`docs/investigations/spk_s6_payload_limits.md`)。実際の上限はS-6の自動測定(P4 Task 32)で記録する。文字列の上限(`FriendlyByteBuf.MAX_STRING_LENGTH=32767`文字)を避けるため、本文はバイト列で送る。そのため、計画は**30KB以下のチャンク**に分けて送り、`uploadId`でまとめ、全体のハッシュで検証する。全体の上限は2MB、プレイヤーごとに同時1件、レート制限あり。既存の`SaveScriptPayload`の`MAX_SCRIPT_CHARS=10000`は、建設の経路には使わない。
+- 承認の有効期限(既定10分)。期限切れ・所有者の退出・登録簿の版変更で無効になる。
+- **地形の変化でハッシュが合わなくなる問題(調査の固定)**: クライアントが計画を作る前に、サーバーから`SiteSurvey`を受け取る(F-8)。サーバーは、その調査結果とダイジェスト(`SurveyRef`)を**一定時間(既定10分)保持**し、承認の流れでは**自分が発行した調査結果を使って再コンパイルする**(世界の現在の状態そのものではない)。したがって、調査から承認までの間に、範囲内で草が広がる・水が流れる・他人が建てるなどしても、ハッシュは変わらない。代わりに、**施工の実行時に、各位置の置換の可否を、その場の世界で確認**し、置けなくなった位置は`Conflict`として`PAUSED`にする(`E-SITE-CHANGED`が原因を示す。`E-REGISTRY-VERSION`とは別のコード)。保持の期限が切れていれば、再調査して再コンパイルする。
+- **受け入れたリスク**: `ApprovePlanPayload`は`manifestHash`と、ユーザーが`ACCEPTED_RISK`にした`Issue`のID一覧(`AcceptedRisk`)を含む。サーバーは、各IDが**自分の解析結果に存在し、`acceptable=true`である**ことを確認し、満たさなければ承認を拒否する(クライアントが受け入れ不可の問題を受け入れたことにできない)。受け入れた内容は、ジョブと`journal`に記録する。
+
+## F-4 権限・所有者
+
+- 実測で確認した現状: 既存の`DroneControllerBlockEntity.ownerUuid`は、「最後にRunを押した人」に更新されるだけで、**権限の判定には使われていない**(`saveScript`・`startScript`は誰でも通る)。建設はこれに依存しない。
+- 建設の権限:
+  - ジョブの所有者=承認した人。**取消・承認・再開は所有者かOP**のみ。
+  - **区画(`SiteClaim`)**: 承認時にワールドボックスと**作用範囲(`operatingBox`。機械の作用範囲・発着場の上空の空きを含む)**を予約する。他人のジョブや他の区画と重なる施工は拒否。**ジョブが終了しても解放しない**(D-23)。工場が存在する間は、他人の施工から内部空間・発着場の上空・機械の作用範囲を守る。所有者が工場を解体(`ROLLBACK`)して初めて解放される。区画の数の上限(プレイヤーごと、既定8)を設ける。
+  - **建築権限の確認**(`PlacementPolicy.canPlace(owner, pos, state)`): (a)世界の境界内、(b)スポーン保護の範囲外(またはOP)、(c)NeoForgeの設置イベント(`BlockEvent.EntityPlaceEvent`)を、所有者を主体として発行し、**他modの保護がキャンセルすれば拒否**(保護modとの互換)(S-9の確認済みの事実: プレイヤー主体の設置イベントは既に置いた状態を読むので、バニラの`BlockItem`と同じく、スナップショットを捕まえながら置いてからイベントを投げ、キャンセルなら捕まえた物を戻す。オフラインの所有者は`FakePlayerFactory.get`で所有者のUUIDを持つ偽のプレイヤーを主体にする。`docs/investigations/spk_s9_place_event.md`)、(d)設定の許可レベル(既定: 許可された全プレイヤー。大規模はOP)。
+- 既存の農場機能の`saveScript`/`Run`に権限の穴がある件は、建設とは別の課題として**GitHub Issueに起票する**(P-15: 既存機能の挙動は、この機能の中では変えない)。
+
+## F-5 安全枠(`SafetyEnvelope`)— 1個でも置く前に検査
+
+| 項目 | 既定 | 超えたとき |
+|---|---|---|
+| 1ジョブの最大設置数 | 20,000 | 承認できない(OPは設定で緩和) |
+| 施工範囲の最大の大きさ | 128×96×128 | 同上 |
+| 高さの範囲 | ワールドの建築可能範囲内 | 該当部分を拒否 |
+| 置換できるブロック | 空気、水・溶岩(要承認)、草・花・雪、木の葉(要承認) | 置換できないブロックは`E-SITE-BLOCKED`。**破壊を伴う置換の一覧を承認画面に表示**し、利用者が明示的に確認して初めて承認できる |
+| 置換禁止 | 岩盤、バリア、コマンドブロック、**元からあった(このプロジェクトが置いたのではない)ブロックエンティティを持つブロック**(例外は、中身が空だと承認時に確認できたコンテナだけ。その場合も、ロールバックで空のコンテナとして戻す) | `E-SITE-BLOCKED`(明示承認で押し切る道は無い) |
+| **このプロジェクトが置いたブロックエンティティ** | `PlacedRegistry`に載る保管庫・デポ・機械などは、`MODIFY`・`ROLLBACK`で撤去・変更できる(D-25)。**中身のアイテム(インベントリ・デポ・ファンネルのフィルタ・ベルト上の物)は、ドロップして保全する**(消さない)。ブロックそのものの材料の返却はF-7の規則。**流体・燃料など回収できない物は失われる**ので、撤去の承認画面に「液体◯mB・燃料◯が失われます」を表示して確認する | (許可。撤去の承認画面に「中身がN個ドロップします」を表示) |
+| **整地(`SITE_PREP`の切り・盛り)** | 区画内の自然のブロック(タグ`micradrone:terraformable`: 土・草・砂利・砂・石・深層岩など)を切る/盛る。**承認画面に「地形の改変: 切る◯個、盛る◯個」を必ず表示し、確認して初めて承認できる**。サバイバルでは、**切ったブロックは所有者に集めて渡し**、盛るブロックは所有者から消費する(資源が消えも増えもしない)。クリエイティブでは無償 | 確認なしの整地は拒否(`E-TERRAFORM-UNCONFIRMED`) |
+| **置いてよいブロック(`PlaceableBlockPolicy`、D-22)** | 登録部品が出力するブロックと、`StyleSpec.palette`の素材で、許可リスト(データパックのタグ`micradrone:palette_allowed`+登録部品の出力)に載る物だけ。**コマンドブロック、岩盤、スポナー、バリア、ストラクチャーブロック、ジグソー、光ブロックなどは、素材・部品のどちらの経路でも常に禁止**。AIやスクリプトが何を書いても、サーバーのコンパイルで弾く | `E-BLOCK-FORBIDDEN`(受け入れ不可) |
+| 同時ジョブ | 所有者ごとに1(サーバー全体の予算はF-2の`ConstructionBudget`) | 待機列 |
+| 読み込まれていないチャンク | 置かない | `PAUSED(CHUNK_UNLOADED)` |
+
+**置いた後の動作の影響(D-24)**: 置いてよいブロック(D-22)の検査だけでは、機械が動作して区画の外の世界を壊す(ドリル・ソー・ハーベスター・プラウ・`offroad:`の掘削部品、ホースプーリーの液体の出し入れ、ポテト砲台、水源・溶岩の流れ出し、組み立てて飛ぶ飛行船)経路を防げない。そこで、**世界に作用する部品は、作用が届く範囲(`EffectSpec`)を宣言しないと登録できず**、Factory Analyzerが、作用範囲が区画の`operatingBox`の中に収まることを検査する(`E-EFFECT-ESCAPES-CLAIM`)。液体の設置(水源・溶岩)は、周囲の流れ出しを止める囲いが区画内にあることを検査する。飛行船は運航で区画を離れるので、衝突による破壊の有無と着陸のしかたをS-8で確認し、結果に応じた規則を決める。区画外に作用する部品(例: ポテト砲台)は、設定で許可された時だけ登録する。
+
+## F-6 独自言語との往復(決定論プロファイル)
+
+- 人が読んで直せる形(引き継ぎ文の要件): 計画は独自言語のスクリプトとして見える。`PlanScriptWriter`が`SemanticPlan`から出力し、`PlanRecorder`(新設の`PlanApi`の実装)がスクリプトを実行して`PlanPatch`を作る。**往復してもハッシュが変わらない**ことをテストで保証する(D-2)。
+- **命令(P3で確定)**: 位置引数だけ(この言語にキーワード引数は無い)。`PlanOp`の全操作が、命令に1対1で対応する。**部品を置く命令の名前は、登録簿から機械的に決まる**(P-16)。
+
+  | 命令 | `PlanOp` | 引数 |
+  |---|---|---|
+  | `site(dimension, x, y, z, facing, bounds[, terrain_digest[, claim_id]])` | `SetSite` | `facing`は`"north"`等、`bounds`は`[minU,minV,minW,maxU,maxV,maxW]` |
+  | `style(role, material)`、`mood(tag)` | `SetStyle` | 呼んだ分を集めて、1つの`SetStyle`にする |
+  | `<部品名>(id, parent, anchor, params[, tags[, label]])` | `AddNode` | `<部品名>`は、`micra:`の部品なら接頭辞を除いた名前(`wall`、`roof`、`door`…) |
+  | `part(id, type, parent, anchor, params[, tags[, label]])` | `AddNode` | `type`は部品ID全体(`"create:mechanical_press"`、`"mod:press_station"`)。`micra:`以外の部品はこちら |
+  | `update_params(id, params)` | `UpdateParams` | |
+  | `relocate(id, anchor)` | `MoveNode` | (`move`は畑の命令なので使わない) |
+  | `remove_part(id)` | `RemoveNode` | |
+  | `connect(id, from, to, kind[, via[, constraints]])` | `AddConnection` | `from`・`to`は`"ノードID.ポート名"`。`via`は経由する部品IDのリストで、省略または`None`なら`Routing.Auto`、リスト(空のリストも)なら`Explicit`(空のリスト=つなぎの部品を置かず直接つなぐ)。`constraints`は`dict`(`max_length`・`avoid`・`max_turns`・`entry_dirs`) |
+  | `disconnect(id)` | `RemoveConnection` | |
+  | `logistics(docks, routes, flows)` | `SetLogistics` | `list`と`dict`(`01` 10節の`Dock`・`Route`・`CargoFlow`の欄名) |
+
+  `anchor`は、`[u, v, w]`または`[u, v, w, 回転数, 鏡像]`(`Absolute`。回転数は0〜3、鏡像は`True`/`False`)、`["surface", 壁ID, "outer"または"inner", u, v]`(`OnSurface`)、`["slot", スロットID, 回転数, 鏡像]`(`InSlot`)。`parent`は親のID(なければ`None`)。`params`は`dict`で、検証は`PlanPatcher`が部品の`ParamSpec`で行う。案にあった`frame`(枠は`site`が持つ)、`place`・`power`・`dock`・`decorate`・`module`・`floor_slab`は、すべて`<部品名>`または`part`で表せるので置かない(名前を別に持つと、登録簿とずれる)。
+- **追加の作法(P3で確定。既存の慣習に沿うが、畑の側を壊さない)**: (a)`lang/CommandNames`に**`PLAN`(建設の命令の一覧。部品を置く命令は登録簿から作る)を新設し、畑用の`ALL`は変えない**。`ALL`は`Interpreter.defineFunction`(`Interpreter.java:183`。組み込みと同名の関数の定義を拒否する)、`CommandNamesTest`、`SyntaxHighlighterTest`、IDEの補完が使っており、`wall`・`place`・`power`のような一般的な名前を入れると、既存の畑のスクリプトが「組み込みの命令なので再定義できない」で壊れる(P-15違反)。(b)`Interpreter`は`PlanApi`を任意で受け取り(`Interpreter(PlanApi, PlanRunLimits)`)、`PlanApi`があるときだけ`CommandNames.PLAN`の呼び出しを`PlanApi`へ渡す。`PlanApi`が無い(畑の)`Interpreter`では、建設の命令は従来どおり「unknown function」で、利用者が同名の関数を定義しても壊れない。(c)`lang/SyntaxHighlighter.highlight`に、命令名の一覧を渡す多重定義を足す(既存の`highlight(source)`は`ALL`のまま)。(d)`drone/CommandsHelpDoc`に、建設の命令の説明`BUILD_COMMANDS`を足す。**既存の`DroneApi`には足さず、別インターフェース`lang.PlanApi`にする**(P-15)。`Lexer`/`Parser`/ASTは無改修。農場の命令と建設の命令の混在は、実行前の静的検査(`PlanScriptProfile`)で拒否する。
+- **決定論プロファイル(許可リスト方式)**: 建設スクリプトで使えるのは、**許可した命令だけ**。許可するのは、建設の命令(上の一覧)、制御構造(if・for・while・関数・変数)、純粋な補助(`len`、`abs`、`min`、`max`、`str`、`list`、`dict`、`set`、`range`、`print`)。**それ以外は静的検査で拒否する**。拒否される既存の命令(`lang/CommandNames.ALL`の実物): 畑の操作(`move`、`till`、`plant`、`harvest`、`do_a_flip`、`sleep_ticks`、釣り・金床の各命令、`set_output`、`pair_with`など)、知覚(`get_pos_x`、`get_time`、`get_weather`、`get_ground`、`can_harvest`など)、**`random`、`create_task`(本物のスレッド)、`semaphore`、`attach_isr`、`raise_interrupt`**。理由: これらは実行の順序や結果が毎回同じにならず、同じスクリプトから同じ`PlanPatch`が出る保証(往復のハッシュ一致、D-2)が崩れるため。ブラックリストではなく許可リストなので、将来`CommandNames`に命令が増えても、自動では建設で使えるようにならない。実行回数の上限(既定100,000文=ステップ)と時間の上限(既定5秒)を、`PlanRunLimits`として`Interpreter`に足す(既存の「畑の操作なしで100万文」の暴走検出とは別。`PlanApi`があるときだけ有効)。超えれば`E-SCRIPT-LIMIT`。
+- **スクリプトの長さ**: 既存の`MAX_SCRIPT_CHARS=10000`は、1つのスクリプトに適用される。大きな計画は、`PlanScriptWriter`が**計画の並びのまま、文の切れ目で、文字数(10,000字)で分割して出力**する(各スクリプトの先頭に`# 建設スクリプト i/n`の行。建物ごとの分割は、計画の並びが建物ごとに固まっているとき、結果として同じになる)。`PlanRecorder`は、複数のスクリプトを順番に取り込める。
+- **`PlanApi`の失敗の契約(P3で確定)**: `PlanApi`のメソッドが投げる`IllegalArgumentException`は「スクリプトの値が悪い」を意味し、命令名と行番号つきで利用者に報告される。`PlanBudgetException`は上限の超過(`E-SCRIPT-LIMIT`)。それ以外の例外は実装の失敗として扱い、利用者の入力のせいにしない。
+- スクリプトを人が直して保存すると、それは新しい`PlanPatch`(新しい版)になる。承認は、**コンパイル後のハッシュ**に対して行う(D-3。スクリプトの文字列ではない)。
+
+## F-7 材料(`MaterialPolicy`、D-4)
+
+- **常に**、コンパイラが材料表(`bom`)を出す(承認画面に表示)。方針は**ゲームモードで決める**: 承認時に、所有者が**クリエイティブ**なら`CREATIVE_FREE`(消費しない)、**サバイバル**なら`SURVIVAL_CONSUME`。設定で強制も可能。
+- `SURVIVAL_CONSUME`:
+  - 材料の出どころ: 所有者のインベントリ、および区画内にある**補給チェスト**(所有者が指定したチェスト。指定方法はP4の計画書で決める。既存の`ScriptChestLibrary`のチェスト探索の作法を参考にする)。
+  - 消費は**設置ごと**に、`placement.index`をキーにした冪等な記録で行う(再起動しても二重に消費しない)。材料が無ければ`PAUSED(MATERIALS_MISSING)`で、不足の一覧を所有者に通知。補給されれば自動で再開。
+  - **返却のルール(材料の複製を防ぐ)**: 消費は設置ごとなので、**取消(`CANCELLED`)では未設置分は元々消費されておらず、設置済みの物は建物として残るので、返却しない**。**ロールバック(`ROLLBACK`)と`MODIFY`の撤去は、`MaterialLedger`に「消費した」と記録された配置について、実際に撤去した分の材料だけ**を返却する(クリエイティブで建てた物は記録が無いので、返却しない。サバイバルへの持ち込みによる複製を防ぐ)(返却先: 所有者のインベントリ、入らなければ足元にドロップ)。返却の記録も`MaterialLedger`に残し、二重に返却しない。
+  - ブロックとアイテムの対応(`BlockToItem`表): 通常は1対1。特別な物(メカニカルベルトは`create:belt_connector`アイテム、ドアや半ブロックなど)は明示表で持つ。**アイテムを持たない内部ブロック**(`create:powered_shaft`など、`IMPLICIT`の部品)は、それを作る側の`USER`部品で数える(例: 蒸気機関)。表に無いブロックは`E-MATERIAL-UNKNOWN`で承認前に検出する。
+  - **自然のブロック**(草・水・木の葉など、置換で壊す物)は、アイテムをドロップせずに消す(材料の増殖を防ぐ)。整地で切る土・石は、上の整地の規則で所有者に集める。**このプロジェクトが置いたコンテナを撤去するときの中身は、消さずにドロップして保全する**(D-25。ブロック自体の材料の返却とは別)。
+- `CREATIVE_FREE`でも、材料表は出す(「買うとこれだけ」という情報として)。
+
+## F-8 サーバー問い合わせ経路
+
+- クライアント(MCPツールや解析)がサーバーの情報(地形、レシピ、権威の検証結果)を得る往復: `QueryRequestPayload(requestId, kind, argsJson)`(クライアント→サーバー、30KB以内)、`QueryResponsePayload(requestId, json)`(サーバー→クライアント、大きければ分割)。サーバーは、メインスレッドで処理し、1回あたりの範囲・件数を制限する(F-5と同様の上限)。
+- 呼び出し側は`CompletableFuture`で待つ。タイムアウトあり(既定5秒)。
+
+## F-9〜F-10 CLI(Claude・Codex)
+
+`06_ai_and_images.md`の1・5節。要点: 段は状態なし、構造化出力、画像入力、費用の記録、取消、Codexの作業フォルダの隔離。
+
+## F-11 Create/Aeronauticsの依存と版固定(D-13)
+
+- **Create/Aeronautics/Sableはoptional依存**(林さんの裁定 2026-09-27: どのmodが入っていてもAIが対応する。「畑だけ遊ぶ」「雰囲気だけの建築」も許す)。`neoforge.mods.toml`では3つとも`type="optional"`。**modが入っていなければ、そのpackの部品だけが無効**になり、残りの部品は動く(能力駆動。D-13の「版の範囲外」を「modの不在」にも広げる)。
+- optional依存はFMLが守らない(無くても起動する)ので、Create/Aeronautics/Sableのクラス(Ponder・Flywheel・Registrate・offroad・simulatedを含む)に触れるコードは、**専用の`integration`パッケージだけ**に置き、ModListで存在を確かめてから読み込む。それ以外のクラスがそれらをimport・参照しないことは、`OptionalModBoundaryTest`が機械的に検査する(漏れると、mod無しの環境で`NoClassDefFoundError`になる)。
+- 現状の版: Create 6.0.10、Aeronautics 1.3.0、Sable 2.0.x。`neoforge.mods.toml`の依存範囲は、Create `[6.0.10,6.1.0)`、Aeronautics `[1.3.0,1.4.0)`、Sable `[2.0.0,3.0.0)`。Aeronauticsの同梱jarは、中に`aeronautics`・`simulated`・`offroad`の3つのmodを持つ(jarJar)。**飛行船の組み立て・操縦・係留の部品は`simulated`のもの**なので、`PartType.requires`は、`simulated`(`[1.3.0,1.4.0)`)と`offroad`のmod IDも指定でき、部品の表示名は`assets/simulated/lang/`から取る。`mods.toml`の依存に`simulated`を足すかは、P13の計画書で、実際の同梱の挙動を確かめて決める。
+- `PartType.requires`(版の範囲)を、登録時に実行中のModListと照らし、**modが無いか範囲外ならその部品だけ無効**にして、理由(必要なmod・版と実際の有無・版)を利用者に見せる。無効な部品を含む計画は`E-REGISTRY-VERSION`。
+- Createの更新時の手順: (1)忠実度テスト(F-12)を全部流す、(2)部品見本帳を作り直す、(3)モジュールライブラリのテンプレートを再検証、(4)通れば`requires`の範囲を広げる。
+- 参考: Create本体のソースに、実機と同じ版のタグ`mc1.21.1-6.0.10`が実在する(`Creators-of-Create/Create`、調査担当が確認)。部品の設置手順のスパイク(S-5)は、この版のソースを読んで行う。
+
+## F-12 Createブロックの設置と、忠実度テスト(P-13)
+
+- 設置は`PartType.placer`の戦略で行う: `SIMPLE`(`setBlock`+ブロック状態)、`BELT`(メカニカルベルトはCreateの専用の連結処理が要る可能性が高い)、`ARM`(メカニカルアームは対象の設定が要る)、`MULTIBLOCK`(水車・風車・ピストンなど)ほか。**どの部品がどの戦略かは、S-5で実際に試して確定**する(推測で決めない)。**組み立て(`ASSEMBLE`)**: 風車(帆を付けて組み立てる)、飛行船(物理アセンブラ)のように、組み立てで元のブロックが世界から消えて、動くエンティティ(コントラプション・サブレベル)になる部品は、`AssemblySpec`に従い、同じグループの部品を全部置いた後に、組み立てを実行する。検証は、消えた位置を欠落と扱わず、`AssemblyExpectation`(生成されたエンティティ数・移動したブロック数)を確認する(`01` 4節、`03` L7)。
+- **忠実度テスト(`FidelityLab`)**: 各部品・各テンプレートについて、(a)実際にサーバーで設置してブロック状態が施工リストどおりか、(b)Createが期待どおりに動くか(回転数・応力・品物の流れ)、(c)`KineticModel`の予測と一致するか、を検査する。方法は、NeoForgeのGameTest(`runGameTestServer`。S-7で動作を確認)。動かない場合は、開発者用の自己診断コマンドで、実機(`runClient`/`runServer`)で同じ検査を走らせる。
+- 既存の慣習(JUnit+Fakes、`@GameTest`未使用)からの逸脱は、**Create連携の検査だけ**(レジストリが要るため)に限る。純Javaの核は従来どおりJUnit。
+
+## F-13 チャンクとオフライン
+
+- 施工は読み込み済みチャンクだけ。範囲内に未読み込みがあれば`PAUSED(CHUNK_UNLOADED)`。所有者が離れたら`PAUSED(OWNER_OFFLINE)`または(設定で)チャンクを保持(`TicketController`)。所有者が戻れば再開。強制読み込みは既定でオフ。
+
+## F-14 取消とロールバック
+
+- 取消: 現在の設置位置で止め、`CANCELLED`。設置済みの物はそのまま残る(「元に戻す」は別操作)。材料は返却しない(F-7)。
+- ロールバック(`ROLLBACK`ジョブ): `UndoEntry`(設置前のブロックとブロック状態)で復元する。**元からあったブロックエンティティの置換はF-5で禁止**(中身が空だと確認できたコンテナだけ例外)なので、施工前の状態が復元できないものは無い。**このプロジェクトが置いたブロックエンティティ**は撤去でき、中身はドロップして保全する(D-25)。**組み立てた物(風車の帆、飛行船)は、先に組み立てを解く**(`AssemblySpec.disassembleAction`)。組み立て後の個体(エンティティのUUID・サブレベルID)は、`AssemblyResult`として`PlacedRegistry`に記録してあり、解体・撤去は**その記録で個体を特定して**行う(記録が無い個体は触らない)。飛行船が定位置にない場合は、戻るまで`PAUSED`にする。復元の完了とは、**置換したすべてのブロックが、設置前のブロックとブロック状態に戻ったこと**(`SparseSnapshot`で確認)。ロールバック後に、プレイヤーが位置を変更していた場合(`Conflict`)は、その位置には触れず、報告する。材料はF-7の規則で、撤去した分だけ返却。
+
+## F-15 設定
+
+- サーバー設定(`micradrone-server.toml`): 安全枠の値、材料の方針、設置の速度、権限の水準、チャンク保持。
+- クライアント設定(`micradrone-client.toml`): `claude`と`codex`の実行パス、費用の警告線・上限線、画像の参考枚数の予算、`CameraPreset`、ループの上限、初回のプライバシー同意の記録。
+- 既存の設定の作法を確認して踏襲する(P3の計画書で)。
+
+## F-16 マルチプレイ
+
+- 専用サーバーにも入る設計: サーバーはCLIを必要としない(AIはクライアントで動く)。計画は、CLIを持つクライアントが作ってサーバーへ送る。
+- 同じサーバーに複数人: プロジェクト・画像・費用は、プレイヤーごとにクライアントに保存。ジョブと区画はサーバーに保存し、所有者で区別する。
+- 他人のジョブは見える(進行表示のみ)、操作は所有者かOPのみ。
+
+## F-17 ログと診断
+
+- プロジェクトの`journal`(各段の入力・応答・判断)、サーバーのジョブのイベントログ、`/micradrone build status`のようなコマンド(所有者・OPのみ)。失敗時は、「何が・どのIDで・なぜ」を利用者向けの日本語で出す。
+
+## F-18 表示言語
+
+- UI・エラー文は翻訳キー(日本語・英語)。AIの指示文は日本語を基本とし、部品名は登録簿の識別子と表示名を併記する。既存の`ChatContextBuilder`(日本語の文脈)と同じ方針。
+
+## F-19 ドキュメントの同時更新
+
+- 機能変更と同じタスクで、`drone/CommandsHelpDoc`(ゲーム内ヘルプ)、README、CurseForgeの説明文(`docs/curseforge_description.md`)を確認して直す(既存の記憶: 機能変更時にドキュメントも同時に更新)。各フェーズの完了条件に含める。
+
+## F-20 既存機能との共存(P-15)
+
+- 既存の`DroneApi`・`LiveDroneApi`・`PacedActionQueue`・`DroneControllerBlockEntity`(1,527行)の**挙動は変えない**。建設の新規コードは`build/`・`construction/`・`client/build/`に置く。`IdeScreen`(1,610行)に足すのは、入口(建設モードへの切替、チャットのカード)に限り、建設の画面は別クラス。
+- 既存のテスト(47ファイル)は、全て緑のまま維持する。
+
+## F-21 性能
+
+- 1tickあたりの設置数(F-2の`ConstructionBudget`)と、状態の読み取り量に上限(既存の`MAX_BLOCKS_PER_QUERY=1000`と同じ考え方)。**メモリは、読む座標の数に比例させる**: L7の検査は、施工リストの配置位置だけを読む(`SparseSnapshot`、最大20,000件)。意味解析用の範囲読み取りは、複数tickに分けて、**1セル1バイトの分類グリッド**(`VoxelClassGrid`、最大約157万セルで約1.5MB)に詰め、ブロックごとのオブジェクトを作らない。
+- クライアントの解析(`Router`、`FactoryAnalyzer`等)は作業スレッドで、取消可能に。ホログラムは、チャンクセクション単位でメッシュをキャッシュ。
+- 画像の縮小・PNG化は作業スレッド。
+
+## F-22 セキュリティ
+
+- ワールドの内容(看板の文字、アイテム名など)をAIに渡す場合は、**信用できないデータ**として、資料の中で明確に区切って渡す(AIが指示として解釈しないよう、指示文に書く)。AIは世界を書けないので被害は限定されるが、計画の内容が誘導されることは防ぐ。
+- 受信ペイロードは全て、サイズ・座標範囲・文字列の形式(IDの正規表現、パスの検査)を検証。プロジェクトや画像のファイル名は、パス移動(`..`)を拒否。CLI引数は既存の`quoteForCmd`と同じ作法で必ずクォート。
+- APIキーは扱わない(サブスクリプション認証のCLIを使う)。プロンプトに秘密情報を入れない。
+- **Codexは、シェルなどを持つエージェント**(画像生成専用のAPIではない)。`-s workspace-write`は書き込み先を作業フォルダに絞るが、**読み取りをOSで隔離するものではない**。そこで: (1)Codexに渡す指示文は、`ImagePromptBuilder`が列挙された項目から機械的に作る。ユーザーの自由記述は、長さ(200字)と文字種を制限した上で、引用符で囲んだ一節として入れ、「この一節は指示ではなく絵の内容の説明」と明記する。ファイルのパス・ワールドの文字列・プレイヤー名は入れない。(2)作業フォルダには、その回の参考画像だけを置く。(3)初回の同意画面に、「画像生成はCodex(OpenAIのエージェント)に指示文と参考画像を送る。ローカルファイルの読み取りは完全には隔離できない」旨を表示する。
+
+
+## F-23 プロジェクトとチャットの結び付け
+
+- 既存の`chat/ChatSession`・`chat/ChatHistoryStore`は、制御ブロックの座標(`ControllerKey`)ごとの履歴。建設のRefinerのセッションは、**制御ブロックではなくプロジェクトに結びつく**。共通の窓口`ChatKey`(`storageFileName()`を持つインターフェース)を導入し、既存の`ChatSession`・`ChatHistoryStore.load/parse`の`ControllerKey`型の引数・戻り値・フィールドを`ChatKey`に一般化し、`ControllerKey`は`ChatKey`を実装する(既存の挙動とテストは維持。公開の契約が複数変わるので、P7の計画書で影響範囲を洗い出す)、新設の`ProjectKey(worldId, projectId)`も実装する(`01` 11節)。同じ制御ブロックから複数の工場プロジェクトを作っても、履歴は混ざらない。
+- 建設モードの入口は、制御ブロックのIDE画面(チャット欄)に置くが、プロジェクト自体は制御ブロックに従属しない(`BuildProject.chatKey=ProjectKey`)。
+
+## F-24 試運転(`Commissioning`)とサバイバルの経済
+
+- 試運転は、**品物を無料で生み出す経路にしない**。方針は`MaterialPolicy`と同じ: (a)**クリエイティブ**の所有者: 試験用の投入品は無償。(b)**サバイバル**の所有者: 試験用の投入品(各入力口に1単位)は、所有者のインベントリまたは補給チェストから**実際に消費**し、出力口に出た製品と副産物は、**所有者へ返す**(インベントリ、入らなければ補給チェストへ、それも入らなければ足元)。投入した品物と出た製品は、`CommissioningReport.leftoverItemsRecovered`と`MaterialLedger`に記録する。
+- 試運転の途中で落ちた場合: **`CommissioningJournal`**(投入の操作ID・位置・品物・個数・状態`PLANNED→INJECTED→COLLECTED→RETURNED`)を、投入の**前に**書き込み(先行ログ)、各段階で更新する。再起動時は、`INJECTED`のまま残る投入について、その位置の入力口・出力口・機械の内部から回収して所有者へ返し、`RETURNED`にする。状態で冪等になり、二重に返さない。
+- 燃料(ブレイズバーナーなど)の補給は、テンプレートが自動の補給手段を持つ場合はそれを使い、持たない場合は所有者が補給する。試運転の前に、燃料が有るかを確認し、無ければ`W-FUEL-SUPPLY`と手順を出す(S-5cで自動補給の可否を確認)。
+
+## F-25 能力パック(`CapabilityPack`)と任意のmodの組合せ(D-30)
+
+- **packの一覧**(現時点。pack ID・要求mod ID・版範囲は`CapabilityPack`の宣言で固定):
+  | pack | 要求するmod | 中身(登録簿に足す物) | 状態 |
+  |---|---|---|---|
+  | `vanilla` | `minecraft`(常に有効) | `micra:*`の建築部品、バニラのブロックとレシピ、畑ドローンの機器、MCP読み取りツール | 常に`ENABLED` |
+  | `create` | `create` `[6.0.10,6.1.0)` | `create:*`部品(`05` 1.2節)、`KineticModel`・`PowerSourceModel`・Createのレシピ源 | optional依存(宣言済み) |
+  | `aeronautics` | `aeronautics` `[1.3.0,1.4.0)`(同梱の`simulated`・`offroad`を含む) | `aeronautics:`・`simulated:`・`offroad:`部品(`05` 1.3節)、発着場・飛行船テンプレート | optional依存(宣言済み) |
+  | `sable` | `sable` `[2.0.0,3.0.0)` | Sableが提供する土台の機能(使い道はS-8の組み立て結果で確定) | optional依存(宣言済み) |
+  | `create_submarine` | (mod IDは未確定。S-11) | 潜水艦・船の部品、防水・浸水の扱い(林さんの指定: 「沈没の心配を無くす」。内容はS-11で確定) | 未導入(スパイク) |
+  | `powergrid` | (mod IDは未確定。S-12) | バッテリー・電気の貯蔵(回転動力とは別の蓄え) | 未導入(スパイク) |
+  | `create_copper_and_zinc` | (mod IDは未確定。S-13) | 銅・亜鉛の再生産のレシピ源。真鍮の経済への影響 | 未導入(スパイク) |
+- **有効化の規則**: 起動時に`ModScanReport`を作り、packの`requiredMods`の全部が入っていて版も範囲内なら`ENABLED`。**1つでも欠ける・範囲外なら、そのpackだけ`DISABLED_ABSENT`/`DISABLED_VERSION`**にして、理由(`PackStatus.reason`)を利用者が読める日本語で出す。**modの不在はエラーではなく「その能力が無い」だけ**。
+- **登録簿の合成**: `EnabledRegistry`は、`vanilla`に有効なpackの部品・アナライザ・テンプレート・レシピ源を足し合わせた物。**無効なpackの物は一切入らない**ので、AIのスキーマ・部品見本帳・`query_part_types`・画面の選択肢は、自動でその環境の語彙になる(P-16)。AIには、各段の`Dossier`に「有効なpackの一覧」を資料として入れ、`Refiner`のシステムプロンプトにも「今使える能力はこの一覧だけ」と明記する。
+- **保存済みの計画の扱い**: 計画が参照する部品・テンプレート・レシピ源が、無効になったpack由来なら、承認の前に`E-PACK-DISABLED`(対象IDと、無効なpackのID・理由つき)で拒否する。部品IDが消えた場合と区別できるよう、原因はpack名で示す。
+- **境界の機械的な保証**: modのクラスに触れるコードは`integration`パッケージだけに置き、ModListで存在を確かめてから読み込む。それ以外のパッケージがmodのクラスをimport・参照しないことは`OptionalModBoundaryTest`が、`build.*`の純粋さは`BuildPurityTest`が機械的に検査する(D-16と同じ「人の注意に頼らない」構え)。
+- **任意の組合せ**: packどうしは互いに前提を持たない(`create_submarine`が`create`を要する等の依存は、`requiredMods`に`create`を書いて表す。そうすれば`create`が無い環境では`create_submarine`packも無効になり、中途半端に動かない)。
+
+## F-26 機器モデル・学びの層(D-32、詳細は`08_device_model.md`)
+
+- **MHSに着想した独自のおもちゃ規格**(実在のMHSの仕様は非公開。互換を主張しない): 機器は`DeviceDescriptor`で「読む・書く・出来事・安全限界・事前条件・日本語の目印」を宣言し、**機器への指示はすべて`DeviceGate`が実行前に検査**する(型と範囲→事前条件→安全限界→緊急停止の状態)。`hard=true`の限界を超える指示は拒否、丸めてよい種類だけ`CLAMP`。AIもスクリプトもこの検査を迂回できない(P-17)。
+- **緊急停止(`ESTOP`)**: 発動した機器は全書き込みを`E-ESTOP`で拒否し、動作中の操作を止める。解除は所有者かOPの明示操作のみ。発動・解除は`MonitorRecord`と`journal`に残す。
+- **出来事は既存のソフトウェア割り込みに載せる**: `DeviceEvent`は`attach_isr(face, fn)`の面名`"device:<deviceId>:<event>"`に対応づけ、発火は`raise_interrupt`を機器層が呼ぶ(既存の実装は「呼んだスレッドでISRが動く」)。実物のレッドストーン立ち上がり→面名の自動配線は、既知の未着手項目としてS-15に置く。
+- **監視と教材**: 操作・出来事・拒否を`MonitorRecord`として記録(実測のフィードバック)。各機器に、子供が読める`ReferenceSheet`(「できること・できないこと・絶対に止まる条件」)を自動生成し、AIの資料にも同じ物を使う(P-16と同じ「正本は1つ」)。
+- **最初の機器**: 畑ドローンの制御ブロックを機器として包む(読む=`measure`・`can_harvest`・`get_*`、書く=`move`・`till`・`plant`・`harvest`・`set_output`)。工場側では発着場・機械がpack由来の機器になる。
+- フェーズ: P17(`08`)。
+
+## F-27 未知のmodの読み解き(D-31)
+
+「誰もmodの中身を知らなくても、その子が入れたmodを読み解き、その子のために動く」ための、5段のパイプライン。**どの段でも、推測で部品を登録しない・未検証の物を世界に置かない**。
+
+- **(1) 事実の収集(`ModScan`、決定論・サーバー側)**: `ModList`のmod一覧に加えて、**ゲームが既に読み込んでいる登録簿**を読む: ブロック・品物・ブロック状態のプロパティ・ブロックエンティティの種類・タグ、`RecipeManager`のレシピ、言語ファイル、ブロックが持つ汎用の能力(品物・液体・エネルギーのハンドラ、レッドストーンの振る舞い)。**jarやmodのクラスを自分で読み込み・実行はしない**(ゲームに登録済みの事実だけを集める)。集めた事実を、決定的な形に正規化した`ModCatalog`にし、`ModScanReport`(全modの分類`KNOWN_PACK`/`BUNDLED_IN_PACK`/`UNKNOWN_COMPATIBLE`/`UNKNOWN_UNSAFE`・packの状態・決定的な`digest`)を出す。**同じmod構成からは同じレポートと目録が出る**。
+- **(2) AIの通訳(`ModInterpreter`、N-34)**: 資料(`Dossier`)には`ModCatalog`の事実だけを入れ(jar・自由文は渡さない)、構造化出力で**草案(`ModDraft`)**を作らせる: 部品の草案(役割・ポート・大きさの仮説)、機器プロファイルの草案(読める物・書ける物・出来事)、モジュールのテンプレートのアイデア、制御コードの提案。**すべての主張(`DraftClaim`)は、根拠となった目録の事実(`evidenceFactId`)と信頼度を持つ**。分からない物は`unknowns`に入れて推測で埋めない。
+- **(3) 検証は実測だけ**: 草案の仮説は、試験用の区画(サンドボックス)か忠実度テストの場で、実際に置いて動かして確かめる(`SANDBOX_TESTED`)。**未検証の草案は、見せて相談はできるが、現実の世界には置けない**。D-17・D-22・D-24はそのまま効く: AIは許可リストを広げられず、世界に作用する可能性のある部品は`EffectSpec`の宣言と人の明示判断が要る。
+- **(4) 人の承認と保存**: 新しいpackと、提案された制御コードは、**人が承認して初めて有効**になる。制御コードは実行前に機器層(`DeviceGate`、F-26)の検査も通る。承認された物は`KnowledgeStore`に、出所(どのmod・どの版・どの検証を通ったか)つきで**ワールドごと**に保存する(L9)。昇格は`DraftStatus`=`PROMOTED`で記録する。
+- **(5) 安全な既定と正直な限界**: modの説明文・メタデータ・レシピの文字列は**信用しないデータ**(F-22と同じ)。`Dossier`には正規化した事実の表だけを入れる。分類できなければ`UNKNOWN_UNSAFE`側へ倒す。未知mod由来らしい部品・能力を計画が使っていたら`E-UNKNOWN-CAPABILITY`。**レジストリ・レシピ・能力は汎用に読めるが、コードの中に隠れた挙動はjarからは読めない**(サンドボックスの実測が要り、それでも「未検証」のまま残る物がある)。この限界は`UnknownModNote`に書く。
+- **校正(できると測れる証拠)**: 走査+通訳をCreateに掛けた結果が、手書きの`create`packの部品表(`05` 1.2節)をどれだけ再発見するかを実測する。新しい3modでは、AIの草案を、人がjarから読んだ一覧と突き合わせる(P16の完了条件)。
+- **費用とプライバシー**: AIに送るのは目録の事実だけ。呼び出しの費用は`CostLedger`に記録し、`ModScanReport.digest`で結果を再利用する(同じmod構成では通訳を再実行しない)。
+- 未知のmodを正式に支える道(=packへの昇格)は、このパイプラインを通るか、(a)mod IDと版範囲、(b)部品一覧と設置方法、(c)アナライザとテンプレート、(d)安全上の扱い、をスパイクで確かめるかの2つ。S-11〜S-13は後者の最初の3例。
+
+## F-28 動線と空きの予約(D-33)
+
+林さんの要件: 「子供(プレイヤー)が建物の中をまっすぐ歩けないのはストレス」「動線は物が在ることでなく空きがあること」。現在の部品は全部「在る物」で、空きは部品の属性(`dock_pad`の`clearance`)か事後の検査としてしか無いので、**空きを計画の中の一級の概念にする**。
+
+- **`ReservedSpace`(空きの予約)**: 「この体積は、この目的のために空けておく」という宣言。目的(`SpacePurpose`)は`CIRCULATION`(人・荷物・ドローンの通り道)、`TRANSPORT_PATH`(輸送手段の通り道)、`APPROACH`(発着・停泊への進入余白)、`CLEARANCE`(操作・整備の余白)。Site Planner(N-10)が敷地レベルで**足跡より先に**予約し、Zoning Fixer(N-11)は予約を足跡と同じく「動かせない・侵入させない」対象として扱う。部品・足跡が予約に侵入したら`E-RESERVED-CONFLICT`。
+- **建屋の内部の動線(`CirculationReq`)**: 出入口から各部屋・スロットまで、指定した断面(幅×高さ)の**空気の連なり**が実在することを要求として宣言する。検査は`VoxelClassGrid`上の洪水塗り(決定論)。通れなければ`E-CIRCULATION-BROKEN`でL4'へ戻る。**歩く人を最優先にし、荷物・ドローンの動線も全部扱う**(林さんの要件)。
+- **Router(N-18)との関係**: Routerは`AUTO`接続の経路を探すとき、用途の合う`ReservedSpace`の中はペナルティ無し・用途の合わない予約や建屋は避ける、という規則にする。「経路を後で探す」のではなく「通り道を先に確保する」のがこの要件の核。
+- **数値は測ってから**: 歩行・ドローン・車両の通れる断面と曲がりの実測はS-16。設計に既定値を書くのはその後。
+
+## F-29 輸送手段とその空間要求(D-34)
+
+- **`TransportProfile`**: 輸送手段ごとの空間要求の型(`01` 14.2節)。歩行・ベルト・動力の通り道(チェーンドライブ等)・パイプ・地上車両・飛行機・気球・船・潜水艇を同じ枠で表す。プロファイルは`CapabilityPack`の知識(`transportProfileIds`)としてpackに属し、**modが無ければその手段のプロファイルも無い**。数値は全部スパイク(S-17)の実測由来。
+- **`LogisticsPlan`の一般化**: `Dock`は飛行船の発着場だけでなく、港(泊位)・滑走路・車両庫も表す(`mode`フィールド)。`Route`は`mode`+`transportProfileId`を持つ。水深は`SiteSurvey.waterDepth`で判定。
+- **敷地に合わせた選択**: Site Planner/Logistics Planner(N-10/N-21)は、敷地と各手段の`TransportProfile`を比較し、合わない手段は`E-MODE-UNFIT`と代替案(「この敷地には滑走路は無理。代わりに車両か船」)を出す。AIは比較結果から選ぶだけで、数値を推測しない。
+- **船・潜水艇の水密**: `needsWatertight`の手段は、船体・収容空間に水が入らないことを解析で検査(`E-HULL-LEAK`)。浸水の実際の規則はS-11(`create_submarine`の中身)とS-17で実測する。林さんの説明(このmodが無いと船内に浸水する)は未検証なので、規則として書くのは実測後。
+- **バッテリー(`powergrid`)**: 電気の蓄えは回転ネットワークとは別のモデル。発電・蓄電・消費をどうモデルに入れるかはS-12の確定まで保留。推測で`KineticModel`に混ぜない。
+
+## F-30 既存建築の計測と様式の一致(D-35)
+
+林さんの要件(裁定B): 既存の通路・壁の幅・高さ・材質を認識しないと、既存物とちぐはぐな建築になる。対象は**プレイヤーが手で建てた物も含む**。
+
+- **2つの経路**: (a)このmodが建てた建屋は`PlacedRegistry`と保存済み計画から**正確に**読む。(b)手造りの建物は`ServerStateReader`→`VoxelClassGrid`から**認識**する。認識の結果は`ExistingStructureProfile`に、`confidence`・「分からなかった所」・根拠(`basis`)を必ず付ける。
+- **様式への反映**: `StyleSpec`の`matchExisting`が立つとき、AIの資料に`ExistingStructureProfile`の`StyleObservation`(材質の分布・様式の手がかり)と`PassageProfile`(通路の幅・高さ)が入り、新しい建屋は既存に揃う。認識由来の値を使った計画は`W-STRUCTURE-UNCERTAIN`を出す(推測を黙って使わない)。
+- **限界**: 読むのは区画(`SiteClaim`)の内側だけ・サーバー側だけ。量は`VoxelClassGrid`の作法(F-21)に従う。**認識が実際にどこまでできるかはS-18で先に測り、正確さを設計の約束にするのはその後**。
+- N-36(既存建築の計測)が`SemanticMap`と同じ`VoxelClassGrid`経路を再利用して作る。
+
+## F-31 ゾーンの階層(C4風。D-36)
+
+林さんの要件: 作業量の上限は「文脈の問題」と同じで、C4モデルのように、各ゾーンを「役割・範囲・窓」だけで知る層を設ければ、細かい作業領域をたくさん割り当てずに一貫した建築が作れる。きっかけの事実: 合法な64×64×64の発着場2つでコンパイラの全体予算(400,000回)を超える(台帳T11-3)。
+
+- **4層**: `SITE`(敷地=文脈)→`ZONE`(建屋・庭・港・滑走路=コンテナ)→`COMPONENT`(部屋・モジュール・スロット)→`PART`(部品とセル)。**上位の層が知るのは、下の層の「役割・範囲・窓」だけ**。
+- **窓(`Window`)**: 出入口・物流の通路・動力の通路・発着場の端・水の通路。窓は**粗い層(ゾーン案)で先に固定**し、ゾーン内部の作業は窓を変えられない。接続の両側のゾーンが同じ窓を宣言しないと`E-WINDOW-MISMATCH`。
+- **ゾーン別の予算と解析**: `ZoneBudget`でゾーンごとのコンパイル試行・部品数・セル数を分け、超えたゾーンだけが`E-ZONE-BUDGET`で戻る(全体の上限を1つの巨大ゾーンが食い潰さない)。予算の数値はS-19で実測。
+- **AIの文脈**: AIは計画全体ではなく`ZoneSummary`(役割・範囲・窓・指標・日本語の要約)を読む。ゾーン内の変更は、**そのゾーンの窓への照合だけ**で再検証し、全体を再コンパイルしない。
+- 既存の型との対応: `ZoningPlan`はゾーン層の計画、`BuildingFootprint`/`Corridor`は`ZoneRole.BUILDING`/`ROAD`の中身、`SemanticMap`/`Slot`はCOMPONENT層、`Dock`はPORT/RUNWAYゾーンの窓。F-28の`ReservedSpace`とF-29の`TransportProfile`は、窓とゾーン内の空きの両方で効く。

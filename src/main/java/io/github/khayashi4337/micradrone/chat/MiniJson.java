@@ -1,5 +1,6 @@
 package io.github.khayashi4337.micradrone.chat;
 
+import io.github.khayashi4337.micradrone.build.model.CanonicalJson;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -11,8 +12,9 @@ import java.util.Map;
  * external dependency. Gson ships with NeoForge but isn't on the test sourceSet's runtime
  * classpath (same constraint PlotGeometry documents for net.minecraft.*), and this class exists
  * specifically so JSON parsing stays unit-testable without a real Minecraft/NeoForge runtime.
+ * Public so the Minecraft-free build.* core can read and write JSON without a second parser.
  */
-final class MiniJson {
+public final class MiniJson {
     private final String src;
     private int pos;
 
@@ -21,7 +23,7 @@ final class MiniJson {
     }
 
     /** Serializes a value built from Map/List/String/Number/Boolean/null back to JSON text. */
-    static String write(Object value) {
+    public static String write(Object value) {
         StringBuilder sb = new StringBuilder();
         writeValue(value, sb);
         return sb.toString();
@@ -68,29 +70,11 @@ final class MiniJson {
     }
 
     private static void writeString(String s, StringBuilder sb) {
-        sb.append('"');
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            switch (c) {
-                case '"' -> sb.append("\\\"");
-                case '\\' -> sb.append("\\\\");
-                case '\n' -> sb.append("\\n");
-                case '\t' -> sb.append("\\t");
-                case '\r' -> sb.append("\\r");
-                default -> {
-                    if (c < 0x20) {
-                        sb.append(String.format("\\u%04x", (int) c));
-                    } else {
-                        sb.append(c);
-                    }
-                }
-            }
-        }
-        sb.append('"');
+        CanonicalJson.appendJsonString(s, sb);
     }
 
     /** Parses a single JSON value (object, array, string, number, boolean, or null). */
-    static Object parse(String json) {
+    public static Object parse(String json) {
         MiniJson parser = new MiniJson(json);
         parser.skipWhitespace();
         Object value = parser.parseValue();
@@ -216,15 +200,29 @@ final class MiniJson {
         throw new IllegalArgumentException("expected null at " + pos);
     }
 
-    private Double parseNumber() {
+    /** Integer text parses as a {@link Long} so ids and millis beyond 2^53 keep their digits; '.'/'e'/'E' or an overflow give a {@link Double}. */
+    private Number parseNumber() {
         int start = pos;
+        boolean integer = true;
         while (pos < src.length() && "-+.eE0123456789".indexOf(src.charAt(pos)) >= 0) {
+            char c = src.charAt(pos);
+            if (c == '.' || c == 'e' || c == 'E') {
+                integer = false;
+            }
             pos++;
         }
         if (pos == start) {
             throw new IllegalArgumentException("expected value at " + pos);
         }
-        return Double.parseDouble(src.substring(start, pos));
+        String text = src.substring(start, pos);
+        if (integer) {
+            try {
+                return Long.parseLong(text);
+            } catch (NumberFormatException overflow) {
+                return Double.parseDouble(text);
+            }
+        }
+        return Double.parseDouble(text);
     }
 
     private void expect(char c) {

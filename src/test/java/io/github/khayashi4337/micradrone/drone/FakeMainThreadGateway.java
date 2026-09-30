@@ -12,6 +12,7 @@ import java.util.Deque;
 final class FakeMainThreadGateway implements MainThreadGateway {
     private final Deque<Runnable> queued = new ArrayDeque<>();
     private volatile long tick = 0;
+    private volatile boolean pumping = false;
 
     @Override
     public synchronized void runOnMainThread(Runnable task) {
@@ -23,14 +24,24 @@ final class FakeMainThreadGateway implements MainThreadGateway {
         return tick;
     }
 
+    @Override
+    public boolean isOnMainThread() {
+        return pumping;
+    }
+
     synchronized boolean hasQueuedWork() {
         return !queued.isEmpty();
     }
 
     /** Runs all currently queued main-thread tasks. */
     synchronized void pump() {
-        while (!queued.isEmpty()) {
-            queued.poll().run();
+        pumping = true;
+        try {
+            while (!queued.isEmpty()) {
+                queued.poll().run();
+            }
+        } finally {
+            pumping = false;
         }
     }
 

@@ -7,11 +7,15 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
 /**
- * Runs a task on the render thread and waits (with a timeout) for its result - what
- * BlockSnapshotToolServer's HTTP handler thread uses to read Minecraft world state safely
- * (Codex review finding: never touch ClientLevel from a non-render thread directly). Takes a
- * {@link MainThreadExecutor} rather than calling {@code Minecraft.getInstance()} itself so the
- * timeout/completion logic here stays unit-testable with a fake.
+ * Runs a task on "the" main thread and waits (with a timeout) for its result. Despite the class
+ * name, this is not client-specific: it started as what BlockSnapshotToolServer's HTTP handler
+ * thread uses to read Minecraft world state safely on the render thread (Codex review finding:
+ * never touch ClientLevel from a non-render thread directly), but the logic itself never touches
+ * Minecraft - it only needs a {@link MainThreadExecutor}-shaped way to run a {@link Supplier} - so
+ * {@code drone.ServerBlockSnapshotReader} reuses it verbatim to dispatch onto the server's main
+ * thread instead, via {@code drone.MainThreadGateway::runOnMainThread}. Takes the executor as a
+ * parameter rather than calling {@code Minecraft.getInstance()} itself so the timeout/completion
+ * logic here stays unit-testable with a fake, and reusable outside the client at all.
  */
 public final class ClientMainThreadDispatch {
     private ClientMainThreadDispatch() {

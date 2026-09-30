@@ -11,14 +11,39 @@ import io.github.khayashi4337.micradrone.lang.ast.Stmt;
 /** Recursive-descent parser for the Micra Drone script language (MVP subset). */
 public final class Parser {
     private final List<Token> tokens;
+    /** The nesting limit; {@code <= 0} means unlimited, which is what the farm path keeps. */
+    private final int maxNesting;
     private int pos = 0;
     /** How many enclosing while/for loops the parser is currently inside; reset to 0 for each function body. */
     private int loopDepth = 0;
     /** How many enclosing function bodies the parser is currently inside; used to reject nested def and return-outside-function. */
     private int funcDepth = 0;
+    /** How deep the recursive descent currently sits; only tracked when {@link #maxNesting} limits it. */
+    private int nesting = 0;
 
+    /**
+     * The unlimited parser, kept for the farm path (DroneControllerBlockEntity parses farm
+     * scripts with this constructor and its behaviour must not change). Construction scripts
+     * use {@link #Parser(List, int)} instead.
+     */
     public Parser(List<Token> tokens) {
+        this(tokens, 0);
+    }
+
+    /**
+     * A parser that refuses a script nested deeper than {@code maxNesting} levels. One level is
+     * counted per edge into a nested production: a statement inside an indented block, an
+     * expression inside {@code ()} brackets, a call or method argument, a list/dict/set literal
+     * element or index expression, and each {@code not} or unary {@code +}/{@code -} prefix.
+     * Crossing the limit throws {@link MicraLangException} instead of letting the recursive
+     * descent grow the JVM's stack, whose size differs per calling thread and so cannot be the
+     * bound. Left-associative operator chains are built by loops and never nest here; they are
+     * bounded by measuring the finished tree's depth instead (see AstDepth). {@code maxNesting
+     * <= 0} means no limit at all.
+     */
+    public Parser(List<Token> tokens, int maxNesting) {
         this.tokens = tokens;
+        this.maxNesting = maxNesting;
     }
 
     public List<Stmt> parseProgram() {
@@ -205,10 +230,59 @@ public final class Parser {
         expect(TokenType.INDENT, "indented block");
         List<Stmt> stmts = new ArrayList<>();
         while (!check(TokenType.DEDENT) && !check(TokenType.EOF)) {
-            stmts.add(statement());
+            stmts.add(blockStatement());
         }
         expect(TokenType.DEDENT, "end of indented block");
         return stmts;
+    }
+
+    // ---- nesting accounting ----
+
+    /**
+     * One statement inside an indented block - the recursive edge of {@link #statement()},
+     * counted against {@link #maxNesting}.
+     */
+    private Stmt blockStatement() {
+        enterNesting(peek().line());
+        try {
+            return statement();
+        } finally {
+            leaveNesting();
+        }
+    }
+
+    /**
+     * An expression nested inside brackets, call/method arguments, list/dict/set literal
+     * contents or an index expression - the recursive edges of {@link #expression()}, counted
+     * against {@link #maxNesting}.
+     */
+    private Expr nestedExpression() {
+        enterNesting(peek().line());
+        try {
+            return expression();
+        } finally {
+            leaveNesting();
+        }
+    }
+
+    /**
+     * Counts one more level of nesting; over the limit throws rather than running the descent
+     * off the thread's stack. A no-op for the unlimited parser.
+     */
+    private void enterNesting(int line) {
+        if (maxNesting <= 0) {
+            return;
+        }
+        nesting++;
+        if (nesting > maxNesting) {
+            throw new MicraLangException(line, "nested too deeply (limit " + maxNesting + ")");
+        }
+    }
+
+    private void leaveNesting() {
+        if (maxNesting > 0) {
+            nesting--;
+        }
     }
 
     // ---- expressions (precedence climbing) ----
@@ -238,7 +312,12 @@ public final class Parser {
     private Expr notTest() {
         if (check(TokenType.NOT)) {
             int line = advance().line();
-            return new Expr.Unary("not", notTest(), line);
+            enterNesting(line);
+            try {
+                return new Expr.Unary("not", notTest(), line);
+            } finally {
+                leaveNesting();
+            }
         }
         return comparison();
     }
@@ -279,7 +358,12 @@ public final class Parser {
     private Expr unary() {
         if (checkAny(TokenType.MINUS, TokenType.PLUS)) {
             Token op = advance();
-            return new Expr.Unary(op.lexeme(), unary(), op.line());
+            enterNesting(op.line());
+            try {
+                return new Expr.Unary(op.lexeme(), unary(), op.line());
+            } finally {
+                leaveNesting();
+            }
         }
         return atomTrailer();
     }
@@ -303,7 +387,7 @@ public final class Parser {
             } else if (check(TokenType.LBRACKET)) {
                 int line = peek().line();
                 advance(); // [
-                Expr index = expression();
+                Expr index = nestedExpression();
                 expect(TokenType.RBRACKET, "']'");
                 expr = new Expr.Index(expr, index, line);
             } else if (check(TokenType.DOT)) {
@@ -329,18 +413,18 @@ public final class Parser {
             advance();
             return new Expr.DictLit(new ArrayList<>(), new ArrayList<>(), line);
         }
-        Expr first = expression();
+        Expr first = nestedExpression();
         if (check(TokenType.COLON)) {
             advance();
             List<Expr> keys = new ArrayList<>();
             List<Expr> values = new ArrayList<>();
             keys.add(first);
-            values.add(expression());
+            values.add(nestedExpression());
             while (check(TokenType.COMMA)) {
                 advance();
-                keys.add(expression());
+                keys.add(nestedExpression());
                 expect(TokenType.COLON, "':'");
-                values.add(expression());
+                values.add(nestedExpression());
             }
             expect(TokenType.RBRACE, "'}'");
             return new Expr.DictLit(keys, values, line);
@@ -349,7 +433,7 @@ public final class Parser {
         elements.add(first);
         while (check(TokenType.COMMA)) {
             advance();
-            elements.add(expression());
+            elements.add(nestedExpression());
         }
         expect(TokenType.RBRACE, "'}'");
         return new Expr.SetLit(elements, line);
@@ -359,10 +443,10 @@ public final class Parser {
     private List<Expr> argList() {
         List<Expr> args = new ArrayList<>();
         if (!check(TokenType.RPAREN)) {
-            args.add(expression());
+            args.add(nestedExpression());
             while (check(TokenType.COMMA)) {
                 advance();
-                args.add(expression());
+                args.add(nestedExpression());
             }
         }
         expect(TokenType.RPAREN, "')'");
@@ -398,7 +482,7 @@ public final class Parser {
             }
             case LPAREN -> {
                 advance();
-                Expr inner = expression();
+                Expr inner = nestedExpression();
                 expect(TokenType.RPAREN, "')'");
                 return inner;
             }
@@ -406,10 +490,10 @@ public final class Parser {
                 advance();
                 List<Expr> elements = new ArrayList<>();
                 if (!check(TokenType.RBRACKET)) {
-                    elements.add(expression());
+                    elements.add(nestedExpression());
                     while (check(TokenType.COMMA)) {
                         advance();
-                        elements.add(expression());
+                        elements.add(nestedExpression());
                     }
                 }
                 expect(TokenType.RBRACKET, "']'");

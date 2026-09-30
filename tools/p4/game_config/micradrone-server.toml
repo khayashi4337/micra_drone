@@ -1,0 +1,4 @@
+# Test worlds only: the singleplayer scenarios build a dozen huts as one player, and a finished job keeps its
+# claim (completion condition 14), so the default cap of 8 claims per owner would stop the later scenarios.
+[claims]
+	maxPerOwner = 64

@@ -1,0 +1,422 @@
+package io.github.khayashi4337.micradrone.build.script;
+
+import io.github.khayashi4337.micradrone.build.model.Issue;
+import io.github.khayashi4337.micradrone.build.model.IssueCode;
+import io.github.khayashi4337.micradrone.build.model.PlanPatch;
+import io.github.khayashi4337.micradrone.lang.AstDepth;
+import io.github.khayashi4337.micradrone.lang.Interpreter;
+import io.github.khayashi4337.micradrone.lang.Lexer;
+import io.github.khayashi4337.micradrone.lang.MicraLangException;
+import io.github.khayashi4337.micradrone.lang.Parser;
+import io.github.khayashi4337.micradrone.lang.PlanLimitException;
+import io.github.khayashi4337.micradrone.lang.PlanRunLimits;
+import io.github.khayashi4337.micradrone.lang.PlanValueText;
+import io.github.khayashi4337.micradrone.lang.ast.Stmt;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
+
+/**
+ * Checks and runs construction scripts, in order, into one {@link PlanPatch}. Any problem means
+ * no patch at all.
+ *
+ * <p>The {@link PlanRunLimits} apply PER SCRIPT: every script gets its own {@link Interpreter}
+ * with its own step counter and its own clock, so a run of N scripts can take up to N times
+ * {@code maxSteps} steps and N times {@code maxMillis} milliseconds. The recorder's budgets -
+ * recorded elements, recorded characters and printed characters - are the only RUN-WIDE limits.
+ * A caller that accepts scripts from outside (the future submit command) must therefore bound
+ * the number of scripts and the total wall-clock time itself.
+ *
+ * <p>Runs are serialized process-wide through {@link #RUN_PERMIT}, so at most one run's heap
+ * is ever live IN FLIGHT. One run's heap peak is about 130-160 MB in the worst case the
+ * budgets allow (the recorder's recorded values plus the interpreter's values on the
+ * 128 MiB worker stack): the in-flight work of a permitted run can never be multiplied by
+ * the number of callers asking for one. A RETURNED {@link Result} is a different matter -
+ * a 30,000-op result retains about 17 MiB and up to tens of MiB at the recorder caps, so
+ * callers that keep many results multiply that retained heap themselves (measured:
+ * OutOfMemoryError with 16-32 result-keeping callers at -Xmx256m). The future submit
+ * command must therefore apply or drop each patch promptly instead of collecting results.
+ * The price of the permit is queueing - a caller waiting for the permit may wait for every
+ * run ahead of it, each up to N x {@code maxMillis} - so {@link #run} should be invoked off
+ * the server thread. Calling {@code run} or {@link #runOnWorker} from inside a running body
+ * is NOT supported: the permit is not reentrant and the nested caller would wait on itself
+ * forever.
+ */
+public final class PlanScriptRunner {
+    /**
+     * The longest interpreter message quoted inside an issue. A script error can legitimately
+     * embed a megabyte of rendered value; the issue only keeps a short prefix.
+     */
+    private static final int MAX_ISSUE_DETAIL_CHARS = 400;
+    /**
+     * The longest identifier name quoted inside a forbidden-identifier issue. The script
+     * length cap lets a single name be almost 10,000 characters; the issue keeps only a
+     * short prefix, while a name that fits passes {@link PlanValueText#cut}
+     * byte-identically.
+     */
+    private static final int MAX_VIOLATION_NAME_CHARS = 60;
+    /** Issue-key prefix for a script that failed while it was running. */
+    private static final String RUN_ISSUE_KEY = "run:";
+    /** Issue-key prefix for a script refused while it was being checked (parse, depth, profile). */
+    private static final String SYNTAX_ISSUE_KEY = "syntax:";
+    /** Issue-key prefix for an unexpected RuntimeException on our side of the script boundary. */
+    private static final String INTERNAL_ISSUE_KEY = "internal:";
+    /**
+     * The advice a {@link Double#parseDouble} failure maps to: the source holds a digit that
+     * {@link Character#isDigit} accepts but ASCII-only parsing does not.
+     */
+    private static final String DIGIT_ADVICE = "半角でない数字があります。数字は半角の0〜9で書いてください";
+
+    /**
+     * Deepest parser nesting a construction script may use (see {@link Parser#Parser(List, int)}):
+     * below this the recursive-descent parse stays shallow enough that the parser can never be
+     * what overflows a stack. Left-associative operator chains do not nest while parsing;
+     * {@link #PLAN_MAX_AST_DEPTH} is what bounds them.
+     */
+    public static final int PLAN_MAX_PARSE_NESTING = 100;
+
+    /**
+     * Deepest AST a construction script's program may have. The interpreter and
+     * {@link PlanScriptProfile} recurse over the tree, so this bound is what keeps them inside
+     * the worker thread's stack. A {@code 1+1+...+1} chain of n terms under {@code x = ...}
+     * measures n + 1 deep (the AssignStmt counts one level) and parses without ever nesting,
+     * so it can only be refused by measuring the finished tree, not by the parse limit.
+     */
+    public static final int PLAN_MAX_AST_DEPTH = 200;
+
+    /**
+     * The fixed stack of the dedicated worker thread one whole run happens on. Sized by
+     * measurement, not guesswork: the deep recursive chain the limit was first measured
+     * against ({@code def f(n): return f(n + 1) + 1 + ... + 1} at 196 terms - the Call
+     * node and its {@code n + 1} argument add 2 levels, so the body measures exactly
+     * {@link #PLAN_MAX_AST_DEPTH}) is NOT the deepest program the limits allow. Putting
+     * the {@code for} nest INSIDE {@code f} instead - 96 nested {@code for i in
+     * range(1):} blocks over a 100-term {@code return} chain, the deepest shape the
+     * limits accept - makes every one of the 200 call levels carry ~96 more live
+     * interpreter frames, and that is the larger of the two measured shapes (the same
+     * 98 blocks wrapped around the top-level {@code f(0)} call are entered once and
+     * measure no deeper than the plain chain). The sweeps in
+     * {@code PlanScriptRunnerTest.theWorkerStackCoversTheWorstCaseWithAFourFoldMargin}
+     * (JDK 21, Windows x64) measured roughly 3.5 MiB JIT / 15.00 MiB -Xint for the
+     * chain and 16.25 MiB JIT / 20.00 MiB -Xint for the for-inside-{@code f} shape;
+     * this constant is 6.4x the 20.00 MiB worst measurement, above the required 4x.
+     */
+    static final long PLAN_RUN_STACK_BYTES = 128L * 1024 * 1024;
+
+    /**
+     * The process-wide serialization point of {@link #runOnWorker}: a single FAIR permit, so
+     * callers run in the order they arrived and at most one run's ~130-160 MB heap peak is
+     * live. Acquired before the worker starts and released in a {@code finally}, so the
+     * permit is never held by the caller after the call returns - but it is also not
+     * reentrant, which is why a body must never call back into {@code run}/{@code runOnWorker}.
+     */
+    static final Semaphore RUN_PERMIT = new Semaphore(1, true);
+
+    public record Result(PlanPatch patch, List<Issue> issues, List<String> printed) {
+        public Result {
+            issues = List.copyOf(issues);
+            printed = List.copyOf(printed);
+        }
+
+        public boolean ok() {
+            return patch != null;
+        }
+    }
+
+    private PlanScriptRunner() {
+    }
+
+    /**
+     * Runs the whole batch - every script's parse, depth check, static profile and interpret -
+     * through {@link #runOnWorker}: none of it touches the caller's own stack.
+     */
+    public static Result run(List<String> scripts, String patchId, int baseRevision, String stageId,
+            PlanRunLimits limits) {
+        return runOnWorker(() -> runScripts(scripts, patchId, baseRevision, stageId, limits));
+    }
+
+    /**
+     * Runs {@code body} on ONE dedicated worker thread with the fixed stack of
+     * {@link #PLAN_RUN_STACK_BYTES} and hands back what it produced: a script's outcome must not
+     * depend on how much stack the CALLER happened to have left, and the depth limits are only
+     * meaningful if the stack they were sized against is the stack actually used. The caller
+     * waits on {@code join()} in a loop so an interrupt poked at it mid-run does not lose the
+     * result; the flag is restored on the way out. A {@link RuntimeException} or {@link Error}
+     * thrown inside the worker is rethrown unchanged on the caller thread - the run's own
+     * per-script catches turn script failures into issues before they can reach this boundary.
+     * Package-private so tests can push arbitrary work across this same thread boundary.
+     *
+     * <p>The caller first queues on the fair {@link #RUN_PERMIT} and holds it for the whole
+     * run, so bodies never overlap and only one run's ~130-160 MB heap peak is ever live.
+     * {@link Semaphore#acquireUninterruptibly()} is used exactly like the join loop: an
+     * interrupt poked at the caller while it queues only sets the flag - the wait continues,
+     * the first {@code join()} below then notices it just like a mid-run poke, and the flag
+     * is set again once the result is in. The permit is released in a {@code finally}, so a
+     * body that throws or a worker that fails to start still frees the next caller, and the
+     * caller never returns still holding it. A caller queued behind an in-progress run may
+     * wait for every run ahead of it (each up to scripts x {@code maxMillis}), so invoke this
+     * off the server thread - and a body must never call back into {@code run}/{@code
+     * runOnWorker}, as the permit is not reentrant and it would wait on itself forever.
+     */
+    static <T> T runOnWorker(Supplier<T> body) {
+        RUN_PERMIT.acquireUninterruptibly();
+        try {
+            AtomicReference<T> result = new AtomicReference<>();
+            AtomicReference<Throwable> failure = new AtomicReference<>();
+            Thread worker = new Thread(null, () -> {
+                try {
+                    result.set(body.get());
+                } catch (RuntimeException | Error e) {
+                    failure.set(e);
+                }
+            }, "micra-construction-script", PLAN_RUN_STACK_BYTES);
+            worker.start();
+            boolean interrupted = false;
+            while (true) {
+                try {
+                    worker.join();
+                    break;
+                } catch (InterruptedException e) {
+                    // keep waiting - the result still matters; the flag is restored below
+                    interrupted = true;
+                }
+            }
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            Throwable thrown = failure.get();
+            if (thrown instanceof RuntimeException e) {
+                throw e;
+            }
+            if (thrown != null) {
+                throw (Error) thrown;
+            }
+            return result.get();
+        } finally {
+            RUN_PERMIT.release();
+        }
+    }
+
+    /**
+     * The batch body that {@link #run} executes on its worker thread: parse, depth-check,
+     * profile and run every script against one shared recorder. Package-private so tests can
+     * measure the same work on stacks of a chosen size.
+     */
+    static Result runScripts(List<String> scripts, String patchId, int baseRevision, String stageId,
+            PlanRunLimits limits) {
+        List<Issue> issues = new ArrayList<>();
+        PlanRecorder recorder = new PlanRecorder();
+        for (int n = 0; n < scripts.size(); n++) {
+            int number = n + 1;
+            String label = "スクリプト" + number;
+            try {
+                runScript(scripts.get(n), number, label, recorder, limits, issues);
+            } catch (StackOverflowError e) {
+                // last-resort backstop: the parse-nesting limit, the AST-depth limit and the
+                // worker stack are sized so a script's own work never gets this far - but a
+                // stack overflow anywhere in one script still becomes a limit issue rather
+                // than an Error killing the whole run
+                issues.add(Issue.of(IssueCode.E_SCRIPT_LIMIT, "stack:" + number, List.of(),
+                        label + "は入れ子が深すぎて処理できませんでした"));
+            }
+        }
+        if (issues.stream().anyMatch(Issue::isError)) {
+            return new Result(null, issues, recorder.printed());
+        }
+        return new Result(recorder.toPatch(patchId, baseRevision, stageId), issues, recorder.printed());
+    }
+
+    /**
+     * Checks and runs one script, appending its issues to {@code issues}. Every failure mode is a
+     * recorded issue and the method returns; only an {@link Error} propagates (a
+     * {@link StackOverflowError} from anywhere in the script's work lands in the caller's catch;
+     * anything worse still kills the run).
+     */
+    private static void runScript(String source, int number, String label, PlanRecorder recorder,
+            PlanRunLimits limits, List<Issue> issues) {
+        if (source.length() > PlanScriptWriter.MAX_SCRIPT_CHARS) {
+            issues.add(Issue.of(IssueCode.E_SCRIPT_LIMIT, "length:" + number, List.of(), label + "が長すぎます(" + source.length()
+                    + "字 > " + PlanScriptWriter.MAX_SCRIPT_CHARS + "字)。複数のスクリプトに分けてください"));
+            return;
+        }
+        List<Stmt> program;
+        try {
+            program = new Parser(new Lexer(source).scan(), PLAN_MAX_PARSE_NESTING).parseProgram();
+        } catch (MicraLangException e) {
+            issues.add(Issue.of(IssueCode.E_SCHEMA, SYNTAX_ISSUE_KEY + number, List.of(), label + "の構文エラー: " + detail(e.getMessage())));
+            return;
+        } catch (NumberFormatException e) {
+            // Lexer.number() scans on Character.isDigit - which accepts every Unicode digit -
+            // while Double.parseDouble only understands ASCII 0-9, so a full-width or other
+            // script's digit in a number literal lands here. Report it like a syntax error,
+            // pointing at the line of the first non-ASCII digit in the source.
+            issues.add(Issue.of(IssueCode.E_SCHEMA, SYNTAX_ISSUE_KEY + number, List.of(),
+                    label + nonAsciiDigitMessage(source)));
+            return;
+        } catch (RuntimeException e) {
+            issues.add(internalIssue(number, label, "解析", e));
+            return;
+        }
+        // a left-associative chain parses without nesting, so the parse limit cannot see it;
+        // measure the finished tree instead. This is iterative (see AstDepth) and runs before
+        // the profile's and the interpreter's own recursion
+        int astDepth;
+        List<PlanScriptProfile.Violation> violations;
+        try {
+            astDepth = AstDepth.of(program);
+            violations = PlanScriptProfile.check(program);
+        } catch (RuntimeException e) {
+            issues.add(internalIssue(number, label, "解析", e));
+            return;
+        }
+        if (astDepth > PLAN_MAX_AST_DEPTH) {
+            issues.add(Issue.of(IssueCode.E_SCHEMA, SYNTAX_ISSUE_KEY + number, List.of(),
+                    label + "の構文木が深すぎます(深さ " + astDepth + " > 上限 " + PLAN_MAX_AST_DEPTH + ")"));
+            return;
+        }
+        for (int k = 0; k < violations.size(); k++) {
+            PlanScriptProfile.Violation v = violations.get(k);
+            // a name can be almost the whole 10,000-character script: quote only the same
+            // short prefix in the issue key, the message and the data (short names stay
+            // byte-identical, so exact issue-id lookups still work)
+            String name = PlanValueText.cut(v.name(), MAX_VIOLATION_NAME_CHARS);
+            issues.add(Issue.of(IssueCode.E_SCRIPT_FORBIDDEN,
+                    "forbidden:" + number + ":" + v.line() + ":" + name + ":" + k, List.of(),
+                    label + " " + v.line() + "行目: 建設のスクリプトでは" + name + "は使えません(" + describe(v.reason()) + ")",
+                    Map.of("name", name, "reason", v.reason().name(), "line", String.valueOf(v.line())), List.of()));
+        }
+        if (!violations.isEmpty()) {
+            return;
+        }
+        try {
+            new Interpreter(recorder, limits).run(program);
+        } catch (PlanLimitException e) {
+            issues.add(Issue.of(IssueCode.E_SCRIPT_LIMIT, RUN_ISSUE_KEY + number, List.of(),
+                    label + "が実行の上限を超えました: " + detail(e.getMessage())));
+        } catch (MicraLangException e) {
+            issues.add(Issue.of(IssueCode.E_SCHEMA, RUN_ISSUE_KEY + number, List.of(),
+                    label + "の実行エラー: " + detail(e.getMessage())));
+        } catch (RuntimeException e) {
+            issues.add(internalIssue(number, label, "実行", e));
+        }
+    }
+
+    /** An interpreter/parser message quoted inside an issue, cut so a huge rendered value cannot fill it. */
+    private static String detail(String text) {
+        return PlanValueText.cut(text, MAX_ISSUE_DETAIL_CHARS);
+    }
+
+    /**
+     * The "use half-width digits" advice a {@link Double#parseDouble} failure maps to: names the
+     * 1-based line of the first number token carrying a character that {@link Character#isDigit}
+     * accepts but ASCII-only parsing does not (full-width, Arabic-Indic, Devanagari, ...).
+     * When the scan finds no such token - the exception then came from a path it cannot see -
+     * the line is omitted rather than guessed.
+     */
+    private static String nonAsciiDigitMessage(String source) {
+        int line = nonAsciiDigitLine(source);
+        if (line < 0) {
+            return "に" + DIGIT_ADVICE;
+        }
+        return "の" + line + "行目に" + DIGIT_ADVICE;
+    }
+
+    /**
+     * The 1-based line of the number token {@link Lexer#number} failed to parse, or -1 when
+     * the source has none. Walks the source the way {@link Lexer#scanLineBody} does so legal
+     * digits cannot steal the report: {@code #} runs to the end of the line, a quote opens a
+     * string literal (skipped the way {@link Lexer#string} reads it), a letter or {@code _}
+     * starts an identifier that keeps consuming {@link Character#isLetterOrDigit} and
+     * {@code _} (so a digit inside one is part of the name, never an offender), and only a
+     * digit that STARTS a token is scanned as a number - integer run plus the optional
+     * {@code .} fraction, all on one line since it can hold no {@code \n}. Lines are counted
+     * by {@code \n} only, like the lexer.
+     */
+    private static int nonAsciiDigitLine(String source) {
+        int line = 1;
+        int i = 0;
+        while (i < source.length()) {
+            char c = source.charAt(i);
+            if (c == '\n') {
+                line++;
+                i++;
+            } else if (c == '#') {
+                while (i < source.length() && source.charAt(i) != '\n') {
+                    i++;
+                }
+            } else if (c == '"' || c == '\'') {
+                i = endOfStringLiteral(source, i);
+            } else if (Character.isLetter(c) || c == '_') {
+                do {
+                    i++;
+                } while (i < source.length()
+                        && (Character.isLetterOrDigit(source.charAt(i)) || source.charAt(i) == '_'));
+            } else if (Character.isDigit(c)) {
+                int start = i;
+                while (i < source.length() && Character.isDigit(source.charAt(i))) {
+                    i++;
+                }
+                if (i + 1 < source.length() && source.charAt(i) == '.'
+                        && Character.isDigit(source.charAt(i + 1))) {
+                    i++;
+                    while (i < source.length() && Character.isDigit(source.charAt(i))) {
+                        i++;
+                    }
+                }
+                for (int k = start; k < i; k++) {
+                    if (source.charAt(k) < '0' || source.charAt(k) > '9') {
+                        return line;
+                    }
+                }
+            } else {
+                i++;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * The index just past the string literal opening at {@code quotePos}, read the way
+     * {@link Lexer#string} does: a backslash escape consumes the next character, and a
+     * newline or the end of input ends the literal (the lexer would already have thrown for
+     * that literal before a later digit could matter).
+     */
+    private static int endOfStringLiteral(String source, int quotePos) {
+        char quote = source.charAt(quotePos);
+        int i = quotePos + 1;
+        while (i < source.length()) {
+            char c = source.charAt(i);
+            if (c == quote) {
+                return i + 1;
+            }
+            if (c == '\n') {
+                return i;
+            }
+            i += c == '\\' ? 2 : 1;
+        }
+        return i;
+    }
+
+    /**
+     * An unexpected failure reported like an interpreter-run error: a bug on our side must still
+     * surface as an ordinary issue, not a RuntimeException escaping the run. {@code phase} names
+     * what the script was doing - {@code "解析"} while it was being checked (parse, AST-depth
+     * measurement, static profile), {@code "実行"} while it was running.
+     */
+    private static Issue internalIssue(int number, String label, String phase, RuntimeException e) {
+        return Issue.of(IssueCode.E_SCHEMA, INTERNAL_ISSUE_KEY + number, List.of(),
+                label + "の" + phase + "中に、想定外のエラー: " + detail(String.valueOf(e)));
+    }
+
+    private static String describe(PlanScriptProfile.Reason reason) {
+        return switch (reason) {
+            case NONDETERMINISTIC -> "実行のたびに結果が変わるため";
+            case FARM_COMMAND -> "畑の命令のため。畑と建設は同じスクリプトに混ぜられません";
+            case UNKNOWN -> "知らない命令です";
+            case RESERVED_NAME -> "組み込みの命令と同じ名前の関数は、定義できません";
+        };
+    }
+}

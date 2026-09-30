@@ -7,6 +7,8 @@ import org.slf4j.Logger;
 
 import com.mojang.logging.LogUtils;
 
+import io.github.khayashi4337.micradrone.construction.ConstructionConfig;
+import io.github.khayashi4337.micradrone.construction.ConstructionRuntime;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerBlock;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerBlockEntity;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlock;
@@ -55,6 +57,7 @@ import net.neoforged.bus.api.IEventBus;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.config.ModConfig;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
@@ -172,6 +175,9 @@ public class MicraDrone {
 
         // Register ourselves for server and other game events we are interested in.
         NeoForge.EVENT_BUS.register(this);
+        // The construction runtime's server config (micradrone-server.toml) and its per-server lifecycle.
+        modContainer.registerConfig(ModConfig.Type.SERVER, ConstructionConfig.SPEC);
+        NeoForge.EVENT_BUS.register(ConstructionRuntime.Events.class);
 
         // Add the drone controller to the vanilla "Functional Blocks" creative tab
         modEventBus.addListener(this::addCreative);

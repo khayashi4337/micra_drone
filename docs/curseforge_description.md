@@ -12,6 +12,8 @@ Minecraft: craft a Drone Controller, write a script in a small Python-like
 language, and watch the drone till, plant, and harvest your fields on its
 own. Inspired by the Steam game
 [*The Farmer Was Replaced*](https://store.steampowered.com/app/2060160/The_Farmer_Was_Replaced/).
+This release automates farming, fishing, and rod repair — drone-driven
+building/factory construction is planned for a future update.
 
 ### Features
 
@@ -91,16 +93,19 @@ own. Inspired by the Steam game
   (the Shop screen) to see its current id before using it in a script with
   `get_plot_id()`.
 - **Learn from the enchanting table** — right-click an enchanting table to
-  open its normal vanilla screen, then drag a blank Script Scroll into its
-  item slot: the screen switches to a picker offering starter scripts and a
-  full command reference, unlocked as you surround the table with more
-  bookshelves (exactly like vanilla enchanting), for a lapis lazuli cost.
+  open its normal vanilla screen, then drop a blank Script Scroll into the
+  item slot and lapis lazuli into the lapis slot: the screen switches to a
+  picker once both are in (either order works - a scroll alone does nothing),
+  offering starter scripts and a full command reference, unlocked as you
+  surround the table with more bookshelves (exactly like vanilla enchanting),
+  for a lapis lazuli cost.
   You can also copy an already-written scroll sitting in a chest, shulker
   box, or chiseled bookshelf around the table for a flat 1 lapis.
 - **Write and run right away** — every controller carries its own built-in
-  script ("Controller script", first in the list), so a freshly placed
-  controller can be edited and run with nothing else in hand. Scrolls are
-  for carrying and sharing scripts.
+  script ("Controller script", first in the list), pre-filled with a comment
+  pointing at the main commands and how to get the full reference, so a
+  freshly placed controller can be edited and run with nothing else in hand.
+  Scrolls are for carrying and sharing scripts.
 - **A script library you can carry** — store scrolls in a chest, shulker
   box, or chiseled bookshelf anywhere along the two axis lines from the
   controller toward the corner marker (no need to relocate it if you resize
@@ -166,8 +171,9 @@ own. Inspired by the Steam game
    your choice), then place the marker diagonally from it to size your plot
    (or skip the marker for a default 5x5 area).
 3. Craft a blank **Script Scroll** (3 paper, 1 feather, 1 ink sac). Open a
-   nearby **enchanting table** and drag the scroll into its item slot to
-   learn a starter script or the full command reference.
+   nearby **enchanting table** and drop the scroll into its item slot together
+   with some lapis lazuli to learn a starter script or the full command
+   reference.
 4. Right-click the controller to open the in-game **IDE** and start
    editing/running the script. A redstone signal (a lever, for example)
    next to the controller runs whatever script is currently selected.

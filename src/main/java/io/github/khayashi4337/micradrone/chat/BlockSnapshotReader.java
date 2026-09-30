@@ -11,7 +11,8 @@ import java.util.Optional;
 public interface BlockSnapshotReader {
     /**
      * A human-readable description of the blocks in the (inclusive) range, or empty if any part
-     * of the range isn't currently loaded on the client.
+     * of the range isn't currently loaded in the level this reader reads (client or server,
+     * depending on the implementation).
      */
     Optional<String> read(int x1, int y1, int z1, int x2, int y2, int z2);
 }
