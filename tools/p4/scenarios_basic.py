@@ -31,6 +31,10 @@ class Ctx:
     game: object  # harness.Game
     client: object  # Devkit (client API)
     server: object  # Devkit (server API)
+    setblock_log: list = None  # every setblock a scenario issued, with the command's output (set by __post_init__)
+
+    def __post_init__(self):
+        self.setblock_log = []
 
     def out(self, file):
         return f"{self.name}/{file}"

@@ -9,7 +9,7 @@ import time
 import traceback
 from dataclasses import dataclass
 
-from tools.p4 import devkit_client, evidence, harness, scenarios_basic, scenarios_show
+from tools.p4 import devkit_client, evidence, harness, scenarios_basic, scenarios_l7, scenarios_show
 
 MODES = ("sp", "mp", "mp2")
 RESTART_LIMIT = 1
@@ -29,13 +29,18 @@ SCENARIOS = {
     "hut-here": Scenario(scenarios_basic.hut_here, (1, 12), "sp"),
     "bad-source": Scenario(scenarios_basic.bad_source, (), "sp"),
     "drone-show": Scenario(scenarios_show.drone_show, (1,), "sp"),
+    "l7-repair": Scenario(scenarios_l7.l7_repair, (2, 15), "sp"),
+    "l7-partial": Scenario(scenarios_l7.l7_partial, (2,), "sp"),
+    "terrain-slope": Scenario(scenarios_l7.terrain_slope, (12,), "sp"),
+    "safety-limits": Scenario(scenarios_l7.safety_limits, (8,), "sp"),
+    "survey-pinned": Scenario(scenarios_l7.survey_pinned, (16,), "sp"),
 }
 
 # Design 07 completion conditions with no scenario yet -> the task that completes them.
 # A task that adds its scenario removes its own condition here in the same commit.
 PENDING_CONDITIONS = {
-    2: "Task 21", 3: "Task 29", 4: "Task 28", 6: "Task 34", 7: "Task 28", 8: "Task 30", 9: "Task 32", 10: "Task 33",
-    11: "Task 37", 13: "Task 30", 14: "Task 28", 15: "Task 21", 16: "Task 21",
+    3: "Task 29", 4: "Task 28", 6: "Task 34", 7: "Task 28", 8: "Task 30", 9: "Task 32", 10: "Task 33",
+    11: "Task 37", 13: "Task 30", 14: "Task 28",
 }
 
 
