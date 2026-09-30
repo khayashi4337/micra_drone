@@ -49,6 +49,13 @@ class RepairPromptBuilderTest {
     }
 
     @Test
+    void theRepairPromptRestatesTheWakachiRule() {
+        String prompt = RepairPromptBuilder.build("{\"ops\":[]}", List.of("E-FOO: x is bad"));
+        assertTrue(prompt.contains(BuildPromptBuilder.WAKACHI_RULE),
+                "the corrected reply keeps the same wakachi-gaki one-liner rule");
+    }
+
+    @Test
     void anEmptyIssueListIsRejected() {
         assertThrows(IllegalArgumentException.class,
                 () -> RepairPromptBuilder.build("{}", List.of()));

@@ -15,6 +15,21 @@ public final class BuildPromptBuilder {
      */
     public static final int MAX_REQUEST_CHARS = 4000;
 
+    /**
+     * One-liner rule shared with {@link RepairPromptBuilder}: the hiragana opening line must put
+     * a space between words (wakachi-gaki) so a child can read it. Design source: task M1b,
+     * evidence run-evidence/p4/p4-mvp-007.
+     */
+    static final String WAKACHI_RULE =
+            "ひらがなの短い一言は、ことばの あいだに スペースを いれて(分かち書き)、子供が読める ようにする。例: `やねが あかい こやを つくるよ`";
+
+    /**
+     * Numeric-argument rule pinned to the catalog ranges so the first plan already passes the
+     * server's min/max checks instead of needing a repair round. Design source: task M1b.
+     */
+    private static final String RANGE_RULE =
+            "数値の引数は、上の一覧の最小と最大の範囲を必ず守る。迷ったら見本の値を使う";
+
     private BuildPromptBuilder() {
     }
 
@@ -32,11 +47,13 @@ public final class BuildPromptBuilder {
         return "あなたは、子供のマインクラフトの建築を手伝う先生です。子供の依頼を、下の形のJSONの「計画」に直してください。\n\n"
                 + "返答の規則:\n"
                 + "- 最初に、ひらがなの短い一言(何を建てるか)を書くこと。\n"
+                + "- " + WAKACHI_RULE + "\n"
                 + "- そのあとに、計画のJSONを```jsonブロックでちょうど1つだけ書くこと。\n"
                 + "- JSON以外の説明を長く書かないこと。\n\n"
                 + "計画の形の見本:\n```json\n" + sampleJson + "\n```\n"
                 + "「set_site」の操作は見本のまま変えないこと(サーバーが足元に置き直します)。\n\n"
-                + "使える部品と引数の範囲:\n" + partsCatalog + "\n\n"
+                + "使える部品と引数の範囲:\n" + partsCatalog + "\n"
+                + RANGE_RULE + "\n\n"
                 + "使えるブロック:\n" + allowedBlocks + "\n\n"
                 + "依頼が曖昧でも質問はしないこと。見本の大きさと素材を既定にして、子供らしい妥当な計画を作ること。\n\n"
                 + "子供の依頼:\n" + request + "\n";

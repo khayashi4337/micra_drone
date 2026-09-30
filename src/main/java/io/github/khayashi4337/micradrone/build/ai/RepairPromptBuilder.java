@@ -24,7 +24,8 @@ public final class RepairPromptBuilder {
             throw new IllegalArgumentException("issueLines is empty");
         }
         StringBuilder prompt = new StringBuilder();
-        prompt.append("さっきの計画に問題があった。直したJSONを、同じ規則(返答は```jsonブロックをちょうど1つ)で返して。\n\n");
+        prompt.append("さっきの計画に問題があった。直したJSONを、同じ規則(返答は```jsonブロックをちょうど1つ)で返して。\n");
+        prompt.append(BuildPromptBuilder.WAKACHI_RULE).append("\n\n");
         prompt.append("問題:\n");
         int count = Math.min(issueLines.size(), MAX_ISSUE_LINES);
         for (int i = 0; i < count; i++) {

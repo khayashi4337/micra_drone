@@ -1,5 +1,6 @@
 package io.github.khayashi4337.micradrone.build.ai;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -30,6 +31,31 @@ class BuildPromptBuilderTest {
         assertTrue(prompt.contains("ちょうど1つ"), "exactly one json block is required");
         assertTrue(prompt.contains("set_site"), "the set_site keep-as-is note is required");
         assertTrue(prompt.contains("ひらがな"), "the child-facing one-liner is required");
+    }
+
+    @Test
+    void thePromptStatesTheWakachiRuleForTheOneLiner() {
+        String prompt = BuildPromptBuilder.build(REQUEST, SAMPLE, CATALOG, ALLOWED);
+        assertTrue(prompt.contains(BuildPromptBuilder.WAKACHI_RULE),
+                "the one-liner rule must be the shared wakachi-gaki sentence");
+        assertTrue(prompt.contains("ことばの あいだに スペースを いれて"),
+                "the wakachi-gaki instruction itself must be stated, not just the constant name");
+    }
+
+    @Test
+    void thePromptPinsNumericArgumentsToTheCatalogRange() {
+        String prompt = BuildPromptBuilder.build(REQUEST, SAMPLE, CATALOG, ALLOWED);
+        assertTrue(prompt.contains("数値の引数は、上の一覧の最小と最大の範囲を必ず守る。迷ったら見本の値を使う"),
+                "numeric arguments must stay inside the listed min/max");
+    }
+
+    @Test
+    void theChildRequestMarkerIsLastAndOnlyTheRequestFollowsIt() {
+        String prompt = BuildPromptBuilder.build(REQUEST, SAMPLE, CATALOG, ALLOWED);
+        assertTrue(prompt.endsWith("子供の依頼:\n" + REQUEST + "\n"),
+                "the prompt must end with the marker line and the request verbatim");
+        assertEquals(prompt.indexOf("子供の依頼:"), prompt.lastIndexOf("子供の依頼:"),
+                "the marker must occur exactly once, so the last one is the real one");
     }
 
     @Test
