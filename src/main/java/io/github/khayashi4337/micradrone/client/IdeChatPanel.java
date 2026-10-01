@@ -33,6 +33,7 @@ import io.github.khayashi4337.micradrone.construction.ClientBuildState;
 import io.github.khayashi4337.micradrone.construction.net.BuildApprovePayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildCancelPayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildPlanPayload;
+import io.github.khayashi4337.micradrone.construction.net.BuildRollbackPayload;
 import io.github.khayashi4337.micradrone.drone.CommandsHelpDoc;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerScan;
 import io.github.khayashi4337.micradrone.drone.UnlockShop;
@@ -278,6 +279,9 @@ final class IdeChatPanel {
             case CONSENT_NO -> "gui.micradrone.ide_screen.build_consent_no";
             case BUILD -> "gui.micradrone.ide_screen.build_build";
             case CANCEL -> "gui.micradrone.ide_screen.build_cancel";
+            case UNDO -> "gui.micradrone.ide_screen.build_undo";
+            case UNDO_YES -> "gui.micradrone.ide_screen.build_undo_yes";
+            case UNDO_NO -> "gui.micradrone.ide_screen.build_undo_no";
         };
     }
 
@@ -541,6 +545,8 @@ final class IdeChatPanel {
                         sendApprove.confirmTerraform(), sendApprove.confirmDestructive()));
             } else if (action instanceof BuildChatFlow.SendCancel sendCancel) {
                 PacketDistributor.sendToServer(new BuildCancelPayload(sendCancel.jobId()));
+            } else if (action instanceof BuildChatFlow.SendRollback sendRollback) {
+                PacketDistributor.sendToServer(new BuildRollbackPayload(sendRollback.claimId()));
             } else if (action instanceof BuildChatFlow.Say say) {
                 buildTranscript.add(BUILD_LINE_PREFIX
                         + Component.translatable(say.key(), say.args().toArray()).getString());
@@ -565,6 +571,9 @@ final class IdeChatPanel {
             case CONSENT_NO -> runActions(buildFlow.consent(false));
             case BUILD -> runActions(buildFlow.approve());
             case CANCEL -> runActions(buildFlow.cancel());
+            case UNDO -> runActions(buildFlow.undo());
+            case UNDO_YES -> runActions(buildFlow.undoConfirmed());
+            case UNDO_NO -> runActions(buildFlow.undoCancelled());
         }
     }
 

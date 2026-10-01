@@ -52,6 +52,9 @@
   "gui.micradrone.ide_screen.build_consent_no": "No",
   "gui.micradrone.ide_screen.build_build": "Build",
   "gui.micradrone.ide_screen.build_cancel": "Cancel",
+  "gui.micradrone.ide_screen.build_undo": "Put back",
+  "gui.micradrone.ide_screen.build_undo_yes": "Put back",
+  "gui.micradrone.ide_screen.build_undo_no": "Keep it",
   "gui.micradrone.ide_screen.shop": "Shop",
   "gui.micradrone.ide_screen.loading": "Loading...",
   "gui.micradrone.ide_screen.debug_pause": "Pause",
@@ -202,5 +205,10 @@
   "micradrone.build.chat.partial": "Almost done - %1$s places could not be built.",
   "micradrone.build.chat.busy": "I am still working on another request. Please wait for it.",
   "micradrone.build.chat.cancelled": "Cancelled.",
-  "micradrone.build.chat.approve_refused": "Could not build here. Move somewhere else and try again"
+  "micradrone.build.chat.approve_refused": "Could not build here. Move somewhere else and try again",
+  "micradrone.build.chat.undo_ask": "Really put everything back the way it was? The building will disappear.",
+  "micradrone.build.chat.undoing": "Putting it back (%1$s％)",
+  "micradrone.build.chat.undo_done": "It is back to how it was before.",
+  "micradrone.build.chat.undo_partial": "Almost back - %1$s places could not be put back.",
+  "micradrone.build.chat.undo_refused": "It cannot be put back right now."
 }

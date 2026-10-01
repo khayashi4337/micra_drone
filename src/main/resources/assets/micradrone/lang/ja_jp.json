@@ -88,10 +88,18 @@
   "micradrone.build.chat.busy": "いま べつの おねがいの とちゅうだよ。おわるまで まってね",
   "micradrone.build.chat.cancelled": "やめたよ",
   "micradrone.build.chat.approve_refused": "つくれなかったよ。ばしょを かえて、もういちど ためしてね",
+  "micradrone.build.chat.undo_ask": "ほんとうに もとの けしきに もどす？ たてた ものが きえるよ",
+  "micradrone.build.chat.undoing": "もとに もどしているよ (%1$s％)",
+  "micradrone.build.chat.undo_done": "もとの けしきに もどったよ",
+  "micradrone.build.chat.undo_partial": "ほとんど もどったよ。もどせなかった ところが %1$s こ あるよ",
+  "micradrone.build.chat.undo_refused": "いま もとには もどせないよ",
   "gui.micradrone.ide_screen.build_mode_on": "けんちく オン",
   "gui.micradrone.ide_screen.build_mode_off": "けんちく オフ",
   "gui.micradrone.ide_screen.build_consent_yes": "いいよ",
   "gui.micradrone.ide_screen.build_consent_no": "やめとく",
   "gui.micradrone.ide_screen.build_build": "つくる",
-  "gui.micradrone.ide_screen.build_cancel": "やめる"
+  "gui.micradrone.ide_screen.build_cancel": "やめる",
+  "gui.micradrone.ide_screen.build_undo": "もとにもどす",
+  "gui.micradrone.ide_screen.build_undo_yes": "もどす",
+  "gui.micradrone.ide_screen.build_undo_no": "やめる"
 }
