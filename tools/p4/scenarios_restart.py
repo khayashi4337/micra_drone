@@ -43,8 +43,8 @@ def _live_kind(game):
     raise RuntimeError("no live singleplayer game of this run")
 
 
-def _start_big_build(ctx, name):
-    sx, sy, sz = STANDS[name]
+def _start_big_build(ctx, name, stand=None):
+    sx, sy, sz = stand or STANDS[name]
     patch = plans.hut_patch((sx, sy, sz), "north", width=BIG_WIDTH, depth=BIG_DEPTH, floors=BIG_FLOORS)
     source = _write_plan("p4-big-" + name, patch)
     _prepare_view(ctx)

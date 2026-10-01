@@ -9,7 +9,7 @@ import time
 import traceback
 from dataclasses import dataclass
 
-from tools.p4 import devkit_client, evidence, harness, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_mvp, scenarios_regression, scenarios_restart, scenarios_show
+from tools.p4 import devkit_client, evidence, harness, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_mvp, scenarios_regression, scenarios_restart, scenarios_rollback, scenarios_show
 
 MODES = ("sp", "mp", "mp2")
 RESTART_LIMIT = 1
@@ -30,6 +30,8 @@ SCENARIOS = {
     "hut-golden": Scenario(scenarios_basic.hut_golden, (1,), "sp"),
     "approve-guard": Scenario(scenarios_approval.approve_guard, (5,), "sp"),
     "farm-regression": Scenario(scenarios_regression.farm_regression, (11,), "sp"),
+    "cancel": Scenario(scenarios_rollback.cancel, (4,), "sp"),
+    "rollback": Scenario(scenarios_rollback.rollback, (4, 14), "sp"),
     "restart-resume": Scenario(scenarios_restart.restart_resume, (), "sp", disruptive=True),
     "real-crash-sp": Scenario(scenarios_restart.real_crash_sp, (), "sp", disruptive=True),
     "missing-journal": Scenario(scenarios_restart.missing_journal, (), "sp", disruptive=True),
@@ -50,8 +52,8 @@ SCENARIOS = {
 # Design 07 completion conditions with no scenario yet -> the task that completes them.
 # A task that adds its scenario removes its own condition here in the same commit.
 PENDING_CONDITIONS = {
-    3: "Task 29", 4: "Task 28", 6: "Task 34", 7: "Task 28", 9: "Task 32", 10: "Task 33",
-    13: "Task 30", 14: "Task 28",
+    3: "Task 29", 6: "Task 34", 7: "Task 27", 9: "Task 32", 10: "Task 33",
+    13: "Task 30",
 }
 
 
@@ -60,6 +62,8 @@ PENDING_CONDITIONS = {
 PARTIAL_CONDITIONS = {
     8: "Task 30: block-entity blocks in general (only a chest with items is exercised so far)",
     12: "Task 27: survival - cut blocks gathered to the owner, fill blocks consumed, nothing created or lost",
+    4: "Task 34: the same crash/restart/rollback checks on a dedicated server (needs the owner's EULA file); crash at every boundary",
+    14: "Task 28b: the job files kept until the claim is released and swept at the next start (restart after a rollback not exercised)",
 }
 
 
