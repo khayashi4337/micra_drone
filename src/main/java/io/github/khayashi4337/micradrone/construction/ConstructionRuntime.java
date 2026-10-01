@@ -1022,6 +1022,9 @@ public final class ConstructionRuntime {
                 // the terminal transition pushes too, so the client always sees a job's last document
                 if (status != null) {
                     BuildNetwork.pushProgress(server, job.ownerUuid(), status);
+                } else if (job.state().terminal()) {
+                    // a rollback that finished released its claim and dropped its record: the panel still needs the last document
+                    BuildNetwork.pushFinalProgress(server, job.ownerUuid(), job);
                 }
             }
             for (var item : u.shortage()) {

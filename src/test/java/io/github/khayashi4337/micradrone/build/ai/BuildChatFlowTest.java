@@ -623,6 +623,29 @@ class BuildChatFlowTest {
     }
 
     /** Drives a flow to UNDOING: done build -> undo -> confirm. */
+    /** The document the real game ends an undo with: the ORIGINAL build job of the claim, now ROLLED_BACK (not "done"). */
+    private static String rolledBackJson(String claimId) {
+        return "{\"jobId\":\"job-1\",\"kind\":\"BUILD\",\"claimId\":\"" + claimId + "\",\"state\":\"ROLLED_BACK\","
+                + "\"cursor\":10,\"total\":10,\"percent\":100,\"pause\":null,\"unrepaired\":0,\"conflicts\":0,"
+                + "\"done\":false,\"partial\":false}";
+    }
+
+    @Test
+    void theRolledBackDocumentOfTheSameClaimEndsTheUndo() {
+        // seen in the real game (p4-undo-003): the last document of an undo is the original BUILD job turned ROLLED_BACK
+        BuildChatFlow flow = atUndoing(CLAIM);
+        List<Action> actions = flow.progress(rolledBackJson(CLAIM));
+        assertEquals(State.IDLE, flow.state());
+        assertEquals(List.of(BuildChatFlow.MSG_UNDO_DONE), sayKeys(actions));
+    }
+
+    @Test
+    void aRolledBackDocumentOfAnotherClaimIsIgnored() {
+        BuildChatFlow flow = atUndoing(CLAIM);
+        assertEquals(List.of(), flow.progress(rolledBackJson("claim-other")));
+        assertEquals(State.UNDOING, flow.state());
+    }
+
     private static BuildChatFlow atUndoing(String claimId) {
         BuildChatFlow flow = atDone(claimId);
         flow.undo();

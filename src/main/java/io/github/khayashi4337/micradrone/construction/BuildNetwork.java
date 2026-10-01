@@ -6,6 +6,7 @@ import io.github.khayashi4337.micradrone.chat.MiniJson;
 import io.github.khayashi4337.micradrone.construction.core.ApprovalDecision;
 import io.github.khayashi4337.micradrone.construction.core.ChildMessages;
 import io.github.khayashi4337.micradrone.construction.core.Confirmations;
+import io.github.khayashi4337.micradrone.construction.core.ConstructionJob;
 import io.github.khayashi4337.micradrone.construction.core.ControlResult;
 import io.github.khayashi4337.micradrone.construction.core.JobStatus;
 import io.github.khayashi4337.micradrone.construction.core.OfferView;
@@ -167,6 +168,14 @@ public final class BuildNetwork {
         ServerPlayer player = server.getPlayerList().getPlayer(owner);
         if (player != null) {
             sendProgress(player, status);
+        }
+    }
+
+    /** The last document of a job whose record is already gone (a finished rollback): built from the job itself. */
+    public static void pushFinalProgress(MinecraftServer server, UUID owner, ConstructionJob job) {
+        ServerPlayer player = server.getPlayerList().getPlayer(owner);
+        if (player != null) {
+            PacketDistributor.sendToPlayer(player, new BuildProgressPayload(MiniJson.write(ProgressView.finalTree(job))));
         }
     }
 

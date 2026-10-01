@@ -34,6 +34,19 @@ class ProgressViewTest {
     }
 
     @Test
+    void theFinalDocumentOfAJobWithoutARecordCarriesTheKindTheClaimAndTheEnding() {
+        ConstructionJob job = ConstructionJob.create("job-9", new UUID(0, 1), "minecraft:overworld", "h", JobKind.ROLLBACK, "job-1",
+                40, "claim-job-1", MaterialPolicy.CREATIVE_FREE, 0L, java.util.List.of());
+        Map<String, Object> t = ProgressView.finalTree(job);
+        assertEquals("ROLLBACK", t.get("kind"));
+        assertEquals("claim-job-1", t.get("claimId"));
+        assertEquals("job-9", t.get("jobId"));
+        assertEquals("PENDING_APPROVAL", t.get("state"));
+        assertEquals(false, t.get("done"));
+        assertEquals(0, ((Number) t.get("percent")).intValue());
+    }
+
+    @Test
     void anEmptyJobShowsZeroPercentInsteadOfDividingByZero() {
         Map<String, Object> t = ProgressView.tree(status(JobState.RUNNING, null, 0, 0));
         assertEquals(0, ((Number) t.get("percent")).intValue());

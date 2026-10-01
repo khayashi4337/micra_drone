@@ -31,6 +31,28 @@ public final class ProgressView {
         return t;
     }
 
+    /**
+     * The same document built from the job itself, for the moment its record is already gone: a finished rollback releases its claim
+     * and the service drops the job's record, so no {@link JobStatus} exists to read. {@code unrepaired} and {@code conflicts} are
+     * only known to the record, so they read 0 here (the final document of a VERIFIED job has none anyway).
+     */
+    public static Map<String, Object> finalTree(ConstructionJob job) {
+        Map<String, Object> t = new LinkedHashMap<>();
+        t.put("jobId", job.jobId());
+        t.put("kind", job.kind().name());
+        t.put("claimId", job.claimId());
+        t.put("state", job.state().name());
+        t.put("cursor", (long) job.cursor());
+        t.put("total", (long) job.total());
+        t.put("percent", percent(job.cursor(), job.total()));
+        t.put("pause", job.pauseReason() == null ? null : job.pauseReason().name());
+        t.put("unrepaired", 0L);
+        t.put("conflicts", 0L);
+        t.put("done", job.state() == JobState.VERIFIED);
+        t.put("partial", job.state() == JobState.PARTIAL);
+        return t;
+    }
+
     /** Integer percent of placed blocks; an empty job is 0%, never a division by zero. */
     static long percent(int cursor, int total) {
         return total == 0 ? 0L : cursor * 100L / total;

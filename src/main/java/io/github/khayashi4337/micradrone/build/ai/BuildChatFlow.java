@@ -113,6 +113,7 @@ public final class BuildChatFlow {
     // re-spelled because build.* may not import construction.core.
     private static final String KIND_BUILD = "BUILD";
     private static final String KIND_ROLLBACK = "ROLLBACK";
+    private static final String STATE_ROLLED_BACK = "ROLLED_BACK";
 
     /**
      * The pause lines the status command already shows ({@code ChildMessages.pause(PauseReason)}
@@ -481,6 +482,14 @@ public final class BuildChatFlow {
             tree = mapAt(MiniJson.parse(progressJson), "progress");
         } catch (RuntimeException malformed) {
             return List.of(); // a broken doc is not worth failing the undo over
+        }
+        // an undo ends with the claim's ORIGINAL build job turning ROLLED_BACK (measured in the real game); that document is not
+        // a rollback job's own, so it is recognised by its state and the claim it belongs to
+        String docState = tree.get("state") instanceof String s ? s : null;
+        String docClaim = tree.get("claimId") instanceof String c ? c : null;
+        if (STATE_ROLLED_BACK.equals(docState) && docClaim != null && docClaim.equals(doneClaimId)) {
+            state = State.IDLE;
+            return List.of(say(MSG_UNDO_DONE));
         }
         String kind = tree.get("kind") instanceof String s ? s : null;
         if (!KIND_ROLLBACK.equals(kind)) {
