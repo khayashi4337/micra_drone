@@ -105,9 +105,15 @@ public final class BuildCommands {
 
     /** permissions.level of micradrone-server.toml (F-4(d)): ALL opens submit/approve to every player. */
     private static boolean maySubmit(CommandSourceStack source) {
+        ServerPlayer player = source.getPlayer();
+        return player != null && maySubmit(player);
+    }
+
+    /** The same submit gate for a payload's player ({@link BuildNetwork}); a non-player never passes. */
+    static boolean maySubmit(ServerPlayer player) {
         int level = ConstructionConfig.permissionLevel() == ConstructionConfig.PermissionLevel.OP
                 ? Commands.LEVEL_GAMEMASTERS : Commands.LEVEL_ALL;
-        return source.getPlayer() != null && source.hasPermission(level);
+        return player.hasPermissions(level);
     }
 
     private static int submit(CommandContext<CommandSourceStack> ctx, boolean relocate) {
@@ -118,6 +124,8 @@ public final class BuildCommands {
         if (player == null || runtime == null) {
             return 0;
         }
+        // M2b: a submission over a command returns the owner's chat to the command lines
+        runtime.markCommand(player.getUUID());
         String json = readSource(player, server, StringArgumentType.getString(ctx, "source"));
         if (json == null) {
             return 0;
@@ -134,15 +142,23 @@ public final class BuildCommands {
         }
         PlanSubmission submission = result.submission();
         if (relocate) {
-            SemanticPlan moved = moveToFeet(player, submission.plan());
-            if (moved == null) {
+            submission = relocatedSubmission(player, submission);
+            if (submission == null) {
                 return 0;
             }
-            submission = new PlanSubmission(moved, submission.templates(), submission.kind(),
-                    submission.parentJobId(), submission.claimId());
         }
         runtime.submit(player, submission);
         return Command.SINGLE_SUCCESS;
+    }
+
+    /**
+     * submit-here for both entry points (the command and {@link BuildNetwork}'s {@code here} flag):
+     * the same plan with its site moved under the player's feet, or null after the refusal line.
+     */
+    static PlanSubmission relocatedSubmission(ServerPlayer player, PlanSubmission submission) {
+        SemanticPlan moved = moveToFeet(player, submission.plan());
+        return moved == null ? null : new PlanSubmission(moved, submission.templates(), submission.kind(),
+                submission.parentJobId(), submission.claimId());
     }
 
     /**

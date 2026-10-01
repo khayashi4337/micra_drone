@@ -52,6 +52,10 @@ KINDS = {
 PREPARE_TASKS = ["dumpP4LaunchInfo"]
 DEV_LAUNCH_MAIN = "net.neoforged.devlaunch.Main"
 WM_CLOSE = 0x0010
+CLAUDE_STUB = "stub"
+CLAUDE_REAL = "real"
+CLAUDE_NONE = "none"  # no claude on PATH at all: the panel must say so in Japanese
+STUB_BIN_DIR = Path(__file__).resolve().parent / "stub_bin"
 
 
 class PortBusyError(Exception):
@@ -136,7 +140,7 @@ def _visible_windows_of(pid):
 
 
 class Game:
-    def __init__(self, run_id, folder):
+    def __init__(self, run_id, folder, claude_mode=CLAUDE_STUB):
         self.run_id = run_id
         self.folder = folder  # RunFolder (evidence)
         self.children = []  # every Popen this run started
@@ -144,6 +148,7 @@ class Game:
         self.commands = {}
         self.java = None
         self.crash_reports_before = {}
+        self.claude_mode = claude_mode
 
     # ---- preparation (Gradle runs here, once, and is gone before any game starts) ----
     def prepare(self):
@@ -218,6 +223,18 @@ class Game:
     def _args_file(run, suffix):
         return MODDEV_DIR / f"{run}{suffix}.txt"
 
+    def _game_env(self):
+        """The game finds the Claude CLI as a bare `claude` on PATH. In stub mode a canned claude.cmd goes first, so the
+        AI step is deterministic; in real mode PATH is untouched and the installed CLI answers."""
+        env = os.environ.copy()
+        if self.claude_mode == CLAUDE_STUB:
+            env["PATH"] = str(STUB_BIN_DIR) + os.pathsep + env.get("PATH", "")
+        elif self.claude_mode == CLAUDE_NONE:
+            kept = [d for d in env.get("PATH", "").split(os.pathsep)
+                    if d and not any((Path(d) / f"claude{ext}").exists() for ext in ("", ".cmd", ".exe", ".bat", ".ps1"))]
+            env["PATH"] = os.pathsep.join(kept)
+        return env
+
     # ---- start / wait / close ----
     def _start(self, kind):
         run, folder, _ = KINDS[kind]
@@ -231,10 +248,10 @@ class Game:
                DEV_LAUNCH_MAIN, f"@{self._args_file(run, 'RunProgramArgs')}"]
         self.commands[kind] = cmd
         log = open(cwd / f"console-{kind}.log", "wb")
-        proc = subprocess.Popen(cmd, cwd=cwd, stdout=log, stderr=subprocess.STDOUT)
+        proc = subprocess.Popen(cmd, cwd=cwd, stdout=log, stderr=subprocess.STDOUT, env=self._game_env())
         self.children.append(proc)
         self.procs[kind] = proc
-        self.folder.write_json(f"launch-{kind}.json", {"cmd": cmd, "cwd": str(cwd), "pid": proc.pid})
+        self.folder.write_json(f"launch-{kind}.json", {"cmd": cmd, "cwd": str(cwd), "pid": proc.pid, "claude": self.claude_mode})
         return proc
 
     def start_client(self, kind):

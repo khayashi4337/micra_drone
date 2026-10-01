@@ -7,8 +7,14 @@ import org.slf4j.Logger;
 
 import com.mojang.logging.LogUtils;
 
+import io.github.khayashi4337.micradrone.construction.BuildNetwork;
 import io.github.khayashi4337.micradrone.construction.ConstructionConfig;
 import io.github.khayashi4337.micradrone.construction.ConstructionRuntime;
+import io.github.khayashi4337.micradrone.construction.net.BuildApprovePayload;
+import io.github.khayashi4337.micradrone.construction.net.BuildCancelPayload;
+import io.github.khayashi4337.micradrone.construction.net.BuildOfferPayload;
+import io.github.khayashi4337.micradrone.construction.net.BuildPlanPayload;
+import io.github.khayashi4337.micradrone.construction.net.BuildProgressPayload;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerBlock;
 import io.github.khayashi4337.micradrone.drone.CornerMarkerBlockEntity;
 import io.github.khayashi4337.micradrone.drone.DroneControllerBlock;
@@ -225,10 +231,15 @@ public class MicraDrone {
         registrar.playToServer(SetBreakpointsPayload.TYPE, SetBreakpointsPayload.STREAM_CODEC, MicraDrone::handleSetBreakpoints);
         registrar.playToServer(DebugCommandPayload.TYPE, DebugCommandPayload.STREAM_CODEC, MicraDrone::handleDebugCommand);
         registrar.playToServer(StopViewingPayload.TYPE, StopViewingPayload.STREAM_CODEC, MicraDrone::handleStopViewing);
+        registrar.playToServer(BuildPlanPayload.TYPE, BuildPlanPayload.STREAM_CODEC, BuildNetwork::handlePlan);
+        registrar.playToServer(BuildApprovePayload.TYPE, BuildApprovePayload.STREAM_CODEC, BuildNetwork::handleApprove);
+        registrar.playToServer(BuildCancelPayload.TYPE, BuildCancelPayload.STREAM_CODEC, BuildNetwork::handleCancel);
         registrar.playToClient(DroneLogPayload.TYPE, DroneLogPayload.STREAM_CODEC, MicraDroneClient::handleDroneLog);
         registrar.playToClient(ShopStatePayload.TYPE, ShopStatePayload.STREAM_CODEC, MicraDroneClient::handleShopState);
         registrar.playToClient(ScriptSourcePayload.TYPE, ScriptSourcePayload.STREAM_CODEC, MicraDroneClient::handleScriptSource);
         registrar.playToClient(DebugStatePayload.TYPE, DebugStatePayload.STREAM_CODEC, MicraDroneClient::handleDebugState);
+        registrar.playToClient(BuildOfferPayload.TYPE, BuildOfferPayload.STREAM_CODEC, MicraDroneClient::handleBuildOffer);
+        registrar.playToClient(BuildProgressPayload.TYPE, BuildProgressPayload.STREAM_CODEC, MicraDroneClient::handleBuildProgress);
     }
 
     /**

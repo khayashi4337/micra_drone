@@ -1,8 +1,10 @@
 package io.github.khayashi4337.micradrone.construction.core;
 
+import io.github.khayashi4337.micradrone.build.ai.BuildChatFlow;
 import io.github.khayashi4337.micradrone.build.model.Issue;
 import io.github.khayashi4337.micradrone.build.model.IssueCode;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
 import java.util.TreeSet;
@@ -40,9 +42,19 @@ public final class ChildMessages {
             IssueCode.E_TERRAFORM_UNCONFIRMED, IssueCode.E_REPLACE_UNCONFIRMED, IssueCode.E_CLAIM_OVERLAP,
             IssueCode.E_CLAIM_LIMIT, IssueCode.E_CLAIM_INVALID, IssueCode.E_REGISTRY_VERSION, IssueCode.E_TEMPLATE_UNVERIFIED,
             IssueCode.E_SITE_MISSING, IssueCode.E_PARAM_RANGE, IssueCode.E_UNKNOWN_PART);
-    private static final Set<String> FIXED = Set.of(SUBMIT_OK, SUBMIT_ISSUES, SUBMIT_BUSY, SUBMIT_BAD_SOURCE, APPROVE_OK,
-            PROGRESS, DONE, PARTIAL, CONFLICTS, SHORTAGE, CANCELLED, RESUMED, STATUS_LINE, NO_JOBS, TERRAIN_CONFIRM,
-            DESTRUCTIVE_CONFIRM, ISSUE_OTHER, ISSUE_SITE_UNLOADED, DRONE_ARRIVED, RECOVER_ASK);
+    // FIXED also lists every micradrone.build.chat.* key the build-chat flow can emit (P4 task M3):
+    // the flow carries them as plain strings (build.* may not import construction.core), so this
+    // addAll is the one place the two sides are tied together for the ChildMessagesTest checks.
+    private static final Set<String> FIXED = fixedKeys();
+
+    private static Set<String> fixedKeys() {
+        Set<String> out = new HashSet<>(Set.of(SUBMIT_OK, SUBMIT_ISSUES, SUBMIT_BUSY,
+                SUBMIT_BAD_SOURCE, APPROVE_OK, PROGRESS, DONE, PARTIAL, CONFLICTS, SHORTAGE,
+                CANCELLED, RESUMED, STATUS_LINE, NO_JOBS, TERRAIN_CONFIRM, DESTRUCTIVE_CONFIRM,
+                ISSUE_OTHER, ISSUE_SITE_UNLOADED, DRONE_ARRIVED, RECOVER_ASK));
+        out.addAll(BuildChatFlow.CHAT_MESSAGE_KEYS);
+        return out;
+    }
     /** An issue's id carries its key after this marker (see {@code Issue.of}). */
     private static final String ID_KEY_MARKER = "#";
 

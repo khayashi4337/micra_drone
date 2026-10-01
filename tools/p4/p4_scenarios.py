@@ -9,7 +9,7 @@ import time
 import traceback
 from dataclasses import dataclass
 
-from tools.p4 import devkit_client, evidence, harness, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_show
+from tools.p4 import devkit_client, evidence, harness, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_mvp, scenarios_regression, scenarios_show
 
 MODES = ("sp", "mp", "mp2")
 RESTART_LIMIT = 1
@@ -21,12 +21,18 @@ class Scenario:
     conditions: tuple
     mode: str
     owner_only_reason: "str | None" = None
+    claude: "str | None" = None  # the Claude mode the game needs (stub / real / none); None = the --claude option
 
 
 SCENARIOS = {
     "devkit-smoke": Scenario(scenarios_basic.devkit_smoke, (), "sp"),
     "hut-golden": Scenario(scenarios_basic.hut_golden, (1,), "sp"),
     "approve-guard": Scenario(scenarios_approval.approve_guard, (5,), "sp"),
+    "farm-regression": Scenario(scenarios_regression.farm_regression, (11,), "sp"),
+    "mvp-japanese-hut": Scenario(scenarios_mvp.mvp_japanese_hut, (), "sp"),
+    "mvp-site-blocked": Scenario(scenarios_mvp.mvp_site_blocked, (), "sp"),
+    "mvp-japanese-hut-real": Scenario(scenarios_mvp.mvp_japanese_hut, (), "sp", claude=harness.CLAUDE_REAL),
+    "mvp-cli-missing": Scenario(scenarios_mvp.mvp_cli_missing, (), "sp", claude=harness.CLAUDE_NONE),
     "hut-here": Scenario(scenarios_basic.hut_here, (1, 12), "sp"),
     "bad-source": Scenario(scenarios_basic.bad_source, (), "sp"),
     "drone-show": Scenario(scenarios_show.drone_show, (1,), "sp"),
@@ -41,7 +47,7 @@ SCENARIOS = {
 # A task that adds its scenario removes its own condition here in the same commit.
 PENDING_CONDITIONS = {
     3: "Task 29", 4: "Task 28", 6: "Task 34", 7: "Task 28", 9: "Task 32", 10: "Task 33",
-    11: "Task 37", 13: "Task 30", 14: "Task 28",
+    13: "Task 30", 14: "Task 28",
 }
 
 
@@ -80,38 +86,71 @@ def _start_singleplayer(game, run_id, kind="sp"):
     return client, server
 
 
-def run_mode_sp(game, folder, names):
+def _start_with_one_retry(game, folder, kind):
+    """A NeoForge start sometimes dies before its API answers (seen once: 'unbound value neoforge:swim_speed' while modded
+    registries load). Retry ONCE and write the fact down; a second crash is a real failure."""
+    try:
+        return _start_singleplayer(game, folder.run_id, kind)
+    except harness.GameCrashedError as first:
+        folder.write_text(f"start-retry-{kind}.txt", f"the game crashed before its API answered: {first}\nretrying once\n")
+        game.collect_logs(target=f"logs/crashed-start-{kind}")
+        return _start_singleplayer(game, folder.run_id, kind)
+
+
+def _groups_by_claude(names, default):
+    """Scenario names grouped by the Claude mode their game needs, in order of first appearance."""
+    groups = {}
+    for name in names:
+        groups.setdefault(SCENARIOS[name].claude or default, []).append(name)
+    return groups
+
+
+def run_mode_sp(game, folder, names, default_claude=harness.CLAUDE_STUB):
+    """Runs singleplayer scenarios. The game's PATH decides which `claude` answers, so scenarios that need another Claude
+    mode run in their own game start (the saved world p4-auto is re-opened with --quickPlaySingleplayer)."""
     restarts = 0
     client = server = None
-    for name in names:
-        scenario = SCENARIOS[name]
-        try:
-            if client is None:
-                client, server = _start_singleplayer(game, folder.run_id)
-            ctx = scenarios_basic.Ctx(name, folder, game, client, server)
-            files = scenario.func(ctx)
-            folder.record(name, scenario.conditions, evidence.PASS, "", files)
-            print(f"PASS  {name}")
-        except Exception as e:
-            traceback.print_exc()
-            folder.write_text(f"{name}/failure.txt", traceback.format_exc())
-            folder.record(name, scenario.conditions, evidence.FAIL, f"{type(e).__name__}: {e}"[:500])
-            print(f"FAIL  {name}: {e}")
-            if isinstance(e, (harness.GameCrashedError, devkit_client.ForeignGameError)) or \
-                    game.procs.get("sp") is None or game.procs["sp"].poll() is not None:
-                restarts += 1
-                client = server = None
-                if restarts > RESTART_LIMIT:
-                    for rest in names[names.index(name) + 1:]:
-                        folder.record(rest, SCENARIOS[rest].conditions, evidence.NOT_RUN, "game crashed twice")
-                    return
+    kind = "sp"
+    for group_index, (mode, group) in enumerate(_groups_by_claude(names, default_claude).items()):
+        if group_index > 0:
+            try:
+                game.collect_logs(target=f"logs/before-group-{group_index}")  # the next start rotates latest.log away
+                game.close_client(kind)
+            except Exception:
+                traceback.print_exc()
+            client = server = None
+            kind = "sp-load"
+        game.claude_mode = mode
+        for name in group:
+            scenario = SCENARIOS[name]
+            try:
+                if client is None:
+                    client, server = _start_with_one_retry(game, folder, kind)
+                ctx = scenarios_basic.Ctx(name, folder, game, client, server)
+                files = scenario.func(ctx)
+                folder.record(name, scenario.conditions, evidence.PASS, "", files)
+                print(f"PASS  {name}")
+            except Exception as e:
+                traceback.print_exc()
+                folder.write_text(f"{name}/failure.txt", traceback.format_exc())
+                folder.record(name, scenario.conditions, evidence.FAIL, f"{type(e).__name__}: {e}"[:500])
+                print(f"FAIL  {name}: {e}")
+                if isinstance(e, (harness.GameCrashedError, devkit_client.ForeignGameError)) or \
+                        game.procs.get(kind) is None or game.procs[kind].poll() is not None:
+                    restarts += 1
+                    client = server = None
+                    if restarts > RESTART_LIMIT:
+                        pending = [n for n in names if n not in folder.scenarios]
+                        for rest in pending:
+                            folder.record(rest, SCENARIOS[rest].conditions, evidence.NOT_RUN, "game crashed twice")
+                        return
 
 
 def run(args):
     harness.main_guard()
     run_id = args.run_id or time.strftime("p4-%Y%m%d-%H%M%S")
     folder = evidence.RunFolder(run_id, partial=PARTIAL_CONDITIONS)
-    game = harness.Game(run_id, folder)
+    game = harness.Game(run_id, folder, claude_mode=args.claude)
     names = _select(args)
     try:
         harness.preflight()
@@ -122,7 +161,7 @@ def run(args):
         sp = [n for n in names if SCENARIOS[n].mode == "sp"]
         others = [n for n in names if SCENARIOS[n].mode != "sp"]
         if sp:
-            run_mode_sp(game, folder, sp)
+            run_mode_sp(game, folder, sp, default_claude=args.claude)
         for name in others:
             reason = "eula" if not game.eula_present() else "not implemented yet"
             folder.record(name, SCENARIOS[name].conditions, evidence.NOT_RUN, reason)
@@ -160,6 +199,8 @@ def main(argv=None):
     group.add_argument("--only", help="comma-separated scenario names")
     parser.add_argument("--mode", choices=("sp", "mp", "mp2", "all"), default="all")
     parser.add_argument("--run-id")
+    parser.add_argument("--claude", choices=(harness.CLAUDE_STUB, harness.CLAUDE_REAL, harness.CLAUDE_NONE), default=harness.CLAUDE_STUB,
+                        help="stub: a canned claude.cmd answers (deterministic); real: the installed Claude CLI answers")
     return run(parser.parse_args(argv))
 
 

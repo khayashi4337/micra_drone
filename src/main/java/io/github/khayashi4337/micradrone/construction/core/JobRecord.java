@@ -2,6 +2,7 @@ package io.github.khayashi4337.micradrone.construction.core;
 
 import io.github.khayashi4337.micradrone.build.compile.PlacementManifest;
 import io.github.khayashi4337.micradrone.build.model.Box;
+import io.github.khayashi4337.micradrone.build.model.IntPos;
 import io.github.khayashi4337.micradrone.build.verify.Deviation;
 import io.github.khayashi4337.micradrone.build.verify.SnapshotCollector;
 import java.util.ArrayList;
@@ -37,6 +38,14 @@ public final class JobRecord {
     long lastDroneTick = Long.MIN_VALUE / 2;
     long admittedOrder;
     long pausedAtTick;
+    /** Loaded with files older than the log: its log part must be folded in before the job may move again. */
+    boolean recoveryPending;
+    /** The log part after the last durable point that waits for the owner's answer (pending_log.bin), or empty. */
+    List<WalEntry> pendingLog = List.of();
+    /** Containers whose dropped contents a crash may have lost (shown by status --debug). */
+    List<IntPos> possiblyLostDrops = List.of();
+    /** Some of its files could not be read: the job never runs silently, the owner chooses repair or fail. */
+    boolean broken;
 
     public JobRecord(ConstructionJob job, PlacementManifest manifest, Map<String, String> nodeTypes, JobProgram program,
                      Journal journal, JobOutcome outcome, Box operatingBox) {
@@ -104,5 +113,18 @@ public final class JobRecord {
 
     public long lastDroneTick() {
         return lastDroneTick;
+    }
+
+    public boolean recoveryPending() {
+        return recoveryPending;
+    }
+
+    /** Marks a loaded job as needing its part of the write-ahead log folded in before it may move again. */
+    public void requireRecovery() {
+        recoveryPending = true;
+    }
+
+    public List<IntPos> possiblyLostDrops() {
+        return possiblyLostDrops;
     }
 }

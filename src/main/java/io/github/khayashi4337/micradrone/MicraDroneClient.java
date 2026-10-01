@@ -8,6 +8,9 @@ import io.github.khayashi4337.micradrone.client.IdeScreen;
 import io.github.khayashi4337.micradrone.client.RegionPointerListener;
 import io.github.khayashi4337.micradrone.client.RegionSelectionRenderer;
 import io.github.khayashi4337.micradrone.client.ShopScreen;
+import io.github.khayashi4337.micradrone.construction.ClientBuildState;
+import io.github.khayashi4337.micradrone.construction.net.BuildOfferPayload;
+import io.github.khayashi4337.micradrone.construction.net.BuildProgressPayload;
 import io.github.khayashi4337.micradrone.drone.net.DebugStatePayload;
 import io.github.khayashi4337.micradrone.drone.net.DroneLogPayload;
 import io.github.khayashi4337.micradrone.drone.net.ScriptSourcePayload;
@@ -54,8 +57,9 @@ public class MicraDroneClient {
         // trace says what was actually dropped.
         NeoForge.EVENT_BUS.addListener((ClientPlayerNetworkEvent.LoggingOut event) -> {
             IdeScreen.clearIdeSessionCaches();
+            ClientBuildState.clear();
             MicraDrone.LOGGER.info(
-                    "MicraDrone: cleared unsaved IDE drafts and undo histories on world/server logout");
+                    "MicraDrone: cleared unsaved IDE drafts, undo histories and build state on world/server logout");
         });
     }
 
@@ -129,6 +133,16 @@ public class MicraDroneClient {
             screen.updateDebugState(payload.pos(), payload.state(), payload.currentLine(), payload.breakpoints(),
                     payload.breakpointRevision());
         }
+    }
+
+    /** Registered as the BuildOfferPayload handler: keeps the newest offer for the build screen (M3). */
+    public static void handleBuildOffer(BuildOfferPayload payload, IPayloadContext context) {
+        ClientBuildState.offer(payload.offerJson());
+    }
+
+    /** Registered as the BuildProgressPayload handler: keeps the newest progress for the build screen (M3). */
+    public static void handleBuildProgress(BuildProgressPayload payload, IPayloadContext context) {
+        ClientBuildState.progress(payload.progressJson());
     }
 
 }
