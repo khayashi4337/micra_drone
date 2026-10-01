@@ -823,6 +823,41 @@ public final class ConstructionRuntime {
     }
 
     /**
+     * The owner's (or an operator's) ask to undo a claim (04 F-14). F-5's confirmation stand-in: without
+     * {@code confirm} the answer is only how many blocks would come out, decided by the same check the run would
+     * pass; with it, the ROLLBACK job is made (its id comes from {@link #nextJobId} like an approval's) and the
+     * answer is the new job's own status line.
+     */
+    public ControlResult rollback(UUID requester, boolean op, String claimId, boolean confirm) {
+        if (!confirm) {
+            ControlResult check = service.checkRollback(claimId, requester, op);
+            if (check != ControlResult.OK) {
+                tell(requester, MessageKey.of(ChildMessages.control(check)));
+                return check;
+            }
+            tell(requester, MessageKey.of(ChildMessages.ROLLBACK_ASK, service.rollbackPlan(claimId).size(), claimId));
+            return ControlResult.OK;
+        }
+        if (recordingFailed) {
+            // like approve: a job whose first file cannot be written must not enter the service at all
+            tell(requester, MessageKey.of(ChildMessages.HALTED));
+            return ControlResult.WRONG_STATE;
+        }
+        String newJobId = nextJobId();
+        ControlResult result = service.rollback(claimId, requester, op, newJobId, server.getTickCount());
+        if (result == ControlResult.OK) {
+            saveJob(newJobId);
+            JobStatus created = service.status(newJobId).orElse(null);
+            if (created != null) {
+                tell(requester, ChildMessages.STATUS_LINE, ServerMessages.status(created));
+            }
+        } else {
+            tell(requester, MessageKey.of(ChildMessages.control(result)));
+        }
+        return result;
+    }
+
+    /**
      * The devkit's crash barrier (Task 25): installed on the log and, when the sink is the file one, inside it for
      * the mid-frame point - and only while {@code -Dmicradrone.devBarriers=true}; without the property the call is a
      * no-op, so a production server can never be held by it.

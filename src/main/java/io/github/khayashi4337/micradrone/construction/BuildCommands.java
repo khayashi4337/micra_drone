@@ -102,6 +102,12 @@ public final class BuildCommands {
                         .requires(src -> src.getPlayer() != null)
                         .then(Commands.argument("jobId", StringArgumentType.word())
                                 .executes(BuildCommands::verify)))
+                .then(Commands.literal("rollback")
+                        .requires(src -> src.getPlayer() != null)
+                        .then(Commands.argument("claimId", StringArgumentType.word())
+                                .executes(ctx -> rollback(ctx, false))
+                                .then(Commands.literal("confirm")
+                                        .executes(ctx -> rollback(ctx, true)))))
                 .then(Commands.literal("recover")
                         .requires(src -> src.getPlayer() != null)
                         .then(Commands.argument("jobId", StringArgumentType.word())
@@ -385,6 +391,23 @@ public final class BuildCommands {
         }
         runtime.verify(player.getUUID(), player.hasPermissions(Commands.LEVEL_GAMEMASTERS),
                 StringArgumentType.getString(ctx, "jobId"));
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /**
+     * Owner-or-operator is judged by {@code JobService.rollback} itself (D-12); the command only relays.
+     * Without {@code confirm} the answer is the preview of how many blocks come out (F-5's confirmation stand-in);
+     * with it, the ROLLBACK job runs.
+     */
+    private static int rollback(CommandContext<CommandSourceStack> ctx, boolean confirm) {
+        CommandSourceStack source = ctx.getSource();
+        ServerPlayer player = source.getPlayer();
+        ConstructionRuntime runtime = ConstructionRuntime.of(source.getServer()).orElse(null);
+        if (player == null || runtime == null) {
+            return 0;
+        }
+        runtime.rollback(player.getUUID(), player.hasPermissions(Commands.LEVEL_GAMEMASTERS),
+                StringArgumentType.getString(ctx, "claimId"), confirm);
         return Command.SINGLE_SUCCESS;
     }
 

@@ -37,6 +37,8 @@ public final class ChildMessages {
     public static final String DRONE_ARRIVED = PREFIX + "drone.arrived";
     /** A job whose log after the last durable point waits for its owner's answer (adopt or discard). Task 24. */
     public static final String RECOVER_ASK = PREFIX + "recover.ask";
+    /** The rollback preview (F-5's confirmation stand-in): how many blocks come out, and the confirm form. Task 28. */
+    public static final String ROLLBACK_ASK = PREFIX + "rollback.ask";
     /** The one line for a runtime that stopped because its records could not be written (Task 25). */
     public static final String HALTED = PREFIX + "halted";
     public static final Set<IssueCode> P4_ISSUES = EnumSet.of(IssueCode.E_SITE_BLOCKED, IssueCode.E_SITE_CHANGED,
@@ -53,7 +55,7 @@ public final class ChildMessages {
         Set<String> out = new HashSet<>(Set.of(SUBMIT_OK, SUBMIT_ISSUES, SUBMIT_BUSY,
                 SUBMIT_BAD_SOURCE, APPROVE_OK, PROGRESS, DONE, PARTIAL, CONFLICTS, SHORTAGE,
                 CANCELLED, RESUMED, STATUS_LINE, NO_JOBS, TERRAIN_CONFIRM, DESTRUCTIVE_CONFIRM,
-                ISSUE_OTHER, ISSUE_SITE_UNLOADED, DRONE_ARRIVED, RECOVER_ASK, HALTED));
+                ISSUE_OTHER, ISSUE_SITE_UNLOADED, DRONE_ARRIVED, RECOVER_ASK, ROLLBACK_ASK, HALTED));
         out.addAll(BuildChatFlow.CHAT_MESSAGE_KEYS);
         return out;
     }

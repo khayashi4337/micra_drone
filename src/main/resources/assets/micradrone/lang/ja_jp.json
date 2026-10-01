@@ -19,6 +19,7 @@
   "micradrone.build.issue.site_unloaded": "ばしょが まだ よみこまれて ないよ。ちかづいて、もういちど おくってね",
   "micradrone.build.drone.arrived": "ドローンが きたよ!",
   "micradrone.build.recover.ask": "しごと %1$s: とまる まえに %2$s を したか どうか わからないよ。したなら /micradrone build recover %1$s adopt 、していないなら discard を えらんでね",
+  "micradrone.build.rollback.ask": "たてた ものを もとに もどすよ。ブロック %1$s こ を けすよ。いいなら /micradrone build rollback %2$s confirm",
   "micradrone.build.halted": "きろくが かけないので とめたよ",
   "micradrone.build.state.pending_approval": "しょうにん まち",
   "micradrone.build.state.queued": "じゅんばん まち",
