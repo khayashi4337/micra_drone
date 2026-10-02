@@ -9,7 +9,7 @@ import time
 import traceback
 from dataclasses import dataclass
 
-from tools.p4 import devkit_client, evidence, harness, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_materials, scenarios_mvp, scenarios_regression, scenarios_restart, scenarios_rollback, scenarios_show, scenarios_undo
+from tools.p4 import devkit_client, evidence, harness, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_materials, scenarios_materials_panel, scenarios_mvp, scenarios_regression, scenarios_restart, scenarios_rollback, scenarios_show, scenarios_undo
 
 MODES = ("sp", "mp", "mp2")
 RESTART_LIMIT = 1
@@ -50,6 +50,7 @@ SCENARIOS = {
     "survey-pinned": Scenario(scenarios_l7.survey_pinned, (16,), "sp"),
     "survival-materials": Scenario(scenarios_materials.survival_materials, (7,), "sp"),
     "player-in-the-way": Scenario(scenarios_materials.player_in_the_way, (), "sp"),
+    "mvp-materials-panel": Scenario(scenarios_materials_panel.mvp_materials_panel, (), "sp"),
 }
 
 # Design 07 completion conditions with no scenario yet -> the task that completes them.
