@@ -1148,6 +1148,74 @@ class BuildChatFlowTest {
         }
     }
 
+    // ---- (k) Task 27e: a materials request the server refused -------------------------------------
+
+    /** The offer doc the network answers a refused materials packet with: bare REJECTED, no issues. */
+    private static String rejectedOfferJson() {
+        return offerJson("REJECTED", null, 0, 0, 0, 0, false, false, List.of());
+    }
+
+    @Test
+    void aRejectedOfferAfterMaterialsWereSentTellsTheChild() {
+        BuildChatFlow flow = atBuilding();
+        flow.progress(pausedProgressJson("job-1", CLAIM, 0, "MATERIALS_MISSING", false));
+        List<Action> sent = flow.inventoryYes();
+        assertTrue(sent.stream().anyMatch(a -> a instanceof BuildChatFlow.SendMaterials));
+        List<Action> actions = flow.offer(rejectedOfferJson());
+        assertEquals(List.of(BuildChatFlow.MSG_MATERIALS_REFUSED), sayKeys(actions),
+                "the refusal of the packet just sent is the child's line");
+        assertEquals(List.of(), only(actions, BuildChatFlow.Say.class).args(),
+                "the refusal carries no ids and no technical text");
+        assertEquals(State.BUILDING, flow.state(), "the build itself goes on - only the ask failed");
+    }
+
+    @Test
+    void aRejectedOfferWithoutASentMaterialsAskStaysSilent() {
+        BuildChatFlow flow = atBuilding();
+        flow.progress(progressJson("job-1", "BUILD", CLAIM, 5, false, false, 0, 0));
+        assertEquals(List.of(), flow.offer(rejectedOfferJson()),
+                "no request went out, so a stray refusal is not the child's business");
+        assertEquals(State.BUILDING, flow.state());
+    }
+
+    @Test
+    void aRejectedOfferAnswersAParkedDirectiveToo() {
+        // the directive parked at the AI reply goes out with the build's first document (27b)
+        BuildChatFlow flow = flow(true);
+        flow.request("ダイヤは つかわない こやを たてて");
+        flow.aiReply(aiOkWithMaterials("ダイヤなしで つくるよ",
+                "{\"materials\":{\"exclude\":[\"minecraft:diamond\"]}}"));
+        flow.offer(offerJson("OFFERED", "h", 5, 20, 0, 0, false, false, List.of()));
+        flow.approve();
+        List<Action> firstDoc =
+                flow.progress(progressJson("job-1", "BUILD", CLAIM, 5, false, false, 0, 0));
+        assertTrue(firstDoc.stream().anyMatch(a -> a instanceof BuildChatFlow.SendMaterials),
+                "the parked materials ask leaves with the first progress document");
+        assertEquals(List.of(BuildChatFlow.MSG_MATERIALS_REFUSED),
+                sayKeys(flow.offer(rejectedOfferJson())));
+    }
+
+    @Test
+    void aFailedOfferIsNotTheMaterialsRefusal() {
+        BuildChatFlow flow = atBuilding();
+        flow.progress(pausedProgressJson("job-1", CLAIM, 0, "MATERIALS_MISSING", false));
+        flow.inventoryYes();
+        // FAILED while the job id is known is a job document the panel ignores, not the answer to
+        // the materials packet - only a bare REJECTED is
+        assertEquals(List.of(), flow.offer(
+                offerJson("FAILED", null, 0, 0, 0, 0, false, false, List.of())));
+    }
+
+    @Test
+    void aRefusedMaterialsAskMustBeSentAgainToBeRefusedAgain() {
+        BuildChatFlow flow = atBuilding();
+        flow.progress(pausedProgressJson("job-1", CLAIM, 0, "MATERIALS_MISSING", false));
+        flow.inventoryYes();
+        flow.offer(rejectedOfferJson());
+        assertEquals(List.of(), flow.offer(rejectedOfferJson()),
+                "the refusal was already told; nothing else was sent to answer");
+    }
+
     @Test
     void theNewMaterialLinesStayFreeOfCommandsAndIds() throws java.io.IOException {
         @SuppressWarnings("unchecked")
@@ -1156,7 +1224,8 @@ class BuildChatFlowTest {
                 java.nio.charset.StandardCharsets.UTF_8));
         for (String key : List.of(BuildChatFlow.MSG_ASK_INVENTORY, BuildChatFlow.MSG_INVENTORY_ON,
                 BuildChatFlow.MSG_INVENTORY_OFF, BuildChatFlow.MSG_OFFER_SOURCE,
-                BuildChatFlow.MSG_MATERIALS_CHANGED, BuildChatFlow.MSG_MATERIALS_UNCLEAR)) {
+                BuildChatFlow.MSG_MATERIALS_CHANGED, BuildChatFlow.MSG_MATERIALS_UNCLEAR,
+                BuildChatFlow.MSG_MATERIALS_REFUSED)) {
             String text = (String) ja.get(key);
             assertTrue(text != null, "missing ja text for " + key);
             assertFalse(text.contains("/micradrone") || text.contains("%1$s")

@@ -21,6 +21,15 @@ public final class SourcePolicy {
     }
 
     /**
+     * The one source position a double chest answers to (Task 27e): the smaller of its two halves
+     * by {@link #POSITION_ORDER}. Scan and use both fold a half onto this name, so a container is
+     * never counted or spent twice under two ids.
+     */
+    public static IntPos sharedSource(IntPos a, IntPos b) {
+        return POSITION_ORDER.compare(a, b) <= 0 ? a : b;
+    }
+
+    /**
      * The stocks {@code all} that the job may draw on: without {@code inventoryAllowed} every
      * {@link MaterialPort#INVENTORY} stock is dropped (none left at all if there are no chests); with it the
      * inventory stocks lead. Chest stocks are sorted by their position's coordinates; stocks of any other

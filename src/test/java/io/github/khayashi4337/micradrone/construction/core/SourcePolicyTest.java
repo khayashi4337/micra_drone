@@ -64,6 +64,21 @@ class SourcePolicyTest {
         assertEquals(List.of("chest:0,0,9", "chest:0,9,0", "chest:7,0,0"), sourceIds(out));
     }
 
+    /**
+     * The canonical name of a double chest (Task 27e): both of its halves - whichever way the
+     * question is asked - resolve to the one source position, the smaller by {@link #POSITION_ORDER}.
+     */
+    @Test
+    void aDoubleChestsTwoHalvesShareOneSourcePosition() {
+        IntPos left = new IntPos(10, 64, 20);
+        IntPos right = new IntPos(11, 64, 20);
+        assertEquals(left, SourcePolicy.sharedSource(left, right));
+        assertEquals(left, SourcePolicy.sharedSource(right, left),
+                "the half that finds the other still names the shared container by its smaller half");
+        IntPos upper = new IntPos(10, 65, 20);
+        assertEquals(left, SourcePolicy.sharedSource(left, upper));
+    }
+
     @Test
     void noChestsAndNoPermissionIsEmpty() {
         assertEquals(List.of(), SourcePolicy.visibleStocks(List.of(inv("a", 5)), false, NONE));

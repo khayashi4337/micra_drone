@@ -179,6 +179,7 @@
   "micradrone.build.control.not_found": "that job does not exist.",
   "micradrone.build.control.not_allowed": "you cannot change someone else's job.",
   "micradrone.build.control.wrong_state": "that cannot be done now.",
+  "micradrone.build.control.save_failed": "the change could not be saved, so nothing was changed.",
   "micradrone.build.issue.e_site_blocked": "there is a block in the way that cannot be moved.",
   "micradrone.build.issue.e_site_changed": "the spot changed after it was checked.",
   "micradrone.build.issue.e_out_of_bounds": "it is too big or sticks out.",
@@ -223,5 +224,6 @@
   "micradrone.build.chat.materials_changed": "I heard your request about the materials.",
   "micradrone.build.chat.materials_excluded": "I will not use %1$s.",
   "micradrone.build.chat.materials_included": "I may use %1$s again.",
-  "micradrone.build.chat.materials_unclear": "I did not understand the materials request. Please say it again."
+  "micradrone.build.chat.materials_unclear": "I did not understand the materials request. Please say it again.",
+  "micradrone.build.chat.materials_refused": "I could not take the materials request."
 }

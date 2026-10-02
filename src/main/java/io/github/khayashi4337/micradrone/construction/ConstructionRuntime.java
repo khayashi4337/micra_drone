@@ -68,6 +68,7 @@ import io.github.khayashi4337.micradrone.construction.core.ServerWorkerPool;
 import io.github.khayashi4337.micradrone.construction.core.SiteBoxLimits;
 import io.github.khayashi4337.micradrone.construction.core.SiteClaim;
 import io.github.khayashi4337.micradrone.construction.core.SubmitOutcome;
+import io.github.khayashi4337.micradrone.construction.core.SupplyChange;
 import io.github.khayashi4337.micradrone.construction.core.SupplySettings;
 import io.github.khayashi4337.micradrone.construction.core.SupplySettingsBook;
 import io.github.khayashi4337.micradrone.construction.core.SurveyCache;
@@ -343,8 +344,10 @@ public final class ConstructionRuntime {
      * The supply switches follow their claim (Task 27a): a released or gone claim's entry is dropped - the
      * same release/rollback/cancel path its other files take - and the files are written on the tick the
      * book changed, like {@link #saveClaimsIfChanged}. A file that could not be read at start-up stays.
+     * Answers whether memory and disk agree (Task 27e): false means the write failed - recording is
+     * halted, and a caller that just changed the book must roll its own change back.
      */
-    private void saveSupplyIfChanged() {
+    private boolean saveSupplyIfChanged() {
         for (String id : List.copyOf(supply.entries().keySet())) {
             SiteClaim c = claims.find(id).orElse(null);
             if (c == null || c.released()) {
@@ -353,7 +356,7 @@ public final class ConstructionRuntime {
         }
         String digest = supplyDigest();
         if (digest.equals(savedSupplyDigest)) {
-            return;
+            return true;
         }
         try {
             for (Map.Entry<String, SupplySettings> e : supply.entries().entrySet()) {
@@ -368,8 +371,10 @@ public final class ConstructionRuntime {
             savedSupplyFiles.clear();
             savedSupplyFiles.addAll(supply.entries().keySet());
             savedSupplyDigest = digest;
+            return true;
         } catch (IOException | RuntimeException e) {
             haltRecording("a claim's supply settings could not be saved", e);
+            return false;
         }
     }
 
@@ -983,9 +988,12 @@ public final class ConstructionRuntime {
         if (!claim.ownerUuid().equals(requester) && !op) {
             return ControlResult.NOT_ALLOWED;
         }
-        supply.allowInventory(claimId, allowed);
-        saveSupplyIfChanged();
-        return ControlResult.OK;
+        // a switch flip is only an answer when the disk would answer the same on a restart
+        // (Task 27e): a save that failed rolls the in-memory book back and comes back SAVE_FAILED
+        return SupplyChange.apply(supply, claimId,
+                new SupplySettings(allowed, supply.of(claimId).excludedItems()),
+                this::saveSupplyIfChanged)
+                ? ControlResult.OK : ControlResult.SAVE_FAILED;
     }
 
     /**
@@ -1016,10 +1024,12 @@ public final class ConstructionRuntime {
         if (excluded.size() > SupplySettings.MAX_EXCLUDED_ITEMS) {
             return ControlResult.WRONG_STATE;
         }
-        supply.set(claimId,
-                new SupplySettings(inventory == null ? current.inventoryAllowed() : inventory, excluded));
-        saveSupplyIfChanged();
-        return ControlResult.OK;
+        SupplySettings next = new SupplySettings(
+                inventory == null ? current.inventoryAllowed() : inventory, excluded);
+        // a change is only an answer when the disk would answer the same on a restart (Task 27e):
+        // a save that failed rolls the in-memory book back and comes back SAVE_FAILED
+        return SupplyChange.apply(supply, claimId, next, this::saveSupplyIfChanged)
+                ? ControlResult.OK : ControlResult.SAVE_FAILED;
     }
 
     /** The claim's inventory switch (false for an unknown claim), for the progress document and 27b's panel. */

@@ -31,7 +31,9 @@ import net.minecraft.world.level.chunk.status.ChunkStatus;
  * drone controller or any other container is ignored. Scans look only at already-loaded chunks (an
  * unloaded chunk's chests simply do not count) and run at most once per
  * {@link #SUPPLY_SCAN_INTERVAL_TICKS} per claim; between scans the found set is kept. A double chest
- * counts once: its source position is the smaller of its two halves in x, y, z order.
+ * counts once: its source position is the smaller of its two halves in x, y, z order, and it counts
+ * only while BOTH halves sit inside the box - a chest that reaches past the claim's edge is not a
+ * supply source at all, so its far half's items are never spent (Task 27e).
  */
 final class SupplyChests {
     /** Two seconds of vanilla ticks between a claim's scans; a chest placed mid-run is found late, never never. */
@@ -64,8 +66,22 @@ final class SupplyChests {
         return found;
     }
 
-    /** The container a source position still names, or null when it is gone or its chunk unloaded. */
-    static Container containerAt(ServerLevel level, IntPos pos) {
+    /**
+     * What a remembered supply position resolves to right now: the live container and the position
+     * its source id names. For a chest that is part of a double chest the id's position is the
+     * smaller of the two halves - the same name the scan used - so an id minted before two chests
+     * merged still names the one shared container, and both remembered halves deduplicate onto it.
+     */
+    record ResolvedSource(IntPos position, Container container) {
+    }
+
+    /**
+     * The container a source position still names, or null when it is gone, its chunk is unloaded,
+     * or - for a double chest - its other half lies outside {@code box} (Task 27e): a chest
+     * reaching past the claim's edge is refused entirely, because serving it would spend items of
+     * the half that is not the claim's.
+     */
+    static ResolvedSource sourceAt(ServerLevel level, IntPos pos, Box box) {
         BlockPos p = ServerWorldPort.toBlockPos(pos);
         ChunkAccess chunk = loadedChunk(level, p.getX(), p.getZ());
         if (chunk == null) {
@@ -73,7 +89,7 @@ final class SupplyChests {
         }
         BlockEntity be = chunk.getBlockEntity(p);
         if (be instanceof BarrelBlockEntity barrel) {
-            return barrel;
+            return new ResolvedSource(pos, barrel);
         }
         if (!(be instanceof ChestBlockEntity chest)) {
             return null;
@@ -83,14 +99,20 @@ final class SupplyChests {
             // a block entity without its chest block is a leftover, not a container
             return null;
         }
+        IntPos source = pos;
         if (state.getValue(ChestBlock.TYPE) != ChestType.SINGLE) {
+            IntPos other = toInt(p.relative(ChestBlock.getConnectedDirection(state)));
+            if (!box.contains(other.x(), other.y(), other.z())) {
+                return null;
+            }
+            source = SourcePolicy.sharedSource(pos, other);
             // reading the other half would load its chunk; an unloaded half means this half is alone now
-            BlockPos other = p.relative(ChestBlock.getConnectedDirection(state));
-            if (loadedChunk(level, other.getX(), other.getZ()) == null) {
-                return chest;
+            if (loadedChunk(level, other.x(), other.z()) == null) {
+                return new ResolvedSource(source, chest);
             }
         }
-        return ChestBlock.getContainer(chestBlock, state, level, p, false);
+        Container container = ChestBlock.getContainer(chestBlock, state, level, p, false);
+        return container == null ? null : new ResolvedSource(source, container);
     }
 
     /** The level of a dimension id, or null when the server has none (a removed dimension supplies nothing). */
@@ -115,7 +137,7 @@ final class SupplyChests {
                     if (!box.contains(p.getX(), p.getY(), p.getZ())) {
                         continue;
                     }
-                    IntPos source = sourcePosition(chunk, p);
+                    IntPos source = sourcePosition(chunk, p, box);
                     if (source != null) {
                         found.add(source);
                     }
@@ -128,8 +150,10 @@ final class SupplyChests {
     /**
      * The source id's position of the block entity at {@code p}: barrels and chests (trapped included)
      * only; for a double-chest half the smaller of the two positions, so both halves name one source.
+     * A double chest whose other half lies outside {@code box} is no source at all (Task 27e): the
+     * half inside would expose the far half's items through the shared 54 slots.
      */
-    private static IntPos sourcePosition(ChunkAccess chunk, BlockPos p) {
+    private static IntPos sourcePosition(ChunkAccess chunk, BlockPos p, Box box) {
         BlockEntity be = chunk.getBlockEntity(p);
         if (be instanceof BarrelBlockEntity) {
             return toInt(p);
@@ -144,7 +168,10 @@ final class SupplyChests {
             return here;
         }
         IntPos other = toInt(p.relative(ChestBlock.getConnectedDirection(state)));
-        return SourcePolicy.POSITION_ORDER.compare(here, other) <= 0 ? here : other;
+        if (!box.contains(other.x(), other.y(), other.z())) {
+            return null;
+        }
+        return SourcePolicy.sharedSource(here, other);
     }
 
     /** The chunk holding (x, z) only when it is already fully loaded - a scan never forces a chunk up. */

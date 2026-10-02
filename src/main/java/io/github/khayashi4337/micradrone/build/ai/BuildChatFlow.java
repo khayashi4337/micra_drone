@@ -134,6 +134,11 @@ public final class BuildChatFlow {
     public static final String MSG_MATERIALS_EXCLUDED = "micradrone.build.chat.materials_excluded";
     public static final String MSG_MATERIALS_INCLUDED = "micradrone.build.chat.materials_included";
     public static final String MSG_MATERIALS_UNCLEAR = "micradrone.build.chat.materials_unclear";
+    /**
+     * The server answered a materials packet this flow sent with a bare REJECTED offer (Task 27e):
+     * the child hears its request could not be taken - the build itself goes on.
+     */
+    public static final String MSG_MATERIALS_REFUSED = "micradrone.build.chat.materials_refused";
 
     /** Every child-facing key this flow can emit - ChildMessages registers all of them. */
     public static final Set<String> CHAT_MESSAGE_KEYS = Set.of(MSG_CONSENT, MSG_CLI_MISSING,
@@ -142,7 +147,7 @@ public final class BuildChatFlow {
             MSG_UNDO_ASK, MSG_UNDOING, MSG_UNDO_DONE, MSG_UNDO_PARTIAL, MSG_UNDO_REFUSED,
             MSG_PAUSE_RECOVERY, MSG_PAUSE_SITE_CHANGED, MSG_ASK_INVENTORY, MSG_INVENTORY_ON,
             MSG_INVENTORY_OFF, MSG_OFFER_SOURCE, MSG_MATERIALS_CHANGED, MSG_MATERIALS_EXCLUDED,
-            MSG_MATERIALS_INCLUDED, MSG_MATERIALS_UNCLEAR);
+            MSG_MATERIALS_INCLUDED, MSG_MATERIALS_UNCLEAR, MSG_MATERIALS_REFUSED);
 
     // The "state" values of the offer document (construction.core.OfferView writes these; the
     // strings are re-spelled here because build.* may not import construction.*).
@@ -207,6 +212,11 @@ public final class BuildChatFlow {
      * doc reveals the claim id (no claim exists before approval, so nothing can be sent sooner).
      */
     private MaterialsDirective.Directive pendingDirective;
+    /**
+     * Whether a {@link SendMaterials} went out and its answer may still come back (Task 27e): only
+     * then is a REJECTED offer in BUILDING the refusal of this flow's own ask, told to the child.
+     */
+    private boolean materialsSent;
 
     public BuildChatFlow(boolean consentGiven, PromptParts parts, Predicate<String> knownItem) {
         this.consented = consentGiven;
@@ -341,6 +351,13 @@ public final class BuildChatFlow {
                     && (OFFER_REJECTED.equals(offerState) || OFFER_FAILED.equals(offerState))) {
                 state = State.FAILED;
                 return List.of(say(MSG_APPROVE_REFUSED), new ShowButtons(List.of()));
+            }
+            // 27e: while the job runs, the only offer doc the server still answers this panel with
+            // is a bare REJECTED to a materials packet it could not take (a failed save, a refused
+            // owner). It is told only when this flow really sent one; anything else stays ignored.
+            if (materialsSent && OFFER_REJECTED.equals(offerState)) {
+                materialsSent = false;
+                return List.of(say(MSG_MATERIALS_REFUSED));
             }
             return List.of();
         }
@@ -486,6 +503,7 @@ public final class BuildChatFlow {
             out.add(new SendMaterials(buildingClaimId, pendingDirective.inventory(),
                     pendingDirective.exclude(), pendingDirective.include()));
             pendingDirective = null;
+            materialsSent = true; // a REJECTED offer can now be this packet's refusal
         }
         if (Boolean.TRUE.equals(tree.get("done"))) {
             state = State.DONE;
@@ -551,6 +569,7 @@ public final class BuildChatFlow {
         if (state != State.BUILDING || buildingClaimId == null) {
             return List.of();
         }
+        materialsSent = true; // a REJECTED offer can now be this packet's refusal
         return List.of(
                 new SendMaterials(buildingClaimId, Boolean.TRUE, List.of(), List.of()),
                 say(MSG_INVENTORY_ON), new ShowButtons(List.of()));
@@ -669,6 +688,7 @@ public final class BuildChatFlow {
         doneClaimId = null;
         buildingClaimId = null;
         pendingDirective = null;
+        materialsSent = false;
     }
 
     /** The technical {@code message} texts of the offer's issues - for the repair prompt only. */

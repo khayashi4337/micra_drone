@@ -5,6 +5,7 @@ import io.github.khayashi4337.micradrone.build.model.IntPos;
 import io.github.khayashi4337.micradrone.construction.core.MaterialPort;
 import io.github.khayashi4337.micradrone.construction.core.Move;
 import io.github.khayashi4337.micradrone.construction.core.SiteClaim;
+import io.github.khayashi4337.micradrone.construction.core.SlotPlan;
 import io.github.khayashi4337.micradrone.construction.core.SourcePolicy;
 import io.github.khayashi4337.micradrone.construction.core.Stock;
 import io.github.khayashi4337.micradrone.construction.core.SupplySettingsBook;
@@ -16,12 +17,16 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.function.Predicate;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.NbtAccounter;
@@ -45,17 +50,24 @@ import net.minecraft.world.level.storage.LevelResource;
  * order (the inventory first when allowed, then chests in coordinate order); gives go to a chest with
  * room first, then the inventory, then nowhere ({@code NO_ROOM}) - items are never dropped.
  * <p>
- * {@link #apply} is atomic from the port's side: every source is resolved and every take and give
- * checked against the world's contents as they are right now, before a single slot changes; a chest
- * broken since the scan refuses the whole batch. An inventory change makes the run dirty; only then
- * does {@link #persist} save the owner with the run's transaction id (a chest-only run has nothing to
- * prove in the player's file - the world save already owns the chests).
+ * {@link #apply} is atomic from the port's side: every source is resolved against the world as it is
+ * right now, and the whole batch - takes first, then gives - is played out on a written-off slot
+ * copy ({@link SlotPlan}) before a single real slot changes; a chest broken since the scan, or a
+ * batch that does not fit, refuses everything. Remembered chest ids are normalized to the position
+ * {@link SupplyChests#sourceAt} names, so a container merged from two halves is one source, never
+ * two. An inventory change makes the run dirty; only then does {@link #persist} save the owner with
+ * the run's transaction id (a chest-only run has nothing to prove in the player's file - the world
+ * save already owns the chests).
  */
 final class InventoryMaterials implements MaterialPort {
     /** The tag {@code Entity#getPersistentData} is written under in the saved {@code playerdata/<uuid>.dat}. */
     static final String TX_TAG = "NeoForgeData";
     /** The transaction id saved with the owner's inventory: which WAL run its contents already hold. */
     static final String TX_KEY = "micradrone:lastTx";
+    /** The placeholder source id a give-target check plays its copy-steps under. */
+    private static final String GIVE_TARGET = "give-target";
+    /** The prefix of the merge identities a snapshot hands out (see {@link #mergeKeyOf}). */
+    private static final String MERGE_KEY = "stack#";
 
     private final MinecraftServer server;
     private final UUID owner;
@@ -92,14 +104,18 @@ final class InventoryMaterials implements MaterialPort {
         }
         ServerLevel level = level();
         if (level != null) {
+            Set<IntPos> seen = new HashSet<>();
             for (IntPos pos : chests.positions(claim)) {
-                Container c = SupplyChests.containerAt(level, pos);
-                if (c == null) {
+                SupplyChests.ResolvedSource r = SupplyChests.sourceAt(level, pos, claim.worldBox());
+                if (r == null || !seen.add(r.position())) {
+                    // gone, refused for reaching outside the box, or another remembered position
+                    // already named the same merged container - counted once, or not at all
                     continue;
                 }
-                String sourceId = MaterialPort.chest(pos);
+                String sourceId = MaterialPort.chest(r.position());
                 for (String id : ids) {
-                    all.add(new Stock(sourceId, id, countOf(c, id, c.getContainerSize())));
+                    all.add(new Stock(sourceId, id,
+                            countOf(r.container(), id, r.container().getContainerSize())));
                 }
             }
         }
@@ -112,15 +128,19 @@ final class InventoryMaterials implements MaterialPort {
         // (coordinate order) first, then the inventory of an online owner, then nowhere at all
         ServerLevel level = level();
         if (level != null) {
+            Set<IntPos> seen = new HashSet<>();
             for (IntPos pos : chests.positions(claim)) {
-                Container c = SupplyChests.containerAt(level, pos);
-                if (c != null && fitsAll(c, items, slotsForGive(c))) {
-                    return Optional.of(MaterialPort.chest(pos));
+                SupplyChests.ResolvedSource r = SupplyChests.sourceAt(level, pos, claim.worldBox());
+                if (r == null || !seen.add(r.position())) {
+                    continue;
+                }
+                if (canGive(r.container(), items)) {
+                    return Optional.of(MaterialPort.chest(r.position()));
                 }
             }
         }
         ServerPlayer p = ownerPlayer();
-        if (p != null && fitsAll(p.getInventory(), items, Inventory.INVENTORY_SIZE)) {
+        if (p != null && canGive(p.getInventory(), items)) {
             return Optional.of(INVENTORY);
         }
         return Optional.empty();
@@ -128,30 +148,62 @@ final class InventoryMaterials implements MaterialPort {
 
     @Override
     public boolean apply(List<Move> moves) {
-        // every source is resolved against the world as it is now: a chest broken since the scan is a miss
+        // every source is resolved against the world as it is now - a chest broken since the scan is
+        // a miss - and each remembered chest id is folded onto the source position the container
+        // answers to: two ids that name the halves of one large chest are the same source
+        Map<String, String> normalized = new LinkedHashMap<>();
         Map<String, Container> sources = new LinkedHashMap<>();
         for (Move m : moves) {
-            if (!sources.containsKey(m.sourceId())) {
-                Container c = resolve(m.sourceId());
-                if (c == null) {
-                    return false;
-                }
-                sources.put(m.sourceId(), c);
+            if (normalized.containsKey(m.sourceId())) {
+                continue;
             }
+            Resolved r = resolve(m.sourceId());
+            if (r == null) {
+                return false;
+            }
+            normalized.put(m.sourceId(), r.sourceId());
+            sources.putIfAbsent(r.sourceId(), r.container());
         }
-        if (!canApply(moves, sources)) {
+        // the whole batch is played out on a written-off copy of the slots first: one miss refuses all
+        Map<String, SlotPlan.Source> copies = new LinkedHashMap<>();
+        Map<String, List<ItemStack>> mergeReps = new LinkedHashMap<>();
+        for (Map.Entry<String, Container> e : sources.entrySet()) {
+            List<ItemStack> reps = new ArrayList<>();
+            copies.put(e.getKey(), snapshot(e.getValue(), reps));
+            mergeReps.put(e.getKey(), reps);
+        }
+        List<SlotPlan.Step> steps = new ArrayList<>(moves.size());
+        for (Move m : moves) {
+            SlotPlan.Step step = stepOf(normalized.get(m.sourceId()), m,
+                    mergeReps.get(normalized.get(m.sourceId())));
+            if (step == null) {
+                return false;
+            }
+            steps.add(step);
+        }
+        if (!SlotPlan.of(copies, Function.identity()).canApply(steps)) {
             return false;
         }
-        // takes first: the give-room the check proved only grows with them, never shrinks
+        // takes first: the give-room the copy proved only grows with them, never shrinks
         List<Container> touched = new ArrayList<>();
         for (Move m : moves) {
             if (m.delta() < 0) {
-                takeFrom(sources.get(m.sourceId()), m.itemId(), -m.delta(), touched);
+                int left = takeFrom(sources.get(normalized.get(m.sourceId())), m.itemId(),
+                        -m.delta(), touched);
+                if (left != 0) {
+                    throw new IllegalStateException(
+                            "the copy proved " + m + " but the world refused " + left + " of it");
+                }
             }
         }
         for (Move m : moves) {
             if (m.delta() > 0) {
-                giveTo(sources.get(m.sourceId()), m.itemId(), m.delta(), touched);
+                int left = giveTo(sources.get(normalized.get(m.sourceId())), m.itemId(),
+                        m.delta(), touched);
+                if (left != 0) {
+                    throw new IllegalStateException(
+                            "the copy proved " + m + " but the world refused " + left + " of it");
+                }
             }
         }
         dirty = dirty || moves.stream().anyMatch(m -> INVENTORY.equals(m.sourceId()));
@@ -216,49 +268,22 @@ final class InventoryMaterials implements MaterialPort {
         }
     }
 
-    /**
-     * Whether every move can go, judged on the sources' contents as they are right now: per source and
-     * item, the total take must not exceed what is there and the total give must fit the free room.
-     */
-    private boolean canApply(List<Move> moves, Map<String, Container> sources) {
-        for (Map.Entry<String, Container> src : sources.entrySet()) {
-            Map<String, Integer> take = new LinkedHashMap<>();
-            Map<String, Integer> give = new LinkedHashMap<>();
-            for (Move m : moves) {
-                if (m.sourceId().equals(src.getKey())) {
-                    (m.delta() < 0 ? take : give).merge(m.itemId(), Math.abs(m.delta()), Integer::sum);
-                }
-            }
-            Container c = src.getValue();
-            for (Map.Entry<String, Integer> e : take.entrySet()) {
-                if (countOf(c, e.getKey(), c.getContainerSize()) < e.getValue()) {
-                    return false;
-                }
-            }
-            for (Map.Entry<String, Integer> e : give.entrySet()) {
-                Item item = itemOf(e.getKey());
-                if (item == null || item == Items.AIR) {
-                    return false;
-                }
-                if (roomFor(c, item, slotsForGive(c)) < e.getValue()) {
-                    return false;
-                }
-            }
-        }
-        return true;
+    /** What a source id names right now: the live container and the normalized id its aliases share. */
+    private record Resolved(Container container, String sourceId) {
     }
 
-    private Container resolve(String sourceId) {
+    private Resolved resolve(String sourceId) {
         if (INVENTORY.equals(sourceId)) {
             ServerPlayer p = ownerPlayer();
-            return p == null ? null : p.getInventory();
+            return p == null ? null : new Resolved(p.getInventory(), INVENTORY);
         }
         Optional<IntPos> pos = MaterialPort.chestPos(sourceId);
         ServerLevel level = level();
         if (pos.isEmpty() || level == null) {
             return null;
         }
-        return SupplyChests.containerAt(level, pos.get());
+        SupplyChests.ResolvedSource r = SupplyChests.sourceAt(level, pos.get(), claim.worldBox());
+        return r == null ? null : new Resolved(r.container(), MaterialPort.chest(r.position()));
     }
 
     /** The claim's level, or null when it has none or the claim is gone: no chests can be served then. */
@@ -294,33 +319,84 @@ final class InventoryMaterials implements MaterialPort {
         return c instanceof Inventory ? Inventory.INVENTORY_SIZE : c.getContainerSize();
     }
 
-    /** Whether the first {@code slots} slots of the container can hold every item of {@code items}. */
-    private static boolean fitsAll(Container c, List<ItemCount> items, int slots) {
+    /**
+     * Whether the container can hold every item of {@code items} at once, decided on a slot-level
+     * copy: the items share the same free slots and merge rules instead of each counting the empty
+     * room alone, so two stacks of 64 can never both be offered one empty slot.
+     */
+    private static boolean canGive(Container c, List<ItemCount> items) {
+        List<ItemStack> mergeReps = new ArrayList<>();
+        SlotPlan.Source copy = snapshot(c, mergeReps);
+        List<SlotPlan.Step> steps = new ArrayList<>(items.size());
         for (ItemCount item : items) {
-            Item type = itemOf(item.itemId());
-            if (type == null || type == Items.AIR || roomFor(c, type, slots) < item.count()) {
+            SlotPlan.Step step = stepOf(GIVE_TARGET,
+                    new Move(GIVE_TARGET, item.itemId(), item.count()), mergeReps);
+            if (step == null) {
                 return false;
             }
+            steps.add(step);
         }
-        return true;
+        return SlotPlan.of(Map.of(GIVE_TARGET, copy), Function.identity()).canApply(steps);
     }
 
-    /** The free room for this item over the first {@code slots} slots: partial stacks plus empty slots. */
-    private static int roomFor(Container c, Item item, int slots) {
-        ItemStack probe = new ItemStack(item);
-        int room = 0;
-        for (int i = 0; i < slots; i++) {
+    /**
+     * The container's slots written off for the simulation (Task 27e): what each slot holds, its
+     * cap (the container's own max stack size), whether it accepts an item id at all, and - for a
+     * held stack - its merge identity, so the copy merges only where
+     * {@link ItemStack#isSameItemSameComponents} would. {@code mergeReps} keeps one representative
+     * stack per distinct stack kind, shared with the steps built after it.
+     */
+    private static SlotPlan.Source snapshot(Container c, List<ItemStack> mergeReps) {
+        List<SlotPlan.Slot> slots = new ArrayList<>(c.getContainerSize());
+        int max = c.getMaxStackSize();
+        for (int i = 0; i < c.getContainerSize(); i++) {
             ItemStack s = c.getItem(i);
-            int max = c.getMaxStackSize(probe);
-            if (s.isEmpty()) {
-                if (c.canPlaceItem(i, probe)) {
-                    room += max;
-                }
-            } else if (ItemStack.isSameItemSameComponents(s, probe)) {
-                room += Math.max(0, max - s.getCount());
+            Predicate<String> accepts = acceptsAt(c, i);
+            slots.add(s.isEmpty() ? SlotPlan.Slot.empty(max, accepts)
+                    : new SlotPlan.Slot(itemIdOf(s), mergeKeyOf(s, mergeReps), s.getCount(), max,
+                            accepts));
+        }
+        return new SlotPlan.Source(slots, slotsForGive(c));
+    }
+
+    /** Whether slot {@code index} accepts the named item (an unknown id or AIR is refused). */
+    private static Predicate<String> acceptsAt(Container c, int index) {
+        return id -> {
+            Item item = itemOf(id);
+            return item != null && item != Items.AIR && c.canPlaceItem(index, new ItemStack(item));
+        };
+    }
+
+    /**
+     * The merge identity of a stack within one simulation: stacks equal by
+     * {@link ItemStack#isSameItemSameComponents} share a key, a renamed or enchanted stack keeps
+     * its own - so the copy never treats different stack kinds as the same free room.
+     */
+    private static String mergeKeyOf(ItemStack stack, List<ItemStack> mergeReps) {
+        for (int i = 0; i < mergeReps.size(); i++) {
+            if (ItemStack.isSameItemSameComponents(mergeReps.get(i), stack)) {
+                return MERGE_KEY + i;
             }
         }
-        return room;
+        mergeReps.add(stack.copy());
+        return MERGE_KEY + (mergeReps.size() - 1);
+    }
+
+    /**
+     * The simulated form of one move on an already-normalized source. A give of an item id the
+     * game does not have is no step at all (null): the caller refuses the whole batch for it.
+     */
+    private static SlotPlan.Step stepOf(String sourceId, Move m, List<ItemStack> mergeReps) {
+        if (m.delta() < 0) {
+            return SlotPlan.Step.take(sourceId, m.itemId(), -m.delta());
+        }
+        Item item = itemOf(m.itemId());
+        if (item == null || item == Items.AIR) {
+            return null;
+        }
+        ItemStack probe = new ItemStack(item);
+        return SlotPlan.Step.give(sourceId, m.itemId(), m.delta(), mergeKeyOf(probe, mergeReps),
+                probe.getMaxStackSize());
     }
 
     /** How many of the item the first {@code slots} slots hold right now. */
@@ -335,8 +411,11 @@ final class InventoryMaterials implements MaterialPort {
         return count;
     }
 
-    /** Removes up to {@code count} of the item; {@link #canApply} has already proved there is enough. */
-    private static void takeFrom(Container c, String itemId, int count, List<Container> touched) {
+    /**
+     * Removes up to {@code count} of the item and answers what could NOT be taken. The slot copy
+     * already proved the whole amount, so a nonzero remainder contradicts it - the caller throws.
+     */
+    private static int takeFrom(Container c, String itemId, int count, List<Container> touched) {
         int left = count;
         for (int i = 0; i < c.getContainerSize() && left > 0; i++) {
             ItemStack s = c.getItem(i);
@@ -345,10 +424,15 @@ final class InventoryMaterials implements MaterialPort {
             }
         }
         touched.add(c);
+        return left;
     }
 
-    /** Adds the item into matching stacks first, then empty slots; the room was proved by the check. */
-    private static void giveTo(Container c, String itemId, int count, List<Container> touched) {
+    /**
+     * Adds the item into matching stacks first, then empty slots, and answers what could NOT fit.
+     * The slot copy already proved the whole amount, so a nonzero remainder contradicts it - the
+     * caller throws.
+     */
+    private static int giveTo(Container c, String itemId, int count, List<Container> touched) {
         ItemStack probe = new ItemStack(itemOf(itemId));
         int max = c.getMaxStackSize(probe);
         int slots = slotsForGive(c);
@@ -370,6 +454,7 @@ final class InventoryMaterials implements MaterialPort {
             }
         }
         touched.add(c);
+        return left;
     }
 
     private static Item itemOf(String itemId) {
