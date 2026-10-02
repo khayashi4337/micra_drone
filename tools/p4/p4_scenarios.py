@@ -9,7 +9,7 @@ import time
 import traceback
 from dataclasses import dataclass
 
-from tools.p4 import devkit_client, evidence, harness, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_mvp, scenarios_regression, scenarios_restart, scenarios_rollback, scenarios_show, scenarios_undo
+from tools.p4 import devkit_client, evidence, harness, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_materials, scenarios_mvp, scenarios_regression, scenarios_restart, scenarios_rollback, scenarios_show, scenarios_undo
 
 MODES = ("sp", "mp", "mp2")
 RESTART_LIMIT = 1
@@ -48,12 +48,13 @@ SCENARIOS = {
     "terrain-slope": Scenario(scenarios_l7.terrain_slope, (12,), "sp"),
     "safety-limits": Scenario(scenarios_l7.safety_limits, (8,), "sp"),
     "survey-pinned": Scenario(scenarios_l7.survey_pinned, (16,), "sp"),
+    "survival-materials": Scenario(scenarios_materials.survival_materials, (7,), "sp"),
 }
 
 # Design 07 completion conditions with no scenario yet -> the task that completes them.
 # A task that adds its scenario removes its own condition here in the same commit.
 PENDING_CONDITIONS = {
-    3: "Task 29", 6: "Task 34", 7: "Task 27", 9: "Task 32", 10: "Task 33",
+    3: "Task 29", 6: "Task 34", 9: "Task 32", 10: "Task 33",
     13: "Task 30",
 }
 
@@ -61,6 +62,7 @@ PENDING_CONDITIONS = {
 # Conditions whose scenarios pass but do not cover the whole condition text -> what is missing and who adds it.
 # The condition shows as PARTIAL in summary.json until its task removes it here (Task 38 requires this to be empty).
 PARTIAL_CONDITIONS = {
+    7: "Task 27c: no-room (a refund that does not fit pauses and drops nothing) and the crash-barrier survival set (Task 34); cancel-does-not-refund and rollback-return not yet exercised with survival",
     8: "Task 30: block-entity blocks in general (only a chest with items is exercised so far)",
     12: "Task 27: survival - cut blocks gathered to the owner, fill blocks consumed, nothing created or lost",
     4: "Task 34: the same crash/restart/rollback checks on a dedicated server (needs the owner's EULA file); crash at every boundary",
