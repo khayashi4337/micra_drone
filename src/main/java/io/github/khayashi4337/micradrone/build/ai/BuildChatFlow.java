@@ -7,6 +7,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * The whole decision logic of the chat panel's "けんちく" (build) mode (P4 task M3), kept pure-Java
@@ -32,7 +33,8 @@ public final class BuildChatFlow {
         CONFIRM_UNDO, UNDOING }
 
     /** Which buttons the screen may show in the insert row; an empty {@link ShowButtons} hides them. */
-    public enum ButtonKind { CONSENT_YES, CONSENT_NO, BUILD, CANCEL, UNDO, UNDO_YES, UNDO_NO }
+    public enum ButtonKind { CONSENT_YES, CONSENT_NO, BUILD, CANCEL, UNDO, UNDO_YES, UNDO_NO,
+        INVENTORY_YES, INVENTORY_NO }
 
     public sealed interface Action {
     }
@@ -56,6 +58,20 @@ public final class BuildChatFlow {
 
     /** Ask the server to roll the claim back to its pre-build state (M5; sent only after UNDO_YES). */
     public record SendRollback(String claimId) implements Action {
+    }
+
+    /**
+     * The claim's material rules (Task 27b): {@code allowed} is the new inventory switch or null to
+     * leave it; {@code exclude}/{@code include} are the item ids to add to / take out of the claim's
+     * ruled-out set. The claim id rides inside the packet, never a child-facing line.
+     */
+    public record SendMaterials(String claimId, Boolean allowed, List<String> exclude,
+                                List<String> include) implements Action {
+        public SendMaterials {
+            Objects.requireNonNull(claimId);
+            exclude = List.copyOf(exclude);
+            include = List.copyOf(include);
+        }
     }
 
     /** One child-facing line: a {@code micradrone.build.chat.*} key plus string args. */
@@ -103,13 +119,30 @@ public final class BuildChatFlow {
      */
     public static final String MSG_PAUSE_RECOVERY = "micradrone.build.chat.pause_recovery";
     public static final String MSG_PAUSE_SITE_CHANGED = "micradrone.build.chat.pause_site_changed";
+    /** Task 27b: the missing-materials question, its two answers, and the offer's source line. */
+    public static final String MSG_ASK_INVENTORY = "micradrone.build.chat.ask_inventory";
+    public static final String MSG_INVENTORY_ON = "micradrone.build.chat.inventory_on";
+    public static final String MSG_INVENTORY_OFF = "micradrone.build.chat.inventory_off";
+    public static final String MSG_OFFER_SOURCE = "micradrone.build.chat.offer_source";
+    /**
+     * A chat-voiced materials rule (27b追加): the confirmation line is ALWAYS said for an accepted
+     * directive (the change must be visible to be trustworthy); excluded/included name one item id
+     * each as their arg - the screen swaps in the item's display name - and unclear is the answer
+     * to a directive that failed validation whole.
+     */
+    public static final String MSG_MATERIALS_CHANGED = "micradrone.build.chat.materials_changed";
+    public static final String MSG_MATERIALS_EXCLUDED = "micradrone.build.chat.materials_excluded";
+    public static final String MSG_MATERIALS_INCLUDED = "micradrone.build.chat.materials_included";
+    public static final String MSG_MATERIALS_UNCLEAR = "micradrone.build.chat.materials_unclear";
 
     /** Every child-facing key this flow can emit - ChildMessages registers all of them. */
     public static final Set<String> CHAT_MESSAGE_KEYS = Set.of(MSG_CONSENT, MSG_CLI_MISSING,
             MSG_AI_FAILED, MSG_PLAN_FAILED, MSG_SAYS, MSG_OFFER, MSG_OFFER_TERRAIN, MSG_PLACE_IN_FRONT,
             MSG_BUILDING, MSG_DONE, MSG_PARTIAL, MSG_BUSY, MSG_CANCELLED, MSG_APPROVE_REFUSED,
             MSG_UNDO_ASK, MSG_UNDOING, MSG_UNDO_DONE, MSG_UNDO_PARTIAL, MSG_UNDO_REFUSED,
-            MSG_PAUSE_RECOVERY, MSG_PAUSE_SITE_CHANGED);
+            MSG_PAUSE_RECOVERY, MSG_PAUSE_SITE_CHANGED, MSG_ASK_INVENTORY, MSG_INVENTORY_ON,
+            MSG_INVENTORY_OFF, MSG_OFFER_SOURCE, MSG_MATERIALS_CHANGED, MSG_MATERIALS_EXCLUDED,
+            MSG_MATERIALS_INCLUDED, MSG_MATERIALS_UNCLEAR);
 
     // The "state" values of the offer document (construction.core.OfferView writes these; the
     // strings are re-spelled here because build.* may not import construction.*).
@@ -122,6 +155,9 @@ public final class BuildChatFlow {
     private static final String KIND_BUILD = "BUILD";
     private static final String KIND_ROLLBACK = "ROLLBACK";
     private static final String STATE_ROLLED_BACK = "ROLLED_BACK";
+    // Progress/offer doc field names re-spelled the same way (PauseReason/MaterialPolicy names).
+    private static final String PAUSE_MATERIALS_MISSING = "MATERIALS_MISSING";
+    private static final String POLICY_SURVIVAL = "SURVIVAL_CONSUME";
 
     /**
      * The pause lines the status command already shows ({@code ChildMessages.pause(PauseReason)}
@@ -143,6 +179,8 @@ public final class BuildChatFlow {
     }
 
     private final PromptParts parts;
+    /** The item catalog, as a predicate - build.* may not import construction.core (BuildPurityTest). */
+    private final Predicate<String> knownItem;
     /** Consent survives whole rounds: the screen persists it to disk and re-injects it here. */
     private boolean consented;
     private State state = State.IDLE;
@@ -158,10 +196,21 @@ public final class BuildChatFlow {
     private String lastAnnouncedPause;
     /** The claim a finished BUILD job built on - what {@link SendRollback} names. */
     private String doneClaimId;
+    /**
+     * The claim the running BUILD job belongs to (27b): read from any progress doc while BUILDING -
+     * what the "use my things?" answer and a parked materials directive get sent to.
+     */
+    private String buildingClaimId;
+    /**
+     * A materials directive the AI reply carried, parked until the approved build's first progress
+     * doc reveals the claim id (no claim exists before approval, so nothing can be sent sooner).
+     */
+    private MaterialsDirective.Directive pendingDirective;
 
-    public BuildChatFlow(boolean consentGiven, PromptParts parts) {
+    public BuildChatFlow(boolean consentGiven, PromptParts parts, Predicate<String> knownItem) {
         this.consented = consentGiven;
         this.parts = Objects.requireNonNull(parts, "parts");
+        this.knownItem = Objects.requireNonNull(knownItem, "knownItem");
     }
 
     public State state() {
@@ -231,6 +280,26 @@ public final class BuildChatFlow {
             out.add(say(MSG_SAYS, extracted.childSays()));
         }
         out.add(new SendPlan(extracted.json()));
+        // 27b: the reply may carry a materials frame beside the plan. An accepted directive is
+        // ALWAYS confirmed to the child - a silent rule change would be invisible; a rejected one
+        // changes nothing and says so. With no claim yet it parks until the build's first doc.
+        MaterialsDirective.Extracted materials =
+                MaterialsDirective.extract(result.text(), knownItem);
+        if (materials.directive() != null) {
+            MaterialsDirective.Directive directive = materials.directive();
+            if (!directive.isEmpty()) {
+                pendingDirective = directive;
+                out.add(say(MSG_MATERIALS_CHANGED));
+                for (String id : directive.exclude()) {
+                    out.add(say(MSG_MATERIALS_EXCLUDED, id));
+                }
+                for (String id : directive.include()) {
+                    out.add(say(MSG_MATERIALS_INCLUDED, id));
+                }
+            }
+        } else if (materials.found()) {
+            out.add(say(MSG_MATERIALS_UNCLEAR));
+        }
         state = State.WAITING_OFFER;
         return out;
     }
@@ -295,6 +364,11 @@ public final class BuildChatFlow {
                 out.add(say(MSG_OFFER_TERRAIN, cut, fill));
             }
             out.add(say(MSG_PLACE_IN_FRONT));
+            // 27b: a survival offer says where the materials come from; creative spends nothing,
+            // so naming chests there would be a lie - and a doc without the field names no source.
+            if (POLICY_SURVIVAL.equals(tree.get("materialPolicy"))) {
+                out.add(say(MSG_OFFER_SOURCE));
+            }
             out.add(new ShowButtons(List.of(ButtonKind.BUILD, ButtonKind.CANCEL)));
             state = State.OFFERED;
             return out;
@@ -399,27 +473,42 @@ public final class BuildChatFlow {
         // kind says which job the document is (M5): only a finished BUILD earns the undo button -
         // a rollback's own done/partial must not offer to roll the rollback back.
         String kind = tree.get("kind") instanceof String s ? s : null;
+        List<Action> out = new ArrayList<>();
+        // 27b: the doc's claim is the claim every materials packet names. It also frees a directive
+        // the AI reply parked: approval created the claim, so the first doc carrying it is the one
+        // moment the rule can finally be sent - exactly once, then the park is empty.
+        String claim = tree.get("claimId") instanceof String s ? s : null;
+        if (claim != null) {
+            buildingClaimId = claim;
+        }
+        if (pendingDirective != null && buildingClaimId != null) {
+            out.add(new SendMaterials(buildingClaimId, pendingDirective.inventory(),
+                    pendingDirective.exclude(), pendingDirective.include()));
+            pendingDirective = null;
+        }
         if (Boolean.TRUE.equals(tree.get("done"))) {
             state = State.DONE;
             if (KIND_BUILD.equals(kind)) {
-                doneClaimId = tree.get("claimId") instanceof String s ? s : null;
-                return List.of(say(MSG_DONE), new ShowButtons(List.of(ButtonKind.UNDO)));
+                doneClaimId = claim;
+                out.add(say(MSG_DONE));
+                out.add(new ShowButtons(List.of(ButtonKind.UNDO)));
+                return out;
             }
-            return List.of(say(MSG_DONE));
+            out.add(say(MSG_DONE));
+            return out;
         }
         if (Boolean.TRUE.equals(tree.get("partial"))) {
             state = State.DONE;
             long missing = longOrZero(tree.get("unrepaired"))
                     + longOrZero(tree.get("conflicts"));
+            out.add(say(MSG_PARTIAL, missing));
             if (KIND_BUILD.equals(kind)) {
-                doneClaimId = tree.get("claimId") instanceof String s ? s : null;
-                return List.of(say(MSG_PARTIAL, missing),
-                        new ShowButtons(List.of(ButtonKind.UNDO)));
+                doneClaimId = claim;
+                out.add(new ShowButtons(List.of(ButtonKind.UNDO)));
             }
-            return List.of(say(MSG_PARTIAL, missing));
+            return out;
         }
         String pause = tree.get("pause") instanceof String s ? s : null;
-        List<Action> out = new ArrayList<>();
         if (pause == null) {
             lastAnnouncedPause = null; // unpaused: the same reason may be announced again later
         } else {
@@ -429,6 +518,16 @@ public final class BuildChatFlow {
                     out.add(say(PANEL_PAUSE_KEYS.get(pauseKey)));
                 } else if (PAUSE_KEYS.contains(pauseKey)) {
                     out.add(say(pauseKey));
+                }
+                // 27b: a materials shortage while the owner has NOT allowed the inventory gets the
+                // yes/no question beside the usual line - once per pause interval (the dedupe by
+                // lastAnnouncedPause already keeps the same pause from asking twice). With the
+                // switch already on, or with no claim to name, only the plain line stays.
+                boolean inventoryAllowed = Boolean.TRUE.equals(tree.get("inventoryAllowed"));
+                if (PAUSE_MATERIALS_MISSING.equals(pause) && !inventoryAllowed
+                        && buildingClaimId != null) {
+                    out.add(say(MSG_ASK_INVENTORY));
+                    out.add(new ShowButtons(List.of(ButtonKind.INVENTORY_YES, ButtonKind.INVENTORY_NO)));
                 }
             }
             lastAnnouncedPause = pause;
@@ -440,6 +539,31 @@ public final class BuildChatFlow {
         lastShownPercent = percent;
         out.add(say(MSG_BUILDING, percent));
         return out;
+    }
+
+    /**
+     * The "もちものからも つかう?" question's yes (27b): only while BUILDING and only when a
+     * claim id was seen (no question was shown otherwise). The answer goes to the claim's supply
+     * settings as {@link SendMaterials} - the id rides inside the packet, never a child's line.
+     */
+    public List<Action> inventoryYes() {
+        if (state != State.BUILDING || buildingClaimId == null) {
+            return List.of();
+        }
+        return List.of(
+                new SendMaterials(buildingClaimId, Boolean.TRUE, List.of(), List.of()),
+                say(MSG_INVENTORY_ON), new ShowButtons(List.of()));
+    }
+
+    /**
+     * The question's no: nothing is sent - the job stays paused until the chests hold the
+     * materials (the retry is the server's own); only the buttons close.
+     */
+    public List<Action> inventoryNo() {
+        if (state != State.BUILDING || buildingClaimId == null) {
+            return List.of();
+        }
+        return List.of(say(MSG_INVENTORY_OFF), new ShowButtons(List.of()));
     }
 
     /**
@@ -542,6 +666,8 @@ public final class BuildChatFlow {
         lastShownPercent = -1;
         lastAnnouncedPause = null;
         doneClaimId = null;
+        buildingClaimId = null;
+        pendingDirective = null;
     }
 
     /** The technical {@code message} texts of the offer's issues - for the repair prompt only. */

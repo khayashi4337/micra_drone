@@ -15,8 +15,10 @@ import io.github.khayashi4337.micradrone.construction.core.PlanFileReader;
 import io.github.khayashi4337.micradrone.construction.core.PlanSubmission;
 import io.github.khayashi4337.micradrone.construction.core.ProgressView;
 import io.github.khayashi4337.micradrone.construction.core.SubmitOutcome;
+import io.github.khayashi4337.micradrone.construction.core.MaterialPolicy;
 import io.github.khayashi4337.micradrone.construction.net.BuildApprovePayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildCancelPayload;
+import io.github.khayashi4337.micradrone.construction.net.BuildMaterialsPayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildOfferPayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildPlanPayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildProgressPayload;
@@ -25,6 +27,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import net.minecraft.commands.Commands;
 import net.minecraft.server.MinecraftServer;
@@ -153,13 +156,45 @@ public final class BuildNetwork {
     }
 
     /**
+     * A materials answer from the panel (Task 27b): the "use my things too?" button and the
+     * chat-voiced "don't use diamonds" alike. The same submit gate as the other build packets,
+     * then the runtime's per-claim update - owner-or-operator is judged there (D-12). A refusal
+     * comes back as a bare REJECTED offer, like the rollback's.
+     */
+    public static void handleMaterials(BuildMaterialsPayload payload, IPayloadContext context) {
+        if (!(context.player() instanceof ServerPlayer player) || !BuildCommands.maySubmit(player)) {
+            return;
+        }
+        ConstructionRuntime runtime = runtimeOf(player);
+        if (runtime == null) {
+            return;
+        }
+        int inventory = payload.inventory();
+        if (inventory < BuildMaterialsPayload.INVENTORY_UNCHANGED || inventory > 1) {
+            // the wire caps the lists; the tri-state's own bounds are checked here
+            sendOffer(player, OfferView.rejectedTree(List.of()));
+            return;
+        }
+        runtime.markPanel(player.getUUID());
+        ControlResult result = runtime.updateSupplySettings(player.getUUID(),
+                player.hasPermissions(Commands.LEVEL_GAMEMASTERS), payload.claimId(),
+                inventory == BuildMaterialsPayload.INVENTORY_UNCHANGED ? null : inventory == 1,
+                Set.copyOf(payload.exclude()), Set.copyOf(payload.include()));
+        if (result != ControlResult.OK) {
+            sendOffer(player, OfferView.rejectedTree(List.of()));
+        }
+    }
+
+    /**
      * The offer push: called by {@link ConstructionRuntime} on the tick a submission leaves WORKING
      * for OFFERED or FAILED (once per outcome - each outcome object is written once).
+     * {@code materialPolicy} (27b) is the policy the approval would decide, or null on a refusal.
      */
-    public static void pushOffer(MinecraftServer server, UUID owner, SubmitOutcome outcome, int blocks) {
+    public static void pushOffer(MinecraftServer server, UUID owner, SubmitOutcome outcome, int blocks,
+                                 MaterialPolicy materialPolicy) {
         ServerPlayer player = server.getPlayerList().getPlayer(owner);
         if (player != null) {
-            sendOffer(player, OfferView.tree(outcome, blocks));
+            sendOffer(player, OfferView.tree(outcome, blocks, materialPolicy));
         }
     }
 

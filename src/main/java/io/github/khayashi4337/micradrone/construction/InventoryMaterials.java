@@ -103,7 +103,7 @@ final class InventoryMaterials implements MaterialPort {
                 }
             }
         }
-        return SourcePolicy.visibleStocks(all, inventoryAllowed());
+        return SourcePolicy.visibleStocks(all, inventoryAllowed(), excludedItems());
     }
 
     @Override
@@ -276,6 +276,14 @@ final class InventoryMaterials implements MaterialPort {
 
     private boolean inventoryAllowed() {
         return claim != null && settings.inventoryAllowed(claim.claimId());
+    }
+
+    /**
+     * The claim's ruled-out item ids (Task 27b): takes honour them on every source; gives never
+     * consult them ({@link #giveTarget} keeps finding room for the excluded item to come back).
+     */
+    private java.util.Set<String> excludedItems() {
+        return claim == null ? java.util.Set.of() : settings.of(claim.claimId()).excludedItems();
     }
 
     /**

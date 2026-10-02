@@ -95,6 +95,14 @@
   "micradrone.build.chat.undo_refused": "いま もとには もどせないよ",
   "micradrone.build.chat.pause_recovery": "サーバーが とちゅうで とまったよ。おとなの ひとに たのんでね",
   "micradrone.build.chat.pause_site_changed": "おく ばしょに なにかが おかれたよ。どかして、おとなの ひとに たのんでね",
+  "micradrone.build.chat.ask_inventory": "ざいりょうが たりないよ。きみの もちものからも つかう?",
+  "micradrone.build.chat.inventory_on": "わかった! きみの もちものからも つかうね",
+  "micradrone.build.chat.inventory_off": "わかった! きみの もちものは つかわないね",
+  "micradrone.build.chat.offer_source": "ざいりょうは ばしょの チェストから つかうよ。きみの もちものは 「いいよ」の ときだけだよ",
+  "micradrone.build.chat.materials_changed": "ざいりょうの おねがいを きいたよ",
+  "micradrone.build.chat.materials_excluded": "%1$s は つかわないよ",
+  "micradrone.build.chat.materials_included": "%1$s は つかっても いいよ",
+  "micradrone.build.chat.materials_unclear": "ざいりょうの おねがいが わからなかったよ。もういちど いってみてね",
   "gui.micradrone.ide_screen.build_mode_on": "けんちく オン",
   "gui.micradrone.ide_screen.build_mode_off": "けんちく オフ",
   "gui.micradrone.ide_screen.build_consent_yes": "いいよ",
@@ -103,5 +111,7 @@
   "gui.micradrone.ide_screen.build_cancel": "やめる",
   "gui.micradrone.ide_screen.build_undo": "もとにもどす",
   "gui.micradrone.ide_screen.build_undo_yes": "もどす",
-  "gui.micradrone.ide_screen.build_undo_no": "やめる"
+  "gui.micradrone.ide_screen.build_undo_no": "やめる",
+  "gui.micradrone.ide_screen.build_inventory_yes": "つかう",
+  "gui.micradrone.ide_screen.build_inventory_no": "つかわない"
 }

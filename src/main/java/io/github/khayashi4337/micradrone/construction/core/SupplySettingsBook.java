@@ -13,9 +13,19 @@ import java.util.Objects;
 public final class SupplySettingsBook {
     private final Map<String, SupplySettings> byClaim = new LinkedHashMap<>();
 
-    /** Sets the claim's switch; a change of an already-set claim is an ordinary write. */
+    /**
+     * Sets only the claim's inventory switch, keeping its exclusions (27b): the "use my things?"
+     * answer must not silently drop the item list the owner already ruled out.
+     */
     public void allowInventory(String claimId, boolean allowed) {
-        byClaim.put(Objects.requireNonNull(claimId, "claimId"), new SupplySettings(allowed));
+        byClaim.put(Objects.requireNonNull(claimId, "claimId"),
+                new SupplySettings(allowed, of(claimId).excludedItems()));
+    }
+
+    /** Replaces the claim's whole settings; a change of an already-set claim is an ordinary write. */
+    public void set(String claimId, SupplySettings settings) {
+        byClaim.put(Objects.requireNonNull(claimId, "claimId"),
+                Objects.requireNonNull(settings, "settings"));
     }
 
     /** The claim's switch; claims that were never set keep {@link SupplySettings#DEFAULT} (off). */

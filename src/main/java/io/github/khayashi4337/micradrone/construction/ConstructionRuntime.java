@@ -45,6 +45,7 @@ import io.github.khayashi4337.micradrone.construction.core.JobStatus;
 import io.github.khayashi4337.micradrone.construction.core.JobUpdate;
 import io.github.khayashi4337.micradrone.construction.core.JobViews;
 import io.github.khayashi4337.micradrone.construction.core.JobWorld;
+import io.github.khayashi4337.micradrone.construction.core.MaterialPolicy;
 import io.github.khayashi4337.micradrone.construction.core.MessageKey;
 import io.github.khayashi4337.micradrone.construction.core.NioFileSystem;
 import io.github.khayashi4337.micradrone.construction.core.OperatingBox;
@@ -80,6 +81,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -140,6 +142,8 @@ public final class ConstructionRuntime {
         final PlanSubmission submission;
         final ServerLevel level;
         final boolean op;
+        /** The submitter's gamemode at submit time - what the offer's materialPolicy predicts. */
+        final boolean creative;
         SubmitPhase phase = SubmitPhase.SURVEY;
         SiteSurveyBuilder builder;
         SiteSurvey survey;
@@ -148,10 +152,11 @@ public final class ConstructionRuntime {
         SnapshotCollector collector;
         Map<IntPos, WorldCell> cells;
 
-        Submit(PlanSubmission submission, ServerLevel level, boolean op) {
+        Submit(PlanSubmission submission, ServerLevel level, boolean op, boolean creative) {
             this.submission = submission;
             this.level = level;
             this.op = op;
+            this.creative = creative;
         }
     }
 
@@ -313,7 +318,7 @@ public final class ConstructionRuntime {
                 if (found.isEmpty()) {
                     continue;
                 }
-                supply.allowInventory(claimId, found.get().inventoryAllowed());
+                supply.set(claimId, found.get());
                 savedSupplyFiles.add(claimId);
             } catch (IOException | RuntimeException e) {
                 unreadableSupply.add(claimId);
@@ -323,10 +328,14 @@ public final class ConstructionRuntime {
         savedSupplyDigest = supplyDigest();
     }
 
-    /** The book's change digest: every entry's claimId and flag, claim-id sorted (like the claims digest). */
+    /**
+     * The book's change digest: every entry's claimId, flag and exclusions (sorted), claim-id
+     * sorted - an exclusions-only change must dirty the digest exactly like a flip of the switch.
+     */
     private String supplyDigest() {
         return supply.entries().entrySet().stream()
-                .map(e -> e.getKey() + (e.getValue().inventoryAllowed() ? "+" : "-"))
+                .map(e -> e.getKey() + (e.getValue().inventoryAllowed() ? "+" : "-")
+                        + new java.util.TreeSet<>(e.getValue().excludedItems()))
                 .sorted().collect(java.util.stream.Collectors.joining(","));
     }
 
@@ -619,7 +628,8 @@ public final class ConstructionRuntime {
         }
         recordOutcome(owner, SubmitOutcome.working(), 0);
         ServerLevel level = player.serverLevel();
-        Submit s = new Submit(submission, level, player.hasPermissions(Commands.LEVEL_GAMEMASTERS));
+        Submit s = new Submit(submission, level, player.hasPermissions(Commands.LEVEL_GAMEMASTERS),
+                player.isCreative());
         Site site = submission.plan().site();
         if (site == null) {
             // nothing to survey; the compile itself answers E-SITE-MISSING
@@ -765,8 +775,13 @@ public final class ConstructionRuntime {
                 compiled.surveyDigest(), server.getTickCount());
         pendingOwners.put(pending.manifestHash(), owner);
         long eta = etaTicks(manifest);
+        // the same rule the desk applies at approve time (27b): the offer names the policy it
+        // expects so the panel can tell the child where the materials come from
+        MaterialPolicy materialPolicy = ConstructionConfig.forcedMaterialPolicy() != null
+                ? ConstructionConfig.forcedMaterialPolicy()
+                : s.creative ? MaterialPolicy.CREATIVE_FREE : MaterialPolicy.SURVIVAL_CONSUME;
         recordOutcome(owner, SubmitOutcome.offered(pending, pending.issues(), safety.replacements(), eta),
-                manifest.placements().size());
+                manifest.placements().size(), materialPolicy);
         tell(owner, MessageKey.of(ChildMessages.SUBMIT_OK, manifest.placements().size(),
                 eta / TICKS_PER_SECOND, pending.manifestHash()));
         ReplacementSummary replacements = safety.replacements();
@@ -793,9 +808,17 @@ public final class ConstructionRuntime {
      * pushes exactly once; WORKING itself is not pushed.
      */
     private void recordOutcome(UUID owner, SubmitOutcome outcome, int blocks) {
+        recordOutcome(owner, outcome, blocks, null);
+    }
+
+    /**
+     * {@code materialPolicy} is the policy the approval of this offer would decide (27b); it is
+     * null for every non-offered outcome, which is also what the document then carries.
+     */
+    private void recordOutcome(UUID owner, SubmitOutcome outcome, int blocks, MaterialPolicy materialPolicy) {
         lastSubmits.put(owner, outcome);
         if (!SubmitOutcome.WORKING.equals(outcome.state())) {
-            BuildNetwork.pushOffer(server, owner, outcome, blocks);
+            BuildNetwork.pushOffer(server, owner, outcome, blocks, materialPolicy);
         }
     }
 
@@ -961,6 +984,40 @@ public final class ConstructionRuntime {
             return ControlResult.NOT_ALLOWED;
         }
         supply.allowInventory(claimId, allowed);
+        saveSupplyIfChanged();
+        return ControlResult.OK;
+    }
+
+    /**
+     * The panel's richer materials update (Task 27b): the same owner-or-operator door as
+     * {@link #setInventoryAllowed}, but every field is optional - {@code inventory} null leaves the
+     * switch alone, {@code exclude} adds ids to the claim's ruled-out set, {@code include} takes
+     * them back out. The merged set keeps {@link SupplySettings#MAX_EXCLUDED_ITEMS}; a change is
+     * saved in the same call, and a materials-paused job of the claim picks the new answer up at
+     * its next review, exactly like the plain switch does.
+     */
+    public ControlResult updateSupplySettings(UUID requester, boolean op, String claimId,
+                                              Boolean inventory, Set<String> exclude, Set<String> include) {
+        SiteClaim claim = claims.find(claimId).orElse(null);
+        if (claim == null || claim.released()) {
+            return ControlResult.NOT_FOUND;
+        }
+        if (!claim.ownerUuid().equals(requester) && !op) {
+            return ControlResult.NOT_ALLOWED;
+        }
+        SupplySettings current = supply.of(claimId);
+        Set<String> excluded = new LinkedHashSet<>(current.excludedItems());
+        if (exclude != null) {
+            excluded.addAll(exclude);
+        }
+        if (include != null) {
+            excluded.removeAll(include);
+        }
+        if (excluded.size() > SupplySettings.MAX_EXCLUDED_ITEMS) {
+            return ControlResult.WRONG_STATE;
+        }
+        supply.set(claimId,
+                new SupplySettings(inventory == null ? current.inventoryAllowed() : inventory, excluded));
         saveSupplyIfChanged();
         return ControlResult.OK;
     }

@@ -55,6 +55,8 @@
   "gui.micradrone.ide_screen.build_undo": "Put back",
   "gui.micradrone.ide_screen.build_undo_yes": "Put back",
   "gui.micradrone.ide_screen.build_undo_no": "Keep it",
+  "gui.micradrone.ide_screen.build_inventory_yes": "Use mine",
+  "gui.micradrone.ide_screen.build_inventory_no": "Keep mine",
   "gui.micradrone.ide_screen.shop": "Shop",
   "gui.micradrone.ide_screen.loading": "Loading...",
   "gui.micradrone.ide_screen.debug_pause": "Pause",
@@ -212,5 +214,13 @@
   "micradrone.build.chat.undo_partial": "Almost back - %1$s places could not be put back.",
   "micradrone.build.chat.undo_refused": "It cannot be put back right now.",
   "micradrone.build.chat.pause_recovery": "The server stopped part-way. Please ask a grown-up.",
-  "micradrone.build.chat.pause_site_changed": "Something was placed at the build spot. Move it, then ask a grown-up."
+  "micradrone.build.chat.pause_site_changed": "Something was placed at the build spot. Move it, then ask a grown-up.",
+  "micradrone.build.chat.ask_inventory": "The materials ran out. May I use your things too?",
+  "micradrone.build.chat.inventory_on": "OK! I will use your things too.",
+  "micradrone.build.chat.inventory_off": "OK! I will not use your things.",
+  "micradrone.build.chat.offer_source": "The materials come from the chests - and from your things only if you say OK.",
+  "micradrone.build.chat.materials_changed": "I heard your request about the materials.",
+  "micradrone.build.chat.materials_excluded": "I will not use %1$s.",
+  "micradrone.build.chat.materials_included": "I may use %1$s again.",
+  "micradrone.build.chat.materials_unclear": "I did not understand the materials request. Please say it again."
 }

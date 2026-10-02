@@ -22,7 +22,7 @@ class OfferViewTest {
 
     @Test
     void aWorkingOutcomeReportsWorkingWithNoOfferDetails() {
-        Map<String, Object> t = OfferView.tree(SubmitOutcome.working(), 0);
+        Map<String, Object> t = OfferView.tree(SubmitOutcome.working(), 0, null);
         assertEquals("WORKING", t.get("state"));
         assertNull(t.get("hash"));
         assertEquals(0, ((Number) t.get("blocks")).intValue());
@@ -36,7 +36,8 @@ class OfferViewTest {
     void anOfferedOutcomeCarriesTheHashBlockCountEtaAndConfirmFlags() {
         Issue issue = Issue.of(IssueCode.E_UNKNOWN_PART, "roof", List.of("node:7"), "unknown part id");
         ReplacementSummary replacements = new ReplacementSummary(3, 0, 1, 2, 4, List.of());
-        Map<String, Object> t = OfferView.tree(offered(replacements, 400, List.of(issue)), 5);
+        Map<String, Object> t = OfferView.tree(offered(replacements, 400, List.of(issue)), 5,
+                MaterialPolicy.SURVIVAL_CONSUME);
         assertEquals("OFFERED", t.get("state"));
         assertEquals("0123abcd", t.get("hash"));
         assertEquals(5, ((Number) t.get("blocks")).intValue());
@@ -59,7 +60,7 @@ class OfferViewTest {
     @Test
     void noTerrainAndNoReplacementsMeansNoConfirmations() {
         ReplacementSummary clean = new ReplacementSummary(0, 0, 0, 0, 0, List.of());
-        Map<String, Object> t = OfferView.tree(offered(clean, 0, List.of()), 3);
+        Map<String, Object> t = OfferView.tree(offered(clean, 0, List.of()), 3, MaterialPolicy.CREATIVE_FREE);
         assertEquals(false, t.get("needsTerrainConfirm"));
         assertEquals(false, t.get("needsDestructiveConfirm"));
     }
@@ -67,7 +68,7 @@ class OfferViewTest {
     @Test
     void aFailedOutcomeCarriesTheIssuesWithChildKeys() {
         Issue unloaded = Issue.of(IssueCode.E_SITE_BLOCKED, "unloaded", List.of("manifest"), "chunk not loaded");
-        Map<String, Object> t = OfferView.tree(SubmitOutcome.failed(List.of(unloaded)), 0);
+        Map<String, Object> t = OfferView.tree(SubmitOutcome.failed(List.of(unloaded)), 0, null);
         assertEquals("FAILED", t.get("state"));
         Map<?, ?> entry = (Map<?, ?>) ((List<?>) t.get("issues")).get(0);
         assertEquals("micradrone.build.issue.site_unloaded", entry.get("childKey"),
@@ -95,11 +96,28 @@ class OfferViewTest {
     @Test
     void theOfferTableRoundTripsThroughTheJsonWriter() {
         ReplacementSummary replacements = new ReplacementSummary(1, 2, 0, 3, 4, List.of());
-        String json = MiniJson.write(OfferView.tree(offered(replacements, 200, List.of()), 7));
+        String json = MiniJson.write(
+                OfferView.tree(offered(replacements, 200, List.of()), 7, MaterialPolicy.SURVIVAL_CONSUME));
         Map<?, ?> parsed = (Map<?, ?>) MiniJson.parse(json);
         assertEquals("OFFERED", parsed.get("state"));
         assertEquals(7, ((Number) parsed.get("blocks")).intValue());
         assertEquals(10, ((Number) parsed.get("etaSeconds")).intValue());
         assertEquals(true, parsed.get("needsTerrainConfirm"));
+    }
+
+    @Test
+    void theOfferNamesItsMaterialPolicySoThePanelCanSayWhereMaterialsComeFrom() {
+        // Task 27b: the "ざいりょうの出どころ" line keys off this field; a non-offer doc carries null
+        Map<String, Object> survival = OfferView.tree(
+                offered(new ReplacementSummary(0, 0, 0, 0, 0, List.of()), 0, List.of()), 5,
+                MaterialPolicy.SURVIVAL_CONSUME);
+        assertEquals("SURVIVAL_CONSUME", survival.get("materialPolicy"));
+        Map<String, Object> creative = OfferView.tree(
+                offered(new ReplacementSummary(0, 0, 0, 0, 0, List.of()), 0, List.of()), 5,
+                MaterialPolicy.CREATIVE_FREE);
+        assertEquals("CREATIVE_FREE", creative.get("materialPolicy"));
+        assertNull(OfferView.tree(SubmitOutcome.working(), 0, null).get("materialPolicy"));
+        assertNull(OfferView.rejectedTree(List.of()).get("materialPolicy"),
+                "a refused submit never promised a material source");
     }
 }

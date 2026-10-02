@@ -39,4 +39,17 @@ class SupplySettingsBookTest {
         book.remove("claim-1");
         assertFalse(book.inventoryAllowed("claim-1"), "a released claim keeps nothing (not even a yes)");
     }
+
+    @Test
+    void setReplacesTheWholeEntryAndAllowInventoryKeepsTheExclusions() {
+        SupplySettingsBook book = new SupplySettingsBook();
+        book.set("claim-1", new SupplySettings(false, java.util.Set.of("minecraft:diamond")));
+        book.allowInventory("claim-1", true);
+        assertTrue(book.inventoryAllowed("claim-1"));
+        assertEquals(java.util.Set.of("minecraft:diamond"), book.of("claim-1").excludedItems(),
+                "toggling the inventory switch must not silently drop the exclusions");
+        book.set("claim-1", new SupplySettings(false, java.util.Set.of()));
+        assertFalse(book.inventoryAllowed("claim-1"));
+        assertTrue(book.of("claim-1").excludedItems().isEmpty());
+    }
 }

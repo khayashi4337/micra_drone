@@ -32,6 +32,7 @@ import io.github.khayashi4337.micradrone.chat.MiniJson;
 import io.github.khayashi4337.micradrone.construction.ClientBuildState;
 import io.github.khayashi4337.micradrone.construction.net.BuildApprovePayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildCancelPayload;
+import io.github.khayashi4337.micradrone.construction.net.BuildMaterialsPayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildPlanPayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildRollbackPayload;
 import io.github.khayashi4337.micradrone.drone.CommandsHelpDoc;
@@ -49,7 +50,11 @@ import net.minecraft.client.gui.narration.NarratableEntry;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.storage.LevelResource;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.lwjgl.glfw.GLFW;
@@ -282,6 +287,8 @@ final class IdeChatPanel {
             case UNDO -> "gui.micradrone.ide_screen.build_undo";
             case UNDO_YES -> "gui.micradrone.ide_screen.build_undo_yes";
             case UNDO_NO -> "gui.micradrone.ide_screen.build_undo_no";
+            case INVENTORY_YES -> "gui.micradrone.ide_screen.build_inventory_yes";
+            case INVENTORY_NO -> "gui.micradrone.ide_screen.build_inventory_no";
         };
     }
 
@@ -547,9 +554,15 @@ final class IdeChatPanel {
                 PacketDistributor.sendToServer(new BuildCancelPayload(sendCancel.jobId()));
             } else if (action instanceof BuildChatFlow.SendRollback sendRollback) {
                 PacketDistributor.sendToServer(new BuildRollbackPayload(sendRollback.claimId()));
+            } else if (action instanceof BuildChatFlow.SendMaterials sendMaterials) {
+                // 27b: the Boolean switch maps to the wire's tri-state (null = leave it alone)
+                PacketDistributor.sendToServer(new BuildMaterialsPayload(sendMaterials.claimId(),
+                        sendMaterials.allowed() == null ? BuildMaterialsPayload.INVENTORY_UNCHANGED
+                                : sendMaterials.allowed() ? 1 : 0,
+                        sendMaterials.exclude(), sendMaterials.include()));
             } else if (action instanceof BuildChatFlow.Say say) {
                 buildTranscript.add(BUILD_LINE_PREFIX
-                        + Component.translatable(say.key(), say.args().toArray()).getString());
+                        + Component.translatable(say.key(), sayArgs(say)).getString());
                 refreshTranscript();
             } else if (action instanceof BuildChatFlow.ShowButtons showButtons) {
                 buildButtons = showButtons.buttons();
@@ -574,12 +587,48 @@ final class IdeChatPanel {
             case UNDO -> runActions(buildFlow.undo());
             case UNDO_YES -> runActions(buildFlow.undoConfirmed());
             case UNDO_NO -> runActions(buildFlow.undoCancelled());
+            case INVENTORY_YES -> runActions(buildFlow.inventoryYes());
+            case INVENTORY_NO -> runActions(buildFlow.inventoryNo());
+        }
+    }
+
+    /**
+     * The args of a {@code Say}, ready for {@code Component.translatable}: the materials lines name
+     * their item as its registry id (a machine string is what the directive carries), which the
+     * child reads as the item's translated display name - "ダイヤモンド", not "minecraft:diamond".
+     */
+    private static Object[] sayArgs(BuildChatFlow.Say say) {
+        boolean itemArgs = BuildChatFlow.MSG_MATERIALS_EXCLUDED.equals(say.key())
+                || BuildChatFlow.MSG_MATERIALS_INCLUDED.equals(say.key());
+        Object[] args = new Object[say.args().size()];
+        for (int i = 0; i < args.length; i++) {
+            args[i] = itemArgs ? itemName(say.args().get(i)) : say.args().get(i);
+        }
+        return args;
+    }
+
+    /** The item's display name as a translatable component; an unreadable id degrades to itself. */
+    private static Component itemName(String itemId) {
+        try {
+            Item item = BuiltInRegistries.ITEM.get(ResourceLocation.parse(itemId));
+            return item == Items.AIR ? Component.literal(itemId) : item.getDescription();
+        } catch (RuntimeException malformed) {
+            return Component.literal(itemId);
+        }
+    }
+
+    /** Whether the running game knows the item id - the materials directive's catalog check. */
+    private static boolean itemExists(String itemId) {
+        try {
+            return BuiltInRegistries.ITEM.containsKey(ResourceLocation.parse(itemId));
+        } catch (RuntimeException malformed) {
+            return false;
         }
     }
 
     private void ensureBuildFlow() {
         if (buildFlow == null) {
-            buildFlow = new BuildChatFlow(loadBuildConsent(), promptParts());
+            buildFlow = new BuildChatFlow(loadBuildConsent(), promptParts(), IdeChatPanel::itemExists);
         }
     }
 

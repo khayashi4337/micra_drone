@@ -1,18 +1,23 @@
 package io.github.khayashi4337.micradrone.construction.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.build.model.IntPos;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
  * The order a survival job may take materials in (Task 27a): the owner's inventory is only in the
  * answer at all when the claim allowed it, and then it comes first; supply chests always follow in
  * coordinate order. This is the rule that keeps a child's own belongings from being spent quietly.
+ * Task 27b adds the excluded-items set: a "don't use this" applies to every source alike.
  */
 class SourcePolicyTest {
+    private static final Set<String> NONE = Set.of();
+
     private static Stock inv(String itemId, int count) {
         return new Stock(MaterialPort.INVENTORY, itemId, count);
     }
@@ -30,7 +35,7 @@ class SourcePolicyTest {
         List<Stock> out = SourcePolicy.visibleStocks(List.of(
                 inv("minecraft:cobblestone", 5),
                 chest(1, 2, 3, "minecraft:cobblestone", 4),
-                chest(2, 2, 3, "minecraft:cobblestone", 1)), false);
+                chest(2, 2, 3, "minecraft:cobblestone", 1)), false, NONE);
         assertEquals(List.of("chest:1,2,3", "chest:2,2,3"), sourceIds(out),
                 "disallowed inventory stocks are removed, chests stay");
         assertEquals(5, out.stream().mapToInt(Stock::count).sum(), "the chests keep their own counts");
@@ -45,7 +50,7 @@ class SourcePolicyTest {
                 inv("minecraft:cobblestone", 3),
                 chest(2, 1, 1, "minecraft:cobblestone", 2),
                 chest(1, 0, 2, "minecraft:cobblestone", 4));
-        List<Stock> out = SourcePolicy.visibleStocks(all, true);
+        List<Stock> out = SourcePolicy.visibleStocks(all, true, NONE);
         assertEquals(List.of("inventory", "chest:1,0,2", "chest:1,0,9", "chest:2,1,1", "chest:5,1,1"),
                 sourceIds(out), "x sorts first, then y, then z; the inventory leads");
         assertEquals(3, out.get(0).count());
@@ -55,13 +60,13 @@ class SourcePolicyTest {
     @Test
     void chestsAreCoordinateSortedEvenWithoutPermission() {
         List<Stock> out = SourcePolicy.visibleStocks(List.of(
-                chest(7, 0, 0, "a", 1), chest(0, 9, 0, "a", 1), chest(0, 0, 9, "a", 1)), false);
+                chest(7, 0, 0, "a", 1), chest(0, 9, 0, "a", 1), chest(0, 0, 9, "a", 1)), false, NONE);
         assertEquals(List.of("chest:0,0,9", "chest:0,9,0", "chest:7,0,0"), sourceIds(out));
     }
 
     @Test
     void noChestsAndNoPermissionIsEmpty() {
-        assertEquals(List.of(), SourcePolicy.visibleStocks(List.of(inv("a", 5)), false));
+        assertEquals(List.of(), SourcePolicy.visibleStocks(List.of(inv("a", 5)), false, NONE));
     }
 
     @Test
@@ -69,7 +74,47 @@ class SourcePolicyTest {
         List<Stock> all = new ArrayList<>(List.of(
                 chest(9, 0, 0, "a", 1), chest(1, 0, 0, "a", 1), inv("a", 2)));
         List<Stock> before = List.copyOf(all);
-        SourcePolicy.visibleStocks(all, true);
+        SourcePolicy.visibleStocks(all, true, NONE);
         assertEquals(before, all, "the policy returns a new list and leaves its argument alone");
+    }
+
+    @Test
+    void anExcludedItemIsDroppedFromTheInventoryToo() {
+        List<Stock> out = SourcePolicy.visibleStocks(List.of(
+                inv("minecraft:diamond", 5), inv("minecraft:cobblestone", 3)),
+                true, Set.of("minecraft:diamond"));
+        assertEquals(List.of("inventory"), sourceIds(out));
+        assertTrue(out.stream().allMatch(s -> s.itemId().equals("minecraft:cobblestone")),
+                "an explicit no is stronger than the inventory permission");
+    }
+
+    @Test
+    void anExcludedItemIsDroppedFromChestsToo() {
+        List<Stock> out = SourcePolicy.visibleStocks(List.of(
+                chest(1, 0, 0, "minecraft:diamond", 4),
+                chest(2, 0, 0, "minecraft:cobblestone", 2),
+                chest(3, 0, 0, "minecraft:diamond", 6)), false, Set.of("minecraft:diamond"));
+        assertEquals(List.of("chest:2,0,0"), sourceIds(out),
+                "a chest stock of an excluded item is not a supply the job may draw on");
+    }
+
+    @Test
+    void excludingEverythingLeavesNothing() {
+        assertEquals(List.of(), SourcePolicy.visibleStocks(List.of(
+                inv("minecraft:diamond", 5), chest(1, 0, 0, "minecraft:diamond", 4)),
+                true, Set.of("minecraft:diamond")),
+                "excluded and still counted would make the job spend the forbidden item");
+    }
+
+    @Test
+    void theExclusionOnlyNarrowsTheTakeView() {
+        // the give side (terraform leftovers, returned surplus) never consults this view: the same
+        // input list, unmutated, is what a give target still sees - only the take order is filtered
+        List<Stock> all = new ArrayList<>(List.of(
+                inv("minecraft:diamond", 5), chest(1, 0, 0, "minecraft:diamond", 4)));
+        List<Stock> before = List.copyOf(all);
+        List<Stock> out = SourcePolicy.visibleStocks(all, true, Set.of("minecraft:diamond"));
+        assertEquals(List.of(), out);
+        assertEquals(before, all, "exclusion removes nothing from the source list itself");
     }
 }

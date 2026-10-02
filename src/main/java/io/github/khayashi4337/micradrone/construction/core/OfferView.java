@@ -37,17 +37,20 @@ public final class OfferView {
 
     /**
      * The offer table of one submission outcome. {@code blocks} is the compiled manifest's placement
-     * count; the caller (the runtime) knows it, the outcome does not carry it.
+     * count; the caller (the runtime) knows it, the outcome does not carry it. {@code materialPolicy}
+     * (Task 27b) names the policy the approval would decide - the panel reads it to say where the
+     * materials come from; only an OFFERED doc carries a name, everything else writes null.
      */
-    public static Map<String, Object> tree(SubmitOutcome outcome, int blocks) {
+    public static Map<String, Object> tree(SubmitOutcome outcome, int blocks, MaterialPolicy materialPolicy) {
         PendingApproval pending = outcome.pending();
         return base(outcome.state(), pending == null ? null : pending.manifestHash(), blocks,
-                outcome.etaTicks(), outcome.replacements(), entryTrees(ofIssues(outcome.issues())));
+                outcome.etaTicks(), outcome.replacements(), materialPolicy,
+                entryTrees(ofIssues(outcome.issues())));
     }
 
     /** The table for a refusal that never became a submission (the {@link #REJECTED} state). */
     public static Map<String, Object> rejectedTree(List<Entry> issues) {
-        return base(REJECTED, null, 0, 0L, null, entryTrees(issues));
+        return base(REJECTED, null, 0, 0L, null, null, entryTrees(issues));
     }
 
     private static List<Entry> ofIssues(List<Issue> issues) {
@@ -70,7 +73,7 @@ public final class OfferView {
     }
 
     private static Map<String, Object> base(String state, String hash, int blocks, long etaTicks,
-            ReplacementSummary replacements, List<Object> issues) {
+            ReplacementSummary replacements, MaterialPolicy materialPolicy, List<Object> issues) {
         Map<String, Object> t = new LinkedHashMap<>();
         t.put("state", state);
         t.put("hash", hash);
@@ -83,6 +86,7 @@ public final class OfferView {
         t.put("emptyContainers", replacements == null ? 0L : (long) replacements.emptyContainers());
         t.put("needsTerrainConfirm", replacements != null && replacements.needsTerraformConfirm());
         t.put("needsDestructiveConfirm", replacements != null && replacements.needsDestructiveConfirm());
+        t.put("materialPolicy", materialPolicy == null ? null : materialPolicy.name());
         t.put("issues", issues);
         return t;
     }
