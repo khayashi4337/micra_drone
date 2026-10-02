@@ -1,6 +1,7 @@
 package io.github.khayashi4337.micradrone.construction;
 
 import io.github.khayashi4337.micradrone.MicraDrone;
+import io.github.khayashi4337.micradrone.construction.core.CheckpointPolicy;
 import io.github.khayashi4337.micradrone.construction.core.JobService;
 import io.github.khayashi4337.micradrone.construction.core.WriteAheadLog;
 import java.util.function.BiConsumer;
@@ -9,18 +10,14 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 
 /**
- * Durable points on a live server (Task 25, 04 F-2): a job that waits for one gets a flushed save at most once a
- * minute, and while runs stay open past the durable point one is made on the autosave's own five-minute cadence. A
- * point is marked only after {@code saveAllChunks(..., flush=true)} returned with the job files written inside it
- * (the {@code LevelEvent.Save} handler writes them) and no recording failure on the way. A dimension under
+ * Durable points on a live server (Task 25, 04 F-2): a job that waits for one gets a flushed save five seconds
+ * after the last try ({@link CheckpointPolicy#WAITING_SPACING_TICKS}), and while runs stay open past the durable
+ * point one is made on the autosave's own five-minute cadence. A point is marked only after
+ * {@code saveAllChunks(..., flush=true)} returned with the job files written inside it (the
+ * {@code LevelEvent.Save} handler writes them) and no recording failure on the way. A dimension under
  * {@code /save-off} cannot take a durable point: the jobs keep waiting until {@code /save-on}.
  */
 final class Checkpoints {
-    /** At most one durable point a minute (20 ticks/s * 60): a waiting job's flush is not allowed to spam. */
-    static final long CHECKPOINT_MIN_SPACING_TICKS = 1200;
-    /** Runs open past the durable point get one every five minutes, on the autosave's own cadence. */
-    static final long CHECKPOINT_INTERVAL_TICKS = 6000;
-
     private final MinecraftServer server;
     private final JobService service;
     private final WriteAheadLog wal;
@@ -52,16 +49,9 @@ final class Checkpoints {
         }
         boolean wanted = service.checkpointWanted();
         boolean runsOpen = wal.lastRun() > wal.durableUpTo();
-        if (!wanted && !runsOpen) {
-            return;
+        if (CheckpointPolicy.due(wanted, runsOpen, tick, lastTry, lastPoint)) {
+            make(tick);
         }
-        if (tick - lastTry < CHECKPOINT_MIN_SPACING_TICKS) {
-            return;
-        }
-        if (!wanted && tick - lastPoint < CHECKPOINT_INTERVAL_TICKS) {
-            return;
-        }
-        make(tick);
     }
 
     /**
