@@ -2,7 +2,7 @@
 dimension, and neither refusal spoils the still-valid offer."""
 import time
 
-from tools.p4.scenarios_basic import PLAYER, _command, _prepare_view, _run_job, _submit_and_offer, _teleport
+from tools.p4.scenarios_basic import ASIDE_OFFSET, PLAYER, _command, _prepare_view, _run_job, _submit_and_offer, _teleport
 
 APPROVAL_STAND = (900, -60, 0)
 FACE_NORTH = 180
@@ -27,7 +27,9 @@ def approve_guard(ctx):
     ctx.save_json("other-dimension.json", elsewhere)
     assert elsewhere["approved"] is False and elsewhere.get("rejection") == "DIMENSION_MISMATCH", elsewhere
     # back home the same offer is still good: the refusals did not consume or spoil it
-    _command(ctx, f"execute in minecraft:overworld run tp {PLAYER} {APPROVAL_STAND[0]} {APPROVAL_STAND[1]} {APPROVAL_STAND[2]}")
+    # back home, beside the site (its origin is the stand; a player standing on it would hold the build up)
+    _command(ctx, f"execute in minecraft:overworld run tp {PLAYER} {APPROVAL_STAND[0] + ASIDE_OFFSET[0]} {APPROVAL_STAND[1]} "
+                  f"{APPROVAL_STAND[2] + ASIDE_OFFSET[2]}")
     time.sleep(SETTLE_S)
     approval = ctx.server.post("/build/approve", {"player": PLAYER, "hash": real, "confirmTerraform": True})
     ctx.save_json("approval.json", approval)
