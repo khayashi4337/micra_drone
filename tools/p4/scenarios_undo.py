@@ -8,7 +8,7 @@ ordinary chat overlay behind the IDE never shows a command, a hash or a job/clai
 import time
 
 from tools.p4 import harness
-from tools.p4.scenarios_basic import PLAYER, _prepare_view, _screenshot, _teleport
+from tools.p4.scenarios_basic import PLAYER, _prepare_view, _screenshot, _step_aside, _teleport
 from tools.p4.scenarios_mvp import (CONTROLLER_OFFSET, FACE_NORTH, FLOW_STEP_TIMEOUT_S, LEAK_PATTERN, POLL_S, REQUEST, _state,
                                     _wait_flow)
 from tools.p4.scenarios_rollback import _read_box
@@ -40,6 +40,7 @@ def mvp_undo(ctx):
     if st["buildFlowState"] == "NEED_CONSENT":
         _press(ctx, "CONSENT_YES")
         _wait_flow(ctx, {"OFFERED"}, FLOW_STEP_TIMEOUT_S)
+    _step_aside(ctx)  # the hut starts where the child stood: the job waits while a player is in the way
     _press(ctx, "BUILD")
     st, _ = _wait_flow(ctx, {"DONE"}, UNDO_TIMEOUT_S)
     assert "UNDO" in st["buildButtons"], f"after a finished build the undo button must be offered: {st['buildButtons']}"

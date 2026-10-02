@@ -8,7 +8,7 @@ import re
 import time
 
 from tools.p4 import devkit_client, harness
-from tools.p4.scenarios_basic import PLAYER, _prepare_view, _read_back_and_compare, _screenshot, _teleport
+from tools.p4.scenarios_basic import PLAYER, _prepare_view, _read_back_and_compare, _screenshot, _step_aside, _teleport
 
 REQUEST = "屋根が赤い小屋を建てて"
 MVP_STAND = (1400, -60, 0)
@@ -95,6 +95,7 @@ def mvp_japanese_hut(ctx):
     files.append(ctx.out("pending.json"))
     assert pending["state"] == "OFFERED", pending
 
+    _step_aside(ctx)  # the hut starts where the child stood: blocks over a standing player would suffocate them, so the job waits
     ctx.client.post("/build-press", {"kind": "BUILD"})
     st, seen3 = _wait_flow(ctx, {"DONE"}, BUILD_TIMEOUT_S)
     final_text = st["buildTranscript"]

@@ -83,13 +83,28 @@ def _place_scaffold(ctx, pos, block="minecraft:glass"):
         time.sleep(harness.POLL_INTERVAL_S)
 
 
-def _submit_and_offer(ctx, body):
+# A site that starts at the player's feet covers x 0.., z ..0 from there (north-facing): blocks written over a player suffocate them,
+# and the runtime now waits (PAUSED ENTITY_IN_WAY) while anything stands in the way. A script that builds "here" therefore steps aside
+# once the offer exists (the origin was taken from where the player stood); only player-in-the-way keeps standing.
+SCREENSHOT_WRITE_TIMEOUT_S = 10
+ASIDE_OFFSET = (-3, 0, 3)
+
+
+def _step_aside(ctx):
+    x, y, z = _player(ctx)["pos"]
+    _teleport(ctx, x + ASIDE_OFFSET[0], y + ASIDE_OFFSET[1], z + ASIDE_OFFSET[2], 180, 20)
+    time.sleep(1)
+
+
+def _submit_and_offer(ctx, body, step_aside=True):
     ctx.server.post("/build/submit", {"player": PLAYER, **body})
     pending, seen = ctx.server.poll("/build/pending", {"player": PLAYER},
                                     lambda r: r["state"] in ("OFFERED", "FAILED"), harness.JOB_TIMEOUT_S)
     ctx.save_json("pending.json", pending)
     ctx.save_json("pending-timeline.json", seen)
     assert pending["state"] == "OFFERED", f"submit did not reach OFFERED: {pending}"
+    if body.get("here") and step_aside:
+        _step_aside(ctx)
     return pending
 
 
@@ -123,6 +138,11 @@ def _read_back_and_compare(ctx, manifest_hash):
 def _screenshot(ctx, name):
     reply = ctx.client.post("/screenshot", {"name": f"{name}.png"})
     src = Path(reply["path"])
+    # the game writes the PNG on another thread: a copy made at once can be empty (found with an empty panel-question.png)
+    deadline = time.monotonic() + SCREENSHOT_WRITE_TIMEOUT_S
+    while (not src.exists() or src.stat().st_size == 0) and time.monotonic() < deadline:
+        time.sleep(harness.POLL_INTERVAL_S)
+    assert src.exists() and src.stat().st_size > 0, f"the screenshot {src} was never written"
     ctx.folder.add_file(src, ctx.out(f"{name}.png"))
     return ctx.out(f"{name}.png")
 

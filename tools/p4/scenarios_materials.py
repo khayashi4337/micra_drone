@@ -13,6 +13,7 @@ import re
 import time
 
 from tools.p4 import harness
+from tools.p4.scenarios_mvp import CONTROLLER_OFFSET, FLOW_STEP_TIMEOUT_S, LEAK_PATTERN, REQUEST, _state, _wait_flow
 from tools.p4.scenarios_basic import (DIMENSION, PLAYER, _command, _prepare_view, _read_back_and_compare, _read_block, _screenshot,
                                       _submit_and_offer, _teleport)
 from tools.p4.scenarios_restart import FACE_NORTH
@@ -194,7 +195,7 @@ def player_in_the_way(ctx):
     _prepare_view(ctx)
     _teleport(ctx, sx + CELL_CENTER, sy, sz + CELL_CENTER, FACE_NORTH, 20)
     time.sleep(SETTLE_S)
-    pending = _submit_and_offer(ctx, {"source": "sample:hut", "here": True})
+    pending = _submit_and_offer(ctx, {"source": "sample:hut", "here": True}, step_aside=False)  # this one must keep standing
     approval = ctx.server.post("/build/approve", {"player": PLAYER, "hash": pending["hash"], "confirmTerraform": True})
     assert approval["approved"] is True, approval
     job_id = approval["jobId"]
