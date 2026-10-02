@@ -18,14 +18,25 @@ public final class RepairPromptBuilder {
     }
 
     public static String build(String previousJson, List<String> issueLines) {
+        return build(previousJson, issueLines, PromptLanguage.of(PromptLanguage.JAPANESE_CODE));
+    }
+
+    /**
+     * L1: same repair prompt, but the one-liner rule names {@code language} instead of restating
+     * {@link BuildPromptBuilder#WAKACHI_RULE} (a Japanese-learner rule). Everything else -
+     * the issue bullets and the rejected JSON - stays identical.
+     */
+    public static String build(String previousJson, List<String> issueLines,
+                               PromptLanguage language) {
         Objects.requireNonNull(previousJson, "previousJson");
         Objects.requireNonNull(issueLines, "issueLines");
+        Objects.requireNonNull(language, "language");
         if (issueLines.isEmpty()) {
             throw new IllegalArgumentException("issueLines is empty");
         }
         StringBuilder prompt = new StringBuilder();
         prompt.append("さっきの計画に問題があった。直したJSONを、同じ規則(返答は```jsonブロックをちょうど1つ)で返して。\n");
-        prompt.append(BuildPromptBuilder.WAKACHI_RULE).append("\n\n");
+        prompt.append(oneLinerRule(language)).append("\n\n");
         prompt.append("問題:\n");
         int count = Math.min(issueLines.size(), MAX_ISSUE_LINES);
         for (int i = 0; i < count; i++) {
@@ -37,5 +48,16 @@ public final class RepairPromptBuilder {
         }
         prompt.append("\n直す前の計画のJSON:\n```json\n").append(previousJson).append("\n```\n");
         return prompt.toString();
+    }
+
+    /**
+     * The one-liner rule restated in the repair prompt: the shared wakachi-gaki sentence for
+     * Japanese, a short language-naming line (same meaning as the build prompt's rule) otherwise.
+     */
+    private static String oneLinerRule(PromptLanguage language) {
+        if (language.isJapanese()) {
+            return BuildPromptBuilder.WAKACHI_RULE;
+        }
+        return "返答の最初の一言は" + language.displayName() + "で書くこと。";
     }
 }

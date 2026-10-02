@@ -16,6 +16,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
 class BuildChatFlowTest {
@@ -28,6 +30,11 @@ class BuildChatFlowTest {
 
     private static BuildChatFlow flow(boolean consentGiven) {
         return new BuildChatFlow(consentGiven, PARTS, KNOWN_ITEMS::contains);
+    }
+
+    /** A flow whose game language the test can change mid-round by mutating the supplier's ref. */
+    private static BuildChatFlow flow(boolean consentGiven, Supplier<String> languageCode) {
+        return new BuildChatFlow(consentGiven, PARTS, KNOWN_ITEMS::contains, languageCode);
     }
 
     private static <T extends Action> T only(List<Action> actions, Class<T> type) {
@@ -1238,5 +1245,50 @@ class BuildChatFlowTest {
             assertFalse(text.contains("/micradrone") || text.contains("%2$s")
                     || text.contains("recover") || text.contains("resume"), key + ": " + text);
         }
+    }
+
+    // ---- L1: the one-liner language comes from the game's language setting ------------------------------
+
+    @Test
+    void theAskPromptUsesTheLanguageTheSupplierReportsNow() {
+        BuildChatFlow flow = flow(true, () -> "en_us");
+        List<Action> actions = flow.request("こやを たてて");
+        String prompt = askAi(actions).prompt();
+        assertTrue(prompt.contains("English"),
+                "an en_us game language must produce the English one-liner rule");
+        assertFalse(prompt.contains(BuildPromptBuilder.WAKACHI_RULE));
+    }
+
+    @Test
+    void aLanguageChangeAppliesFromTheNextRequest() {
+        AtomicReference<String> lang = new AtomicReference<>("en_us");
+        BuildChatFlow flow = flow(true, lang::get);
+        flow.request("こやを たてて");
+        flow.aiReply(new StageResult(false, null, "boom", false)); // ends the round at FAILED
+        assertEquals(State.FAILED, flow.state());
+        lang.set("th_th");
+        String prompt = askAi(flow.request("もういちど こやを たてて")).prompt();
+        assertTrue(prompt.contains("Thai"),
+                "the supplier is re-read per request - a language switch applies immediately");
+        assertFalse(prompt.contains("English"));
+    }
+
+    @Test
+    void aRepairPromptAlsoUsesTheCurrentLanguage() {
+        BuildChatFlow flow = flow(true, () -> "en_us");
+        flow.request("こやを たてて");
+        flow.aiReply(aiOk("こやを つくるよ\n```json\n{\"ops\":[]}\n```"));
+        List<Action> actions = flow.offer(offerJson("REJECTED", null, 0, 0, 0, 0, false, false,
+                List.of(issueEntry(null, "bad part"))));
+        String prompt = askAi(actions).prompt();
+        assertTrue(prompt.contains("English"), "the repair prompt names the current language too");
+        assertFalse(prompt.contains(BuildPromptBuilder.WAKACHI_RULE));
+    }
+
+    @Test
+    void theThreeArgumentConstructorKeepsJapanese() {
+        List<Action> actions = flow(true).request("こやを たてて");
+        assertTrue(askAi(actions).prompt().contains(BuildPromptBuilder.WAKACHI_RULE),
+                "the legacy constructor is the fixed-Japanese behaviour");
     }
 }

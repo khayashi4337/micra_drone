@@ -628,7 +628,10 @@ final class IdeChatPanel {
 
     private void ensureBuildFlow() {
         if (buildFlow == null) {
-            buildFlow = new BuildChatFlow(loadBuildConsent(), promptParts(), IdeChatPanel::itemExists);
+            // L1: the supplier reads the LIVE language selection per AI call, so a language switch
+            // in the options screen applies from the next request without rebuilding the panel.
+            buildFlow = new BuildChatFlow(loadBuildConsent(), promptParts(), IdeChatPanel::itemExists,
+                    () -> Minecraft.getInstance().getLanguageManager().getSelected());
         }
     }
 

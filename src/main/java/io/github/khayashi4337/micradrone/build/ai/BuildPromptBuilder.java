@@ -35,6 +35,18 @@ public final class BuildPromptBuilder {
 
     public static String build(String childRequest, String sampleJson, String partsCatalog,
                                String allowedBlocks) {
+        return build(childRequest, sampleJson, partsCatalog, allowedBlocks,
+                PromptLanguage.of(PromptLanguage.JAPANESE_CODE));
+    }
+
+    /**
+     * L1: same prompt, but the child-facing one-liner is written in {@code language} instead of
+     * Japanese. For a non-Japanese language the hiragana line and {@link #WAKACHI_RULE} are
+     * replaced by one line naming the language (both names, or the bare code for an unlisted
+     * language); everything else - the plan JSON rules, the catalogs - stays in Japanese.
+     */
+    public static String build(String childRequest, String sampleJson, String partsCatalog,
+                               String allowedBlocks, PromptLanguage language) {
         Objects.requireNonNull(childRequest, "childRequest");
         if (childRequest.isBlank()) {
             throw new IllegalArgumentException("childRequest is blank");
@@ -42,12 +54,12 @@ public final class BuildPromptBuilder {
         Objects.requireNonNull(sampleJson, "sampleJson");
         Objects.requireNonNull(partsCatalog, "partsCatalog");
         Objects.requireNonNull(allowedBlocks, "allowedBlocks");
+        Objects.requireNonNull(language, "language");
         String request = childRequest.length() > MAX_REQUEST_CHARS
                 ? childRequest.substring(0, MAX_REQUEST_CHARS) : childRequest;
         return "あなたは、子供のマインクラフトの建築を手伝う先生です。子供の依頼を、下の形のJSONの「計画」に直してください。\n\n"
                 + "返答の規則:\n"
-                + "- 最初に、ひらがなの短い一言(何を建てるか)を書くこと。\n"
-                + "- " + WAKACHI_RULE + "\n"
+                + oneLinerRule(language)
                 + "- そのあとに、計画のJSONを```jsonブロックでちょうど1つだけ書くこと。\n"
                 + "- 材料(ブロック)の使いかたの指定があったときだけ、計画のJSONのあとに```materialsブロックを1つ書くこと。"
                 + "中身は {\"materials\":{\"inventory\":true/false,\"exclude\":[\"minecraft:diamond\"],\"include\":[\"minecraft:emerald\"]}} で、"
@@ -60,5 +72,19 @@ public final class BuildPromptBuilder {
                 + "使えるブロック:\n" + allowedBlocks + "\n\n"
                 + "依頼が曖昧でも質問はしないこと。見本の大きさと素材を既定にして、子供らしい妥当な計画を作ること。\n\n"
                 + "子供の依頼:\n" + request + "\n";
+    }
+
+    /**
+     * The reply-rules lines that govern the child-facing one-liner. Japanese keeps the pre-L1 pair
+     * (hiragana + {@link #WAKACHI_RULE}); any other language collapses them into a single line
+     * naming the language - wakachi-gaki is a Japanese-learner rule, not a universal one.
+     */
+    private static String oneLinerRule(PromptLanguage language) {
+        if (language.isJapanese()) {
+            return "- 最初に、ひらがなの短い一言(何を建てるか)を書くこと。\n"
+                    + "- " + WAKACHI_RULE + "\n";
+        }
+        return "- 最初に、子供に見せる短い一言(何を建てるか)を、" + language.displayName()
+                + "で書くこと。小さな子供が読める、やさしい短いことばで。他の言語を混ぜない。\n";
     }
 }

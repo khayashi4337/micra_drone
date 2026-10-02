@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 /**
  * The whole decision logic of the chat panel's "けんちく" (build) mode (P4 task M3), kept pure-Java
@@ -187,6 +188,11 @@ public final class BuildChatFlow {
     private final PromptParts parts;
     /** The item catalog, as a predicate - build.* may not import construction.core (BuildPurityTest). */
     private final Predicate<String> knownItem;
+    /**
+     * The game's language code supplier (L1): read per AI call, so a language switch mid-play
+     * applies from the next request/repair prompt rather than needing a new flow.
+     */
+    private final Supplier<String> languageCode;
     /** Consent survives whole rounds: the screen persists it to disk and re-injects it here. */
     private boolean consented;
     private State state = State.IDLE;
@@ -219,9 +225,19 @@ public final class BuildChatFlow {
     private boolean materialsSent;
 
     public BuildChatFlow(boolean consentGiven, PromptParts parts, Predicate<String> knownItem) {
+        this(consentGiven, parts, knownItem, () -> PromptLanguage.JAPANESE_CODE);
+    }
+
+    /**
+     * L1: {@code languageCode} supplies the game's Minecraft language code; it is consulted each
+     * time an AI prompt is built, never cached.
+     */
+    public BuildChatFlow(boolean consentGiven, PromptParts parts, Predicate<String> knownItem,
+                         Supplier<String> languageCode) {
         this.consented = consentGiven;
         this.parts = Objects.requireNonNull(parts, "parts");
         this.knownItem = Objects.requireNonNull(knownItem, "knownItem");
+        this.languageCode = Objects.requireNonNull(languageCode, "languageCode");
     }
 
     public State state() {
@@ -402,7 +418,8 @@ public final class BuildChatFlow {
             if (repairs < MAX_REPAIRS && lastPlanJson != null && !messages.isEmpty()) {
                 repairs++;
                 state = State.ASKING_AI;
-                return List.of(new AskAi(RepairPromptBuilder.build(lastPlanJson, messages)));
+                return List.of(new AskAi(RepairPromptBuilder.build(lastPlanJson, messages,
+                        PromptLanguage.of(languageCode.get()))));
             }
             state = State.FAILED;
             return List.of(say(MSG_PLAN_FAILED));
@@ -671,7 +688,7 @@ public final class BuildChatFlow {
         state = State.ASKING_AI;
         return List.of(new AskAi(
                 BuildPromptBuilder.build(childText, parts.sampleJson(), parts.partsCatalog(),
-                        parts.allowedBlocks())));
+                        parts.allowedBlocks(), PromptLanguage.of(languageCode.get()))));
     }
 
     /** Per-round fields; {@code consented} is deliberately not part of a round. */
