@@ -49,6 +49,7 @@ SCENARIOS = {
     "safety-limits": Scenario(scenarios_l7.safety_limits, (8,), "sp"),
     "survey-pinned": Scenario(scenarios_l7.survey_pinned, (16,), "sp"),
     "survival-materials": Scenario(scenarios_materials.survival_materials, (7,), "sp"),
+    "player-in-the-way": Scenario(scenarios_materials.player_in_the_way, (), "sp"),
 }
 
 # Design 07 completion conditions with no scenario yet -> the task that completes them.

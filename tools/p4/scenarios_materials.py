@@ -13,13 +13,20 @@ import re
 import time
 
 from tools.p4 import harness
-from tools.p4.scenarios_basic import DIMENSION, PLAYER, _command, _prepare_view, _screenshot, _submit_and_offer, _teleport
+from tools.p4.scenarios_basic import (DIMENSION, PLAYER, _command, _prepare_view, _read_back_and_compare, _read_block, _screenshot,
+                                      _submit_and_offer, _teleport)
 from tools.p4.scenarios_restart import FACE_NORTH
 
 SETTLE_S = 2
 HOLD_S = 8  # how long a paused job must stay paused and leave the inventory alone
+ASIDE = (-3, 0, 3)  # where the player waits: outside the hut (x 0..6, z -6..0 from the origin) and its walls, beside the chest
+HEALTH = re.compile(r"(\d+(?:\.\d+)?)f")
+FULL_HEALTH = 20.0
 CHEST_OFFSET = (-3, 0, 0)  # inside the claim's operating box (it reaches 5 blocks beyond the walls) and off every placement
-STANDS = {"chest": (2800, -60, 0), "inventory": (3000, -60, 0)}
+STANDS = {"chest": (2800, -60, 0), "inventory": (3000, -60, 0), "in-the-way": (3200, -60, 0)}
+PAUSE_ENTITY = "ENTITY_IN_WAY"
+IN_THE_WAY_TIMEOUT_S = 90
+CELL_CENTER = 0.5  # a player standing on the origin cell: the hut's corner wall is planned right there
 PAUSE_MATERIALS = "MATERIALS_MISSING"
 POLL_S = 0.5
 # the game prints in its own language (ja: "...条件に一致する49個のアイテムを持っています"): the count is the only number in the line
@@ -49,6 +56,20 @@ def _chest_items(ctx, pos):
         if item and count:
             out[item.group(1)] = out.get(item.group(1), 0) + int(count.group(1))
     return out
+
+
+def _health(ctx):
+    """The player's health (`data get entity <player> Health` prints e.g. "...: 20.0f")."""
+    text = " ".join(_command(ctx, f"data get entity {PLAYER} Health"))
+    found = HEALTH.search(text)
+    assert found, f"cannot read the player's health from: {text!r}"
+    return float(found.group(1))
+
+
+def _stand_aside(ctx, stand):
+    """Beside the site, never inside it: blocks placed over a player suffocate them (found by p4-mat-004)."""
+    _teleport(ctx, stand[0] + ASIDE[0], stand[1] + ASIDE[1], stand[2] + ASIDE[2], FACE_NORTH, 20)
+    time.sleep(SETTLE_S)
 
 
 def _give(ctx, bom):
@@ -96,6 +117,7 @@ def _start_survival_hut(ctx, stand):
     manifest = ctx.server.post("/build/manifest", {"hash": pending["hash"]})
     bom = manifest["bom"]
     assert bom, f"the manifest carries no bill of materials: {manifest.keys()}"
+    _stand_aside(ctx, stand)
     return pending, bom
 
 
@@ -121,7 +143,6 @@ def survival_materials(ctx):
 
     sx, sy, sz = STANDS["chest"]
     chest = (sx + CHEST_OFFSET[0], sy + CHEST_OFFSET[1], sz + CHEST_OFFSET[2])
-    _teleport(ctx, sx, sy, sz, FACE_NORTH, 20)
     _command(ctx, f"setblock {chest[0]} {chest[1]} {chest[2]} minecraft:chest")
     time.sleep(1)
     half = {item: bom[item] // 2 for item in items[:len(items) // 2 + 1]}
@@ -159,5 +180,42 @@ def survival_materials(ctx):
     ctx.save_json("inventory-after.json", left)
     assert not any(left.values()), f"the inventory must have lost exactly the bill of materials: {left}"
     files.append(_screenshot(ctx, "materials-inventory"))
+    health = _health(ctx)
+    ctx.save_json("health.json", {"health": health})
+    assert health == FULL_HEALTH, f"the player lost health during the builds (buried by the hut?): {health}"
     return files + [ctx.out(n) for n in ("paused-1.json", "chest-half.json", "chest-after.json", "paused-2.json", "inventory-after.json",
                                          "chest-status.json", "inventory-status.json")]
+
+
+def player_in_the_way(ctx):
+    """A player standing where the hut's corner wall goes: nothing is written over them, the job waits (ENTITY_IN_WAY) and
+    tells the child, and it finishes by itself once the player steps aside (found when p4-mat-004's player suffocated)."""
+    sx, sy, sz = STANDS["in-the-way"]
+    _prepare_view(ctx)
+    _teleport(ctx, sx + CELL_CENTER, sy, sz + CELL_CENTER, FACE_NORTH, 20)
+    time.sleep(SETTLE_S)
+    pending = _submit_and_offer(ctx, {"source": "sample:hut", "here": True})
+    approval = ctx.server.post("/build/approve", {"player": PLAYER, "hash": pending["hash"], "confirmTerraform": True})
+    assert approval["approved"] is True, approval
+    job_id = approval["jobId"]
+    waiting, _ = ctx.server.poll("/build/status", {"jobId": job_id},
+                                 lambda r: r["state"] == "PAUSED" and r.get("pause") == PAUSE_ENTITY, IN_THE_WAY_TIMEOUT_S)
+    ctx.save_json("waiting.json", waiting)
+    cursor = waiting["cursor"]
+    deadline = time.monotonic() + HOLD_S
+    while time.monotonic() < deadline:
+        status = ctx.server.post("/build/status", {"jobId": job_id})
+        assert status["state"] == "PAUSED" and status.get("pause") == PAUSE_ENTITY and status["cursor"] == cursor,             f"the job moved on while a player stood in the way: {status}"
+        time.sleep(POLL_S)
+    here = _read_block(ctx, (sx, sy, sz))
+    ctx.save_json("player-cell.json", here)
+    assert here["state"].startswith("minecraft:air"), f"a block was written over the standing player: {here}"
+    assert _health(ctx) == FULL_HEALTH, "the player lost health while the job waited"
+    files = [_screenshot(ctx, "in-the-way-waiting")]
+    _stand_aside(ctx, (sx, sy, sz))
+    final = _finished(ctx, job_id, "in-the-way")
+    assert final["state"] == "VERIFIED", final
+    _read_back_and_compare(ctx, pending["hash"])
+    assert _health(ctx) == FULL_HEALTH, "the player lost health during the build"
+    files.append(_screenshot(ctx, "in-the-way-done"))
+    return files + [ctx.out("waiting.json"), ctx.out("player-cell.json"), ctx.out("in-the-way-status.json")]
