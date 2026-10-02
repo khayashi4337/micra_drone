@@ -210,5 +210,7 @@
   "micradrone.build.chat.undoing": "Putting it back (%1$s％)",
   "micradrone.build.chat.undo_done": "It is back to how it was before.",
   "micradrone.build.chat.undo_partial": "Almost back - %1$s places could not be put back.",
-  "micradrone.build.chat.undo_refused": "It cannot be put back right now."
+  "micradrone.build.chat.undo_refused": "It cannot be put back right now.",
+  "micradrone.build.chat.pause_recovery": "The server stopped part-way. Please ask a grown-up.",
+  "micradrone.build.chat.pause_site_changed": "Something was placed at the build spot. Move it, then ask a grown-up."
 }

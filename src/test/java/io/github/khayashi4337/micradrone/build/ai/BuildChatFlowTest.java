@@ -591,23 +591,49 @@ class BuildChatFlowTest {
                 "only the registered pause keys may reach a child line");
     }
 
+    private static final java.util.Set<PauseReason> PANEL_WORDED = java.util.Set.of(
+            PauseReason.RECOVERY_NEEDED, PauseReason.SITE_CHANGED);
+
     @Test
-    void everyPauseReasonMapsToTheRegisteredPauseKey() {
+    void everyPauseReasonMapsToItsPauseKeyExceptTheTwoWithPanelWording() {
         BuildChatFlow flow = atBuilding();
         for (PauseReason r : PauseReason.values()) {
+            if (PANEL_WORDED.contains(r)) {
+                continue;
+            }
             List<Action> actions = flow.progress(pausedProgressJson("job-1", 0, r.name()));
             assertEquals(List.of(ChildMessages.pause(r)), sayKeys(actions), r.name());
         }
     }
 
     @Test
-    void theSiteChangedPauseCarriesTheJobIdForItsPlaceholder() {
-        BuildChatFlow flow = atBuilding();
-        List<Action> actions = flow.progress(pausedProgressJson("job-42", 0, "SITE_CHANGED"));
-        BuildChatFlow.Say say = only(actions, BuildChatFlow.Say.class);
-        assertEquals("micradrone.build.pause.site_changed", say.key());
-        assertEquals(List.of("job-42"), say.args(),
-                "the pause line's %1$s is the job id, the same way ServerMessages renders it");
+    void theRecoveryAndSiteChangedPausesUseThePanelWordingWithoutAnyArgument() {
+        for (var entry : java.util.Map.of(PauseReason.RECOVERY_NEEDED, BuildChatFlow.MSG_PAUSE_RECOVERY,
+                PauseReason.SITE_CHANGED, BuildChatFlow.MSG_PAUSE_SITE_CHANGED).entrySet()) {
+            BuildChatFlow flow = atBuilding();
+            List<Action> actions = flow.progress(pausedProgressJson("job-42", 0, entry.getKey().name()));
+            BuildChatFlow.Say say = only(actions, BuildChatFlow.Say.class);
+            assertEquals(entry.getValue(), say.key());
+            assertEquals(List.of(), say.args(), "the panel line never carries the job id");
+        }
+    }
+
+    @Test
+    void noPauseLineTheFlowCanSayShowsACommandOrAnIdToAChild() throws java.io.IOException {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> ja = (Map<String, Object>) MiniJson.parse(java.nio.file.Files.readString(
+                java.nio.file.Path.of("src/main/resources/assets/micradrone/lang/ja_jp.json"),
+                java.nio.charset.StandardCharsets.UTF_8));
+        for (PauseReason r : PauseReason.values()) {
+            BuildChatFlow flow = atBuilding();
+            for (Action a : flow.progress(pausedProgressJson("job-42", 0, r.name()))) {
+                if (a instanceof BuildChatFlow.Say say) {
+                    String text = (String) ja.get(say.key());
+                    assertTrue(text != null && !text.contains("/micradrone") && !text.contains("%1$s")
+                            && !text.contains("recover") && !text.contains("resume"), r + ": " + text);
+                }
+            }
+        }
     }
 
     // ---- (h) M5: the もとにもどす (undo) button ------------------------------------------------------

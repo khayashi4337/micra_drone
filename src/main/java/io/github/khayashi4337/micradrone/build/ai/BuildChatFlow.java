@@ -96,12 +96,20 @@ public final class BuildChatFlow {
     public static final String MSG_UNDO_DONE = "micradrone.build.chat.undo_done";
     public static final String MSG_UNDO_PARTIAL = "micradrone.build.chat.undo_partial";
     public static final String MSG_UNDO_REFUSED = "micradrone.build.chat.undo_refused";
+    /**
+     * Panel-only wording for the two pauses whose status-command text names an adult command and a
+     * job id (pause.recovery_needed, pause.site_changed): the panel has no button for either, so the
+     * child is only told to ask a grown-up.
+     */
+    public static final String MSG_PAUSE_RECOVERY = "micradrone.build.chat.pause_recovery";
+    public static final String MSG_PAUSE_SITE_CHANGED = "micradrone.build.chat.pause_site_changed";
 
     /** Every child-facing key this flow can emit - ChildMessages registers all of them. */
     public static final Set<String> CHAT_MESSAGE_KEYS = Set.of(MSG_CONSENT, MSG_CLI_MISSING,
             MSG_AI_FAILED, MSG_PLAN_FAILED, MSG_SAYS, MSG_OFFER, MSG_OFFER_TERRAIN, MSG_PLACE_IN_FRONT,
             MSG_BUILDING, MSG_DONE, MSG_PARTIAL, MSG_BUSY, MSG_CANCELLED, MSG_APPROVE_REFUSED,
-            MSG_UNDO_ASK, MSG_UNDOING, MSG_UNDO_DONE, MSG_UNDO_PARTIAL, MSG_UNDO_REFUSED);
+            MSG_UNDO_ASK, MSG_UNDOING, MSG_UNDO_DONE, MSG_UNDO_PARTIAL, MSG_UNDO_REFUSED,
+            MSG_PAUSE_RECOVERY, MSG_PAUSE_SITE_CHANGED);
 
     // The "state" values of the offer document (construction.core.OfferView writes these; the
     // strings are re-spelled here because build.* may not import construction.*).
@@ -124,8 +132,11 @@ public final class BuildChatFlow {
     private static final Set<String> PAUSE_KEYS = Set.of(
             PAUSE_KEY_PREFIX + "owner_offline", PAUSE_KEY_PREFIX + "chunk_unloaded",
             PAUSE_KEY_PREFIX + "materials_missing", PAUSE_KEY_PREFIX + "server_busy",
-            PAUSE_KEY_PREFIX + "recovery_needed", PAUSE_KEY_PREFIX + "user",
-            PAUSE_KEY_PREFIX + "site_changed", PAUSE_KEY_PREFIX + "no_room");
+            PAUSE_KEY_PREFIX + "user", PAUSE_KEY_PREFIX + "no_room");
+    /** Pause names that use the panel-only wording instead of the status command's pause text. */
+    private static final Map<String, String> PANEL_PAUSE_KEYS = Map.of(
+            PAUSE_KEY_PREFIX + "recovery_needed", MSG_PAUSE_RECOVERY,
+            PAUSE_KEY_PREFIX + "site_changed", MSG_PAUSE_SITE_CHANGED);
 
     /** The three texts {@link BuildPromptBuilder} needs - gathered once by the screen. */
     public record PromptParts(String sampleJson, String partsCatalog, String allowedBlocks) {
@@ -414,11 +425,10 @@ public final class BuildChatFlow {
         } else {
             if (!pause.equals(lastAnnouncedPause)) {
                 String pauseKey = PAUSE_KEY_PREFIX + pause.toLowerCase(Locale.ROOT);
-                if (PAUSE_KEYS.contains(pauseKey)) {
-                    // pause.site_changed's text takes the job id as %1$s, the same way
-                    // ServerMessages renders it; an early doc without a jobId passes "" rather
-                    // than leaving a literal "%1$s" in the child's line.
-                    out.add(say(pauseKey, jobId == null ? "" : jobId));
+                if (PANEL_PAUSE_KEYS.containsKey(pauseKey)) {
+                    out.add(say(PANEL_PAUSE_KEYS.get(pauseKey)));
+                } else if (PAUSE_KEYS.contains(pauseKey)) {
+                    out.add(say(pauseKey));
                 }
             }
             lastAnnouncedPause = pause;

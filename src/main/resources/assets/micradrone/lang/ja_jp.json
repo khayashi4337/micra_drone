@@ -93,6 +93,8 @@
   "micradrone.build.chat.undo_done": "もとの けしきに もどったよ",
   "micradrone.build.chat.undo_partial": "ほとんど もどったよ。もどせなかった ところが %1$s こ あるよ",
   "micradrone.build.chat.undo_refused": "いま もとには もどせないよ",
+  "micradrone.build.chat.pause_recovery": "サーバーが とちゅうで とまったよ。おとなの ひとに たのんでね",
+  "micradrone.build.chat.pause_site_changed": "おく ばしょに なにかが おかれたよ。どかして、おとなの ひとに たのんでね",
   "gui.micradrone.ide_screen.build_mode_on": "けんちく オン",
   "gui.micradrone.ide_screen.build_mode_off": "けんちく オフ",
   "gui.micradrone.ide_screen.build_consent_yes": "いいよ",
