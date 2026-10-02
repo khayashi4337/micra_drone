@@ -243,7 +243,8 @@ class BuildChatFlowTest {
         flow.request("こやを たてて");
         List<Action> actions = flow.aiReply(new StageResult(false, null, "not found", true));
         assertEquals(State.FAILED, flow.state());
-        assertEquals(BuildChatFlow.MSG_CLI_MISSING, only(actions, BuildChatFlow.Say.class).key());
+        assertEquals(BuildChatFlow.MSG_CLI_MISSING,
+                actionAt(actions, 0, BuildChatFlow.Say.class).key());
     }
 
     @Test
@@ -252,7 +253,8 @@ class BuildChatFlowTest {
         flow.request("こやを たてて");
         List<Action> actions = flow.aiReply(new StageResult(false, null, "timeout", false));
         assertEquals(State.FAILED, flow.state());
-        assertEquals(BuildChatFlow.MSG_AI_FAILED, only(actions, BuildChatFlow.Say.class).key());
+        assertEquals(BuildChatFlow.MSG_AI_FAILED,
+                actionAt(actions, 0, BuildChatFlow.Say.class).key());
     }
 
     @Test
@@ -261,7 +263,8 @@ class BuildChatFlowTest {
         flow.request("こやを たてて");
         List<Action> actions = flow.aiReply(aiOk("ごめん、わからない"));
         assertEquals(State.FAILED, flow.state());
-        assertEquals(BuildChatFlow.MSG_PLAN_FAILED, only(actions, BuildChatFlow.Say.class).key());
+        assertEquals(BuildChatFlow.MSG_PLAN_FAILED,
+                actionAt(actions, 0, BuildChatFlow.Say.class).key());
     }
 
     @Test
@@ -372,7 +375,8 @@ class BuildChatFlowTest {
         flow.aiReply(aiOk("```json\n{\"ops\":[],\"v\":3}\n```"));
         List<Action> actions = flow.offer(rejected);   // beyond MAX_REPAIRS = 2
         assertEquals(State.FAILED, flow.state());
-        assertEquals(BuildChatFlow.MSG_PLAN_FAILED, only(actions, BuildChatFlow.Say.class).key());
+        assertEquals(BuildChatFlow.MSG_PLAN_FAILED,
+                actionAt(actions, 0, BuildChatFlow.Say.class).key());
     }
 
     @Test
@@ -1290,5 +1294,208 @@ class BuildChatFlowTest {
         List<Action> actions = flow(true).request("こやを たてて");
         assertTrue(askAi(actions).prompt().contains(BuildPromptBuilder.WAKACHI_RULE),
                 "the legacy constructor is the fixed-Japanese behaviour");
+    }
+
+    // ---- A1: a CLI the probe knows is missing, a logged-out CLI, and repeated failures -----------
+
+    /** A flow whose CLI probe answer the test can flip by mutating the supplier's reference. */
+    private static BuildChatFlow flow(boolean consentGiven, AtomicReference<Boolean> cliAvailable) {
+        return new BuildChatFlow(consentGiven, PARTS, KNOWN_ITEMS::contains,
+                () -> "ja_jp", cliAvailable::get);
+    }
+
+    /**
+     * The FAILED end-state's contract (A1): the transition's LAST ShowButtons is an empty list, so
+     * no dangling consent/build buttons are left under a child who cannot press them safely.
+     */
+    private static void assertFailedWithClosedButtons(BuildChatFlow flow, List<Action> actions) {
+        assertEquals(State.FAILED, flow.state());
+        List<BuildChatFlow.ShowButtons> shown = actions.stream()
+                .filter(a -> a instanceof BuildChatFlow.ShowButtons)
+                .map(a -> (BuildChatFlow.ShowButtons) a)
+                .toList();
+        assertFalse(shown.isEmpty(), "a FAILED transition must close the button row: " + actions);
+        assertTrue(shown.get(shown.size() - 1).buttons().isEmpty(),
+                "the last ShowButtons of a FAILED transition is empty: " + actions);
+    }
+
+    @Test
+    void aRequestWithAKnownMissingCliIsRefusedBeforeConsent() {
+        BuildChatFlow flow = flow(false, new AtomicReference<>(Boolean.FALSE));
+        List<Action> actions = flow.request("こやを たてて");
+        assertEquals(State.FAILED, flow.state());
+        assertEquals(2, actions.size());
+        assertEquals(BuildChatFlow.MSG_CLI_MISSING,
+                actionAt(actions, 0, BuildChatFlow.Say.class).key());
+        assertTrue(actionAt(actions, 1, BuildChatFlow.ShowButtons.class).buttons().isEmpty());
+        assertTrue(actions.stream().noneMatch(a -> a instanceof BuildChatFlow.AskAi),
+                "no AI call goes out for a CLI known to be absent");
+    }
+
+    @Test
+    void aRefusedRequestIsNotRememberedAndTheNextRequestStartsNormally() {
+        AtomicReference<Boolean> available = new AtomicReference<>(Boolean.FALSE);
+        BuildChatFlow flow = flow(false, available);
+        flow.request("さいしょの おねがい");
+        assertEquals(State.FAILED, flow.state());
+        // the grown-up installs the CLI: the very next request must walk the ordinary path, and
+        // the refused text must not surface inside the AI's prompt later
+        available.set(Boolean.TRUE);
+        List<Action> asked = flow.request("つぎの おねがい");
+        assertEquals(State.NEED_CONSENT, flow.state());
+        assertEquals(BuildChatFlow.MSG_CONSENT, actionAt(asked, 0, BuildChatFlow.Say.class).key());
+        BuildChatFlow.AskAi ask = askAi(flow.consent(true));
+        assertTrue(ask.prompt().contains("つぎの おねがい"));
+        assertFalse(ask.prompt().contains("さいしょの おねがい"),
+                "the refused request's text must not be remembered");
+    }
+
+    @Test
+    void aKnownPresentOrUnprobedCliKeepsTheConsentFlow() {
+        for (Boolean probe : new Boolean[]{Boolean.TRUE, null}) {
+            BuildChatFlow flow = new BuildChatFlow(false, PARTS, KNOWN_ITEMS::contains,
+                    () -> "ja_jp", () -> probe);
+            List<Action> actions = flow.request("こやを たてて");
+            assertEquals(State.NEED_CONSENT, flow.state());
+            assertEquals(BuildChatFlow.MSG_CONSENT,
+                    actionAt(actions, 0, BuildChatFlow.Say.class).key());
+        }
+    }
+
+    @Test
+    void aLoggedOutReplyFailsWithTheLoginMissingLineAndNoButtons() {
+        BuildChatFlow flow = flow(true);
+        flow.request("こやを たてて");
+        List<Action> actions = flow.aiReply(new StageResult(false, null,
+                "Not logged in · Please run /login", false, true));
+        assertEquals(State.FAILED, flow.state());
+        assertEquals(2, actions.size());
+        assertEquals(BuildChatFlow.MSG_LOGIN_MISSING,
+                actionAt(actions, 0, BuildChatFlow.Say.class).key());
+        assertTrue(actionAt(actions, 1, BuildChatFlow.ShowButtons.class).buttons().isEmpty());
+    }
+
+    @Test
+    void everyTransitionToFailedClosesTheButtonRow() {
+        // a plain AI failure
+        BuildChatFlow aiFailed = flow(true);
+        aiFailed.request("こや");
+        assertFailedWithClosedButtons(aiFailed,
+                aiFailed.aiReply(new StageResult(false, null, "boom", false)));
+
+        // the missing-CLI reply
+        BuildChatFlow cli = flow(true);
+        cli.request("こや");
+        assertFailedWithClosedButtons(cli,
+                cli.aiReply(new StageResult(false, null, "not found", true)));
+
+        // the logged-out reply
+        BuildChatFlow login = flow(true);
+        login.request("こや");
+        assertFailedWithClosedButtons(login, login.aiReply(new StageResult(false, null,
+                "Not logged in · Please run /login", false, true)));
+
+        // a reply without a JSON block (planFailed)
+        BuildChatFlow plan = flow(true);
+        plan.request("こや");
+        assertFailedWithClosedButtons(plan, plan.aiReply(aiOk("ごめん、わからない")));
+
+        // a malformed offer while waiting for one
+        BuildChatFlow malformed = atWaitingOffer();
+        assertFailedWithClosedButtons(malformed, malformed.offer("this is not json"));
+
+        // an OFFERED doc whose hash is missing
+        BuildChatFlow noHash = atWaitingOffer();
+        assertFailedWithClosedButtons(noHash, noHash.offer(
+                offerJson("OFFERED", null, 5, 20, 0, 0, false, false, List.of())));
+
+        // a REJECTED doc whose issues array is unreadable
+        BuildChatFlow badIssues = atWaitingOffer();
+        assertFailedWithClosedButtons(badIssues,
+                badIssues.offer("{\"offer\":{\"state\":\"REJECTED\",\"issues\":[7]}}"));
+
+        // repairs used up on a third rejection
+        BuildChatFlow exhausted = atWaitingOffer();
+        String rejected = offerJson("REJECTED", null, 0, 0, 0, 0, false, false,
+                List.of(issueEntry(null, "bad part")));
+        exhausted.offer(rejected);
+        exhausted.aiReply(aiOk("```json\n{\"ops\":[]}\n```"));
+        exhausted.offer(rejected);
+        exhausted.aiReply(aiOk("```json\n{\"ops\":[]}\n```"));
+        assertFailedWithClosedButtons(exhausted, exhausted.offer(rejected));
+
+        // the approve refused by the server
+        BuildChatFlow refused = atBuilding();
+        assertFailedWithClosedButtons(refused, refused.offer(
+                offerJson("REJECTED", null, 0, 0, 0, 0, false, false, List.of())));
+
+        // the up-front refusal while the CLI is known absent
+        BuildChatFlow absent = flow(true, new AtomicReference<>(Boolean.FALSE));
+        assertFailedWithClosedButtons(absent, absent.request("こや"));
+    }
+
+    /** A1: the first action of a FAILED reply is its Say - the ShowButtons that follows is checked elsewhere. */
+    private static BuildChatFlow.Say firstSay(List<Action> actions) {
+        return actionAt(actions, 0, BuildChatFlow.Say.class);
+    }
+
+    @Test
+    void theSecondPlainFailureInARowAsksForAGrownUp() {
+        BuildChatFlow flow = flow(true);
+        flow.request("こや");
+        assertEquals(BuildChatFlow.MSG_AI_FAILED,
+                firstSay(flow.aiReply(new StageResult(false, null, "boom", false))).key(),
+                "the first failure still says try again");
+        flow.request("こや");
+        assertEquals(BuildChatFlow.MSG_AI_FAILED_ADULT,
+                firstSay(flow.aiReply(new StageResult(false, null, "boom", false))).key(),
+                "the second in a row asks for a grown-up");
+        flow.request("こや");
+        assertEquals(BuildChatFlow.MSG_AI_FAILED_ADULT,
+                firstSay(flow.aiReply(new StageResult(false, null, "boom", false))).key(),
+                "and every failure after keeps asking");
+    }
+
+    @Test
+    void aSuccessfulReplyResetsTheGrownUpCount() {
+        BuildChatFlow flow = flow(true);
+        flow.request("こや");
+        flow.aiReply(new StageResult(false, null, "boom", false)); // first plain failure
+        flow.request("こや");
+        flow.aiReply(aiOk("こやを つくるよ\n```json\n{\"ops\":[]}\n```")); // the AI answered - count resets
+        flow.offer(offerJson("REJECTED", null, 0, 0, 0, 0, false, false,
+                List.of(issueEntry(null, "bad part")))); // repair round 1 -> ASKING_AI
+        List<Action> actions = flow.aiReply(new StageResult(false, null, "boom", false));
+        assertEquals(BuildChatFlow.MSG_AI_FAILED, firstSay(actions).key(),
+                "a success in between restarts the count at one");
+    }
+
+    @Test
+    void cliAndLoginFailuresDoNotCountTowardTheGrownUpLine() {
+        BuildChatFlow flow = flow(true);
+        flow.request("こや");
+        flow.aiReply(new StageResult(false, null, "not found", true));
+        flow.request("こや");
+        flow.aiReply(new StageResult(false, null, "Not logged in · Please run /login", false, true));
+        flow.request("こや");
+        assertEquals(BuildChatFlow.MSG_AI_FAILED,
+                firstSay(flow.aiReply(new StageResult(false, null, "boom", false))).key(),
+                "cliMissing/loginMissing are not retries of the same kind - the count starts at one");
+    }
+
+    @Test
+    void theNewChildLinesStayFreeOfCommandsAndJargon() throws java.io.IOException {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> ja = (Map<String, Object>) MiniJson.parse(java.nio.file.Files.readString(
+                java.nio.file.Path.of("src/main/resources/assets/micradrone/lang/ja_jp.json"),
+                java.nio.charset.StandardCharsets.UTF_8));
+        for (String key : List.of(BuildChatFlow.MSG_LOGIN_MISSING, BuildChatFlow.MSG_AI_FAILED_ADULT,
+                "gui.micradrone.ide_screen.build_cli_missing")) {
+            String text = (String) ja.get(key);
+            assertTrue(text != null, "missing ja text for " + key);
+            assertFalse(text.contains("/micradrone") || text.contains("%1$s"), key + ": " + text);
+            assertFalse(text.toLowerCase(java.util.Locale.ROOT).contains("claude"),
+                    key + " must not name the tool (only cli_missing may): " + text);
+        }
     }
 }

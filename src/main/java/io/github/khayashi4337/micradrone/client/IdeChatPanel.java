@@ -129,6 +129,11 @@ final class IdeChatPanel {
     private static final int THINKING_MAX_DOTS = 3;
     private static final int CANCEL_HINT_COLOR = 0xFF9A9A9A;
     private static final int CLI_MISSING_COLOR = 0xFFFF6060;
+    /**
+     * A1: once the probe reports "absent", one build request re-runs it - but never more often
+     * than this, so a child pressing send repeatedly cannot spawn a probe per keystroke.
+     */
+    private static final long CLI_REPROBE_MIN_INTERVAL_MS = 10000;
 
     // ---- "けんちく" build mode (P4 task M3) ---------------------------------------------------
     // Every build-mode decision lives in the pure-Java BuildChatFlow; this panel only executes the
@@ -161,10 +166,12 @@ final class IdeChatPanel {
     private String pendingQuestion;
     /** Client ticks since the panel was built; drives the thinking-dots animation. */
     private int animationTicks = 0;
-    /** Result of the one-time {@code claude --version} probe: null = not probed yet / still running. */
+    /** Result of the {@code claude --version} probe: null = not probed yet / still running. */
     private Boolean cliAvailable;
     private String cliVersion = "";
     private boolean cliProbeStarted;
+    /** When the last probe was started (ms) - A1's re-probe throttle measures from this. */
+    private long lastCliProbeMs;
 
     // build mode's own state (the flow itself is created lazily - the prompt parts read packaged
     // resources, which only pays off when the child actually turns けんちく on)
@@ -325,10 +332,35 @@ final class IdeChatPanel {
             return;
         }
         cliProbeStarted = true;
+        probeCli();
+    }
+
+    /**
+     * Runs {@code claude --version} on the bridge's executor; the answer lands on the render thread
+     * as {@link #cliAvailable}/{@link #cliVersion}.
+     */
+    private void probeCli() {
+        lastCliProbeMs = System.currentTimeMillis();
         claudeCliBridge.probeVersion().thenAccept(version -> Minecraft.getInstance().execute(() -> {
             cliAvailable = version.isPresent();
             cliVersion = version.orElse("");
         }));
+    }
+
+    /**
+     * A1: a build request made while the CLI is known absent re-tries the probe once (never more
+     * than one per {@link #CLI_REPROBE_MIN_INTERVAL_MS}), so a CLI a grown-up installed in the
+     * meantime is picked up without reopening the panel. The current request still fails on the
+     * stale FALSE - the probe's answer only lets the NEXT request through.
+     */
+    private void reprobeCliIfMissing() {
+        if (!Boolean.FALSE.equals(cliAvailable)) {
+            return;
+        }
+        if (System.currentTimeMillis() - lastCliProbeMs < CLI_REPROBE_MIN_INTERVAL_MS) {
+            return;
+        }
+        probeCli();
     }
 
     /**
@@ -355,6 +387,17 @@ final class IdeChatPanel {
     /** Idle status row: the probed CLI version in grey, or the install hint in red if there is none. */
     private void renderCliStatus(GuiGraphics guiGraphics) {
         if (cliAvailable == null) {
+            return;
+        }
+        if (buildMode) {
+            // A1: build mode faces a child - no English install hint and no version number, only
+            // the child-worded "not ready" line while the CLI is known absent.
+            if (!cliAvailable) {
+                int textY = statusRowY + (STATUS_ROW_HEIGHT - host.font().lineHeight) / 2;
+                guiGraphics.drawString(host.font(),
+                        Component.translatable("gui.micradrone.ide_screen.build_cli_missing").getString(),
+                        statusRowX, textY, CLI_MISSING_COLOR);
+            }
             return;
         }
         int textY = statusRowY + (STATUS_ROW_HEIGHT - host.font().lineHeight) / 2;
@@ -517,6 +560,7 @@ final class IdeChatPanel {
      */
     private void sendBuildMessage(String request) {
         ensureBuildFlow();
+        reprobeCliIfMissing();
         List<BuildChatFlow.Action> actions = buildFlow.request(request);
         if (buildFlow.state() == BuildChatFlow.State.ASKING_AI
                 || buildFlow.state() == BuildChatFlow.State.NEED_CONSENT) {
@@ -630,8 +674,10 @@ final class IdeChatPanel {
         if (buildFlow == null) {
             // L1: the supplier reads the LIVE language selection per AI call, so a language switch
             // in the options screen applies from the next request without rebuilding the panel.
+            // A1: the same for the CLI probe - a FALSE lets the flow refuse before asking consent.
             buildFlow = new BuildChatFlow(loadBuildConsent(), promptParts(), IdeChatPanel::itemExists,
-                    () -> Minecraft.getInstance().getLanguageManager().getSelected());
+                    () -> Minecraft.getInstance().getLanguageManager().getSelected(),
+                    () -> cliAvailable);
         }
     }
 

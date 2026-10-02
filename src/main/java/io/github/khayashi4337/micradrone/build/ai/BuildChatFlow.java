@@ -28,6 +28,8 @@ import java.util.function.Supplier;
 public final class BuildChatFlow {
     /** How many times a rejected/failed plan is sent back to the AI for repair before giving up. */
     public static final int MAX_REPAIRS = 2;
+    /** A1: this many ordinary AI failures in a row switches the retry line to "ask a grown-up". */
+    private static final int AI_FAILED_ADULT_AFTER = 2;
 
     /** The flow's states; the screen mirrors this for the devkit's state probe. */
     public enum State { IDLE, NEED_CONSENT, ASKING_AI, WAITING_OFFER, OFFERED, BUILDING, DONE, FAILED,
@@ -93,7 +95,11 @@ public final class BuildChatFlow {
     // Child-facing line keys; the texts live in the lang files and ChildMessages.FIXED lists these.
     public static final String MSG_CONSENT = "micradrone.build.chat.consent";
     public static final String MSG_CLI_MISSING = "micradrone.build.chat.cli_missing";
+    /** A1: the CLI answered but is not signed in - retrying can never fix it, so ask a grown-up. */
+    public static final String MSG_LOGIN_MISSING = "micradrone.build.chat.login_missing";
     public static final String MSG_AI_FAILED = "micradrone.build.chat.ai_failed";
+    /** A1: ordinary failures keep repeating - the child should fetch a grown-up instead of retrying. */
+    public static final String MSG_AI_FAILED_ADULT = "micradrone.build.chat.ai_failed_adult";
     public static final String MSG_PLAN_FAILED = "micradrone.build.chat.plan_failed";
     /** The AI's own hiragana one-liner, passed through as the single arg. */
     public static final String MSG_SAYS = "micradrone.build.chat.says";
@@ -143,7 +149,8 @@ public final class BuildChatFlow {
 
     /** Every child-facing key this flow can emit - ChildMessages registers all of them. */
     public static final Set<String> CHAT_MESSAGE_KEYS = Set.of(MSG_CONSENT, MSG_CLI_MISSING,
-            MSG_AI_FAILED, MSG_PLAN_FAILED, MSG_SAYS, MSG_OFFER, MSG_OFFER_TERRAIN, MSG_PLACE_IN_FRONT,
+            MSG_LOGIN_MISSING, MSG_AI_FAILED, MSG_AI_FAILED_ADULT, MSG_PLAN_FAILED, MSG_SAYS,
+            MSG_OFFER, MSG_OFFER_TERRAIN, MSG_PLACE_IN_FRONT,
             MSG_BUILDING, MSG_DONE, MSG_PARTIAL, MSG_BUSY, MSG_CANCELLED, MSG_APPROVE_REFUSED,
             MSG_UNDO_ASK, MSG_UNDOING, MSG_UNDO_DONE, MSG_UNDO_PARTIAL, MSG_UNDO_REFUSED,
             MSG_PAUSE_RECOVERY, MSG_PAUSE_SITE_CHANGED, MSG_ASK_INVENTORY, MSG_INVENTORY_ON,
@@ -193,6 +200,12 @@ public final class BuildChatFlow {
      * applies from the next request/repair prompt rather than needing a new flow.
      */
     private final Supplier<String> languageCode;
+    /**
+     * A1: the panel's {@code claude --version} probe, as a tri-state (null = still unknown,
+     * TRUE = installed, FALSE = known absent). Read per request, so a CLI a grown-up installs
+     * later is picked up without rebuilding the flow.
+     */
+    private final Supplier<Boolean> cliAvailable;
     /** Consent survives whole rounds: the screen persists it to disk and re-injects it here. */
     private boolean consented;
     private State state = State.IDLE;
@@ -223,6 +236,12 @@ public final class BuildChatFlow {
      * then is a REJECTED offer in BUILDING the refusal of this flow's own ask, told to the child.
      */
     private boolean materialsSent;
+    /**
+     * Ordinary AI failures in a row (A1): neither cliMissing nor loginMissing count - those are
+     * different problems that never heal by retrying. Deliberately NOT reset by
+     * {@link #resetRound()}: a fresh request keeps the count, only a real success clears it.
+     */
+    private int consecutiveAiFailures;
 
     public BuildChatFlow(boolean consentGiven, PromptParts parts, Predicate<String> knownItem) {
         this(consentGiven, parts, knownItem, () -> PromptLanguage.JAPANESE_CODE);
@@ -234,10 +253,20 @@ public final class BuildChatFlow {
      */
     public BuildChatFlow(boolean consentGiven, PromptParts parts, Predicate<String> knownItem,
                          Supplier<String> languageCode) {
+        this(consentGiven, parts, knownItem, languageCode, () -> null);
+    }
+
+    /**
+     * A1: {@code cliAvailable} reports the panel's CLI probe result; FALSE lets {@link #request}
+     * refuse up front instead of asking consent for a call that cannot run.
+     */
+    public BuildChatFlow(boolean consentGiven, PromptParts parts, Predicate<String> knownItem,
+                         Supplier<String> languageCode, Supplier<Boolean> cliAvailable) {
         this.consented = consentGiven;
         this.parts = Objects.requireNonNull(parts, "parts");
         this.knownItem = Objects.requireNonNull(knownItem, "knownItem");
         this.languageCode = Objects.requireNonNull(languageCode, "languageCode");
+        this.cliAvailable = Objects.requireNonNull(cliAvailable, "cliAvailable");
     }
 
     public State state() {
@@ -255,6 +284,12 @@ public final class BuildChatFlow {
             return List.of(say(MSG_BUSY));
         }
         resetRound();
+        if (Boolean.FALSE.equals(cliAvailable.get())) {
+            // A1: the probe proved the CLI absent, so refuse before the consent question and before
+            // the request text is parked - neither can lead anywhere while no CLI can run.
+            state = State.FAILED;
+            return List.of(say(MSG_CLI_MISSING), new ShowButtons(List.of()));
+        }
         if (!consented) {
             pendingRequest = childText;
             state = State.NEED_CONSENT;
@@ -285,21 +320,31 @@ public final class BuildChatFlow {
         if (state != State.ASKING_AI) {
             return List.of();
         }
+        // A1: every FAILED transition ends with an empty ShowButtons - no dangling buttons under
+        // a failure the child cannot act on.
         if (result.cliMissing()) {
             state = State.FAILED;
-            return List.of(say(MSG_CLI_MISSING));
+            return List.of(say(MSG_CLI_MISSING), new ShowButtons(List.of()));
+        }
+        if (result.loginMissing()) {
+            state = State.FAILED;
+            return List.of(say(MSG_LOGIN_MISSING), new ShowButtons(List.of()));
         }
         if (!result.success()) {
+            consecutiveAiFailures++;
             state = State.FAILED;
-            return List.of(say(MSG_AI_FAILED));
+            return List.of(say(consecutiveAiFailures >= AI_FAILED_ADULT_AFTER
+                            ? MSG_AI_FAILED_ADULT : MSG_AI_FAILED),
+                    new ShowButtons(List.of()));
         }
+        consecutiveAiFailures = 0;
         PlanReplyExtractor.Extracted extracted =
                 PlanReplyExtractor.extract(result.text() == null ? "" : result.text());
         if (extracted.error() != null) {
             // A reply without a well-shaped JSON block means the reply rules were not kept; the
             // plan is not auto-repaired - the child re-asks in different words.
             state = State.FAILED;
-            return List.of(say(MSG_PLAN_FAILED));
+            return List.of(say(MSG_PLAN_FAILED), new ShowButtons(List.of()));
         }
         lastPlanJson = extracted.json();
         List<Action> out = new ArrayList<>();
@@ -356,7 +401,7 @@ public final class BuildChatFlow {
                 return List.of();
             }
             state = State.FAILED;
-            return List.of(say(MSG_PLAN_FAILED));
+            return List.of(say(MSG_PLAN_FAILED), new ShowButtons(List.of()));
         }
         if (state == State.BUILDING) {
             // Between SendApprove and the first progress doc the only offer still open is the
@@ -387,7 +432,7 @@ public final class BuildChatFlow {
                 // The approve payload's hash field cannot encode null, so an OFFERED doc without a
                 // hash is failed here instead of dying at the packet codec on つくる.
                 state = State.FAILED;
-                return List.of(say(MSG_PLAN_FAILED));
+                return List.of(say(MSG_PLAN_FAILED), new ShowButtons(List.of()));
             }
             List<Action> out = new ArrayList<>();
             out.add(say(MSG_OFFER, longAt(tree.get("blocks"), "blocks"),
@@ -413,7 +458,7 @@ public final class BuildChatFlow {
                 messages = issueMessages(tree.get("issues"));
             } catch (RuntimeException malformed) {
                 state = State.FAILED;
-                return List.of(say(MSG_PLAN_FAILED));
+                return List.of(say(MSG_PLAN_FAILED), new ShowButtons(List.of()));
             }
             if (repairs < MAX_REPAIRS && lastPlanJson != null && !messages.isEmpty()) {
                 repairs++;
@@ -422,7 +467,7 @@ public final class BuildChatFlow {
                         PromptLanguage.of(languageCode.get()))));
             }
             state = State.FAILED;
-            return List.of(say(MSG_PLAN_FAILED));
+            return List.of(say(MSG_PLAN_FAILED), new ShowButtons(List.of()));
         }
         return List.of(); // WORKING or an unknown state: still waiting
     }

@@ -78,7 +78,9 @@
   "micradrone.build.issue.e_unknown_part": "しらない ぶひんが あるよ",
   "micradrone.build.chat.consent": "AI に けんちくの おねがいを おくるよ。いいかな?",
   "micradrone.build.chat.cli_missing": "AI の じゅんびが まだだよ。おとなの ひとに Claude Code を いれてもらってね",
+  "micradrone.build.chat.login_missing": "AI に ログインが まだだよ。おとなの ひとに たのんでね",
   "micradrone.build.chat.ai_failed": "AI が こたえられなかったよ。もういちど いってみてね",
+  "micradrone.build.chat.ai_failed_adult": "AI が つかえないみたい。おとなの ひとに みてもらってね",
   "micradrone.build.chat.plan_failed": "けいかくが つくれなかったよ。べつの いいかたで たのんでみてね",
   "micradrone.build.chat.says": "%1$s",
   "micradrone.build.chat.offer": "けいかくが できたよ! ブロック %1$s こ、やく %2$s びょう かかるよ",
@@ -116,5 +118,6 @@
   "gui.micradrone.ide_screen.build_undo_yes": "もどす",
   "gui.micradrone.ide_screen.build_undo_no": "やめる",
   "gui.micradrone.ide_screen.build_inventory_yes": "つかう",
-  "gui.micradrone.ide_screen.build_inventory_no": "つかわない"
+  "gui.micradrone.ide_screen.build_inventory_no": "つかわない",
+  "gui.micradrone.ide_screen.build_cli_missing": "AI の じゅんびが まだだよ"
 }
