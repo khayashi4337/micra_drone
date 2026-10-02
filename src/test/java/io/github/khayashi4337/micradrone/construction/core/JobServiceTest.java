@@ -356,6 +356,33 @@ class JobServiceTest {
     }
 
     @Test
+    void anEntityInTheWayPausesTheJobAndTheNextReviewGoesOn() {
+        JobService s = service();
+        Clock c = new Clock();
+        FakeJobWorld w = new FakeJobWorld();
+        w.online.add(A);
+        PlacementManifest m = TestManifests.smallHut();
+        IntPos spot = m.placements().get(3).pos();
+        w.world.occupy(spot);
+        submit(s, approved("job-1", A, m, MaterialPolicy.CREATIVE_FREE), m);
+        c.runUntil(s, w, "job-1", in(JobState.PAUSED));
+        ConstructionJob paused = s.record("job-1").orElseThrow().job();
+        assertEquals(PauseReason.ENTITY_IN_WAY, paused.pauseReason());
+        assertEquals(3, paused.cursor());
+        long pausedAt = c.tick - 1;
+        w.world.leave(spot);
+        while (c.tick < pausedAt + JobService.RETRY_INTERVAL_TICKS) {
+            c.step(s, w);
+            assertEquals(JobState.PAUSED, s.record("job-1").orElseThrow().job().state(), "no retry before one second");
+        }
+        c.step(s, w);
+        assertEquals(JobState.RUNNING, s.record("job-1").orElseThrow().job().state(),
+                "the review picks the job back up once the spot is clear");
+        c.runUntil(s, w, "job-1", in(JobState.VERIFIED));
+        assertEquals(m.placements().get(3).block(), w.world.blockAt(spot));
+    }
+
+    @Test
     void aHandOverThatDoesNotFitWaitsAndGoesOnOnceThereIsRoom() {
         JobService s = service();
         Clock c = new Clock();

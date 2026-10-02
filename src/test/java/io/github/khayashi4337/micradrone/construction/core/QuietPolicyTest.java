@@ -57,6 +57,7 @@ class QuietPolicyTest {
         t.put(ChildMessages.pause(PauseReason.USER), false);
         t.put(ChildMessages.pause(PauseReason.SITE_CHANGED), true);    // "/micradrone build resume … skip-conflicts"
         t.put(ChildMessages.pause(PauseReason.NO_ROOM), false);
+        t.put(ChildMessages.pause(PauseReason.ENTITY_IN_WAY), false);
         // approval rejections, one by one: a reason that tells the child to run submit or to add a
         // confirm flag names command machinery; a pure explanation stays
         t.put(ChildMessages.rejection(ApprovalRejection.NO_PENDING), true);            // "submit してね"

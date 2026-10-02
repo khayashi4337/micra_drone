@@ -41,6 +41,7 @@
   "micradrone.build.pause.recovery_needed": "サーバーが とちゅうで とまったので、どこまで できたか たしかめられない ところが あるよ。おとなの ひとに /micradrone build recover を たのんでね",
   "micradrone.build.pause.user": "とめて あるよ",
   "micradrone.build.pause.site_changed": "おく ばしょに なにかが おかれたよ。どかすか、/micradrone build resume %1$s skip-conflicts で とばしてね",
+  "micradrone.build.pause.entity_in_way": "たてる ばしょに だれかが いるよ。どいてね",
   "micradrone.build.reject.no_pending": "しょうにん まちの けいかくが ないよ。さきに submit してね",
   "micradrone.build.reject.not_owner": "これは ほかの ひとの けいかくだよ",
   "micradrone.build.reject.expired": "じかんが たちすぎたよ。もう いちど submit してね",

@@ -618,6 +618,13 @@ class BuildChatFlowTest {
                 "only the registered pause keys may reach a child line");
     }
 
+    @Test
+    void anEntityInTheWayPauseIsSpokenToThePanel() {
+        BuildChatFlow flow = atBuilding();
+        List<Action> actions = flow.progress(pausedProgressJson("job-1", 0, "ENTITY_IN_WAY"));
+        assertEquals(List.of("micradrone.build.pause.entity_in_way"), sayKeys(actions));
+    }
+
     private static final java.util.Set<PauseReason> PANEL_WORDED = java.util.Set.of(
             PauseReason.RECOVERY_NEEDED, PauseReason.SITE_CHANGED);
 

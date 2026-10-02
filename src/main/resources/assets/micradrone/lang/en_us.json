@@ -161,6 +161,7 @@
   "micradrone.build.pause.recovery_needed": "the server stopped mid-way, so I cannot check how far it got. Ask a grown-up to run /micradrone build recover",
   "micradrone.build.pause.user": "paused",
   "micradrone.build.pause.site_changed": "something was placed at the build spot. Move it, or skip it with /micradrone build resume %1$s skip-conflicts.",
+  "micradrone.build.pause.entity_in_way": "Someone is standing where I want to build. Please step aside.",
   "micradrone.build.reject.no_pending": "no plan is waiting for approval. submit first.",
   "micradrone.build.reject.not_owner": "this is someone else's plan.",
   "micradrone.build.reject.expired": "too much time passed. submit again.",

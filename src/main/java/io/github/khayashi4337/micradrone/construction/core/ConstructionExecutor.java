@@ -609,6 +609,11 @@ public final class ConstructionExecutor {
                     yield new Step(PauseReason.NO_ROOM, pl.yieldOwed());
                 }
                 PlaceResult result = ctx.world().place(p.pos(), p.block(), p.blockEntityConfig(), ctx.job().ownerUuid());
+                if (result == PlaceResult.BLOCKED_BY_ENTITY) {
+                    // someone stands where the block would go: wait, do not skip — nothing is written,
+                    // recorded or charged, and the cursor stays here so the next review retries this position
+                    yield Step.pause(PauseReason.ENTITY_IN_WAY);
+                }
                 if (result != PlaceResult.PLACED) {
                     ctx.outcome().skip(new SkippedPlacement(item.index(), p.pos(),
                             result == PlaceResult.DENIED ? SkippedPlacement.DENIED : SkippedPlacement.INVALID));
@@ -698,6 +703,10 @@ public final class ConstructionExecutor {
                 }
                 PlaceResult result = ctx.world().restore(item.pos(), item.restoreTo(), ctx.job().ownerUuid(),
                         item.dropContents());
+                if (result == PlaceResult.BLOCKED_BY_ENTITY) {
+                    // a solid block must not be written back over someone standing there: wait like a put does
+                    yield Step.pause(PauseReason.ENTITY_IN_WAY);
+                }
                 if (result != PlaceResult.PLACED) {
                     ctx.outcome().skip(new SkippedPlacement(index, item.pos(),
                             result == PlaceResult.DENIED ? SkippedPlacement.DENIED : SkippedPlacement.INVALID));

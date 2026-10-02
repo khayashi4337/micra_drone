@@ -12,6 +12,7 @@ import java.util.UUID;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.shapes.CollisionContext;
 
 /**
  * The core's WorldPort on a ServerLevel (F-1: the caller runs on the server's main thread). Reads go through
@@ -38,14 +39,22 @@ public final class ServerWorldPort implements WorldPort {
             return PlaceResult.INVALID;
         }
         BlockState state = toState(block);
-        return state == null ? PlaceResult.INVALID : guard.place(level, toBlockPos(pos), state, actor);
+        if (state == null) {
+            return PlaceResult.INVALID;
+        }
+        BlockPos target = toBlockPos(pos);
+        return clearForWrite(target, state) ? guard.place(level, target, state, actor) : PlaceResult.BLOCKED_BY_ENTITY;
     }
 
     @Override
     public PlaceResult restore(IntPos pos, BlockSpec block, UUID actor, boolean dropContentsFirst) {
         BlockState state = toState(block);
-        return state == null ? PlaceResult.INVALID
-                : guard.restore(level, toBlockPos(pos), state, actor, dropContentsFirst);
+        if (state == null) {
+            return PlaceResult.INVALID;
+        }
+        BlockPos target = toBlockPos(pos);
+        return clearForWrite(target, state) ? guard.restore(level, target, state, actor, dropContentsFirst)
+                : PlaceResult.BLOCKED_BY_ENTITY;
     }
 
     @Override
@@ -60,6 +69,15 @@ public final class ServerWorldPort implements WorldPort {
     /** The single IntPos to BlockPos conversion of this adapter (read shares it). */
     static BlockPos toBlockPos(IntPos pos) {
         return new BlockPos(pos.x(), pos.y(), pos.z());
+    }
+
+    /**
+     * Vanilla's placement occupancy check (the same one BlockItem.canPlace runs for a player): false while an entity
+     * that blocks placement — a player, a mob, a boat — overlaps the state's collision shape at pos. Air and other
+     * states without a collision shape are always clear, so a removal to air is never held up.
+     */
+    private boolean clearForWrite(BlockPos pos, BlockState state) {
+        return level.isUnobstructed(state, pos, CollisionContext.empty());
     }
 
     /** Null when the spec cannot be a block state of this game: BlockStates.toState throws IllegalArgumentException. */

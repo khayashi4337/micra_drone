@@ -168,7 +168,8 @@ public final class BuildChatFlow {
     private static final Set<String> PAUSE_KEYS = Set.of(
             PAUSE_KEY_PREFIX + "owner_offline", PAUSE_KEY_PREFIX + "chunk_unloaded",
             PAUSE_KEY_PREFIX + "materials_missing", PAUSE_KEY_PREFIX + "server_busy",
-            PAUSE_KEY_PREFIX + "user", PAUSE_KEY_PREFIX + "no_room");
+            PAUSE_KEY_PREFIX + "user", PAUSE_KEY_PREFIX + "no_room",
+            PAUSE_KEY_PREFIX + "entity_in_way");
     /** Pause names that use the panel-only wording instead of the status command's pause text. */
     private static final Map<String, String> PANEL_PAUSE_KEYS = Map.of(
             PAUSE_KEY_PREFIX + "recovery_needed", MSG_PAUSE_RECOVERY,

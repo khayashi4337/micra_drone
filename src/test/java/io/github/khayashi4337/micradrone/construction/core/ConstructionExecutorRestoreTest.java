@@ -290,6 +290,41 @@ class ConstructionExecutorRestoreTest {
     }
 
     @Test
+    void aBlockingEntityPausesARollbackRestoreAndResumesWhenItLeaves() {
+        FakeWorld w = new FakeWorld();
+        IntPos p = new IntPos(0, 63, 0);
+        BlockSpec cut = BlockSpec.of("minecraft:cobblestone");
+        BlockSpec ground = BlockSpec.of("minecraft:grass_block");
+        w.setBlock(p, cut);
+        w.occupy(p);
+        PlacedRegistry registry = new PlacedRegistry("claim-job-1");
+        registry.apply("job-1", new JournalRecord(0, p, ground, false, cut, 0));
+        RestoreItem item = new RestoreItem(p, cut, Set.of(), ground, "job-1", 0, false);
+        Built b = new Built(TestManifests.smallHut(), w, new FakeMaterials(), new LedgerBook(), registry);
+        ExecutionContext c = rollback(b, List.of(item));
+        StepReport r = ConstructionExecutor.run(c, 0, PLENTY);
+        assertEquals(PauseReason.ENTITY_IN_WAY, r.pause(), "putting the ground back over someone must wait");
+        assertEquals(0, r.cursor());
+        assertEquals(cut, w.blockAt(p), "the restore wrote nothing");
+        assertEquals(0, c.journal().size(), "nothing was recorded");
+        w.leave(p);
+        StepReport done = ConstructionExecutor.run(c, 0, PLENTY);
+        assertNull(done.pause());
+        assertEquals(ground, w.blockAt(p), "once clear, the retry puts the ground back");
+    }
+
+    @Test
+    void anEntityNeverBlocksARemovalToAir() {
+        Built b = build();
+        List<RestoreItem> items = undoAll(b.registry());
+        IntPos occupied = items.get(0).pos();
+        b.w().occupy(occupied);
+        StepReport r = ConstructionExecutor.run(rollback(b, items), 0, PLENTY);
+        assertNull(r.pause(), "air has no collision shape: a removal always goes through, whoever stands there");
+        assertEquals(BlockSpec.AIR, b.w().blockAt(occupied));
+    }
+
+    @Test
     void aFailedApplyAfterARemovalLeavesTheRemovalJournaledAndPausesForRecovery() {
         Built b = build();
         List<RestoreItem> items = undoAll(b.registry());

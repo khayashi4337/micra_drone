@@ -20,6 +20,8 @@ public final class FakeWorld implements WorldPort {
     private final Map<IntPos, WorldCell> cells = new HashMap<>();
     private final Set<IntPos> unloaded = new HashSet<>();
     private final Set<IntPos> denied = new HashSet<>();
+    /** Positions where an entity (a player, a mob, a boat…) stands: a colliding write there comes back refused. */
+    private final Set<IntPos> occupied = new HashSet<>();
     private final Map<IntPos, Integer> containerItems = new HashMap<>();
     /** Blocks the fake treats as block entities: block id -> block entity type (D-25 container tests). */
     private final Map<String, String> blockEntityTypes = new HashMap<>();
@@ -50,6 +52,16 @@ public final class FakeWorld implements WorldPort {
 
     public void deny(IntPos pos) {
         denied.add(pos);
+    }
+
+    /** Test setup: an entity stands at pos, so a block with a collision shape cannot be written there. */
+    public void occupy(IntPos pos) {
+        occupied.add(pos);
+    }
+
+    /** The entity at pos stepped aside. */
+    public void leave(IntPos pos) {
+        occupied.remove(pos);
     }
 
     public void putItems(IntPos pos, int count) {
@@ -86,7 +98,7 @@ public final class FakeWorld implements WorldPort {
 
     @Override
     public PlaceResult restore(IntPos pos, BlockSpec block, UUID actor, boolean dropContentsFirst) {
-        if (!denied.contains(pos) && !unloaded.contains(pos) && dropContentsFirst) {
+        if (!denied.contains(pos) && !unloaded.contains(pos) && !entityBlocks(pos, block) && dropContentsFirst) {
             int n = containerItems.getOrDefault(pos, 0);
             containerItems.remove(pos);
             log.add("drop " + pos.x() + "," + pos.y() + "," + pos.z() + " " + n);
@@ -115,10 +127,22 @@ public final class FakeWorld implements WorldPort {
             log.add("denied " + pos.x() + "," + pos.y() + "," + pos.z());
             return PlaceResult.DENIED;
         }
+        if (entityBlocks(pos, block)) {
+            log.add("blocked " + pos.x() + "," + pos.y() + "," + pos.z());
+            return PlaceResult.BLOCKED_BY_ENTITY;
+        }
         cells.put(pos, storedCell(pos, block));
         log.add(what + " " + pos.x() + "," + pos.y() + "," + pos.z() + " " + block);
         afterWrite.accept(pos, block);
         return PlaceResult.PLACED;
+    }
+
+    /**
+     * Vanilla's placement check (Level.isUnobstructed): an entity overlapping the state's collision shape blocks the
+     * write; air and other states without a collision shape always pass.
+     */
+    private boolean entityBlocks(IntPos pos, BlockSpec block) {
+        return occupied.contains(pos) && !block.isAir();
     }
 
     /**
