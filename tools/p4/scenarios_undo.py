@@ -86,6 +86,7 @@ def mvp_undo(ctx):
     decaying = (cx, cy - 1, cz)
     differing = sorted(pos for pos in before if before[pos] != after[pos] and pos != decaying)
     ctx.save_json("compare.json", {"positions": len(before), "differingCount": len(differing),
+                                   "excludedByVanillaDecay": list(decaying),
                                    "differing": [{"pos": list(p), "before": before[p], "changedByBuild": changed[p],
                                                   "after": after[p]} for p in differing[:50]]})
     files.append(ctx.out("compare.json"))

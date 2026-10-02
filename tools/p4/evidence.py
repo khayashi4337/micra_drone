@@ -8,13 +8,15 @@ FAIL = "FAIL"
 NOT_RUN = "NOT-RUN"
 # every scenario of the condition passed, but part of the condition text has no scenario yet
 PARTIAL = "PARTIAL"
+PENDING = "PENDING"  # no scenario exists yet: a condition that is not built is never silently absent
 STATUSES = (PASS, FAIL, NOT_RUN)
 EVIDENCE_ROOT = Path("run-evidence") / "p4"
 
 
 class RunFolder:
-    def __init__(self, run_id, root=EVIDENCE_ROOT, partial=None):
+    def __init__(self, run_id, root=EVIDENCE_ROOT, partial=None, pending=None):
         self.run_id = run_id
+        self.pending = dict(pending or {})
         self.partial = dict(partial or {})
         self.path = Path(root) / run_id
         self.path.mkdir(parents=True, exist_ok=True)
@@ -63,11 +65,14 @@ class RunFolder:
                 out[condition] = PARTIAL
             else:
                 out[condition] = PASS
+        for condition in self.pending:
+            out.setdefault(condition, PENDING)
         return out
 
     def write_summary(self):
         summary = {"runId": self.run_id, "scenarios": self.scenarios,
                    "partialConditions": {str(k): v for k, v in sorted(self.partial.items())},
+                   "pendingConditions": {str(k): v for k, v in sorted(self.pending.items())},
                    "conditions": {str(k): v for k, v in sorted(self.condition_states().items())}}
         self.write_json("summary.json", summary)
         return summary

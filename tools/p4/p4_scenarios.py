@@ -170,7 +170,7 @@ def run_mode_sp(game, folder, names, default_claude=harness.CLAUDE_STUB):
 def run(args):
     harness.main_guard()
     run_id = args.run_id or time.strftime("p4-%Y%m%d-%H%M%S")
-    folder = evidence.RunFolder(run_id, partial=PARTIAL_CONDITIONS)
+    folder = evidence.RunFolder(run_id, partial=PARTIAL_CONDITIONS, pending=PENDING_CONDITIONS)
     game = harness.Game(run_id, folder, claude_mode=args.claude)
     names = _select(args)
     try:
