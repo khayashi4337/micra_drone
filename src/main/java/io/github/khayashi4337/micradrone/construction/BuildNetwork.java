@@ -175,7 +175,10 @@ public final class BuildNetwork {
     public static void pushFinalProgress(MinecraftServer server, UUID owner, ConstructionJob job) {
         ServerPlayer player = server.getPlayerList().getPlayer(owner);
         if (player != null) {
-            PacketDistributor.sendToPlayer(player, new BuildProgressPayload(MiniJson.write(ProgressView.finalTree(job))));
+            boolean allowed = ConstructionRuntime.of(server)
+                    .map(r -> r.inventoryAllowed(job.claimId())).orElse(false);
+            PacketDistributor.sendToPlayer(player,
+                    new BuildProgressPayload(MiniJson.write(ProgressView.finalTree(job, allowed))));
         }
     }
 
@@ -184,7 +187,11 @@ public final class BuildNetwork {
     }
 
     private static void sendProgress(ServerPlayer player, JobStatus status) {
-        PacketDistributor.sendToPlayer(player, new BuildProgressPayload(MiniJson.write(ProgressView.tree(status))));
+        // the claim's inventory switch (27a) lets the panel know whether the owner already said yes
+        ConstructionRuntime runtime = runtimeOf(player);
+        boolean allowed = runtime != null && runtime.inventoryAllowed(status.claimId());
+        PacketDistributor.sendToPlayer(player,
+                new BuildProgressPayload(MiniJson.write(ProgressView.tree(status, allowed))));
     }
 
     private static ConstructionRuntime runtimeOf(ServerPlayer player) {

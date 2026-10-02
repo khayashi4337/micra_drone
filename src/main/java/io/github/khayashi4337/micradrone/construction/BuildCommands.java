@@ -40,8 +40,10 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
+import net.minecraft.Util;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
@@ -108,6 +110,16 @@ public final class BuildCommands {
                                 .executes(ctx -> rollback(ctx, false))
                                 .then(Commands.literal("confirm")
                                         .executes(ctx -> rollback(ctx, true)))))
+                .then(Commands.literal("supply")
+                        .then(Commands.literal("list")
+                                .then(Commands.argument("claimId", StringArgumentType.word())
+                                        .executes(BuildCommands::supplyList)))
+                        .then(Commands.literal("inventory")
+                                .then(Commands.argument("claimId", StringArgumentType.word())
+                                        .then(Commands.argument("on", StringArgumentType.word())
+                                                .suggests((c, b) -> SharedSuggestionProvider.suggest(
+                                                        List.of("on", "off"), b))
+                                                .executes(BuildCommands::supplyInventory)))))
                 .then(Commands.literal("recover")
                         .requires(src -> src.getPlayer() != null)
                         .then(Commands.argument("jobId", StringArgumentType.word())
@@ -330,6 +342,66 @@ public final class BuildCommands {
         }
         runtime.resume(player.getUUID(), player.hasPermissions(Commands.LEVEL_GAMEMASTERS),
                 StringArgumentType.getString(ctx, "jobId"), skipConflicts);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /**
+     * The adult/script path to the per-claim inventory switch (Task 27a):
+     * {@code supply inventory <claimId> <on|off>}. Owner-or-operator is judged by
+     * {@code ConstructionRuntime#setInventoryAllowed} itself (D-12); a non-player source carries
+     * {@link Util#NIL_UUID}, so only its operator permission can satisfy the check. The answers are
+     * plain literal lines to the command source - they are not child-facing messages.
+     */
+    private static int supplyInventory(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        ConstructionRuntime runtime = ConstructionRuntime.of(source.getServer()).orElse(null);
+        if (runtime == null) {
+            source.sendFailure(Component.literal("construction runtime is not running"));
+            return 0;
+        }
+        String on = StringArgumentType.getString(ctx, "on");
+        if (!"on".equals(on) && !"off".equals(on)) {
+            source.sendFailure(Component.literal("usage: supply inventory <claimId> <on|off>"));
+            return 0;
+        }
+        ServerPlayer player = source.getPlayer();
+        String claimId = StringArgumentType.getString(ctx, "claimId");
+        boolean allowed = "on".equals(on);
+        ControlResult result = runtime.setInventoryAllowed(
+                player == null ? Util.NIL_UUID : player.getUUID(),
+                source.hasPermission(Commands.LEVEL_GAMEMASTERS), claimId, allowed);
+        if (result != ControlResult.OK) {
+            source.sendFailure(Component.literal("supply " + claimId + ": " + result.name().toLowerCase()));
+            return 0;
+        }
+        source.sendSystemMessage(Component.literal("supply " + claimId + ": inventory=" + on));
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /**
+     * The claim's supply answer for adults and scripts (Task 27a): the chest/barrel source positions the
+     * scan sees in the claim's box, and whether the owner's inventory may be used. The same inspection
+     * rule as {@code status} applies - a stranger gets the plain "not found" and learns nothing.
+     */
+    private static int supplyList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        ConstructionRuntime runtime = ConstructionRuntime.of(source.getServer()).orElse(null);
+        if (runtime == null) {
+            source.sendFailure(Component.literal("construction runtime is not running"));
+            return 0;
+        }
+        Optional<ConstructionRuntime.SupplyInfo> info =
+                runtime.supplyInfo(StringArgumentType.getString(ctx, "claimId"));
+        if (info.isEmpty() || !mayInspect(source, info.get().ownerUuid())) {
+            notFound(source);
+            return 0;
+        }
+        ConstructionRuntime.SupplyInfo i = info.get();
+        source.sendSystemMessage(Component.literal(
+                "supply " + i.claimId() + ": inventory=" + (i.inventoryAllowed() ? "on" : "off")));
+        for (IntPos p : i.chests()) {
+            source.sendSystemMessage(Component.literal("  chest " + p.x() + "," + p.y() + "," + p.z()));
+        }
         return Command.SINGLE_SUCCESS;
     }
 

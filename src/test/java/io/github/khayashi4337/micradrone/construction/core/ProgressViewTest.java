@@ -20,7 +20,7 @@ class ProgressViewTest {
 
     @Test
     void percentIsTheIntegerShareOfPlacedBlocks() {
-        Map<String, Object> t = ProgressView.tree(status(JobState.RUNNING, null, 3, 25));
+        Map<String, Object> t = ProgressView.tree(status(JobState.RUNNING, null, 3, 25), false);
         assertEquals("job-1", t.get("jobId"));
         assertEquals("RUNNING", t.get("state"));
         assertEquals(3, ((Number) t.get("cursor")).intValue());
@@ -37,7 +37,7 @@ class ProgressViewTest {
     void theFinalDocumentOfAJobWithoutARecordCarriesTheKindTheClaimAndTheEnding() {
         ConstructionJob job = ConstructionJob.create("job-9", new UUID(0, 1), "minecraft:overworld", "h", JobKind.ROLLBACK, "job-1",
                 40, "claim-job-1", MaterialPolicy.CREATIVE_FREE, 0L, java.util.List.of());
-        Map<String, Object> t = ProgressView.finalTree(job);
+        Map<String, Object> t = ProgressView.finalTree(job, false);
         assertEquals("ROLLBACK", t.get("kind"));
         assertEquals("claim-job-1", t.get("claimId"));
         assertEquals("job-9", t.get("jobId"));
@@ -48,27 +48,27 @@ class ProgressViewTest {
 
     @Test
     void anEmptyJobShowsZeroPercentInsteadOfDividingByZero() {
-        Map<String, Object> t = ProgressView.tree(status(JobState.RUNNING, null, 0, 0));
+        Map<String, Object> t = ProgressView.tree(status(JobState.RUNNING, null, 0, 0), false);
         assertEquals(0, ((Number) t.get("percent")).intValue());
     }
 
     @Test
     void aVerifiedJobIsDoneAndAPartialJobIsPartial() {
-        assertEquals(true, ProgressView.tree(status(JobState.VERIFIED, null, 25, 25)).get("done"));
-        Map<String, Object> partial = ProgressView.tree(status(JobState.PARTIAL, null, 20, 25));
+        assertEquals(true, ProgressView.tree(status(JobState.VERIFIED, null, 25, 25), false).get("done"));
+        Map<String, Object> partial = ProgressView.tree(status(JobState.PARTIAL, null, 20, 25), false);
         assertEquals(true, partial.get("partial"));
         assertEquals(false, partial.get("done"));
     }
 
     @Test
     void aPausedJobCarriesItsShownPause() {
-        Map<String, Object> t = ProgressView.tree(status(JobState.PAUSED, PauseReason.SITE_CHANGED, 3, 25));
+        Map<String, Object> t = ProgressView.tree(status(JobState.PAUSED, PauseReason.SITE_CHANGED, 3, 25), false);
         assertEquals("SITE_CHANGED", t.get("pause"));
     }
 
     @Test
     void theProgressTableCarriesTheJobKindAndTheClaimId() {
-        Map<String, Object> t = ProgressView.tree(status(JobState.RUNNING, null, 3, 25));
+        Map<String, Object> t = ProgressView.tree(status(JobState.RUNNING, null, 3, 25), false);
         assertEquals("BUILD", t.get("kind"), "the JobKind name, so the panel knows which job the doc is");
         assertEquals("claim-job-1", t.get("claimId"), "what the もとにもどす button would roll back");
     }
@@ -76,16 +76,25 @@ class ProgressViewTest {
     @Test
     void aRollbackJobReportsItsOwnKind() {
         Map<String, Object> t =
-                ProgressView.tree(status(JobKind.ROLLBACK, JobState.VERIFYING, null, 3, 25));
+                ProgressView.tree(status(JobKind.ROLLBACK, JobState.VERIFYING, null, 3, 25), false);
         assertEquals("ROLLBACK", t.get("kind"));
         assertEquals("claim-job-1", t.get("claimId"));
     }
 
     @Test
     void theProgressTableRoundTripsThroughTheJsonWriter() {
-        String json = MiniJson.write(ProgressView.tree(status(JobState.RUNNING, null, 3, 25)));
+        String json = MiniJson.write(ProgressView.tree(status(JobState.RUNNING, null, 3, 25), false));
         Map<?, ?> parsed = (Map<?, ?>) MiniJson.parse(json);
         assertEquals("job-1", parsed.get("jobId"));
         assertEquals(12, ((Number) parsed.get("percent")).intValue());
+    }
+
+    @Test
+    void theInventorySwitchIsInBothProgressDocuments() {
+        assertEquals(true, ProgressView.tree(status(JobState.PAUSED, PauseReason.MATERIALS_MISSING, 3, 25), true)
+                .get("inventoryAllowed"), "the panel needs the claim's current switch to know it was already allowed");
+        ConstructionJob job = ConstructionJob.create("job-9", new UUID(0, 1), "minecraft:overworld", "h",
+                JobKind.BUILD, null, 10, "claim-job-1", MaterialPolicy.SURVIVAL_CONSUME, 0L, java.util.List.of());
+        assertEquals(false, ProgressView.finalTree(job, false).get("inventoryAllowed"));
     }
 }

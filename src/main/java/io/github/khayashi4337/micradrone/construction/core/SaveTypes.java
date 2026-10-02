@@ -17,6 +17,8 @@ public final class SaveTypes {
     public static final String MANIFEST = "manifest";
     public static final String CLAIMS = "claims";
     public static final String REGISTRY = "registry";
+    /** One claim's supply switches (Task 27a), one file per claim at claims/<claimId>/supply.bin. */
+    public static final String SUPPLY = "supply";
 
     /** Every saved type starts at version 1; the payload records that carry a SCHEMA_VERSION share that constant. */
     public static final int FIRST_VERSION = 1;
@@ -35,6 +37,7 @@ public final class SaveTypes {
         m.put(MANIFEST, PlacementManifest.MANIFEST_VERSION);
         m.put(CLAIMS, SiteClaim.SCHEMA_VERSION);
         m.put(REGISTRY, PlacedRegistry.SCHEMA_VERSION);
+        m.put(SUPPLY, FIRST_VERSION);
         return Map.copyOf(m);
     }
 

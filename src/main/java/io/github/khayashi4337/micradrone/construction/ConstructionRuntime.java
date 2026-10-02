@@ -67,6 +67,8 @@ import io.github.khayashi4337.micradrone.construction.core.ServerWorkerPool;
 import io.github.khayashi4337.micradrone.construction.core.SiteBoxLimits;
 import io.github.khayashi4337.micradrone.construction.core.SiteClaim;
 import io.github.khayashi4337.micradrone.construction.core.SubmitOutcome;
+import io.github.khayashi4337.micradrone.construction.core.SupplySettings;
+import io.github.khayashi4337.micradrone.construction.core.SupplySettingsBook;
 import io.github.khayashi4337.micradrone.construction.core.SurveyCache;
 import io.github.khayashi4337.micradrone.construction.core.TickInput;
 import io.github.khayashi4337.micradrone.construction.core.WorkResult;
@@ -161,6 +163,14 @@ public final class ConstructionRuntime {
     private final ClaimBook claims;
     /** What the claim book looked like when it was last written (see {@link #saveClaimsIfChanged}). */
     private String savedClaimsDigest = "";
+    /** Every claim's supply switches (Task 27a): whether its jobs may take from the owner's inventory. */
+    private final SupplySettingsBook supply = new SupplySettingsBook();
+    /** What the supply switches looked like when they were last written (see {@link #saveSupplyIfChanged}). */
+    private String savedSupplyDigest = "";
+    /** The claim ids that have a supply file on the disk (written here or read at start-up). */
+    private final Set<String> savedSupplyFiles = new HashSet<>();
+    /** Supply files that exist but could not be read: never silently removed or written over (F-2). */
+    private final Set<String> unreadableSupply = new HashSet<>();
     private final NioFileSystem fs;
     private final JobFiles files;
     private final WriteAheadLog wal;
@@ -219,7 +229,7 @@ public final class ConstructionRuntime {
         this.desk = new ApprovalDesk();
         this.surveys = new SurveyCache();
         this.guard = new PlacementGuard(server, this::ownerName);
-        this.world = new RuntimeJobWorld(server, guard);
+        this.world = new RuntimeJobWorld(server, guard, claims, supply);
         this.recoveryWorld = RuntimeJobWorld.recovery(server);
         this.recordingFailed = broken;
         this.checkpoints = new Checkpoints(server, service, wal, () -> recordingFailed, this::haltRecording);
@@ -238,6 +248,7 @@ public final class ConstructionRuntime {
             return;
         }
         loadRegistries();
+        loadSupplyBook();
         Set<String> unreadable = new HashSet<>();
         List<ConstructionJob> kept = loadJobs(unreadable);
         JobService.RecoveryReport report = service.recoverAll(recoveryWorld);
@@ -274,6 +285,82 @@ public final class ConstructionRuntime {
             } catch (IOException | RuntimeException e) {
                 MicraDrone.LOGGER.error("a placed registry could not be read ({})", f, e);
             }
+        }
+    }
+
+    /**
+     * Every claim's {@code supply.bin} (Task 27a). A file that cannot be read is kept on the disk and never
+     * silently reset or removed (F-2): the claim falls back to the safe default - inventory disallowed -
+     * until the owner sets the switch again.
+     */
+    private void loadSupplyBook() {
+        List<String> claimFiles;
+        try {
+            claimFiles = fs.list(JobFiles.CLAIMS_DIR);
+        } catch (IOException e) {
+            haltRecording("the supply settings could not be listed", e);
+            return;
+        }
+        for (String f : claimFiles) {
+            String rest = f.substring(JobFiles.CLAIMS_DIR.length());
+            int slash = rest.indexOf('/');
+            if (slash < 0 || !rest.substring(slash + 1).equals(JobFiles.SUPPLY_FILE)) {
+                continue;
+            }
+            String claimId = rest.substring(0, slash);
+            try {
+                Optional<SupplySettings> found = files.loadSupply(claimId);
+                if (found.isEmpty()) {
+                    continue;
+                }
+                supply.allowInventory(claimId, found.get().inventoryAllowed());
+                savedSupplyFiles.add(claimId);
+            } catch (IOException | RuntimeException e) {
+                unreadableSupply.add(claimId);
+                MicraDrone.LOGGER.error("a claim's supply settings could not be read ({})", f, e);
+            }
+        }
+        savedSupplyDigest = supplyDigest();
+    }
+
+    /** The book's change digest: every entry's claimId and flag, claim-id sorted (like the claims digest). */
+    private String supplyDigest() {
+        return supply.entries().entrySet().stream()
+                .map(e -> e.getKey() + (e.getValue().inventoryAllowed() ? "+" : "-"))
+                .sorted().collect(java.util.stream.Collectors.joining(","));
+    }
+
+    /**
+     * The supply switches follow their claim (Task 27a): a released or gone claim's entry is dropped - the
+     * same release/rollback/cancel path its other files take - and the files are written on the tick the
+     * book changed, like {@link #saveClaimsIfChanged}. A file that could not be read at start-up stays.
+     */
+    private void saveSupplyIfChanged() {
+        for (String id : List.copyOf(supply.entries().keySet())) {
+            SiteClaim c = claims.find(id).orElse(null);
+            if (c == null || c.released()) {
+                supply.remove(id);
+            }
+        }
+        String digest = supplyDigest();
+        if (digest.equals(savedSupplyDigest)) {
+            return;
+        }
+        try {
+            for (Map.Entry<String, SupplySettings> e : supply.entries().entrySet()) {
+                files.saveSupply(e.getKey(), e.getValue());
+            }
+            // unreadableSupply is deliberately not in savedSupplyFiles, so an unreadable file is never deleted here
+            for (String id : savedSupplyFiles) {
+                if (!supply.entries().containsKey(id)) {
+                    files.deleteSupply(id);
+                }
+            }
+            savedSupplyFiles.clear();
+            savedSupplyFiles.addAll(supply.entries().keySet());
+            savedSupplyDigest = digest;
+        } catch (IOException | RuntimeException e) {
+            haltRecording("a claim's supply settings could not be saved", e);
         }
     }
 
@@ -858,6 +945,46 @@ public final class ConstructionRuntime {
     }
 
     /**
+     * The one door to the per-claim inventory switch (Task 27a): only the claim's owner - or an op - may set
+     * it, never on a missing or released claim. The change is saved in the same call so a crash cannot lose
+     * an answer the player already saw. A job of the claim paused on missing materials picks the new switch
+     * up on its own at the next review ({@link JobService#RETRY_INTERVAL_TICKS} re-runs the paused run, and
+     * the port reads this book live), so nothing extra is needed here. The result is returned to the caller;
+     * the child-facing line, when there is one, is the caller's to phrase.
+     */
+    public ControlResult setInventoryAllowed(UUID requester, boolean op, String claimId, boolean allowed) {
+        SiteClaim claim = claims.find(claimId).orElse(null);
+        if (claim == null || claim.released()) {
+            return ControlResult.NOT_FOUND;
+        }
+        if (!claim.ownerUuid().equals(requester) && !op) {
+            return ControlResult.NOT_ALLOWED;
+        }
+        supply.allowInventory(claimId, allowed);
+        saveSupplyIfChanged();
+        return ControlResult.OK;
+    }
+
+    /** The claim's inventory switch (false for an unknown claim), for the progress document and 27b's panel. */
+    public boolean inventoryAllowed(String claimId) {
+        return supply.inventoryAllowed(claimId);
+    }
+
+    /** The claim's supply answer for the adult-facing list command: the switch and the chests in use. */
+    public record SupplyInfo(String claimId, UUID ownerUuid, boolean inventoryAllowed, List<IntPos> chests) {
+    }
+
+    /** The claim's supply info, or empty when the claim does not exist or was released. */
+    public Optional<SupplyInfo> supplyInfo(String claimId) {
+        SiteClaim claim = claims.find(claimId).orElse(null);
+        if (claim == null || claim.released()) {
+            return Optional.empty();
+        }
+        return Optional.of(new SupplyInfo(claimId, claim.ownerUuid(), supply.inventoryAllowed(claimId),
+                world.chests().positions(claim)));
+    }
+
+    /**
      * The devkit's crash barrier (Task 25): installed on the log and, when the sink is the file one, inside it for
      * the mid-frame point - and only while {@code -Dmicradrone.devBarriers=true}; without the property the call is a
      * no-op, so a production server can never be held by it.
@@ -982,6 +1109,7 @@ public final class ConstructionRuntime {
                 haltRecording("a job's run could not be recorded", e);
             }
             saveClaimsIfChanged();
+            saveSupplyIfChanged();
             for (JobUpdate u : updates) {
                 // a state change is a new job.bin before the owner hears of it
                 if (u.stateChanged()) {
