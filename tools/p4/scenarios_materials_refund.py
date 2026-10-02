@@ -11,7 +11,7 @@ import time
 from tools.p4 import harness
 from tools.p4.scenarios_basic import DIMENSION, PLAYER, TERMINAL_STATES, _command
 from tools.p4.scenarios_materials import (CHEST_OFFSET, FULL_HEALTH, HOLD_S, _approve, _chest_items, _fill_chest, _finished, _health,
-                                          _inventory, _start_survival_hut)
+                                          _inventory, _paused_for_materials, _start_survival_hut)
 
 STANDS = {"rollback": (3800, -60, 0), "cancel": (4000, -60, 0)}
 PLAIN_ITEMS = ("minecraft:cobblestone", "minecraft:stone_bricks", "minecraft:oak_planks", "minecraft:oak_stairs",
@@ -81,26 +81,28 @@ def survival_refund(ctx):
     assert _dropped_items(ctx, STANDS["rollback"]) == 0, "the rollback dropped items on the ground"
     files += [ctx.out("rollback-chest-after-build.json"), ctx.out("rollback-chest-after-undo.json"), ctx.out("rollback-started.json")]
 
-    # -- cancel: what was consumed stays consumed
+    # -- cancel: what was consumed stays consumed. A hut takes about a second, so the cancel waits for a certain moment: the chest
+    # holds half of every item, the job pauses for materials part way, and the cancel comes while it waits.
     pending, bom = _start_survival_hut(ctx, STANDS["cancel"])
     items = sorted(bom)
-    manifest = ctx.server.post("/build/manifest", {"hash": pending["hash"]})
-    chest = _stock_chest(ctx, STANDS["cancel"], bom)
+    half = {item: bom[item] // HALF for item in items if bom[item] // HALF}
+    chest = _stock_chest(ctx, STANDS["cancel"], half)
     job_id = _approve(ctx, pending)
-    status, _ = ctx.server.poll("/build/status", {"jobId": job_id},
-                                lambda r: r["state"] in TERMINAL_STATES or r["cursor"] * HALF >= r["total"], harness.JOB_TIMEOUT_S)
-    assert status["state"] not in TERMINAL_STATES, f"the hut was already finished: the cancel came too late to test anything: {status}"
+    status = _paused_for_materials(ctx, job_id)
+    ctx.save_json("cancel-paused.json", status)
+    assert status["state"] == "PAUSED", status
     reply = ctx.server.post("/build/cancel", {"player": PLAYER, "jobId": job_id})
     assert reply["result"] == "OK", reply
     final = _finished(ctx, job_id, "cancel")
     assert final["state"] == "CANCELLED", final
+    manifest = ctx.server.post("/build/manifest", {"hash": pending["hash"]})  # a pending offer's manifest has counts only; the approved one lists placements
     left = _bom_in(_chest_items(ctx, chest), bom)
     placed = _placed_counts(ctx, manifest, set(PLAIN_ITEMS) & set(items))
-    consumed = {item: bom[item] - left[item] for item in placed}
-    ctx.save_json("cancel-consumed-vs-placed.json", {"chestLeft": left, "consumed": consumed, "placed": placed})
+    consumed = {item: half.get(item, 0) - left[item] for item in placed}
+    ctx.save_json("cancel-consumed-vs-placed.json", {"chestStocked": half, "chestLeft": left, "consumed": consumed, "placed": placed})
     files.append(ctx.out("cancel-consumed-vs-placed.json"))
     assert any(consumed.values()), "nothing was consumed before the cancel: nothing to test"
-    assert any(consumed[item] < bom[item] for item in consumed), "the whole bill was consumed: the cancel came too late"
+    assert any(consumed[item] < bom[item] for item in consumed), "the whole bill was consumed: nothing was left unbuilt"
     assert consumed == placed, f"a cancel must neither refund nor over-take: consumed {consumed}, placed {placed}"
     time.sleep(HOLD_S)
     assert _bom_in(_chest_items(ctx, chest), bom) == left, "something came back (or went) after the cancel"
