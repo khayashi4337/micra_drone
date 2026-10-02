@@ -32,7 +32,11 @@ import io.github.khayashi4337.micradrone.construction.core.Confirmations;
 import io.github.khayashi4337.micradrone.construction.core.ConstructionBudget;
 import io.github.khayashi4337.micradrone.construction.core.ConstructionJob;
 import io.github.khayashi4337.micradrone.construction.core.ControlResult;
+import io.github.khayashi4337.micradrone.construction.core.FileWalSink;
 import io.github.khayashi4337.micradrone.construction.core.ItemCatalog;
+import io.github.khayashi4337.micradrone.construction.core.JobCodec;
+import io.github.khayashi4337.micradrone.construction.core.JobFiles;
+import io.github.khayashi4337.micradrone.construction.core.JobLoad;
 import io.github.khayashi4337.micradrone.construction.core.JobProgram;
 import io.github.khayashi4337.micradrone.construction.core.JobRecord;
 import io.github.khayashi4337.micradrone.construction.core.JobService;
@@ -40,30 +44,44 @@ import io.github.khayashi4337.micradrone.construction.core.JobState;
 import io.github.khayashi4337.micradrone.construction.core.JobStatus;
 import io.github.khayashi4337.micradrone.construction.core.JobUpdate;
 import io.github.khayashi4337.micradrone.construction.core.JobViews;
+import io.github.khayashi4337.micradrone.construction.core.JobWorld;
 import io.github.khayashi4337.micradrone.construction.core.MessageKey;
+import io.github.khayashi4337.micradrone.construction.core.NioFileSystem;
 import io.github.khayashi4337.micradrone.construction.core.OperatingBox;
+import io.github.khayashi4337.micradrone.construction.core.OrphanSweep;
+import io.github.khayashi4337.micradrone.construction.core.PauseReason;
 import io.github.khayashi4337.micradrone.construction.core.PendingApproval;
+import io.github.khayashi4337.micradrone.construction.core.PersistenceEnvelope;
 import io.github.khayashi4337.micradrone.construction.core.PlacementSurvey;
 import io.github.khayashi4337.micradrone.construction.core.PlanCompilation;
 import io.github.khayashi4337.micradrone.construction.core.PlanSubmission;
 import io.github.khayashi4337.micradrone.construction.core.QuietPolicy;
+import io.github.khayashi4337.micradrone.construction.core.RecoveryChoice;
+import io.github.khayashi4337.micradrone.construction.core.RecoveryDecision;
+import io.github.khayashi4337.micradrone.construction.core.RecoveryPlanner;
 import io.github.khayashi4337.micradrone.construction.core.ReplacementSummary;
 import io.github.khayashi4337.micradrone.construction.core.SafetyEnvelope;
 import io.github.khayashi4337.micradrone.construction.core.SafetyReport;
+import io.github.khayashi4337.micradrone.construction.core.SaveTypes;
 import io.github.khayashi4337.micradrone.construction.core.ServerWorkerPool;
 import io.github.khayashi4337.micradrone.construction.core.SiteBoxLimits;
+import io.github.khayashi4337.micradrone.construction.core.SiteClaim;
 import io.github.khayashi4337.micradrone.construction.core.SubmitOutcome;
 import io.github.khayashi4337.micradrone.construction.core.SurveyCache;
 import io.github.khayashi4337.micradrone.construction.core.TickInput;
 import io.github.khayashi4337.micradrone.construction.core.WorkResult;
 import io.github.khayashi4337.micradrone.construction.core.WorldCell;
 import io.github.khayashi4337.micradrone.construction.core.WriteAheadLog;
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import net.minecraft.commands.Commands;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -73,11 +91,15 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.GameProfileCache;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.storage.LevelResource;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.level.LevelEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
+import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
@@ -131,9 +153,16 @@ public final class ConstructionRuntime {
         }
     }
 
+    /** {@code -Dmicradrone.devBarriers=true} arms the crash-barrier hook ({@link #installBarrier}); off: inert. */
+    public static final String DEV_BARRIERS_PROPERTY = "micradrone.devBarriers";
+
     private final MinecraftServer server;
     private final PartTypeRegistry registry;
     private final ClaimBook claims;
+    /** What the claim book looked like when it was last written (see {@link #saveClaimsIfChanged}). */
+    private String savedClaimsDigest = "";
+    private final NioFileSystem fs;
+    private final JobFiles files;
     private final WriteAheadLog wal;
     private final JobService service;
     private final ServerWorkerPool workers;
@@ -141,6 +170,9 @@ public final class ConstructionRuntime {
     private final SurveyCache surveys;
     private final PlacementGuard guard;
     private final RuntimeJobWorld world;
+    /** The read-only, chunk-loading world recovery and the recover command judge evidence against. */
+    private final JobWorld recoveryWorld;
+    private final Checkpoints checkpoints;
     private final DroneShow show = new DroneShow();
     private final ItemCatalog itemCatalog = id -> BuiltInRegistries.ITEM.containsKey(ResourceLocation.parse(id));
     /** M2b: the path each owner's newest submission came in on; it gates {@link #tell}. */
@@ -150,14 +182,36 @@ public final class ConstructionRuntime {
     private final Map<UUID, SubmitOutcome> lastSubmits = new HashMap<>();
     /** Manifest hash -> owner of a live pending approval, so {@link #manifestTree} finds offered manifests. */
     private final Map<String, UUID> pendingOwners = new HashMap<>();
+    /**
+     * A write of the records that could not be confirmed stops construction for the whole run: a job that keeps
+     * placing without its files would build state a restart cannot prove (04 F-2). Set once; reads may come from
+     * a devkit query thread, so it is volatile.
+     */
+    private volatile boolean recordingFailed;
     private long jobSeq;
     private long lastTickWorkNanos;
 
     private ConstructionRuntime(MinecraftServer server) {
         this.server = server;
         this.registry = BuildingParts.registry();
-        this.claims = new ClaimBook(ConstructionConfig.claimsMaxPerOwner());
-        this.wal = WriteAheadLog.inMemory();
+        Path root = server.getWorldPath(LevelResource.ROOT).resolve("data").resolve("micradrone");
+        this.fs = new NioFileSystem(root);
+        this.files = new JobFiles(fs);
+        WriteAheadLog opened;
+        ClaimBook loadedClaims = null;
+        boolean broken = false;
+        try {
+            fs.cleanTemp();
+            opened = WriteAheadLog.open(new FileWalSink(root.resolve(JobFiles.WAL_DIR)));
+            loadedClaims = files.loadClaims(ConstructionConfig.claimsMaxPerOwner()).orElse(null);
+        } catch (IOException | RuntimeException e) {
+            // a log or a claims book that cannot be read is never written over: construction stops, the game runs on
+            MicraDrone.LOGGER.error("construction records could not be read; construction is stopped", e);
+            opened = WriteAheadLog.inMemory();
+            broken = true;
+        }
+        this.wal = opened;
+        this.claims = loadedClaims != null ? loadedClaims : new ClaimBook(ConstructionConfig.claimsMaxPerOwner());
         this.service = new JobService(ConstructionConfig.budget(), claims, registry, ConstructionConfig.fastStructure(),
                 ConstructionConfig.continueWhileOffline(), wal);
         this.workers = new ServerWorkerPool(ServerWorkerPool.DEFAULT_THREADS, ServerWorkerPool.DEFAULT_MAX_QUEUED,
@@ -166,6 +220,239 @@ public final class ConstructionRuntime {
         this.surveys = new SurveyCache();
         this.guard = new PlacementGuard(server, this::ownerName);
         this.world = new RuntimeJobWorld(server, guard);
+        this.recoveryWorld = RuntimeJobWorld.recovery(server);
+        this.recordingFailed = broken;
+        this.checkpoints = new Checkpoints(server, service, wal, () -> recordingFailed, this::haltRecording);
+        loadAll();
+    }
+
+    /**
+     * Start-up (Task 25, 04 F-2), in the order the evidence allows: the placed registries, every saved job through
+     * {@link JobFiles#loadJob} and {@link RecoveryPlanner#decide} (never a silent re-run of a broken one), the WAL
+     * fold ({@link JobService#recoverAll}) that rewinds what the world lost and pauses what it cannot decide, the
+     * persisted result, a first durable point once the whole of it is on the disk, and the orphan sweep last so a
+     * job file that failed to read is never mistaken for refuse.
+     */
+    private void loadAll() {
+        if (recordingFailed) {
+            return;
+        }
+        loadRegistries();
+        Set<String> unreadable = new HashSet<>();
+        List<ConstructionJob> kept = loadJobs(unreadable);
+        JobService.RecoveryReport report = service.recoverAll(recoveryWorld);
+        for (String line : report.reasons()) {
+            MicraDrone.LOGGER.warn("start-up recovery waits for an owner: {}", line);
+        }
+        saveAll();
+        watchJobIds();
+        if (!recordingFailed && wal.lastRun() > wal.durableUpTo()) {
+            checkpoints.make(server.getTickCount());
+        }
+        sweepOrphans(kept, unreadable);
+    }
+
+    /** Every claim's placed registry; a claim with none keeps the empty one the service makes on demand. */
+    private void loadRegistries() {
+        List<String> claimFiles;
+        try {
+            claimFiles = fs.list(JobFiles.CLAIMS_DIR);
+        } catch (IOException e) {
+            haltRecording("the placed registries could not be listed", e);
+            return;
+        }
+        for (String f : claimFiles) {
+            String rest = f.substring(JobFiles.CLAIMS_DIR.length());
+            int slash = rest.indexOf('/');
+            if (slash < 0 || !rest.substring(slash + 1).equals(JobFiles.PLACED_FILE)) {
+                continue;
+            }
+            String claimId = rest.substring(0, slash);
+            try {
+                files.loadRegistry(claimId)
+                        .ifPresent(reg -> service.registries().put(claimId, reg));
+            } catch (IOException | RuntimeException e) {
+                MicraDrone.LOGGER.error("a placed registry could not be read ({})", f, e);
+            }
+        }
+    }
+
+    /**
+     * Every {@code jobs/<id>/job.bin}, decoded and decided: a readable job goes to the service with the planner's
+     * answer (and its recovery mark); a job whose own file cannot be read stays on disk for the owner rather than
+     * becoming an orphan, and a job whose other files failed becomes a broken record the owner answers for.
+     */
+    private List<ConstructionJob> loadJobs(Set<String> unreadable) {
+        List<ConstructionJob> kept = new ArrayList<>();
+        List<String> jobFiles;
+        try {
+            jobFiles = fs.list(ConstructionJob.JOBS_DIR);
+        } catch (IOException e) {
+            haltRecording("the jobs folder could not be listed", e);
+            return kept;
+        }
+        for (String f : jobFiles) {
+            if (!f.endsWith("/" + JobFiles.JOB_FILE)) {
+                continue;
+            }
+            String dir = f.substring(0, f.length() - JobFiles.JOB_FILE.length());
+            String id = dir.substring(ConstructionJob.JOBS_DIR.length(), dir.length() - 1);
+            ConstructionJob saved;
+            try {
+                byte[] bytes = fs.read(f).orElseThrow(() -> new IOException("job file listed but unreadable: " + f));
+                PersistenceEnvelope envelope = PersistenceEnvelope.fromBytes(bytes);
+                if (!SaveTypes.JOB.equals(envelope.type())) {
+                    throw new IOException("a " + envelope.type() + " file where a job belongs: " + f);
+                }
+                saved = JobCodec.fromTree(SaveTypes.migrations().payloadOf(envelope));
+            } catch (IOException | RuntimeException e) {
+                unreadable.add(id);
+                MicraDrone.LOGGER.error("a job's record could not be read ({})", f, e);
+                continue;
+            }
+            try {
+                JobLoad load = files.loadJob(saved, claims);
+                RecoveryDecision decision = RecoveryPlanner.decide(saved, load);
+                if (OrphanSweep.forgettableJobs(List.of(decision.job()), claims).contains(decision.job().jobId())) {
+                    continue;
+                }
+                if (load instanceof JobLoad.Loaded l) {
+                    service.addLoaded(decision.job(), l, decision.fromLog());
+                } else if (load instanceof JobLoad.Broken b) {
+                    service.addBroken(decision.job(), b.manifestOrNull(), b.nodeTypes(), operatingBoxOf(decision.job(), b),
+                            b.reasons());
+                }
+                kept.add(decision.job());
+            } catch (IOException | RuntimeException e) {
+                unreadable.add(id);
+                MicraDrone.LOGGER.error("a job's files could not be read ({})", id, e);
+            }
+        }
+        return kept;
+    }
+
+    /** The operating box a broken job's record still needs: the claim's own, else the manifest's bounds. */
+    private Box operatingBoxOf(ConstructionJob job, JobLoad.Broken broken) {
+        if (broken.manifestOrNull() == null) {
+            // no manifest means no record at all: the box is unused, only the bare job is kept for the owner
+            return new Box(0, 0, 0, 0, 0, 0);
+        }
+        return claims.find(job.claimId()).map(SiteClaim::operatingBox).orElseGet(broken.manifestOrNull()::worldBounds);
+    }
+
+    /**
+     * Job ids carry the overworld clock plus a per-runtime sequence ({@link #nextJobId}); after a crash the clock
+     * may come back unchanged, so the sequence resumes past every id this boot already holds.
+     */
+    private void watchJobIds() {
+        String prefix = "job-" + server.overworld().getGameTime() + "-";
+        for (JobStatus st : service.statuses()) {
+            String id = st.jobId();
+            if (!id.startsWith(prefix)) {
+                continue;
+            }
+            try {
+                jobSeq = Math.max(jobSeq, Long.parseLong(id.substring(prefix.length())) + 1);
+            } catch (NumberFormatException e) {
+                // an id another tool issued is simply not a sequence member
+            }
+        }
+    }
+
+    /** Every live record's files plus the claim book and the placed registries, forced to the disk. */
+    private void saveAll() {
+        for (JobRecord r : service.records()) {
+            saveJob(r);
+        }
+        try {
+            files.saveClaims(claims);
+            for (SiteClaim c : claims.all()) {
+                if (!c.released()) {
+                    files.saveRegistry(service.registry(c.claimId()));
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            haltRecording("the claims or a placed registry could not be saved", e);
+        }
+    }
+
+    /** What a finished job leaves behind once its claim is gone: files no job keeps alive are deleted. */
+    private void sweepOrphans(List<ConstructionJob> kept, Set<String> unreadable) {
+        List<String> all;
+        try {
+            all = files.allFiles();
+        } catch (IOException e) {
+            MicraDrone.LOGGER.warn("the orphan sweep could not list the construction's files", e);
+            return;
+        }
+        List<String> orphans = new ArrayList<>(OrphanSweep.orphanFiles(all, kept, claims));
+        // a job directory that failed to read is a question for the owner, never refuse for the sweep
+        orphans.removeIf(f -> unreadable.stream()
+                .anyMatch(id -> f.startsWith(ConstructionJob.JOBS_DIR + id + "/")));
+        int swept = 0;
+        for (String f : orphans) {
+            try {
+                fs.delete(f);
+                swept++;
+            } catch (IOException | RuntimeException e) {
+                MicraDrone.LOGGER.warn("an orphan file could not be deleted: {}", f);
+            }
+        }
+        if (swept > 0) {
+            MicraDrone.LOGGER.info("orphan sweep removed {} construction file(s)", swept);
+        }
+    }
+
+    /** One job's files, durable before the caller's answer is given; a failure stops construction. */
+    private void saveJob(JobRecord r) {
+        if (r == null) {
+            return;
+        }
+        try {
+            files.saveJob(r, service.ledgers());
+        } catch (IOException | RuntimeException e) {
+            haltRecording("job " + r.job().jobId() + " could not be saved", e);
+        }
+    }
+
+    private void saveJob(String jobId) {
+        saveJob(service.record(jobId).orElse(null));
+    }
+
+    /**
+     * The claim book goes to the disk the tick it changes (a claim is reserved or released), not only at save events:
+     * a job file whose claim is not on the disk cannot be recovered without asking the owner ("claim: missing"), which
+     * a real kill of the game a few seconds after the approval produced. The window left is the one tick in which the
+     * claim was reserved and the first runs were already logged.
+     */
+    private void saveClaimsIfChanged() {
+        String digest = claims.all().stream().map(c -> c.claimId() + (c.released() ? "-" : "+")).sorted()
+                .collect(java.util.stream.Collectors.joining(","));
+        if (digest.equals(savedClaimsDigest)) {
+            return;
+        }
+        try {
+            files.saveClaims(claims);
+            savedClaimsDigest = digest;
+        } catch (IOException | RuntimeException e) {
+            haltRecording("the claims could not be saved", e);
+        }
+    }
+
+    /**
+     * The one place a failed durable write turns into a stopped runtime: the message goes to the log once, every
+     * later failure just keeps the flag (the records may already be half-written, so nothing writes on).
+     */
+    private void haltRecording(String what, Throwable e) {
+        if (!recordingFailed) {
+            recordingFailed = true;
+            MicraDrone.LOGGER.error("construction is stopped: {}", what, e);
+        }
+    }
+
+    /** True once a record the durability chain needs could not be written; {@link BuildCommands} shows the halt line. */
+    public boolean halted() {
+        return recordingFailed;
     }
 
     /** The runtime of this server, while it is up (between ServerStartedEvent and ServerStoppingEvent). */
@@ -233,6 +520,12 @@ public final class ConstructionRuntime {
      */
     public void submit(ServerPlayer player, PlanSubmission submission) {
         UUID owner = player.getUUID();
+        if (recordingFailed) {
+            // a new job whose first file cannot be written must not be accepted at all
+            recordOutcome(owner, SubmitOutcome.failed(List.of()), 0);
+            tell(owner, MessageKey.of(ChildMessages.HALTED));
+            return;
+        }
         if (workers.busy(owner) || submissions.containsKey(owner)) {
             tell(owner, MessageKey.of(ChildMessages.SUBMIT_BUSY));
             return;
@@ -439,9 +732,15 @@ public final class ConstructionRuntime {
         ApprovalDecision decision = desk.approve(request, approver, registry.version(), surveys, server.getTickCount(),
                 this::nextJobId);
         if (decision instanceof ApprovalDecision.Approved approved) {
+            if (recordingFailed) {
+                // an approved job that cannot be saved must not enter the service at all
+                tell(player.getUUID(), MessageKey.of(ChildMessages.HALTED));
+                return decision;
+            }
             CompiledPlan compiled = approved.candidate().compiled();
             service.admitApproved(approved.job(), compiled.manifest(), compiled.nodeTypes(),
                     JobProgram.build(compiled.manifest()), compiled.operatingBox());
+            saveJob(approved.job().jobId());
             tell(player.getUUID(), MessageKey.of(ChildMessages.APPROVE_OK, approved.job().jobId()));
         } else if (decision instanceof ApprovalDecision.Rejected rejected) {
             for (Issue issue : rejected.blocking()) {
@@ -455,6 +754,9 @@ public final class ConstructionRuntime {
 
     public ControlResult cancel(UUID requester, boolean op, String jobId) {
         ControlResult result = service.cancel(jobId, requester, op);
+        if (result == ControlResult.OK) {
+            saveJob(jobId);
+        }
         tell(requester, result == ControlResult.OK
                 ? MessageKey.of(ChildMessages.CANCELLED, jobId) : MessageKey.of(ChildMessages.control(result)));
         return result;
@@ -462,6 +764,9 @@ public final class ConstructionRuntime {
 
     public ControlResult resume(UUID requester, boolean op, String jobId, boolean skipSiteChanges) {
         ControlResult result = service.resume(jobId, requester, op, skipSiteChanges);
+        if (result == ControlResult.OK) {
+            saveJob(jobId);
+        }
         tell(requester, result == ControlResult.OK
                 ? MessageKey.of(ChildMessages.RESUMED, jobId) : MessageKey.of(ChildMessages.control(result)));
         return result;
@@ -475,6 +780,10 @@ public final class ConstructionRuntime {
     public ControlResult verify(UUID requester, boolean op, String jobId) {
         String newJobId = nextJobId();
         ControlResult result = service.beginVerify(jobId, requester, op, newJobId, server.getTickCount());
+        if (result == ControlResult.OK) {
+            saveJob(jobId);
+            saveJob(newJobId);
+        }
         JobStatus created = result == ControlResult.OK ? service.status(newJobId).orElse(null) : null;
         if (created != null) {
             tell(requester, ChildMessages.STATUS_LINE, ServerMessages.status(created));
@@ -482,6 +791,88 @@ public final class ConstructionRuntime {
             tell(requester, MessageKey.of(ChildMessages.control(result)));
         }
         return result;
+    }
+
+    /**
+     * The owner's (or an operator's) answer to a recovery-paused job (Task 25): adopt or discard the part of the log
+     * the evidence could not decide, or end the job with repair or fail. {@link JobService#recover} itself checks
+     * the owner and the state; the resulting files are written before the answer goes out, and a job that still
+     * waits hears the ask line again.
+     */
+    public ControlResult recover(UUID requester, boolean op, String jobId, RecoveryChoice choice) {
+        String newJobId = nextJobId();
+        ControlResult result = service.recover(jobId, requester, op, choice, newJobId, server.getTickCount(),
+                recoveryWorld);
+        if (result == ControlResult.OK) {
+            saveJob(jobId);
+            if (choice == RecoveryChoice.REPAIR) {
+                saveJob(newJobId);
+            }
+            JobStatus shown = service.status(choice == RecoveryChoice.REPAIR ? newJobId : jobId).orElse(null);
+            if (shown != null) {
+                tell(requester, ChildMessages.STATUS_LINE, ServerMessages.status(shown));
+            }
+            JobStatus after = service.status(jobId).orElse(null);
+            if (after != null && after.state() == JobState.PAUSED && after.shownPause() == PauseReason.RECOVERY_NEEDED) {
+                tell(requester, MessageKey.of(ChildMessages.RECOVER_ASK, after.jobId(), recoveryReason(after.lastError())));
+            }
+        } else {
+            tell(requester, MessageKey.of(ChildMessages.control(result)));
+        }
+        return result;
+    }
+
+    /**
+     * The owner's (or an operator's) ask to undo a claim (04 F-14). F-5's confirmation stand-in: without
+     * {@code confirm} the answer is only how many blocks would come out, decided by the same check the run would
+     * pass; with it, the ROLLBACK job is made (its id comes from {@link #nextJobId} like an approval's) and the
+     * answer is the new job's own status line.
+     */
+    public ControlResult rollback(UUID requester, boolean op, String claimId, boolean confirm) {
+        if (!confirm) {
+            ControlResult check = service.checkRollback(claimId, requester, op);
+            if (check != ControlResult.OK) {
+                tell(requester, MessageKey.of(ChildMessages.control(check)));
+                return check;
+            }
+            tell(requester, MessageKey.of(ChildMessages.ROLLBACK_ASK, service.rollbackPlan(claimId).size(), claimId));
+            return ControlResult.OK;
+        }
+        if (recordingFailed) {
+            // like approve: a job whose first file cannot be written must not enter the service at all
+            tell(requester, MessageKey.of(ChildMessages.HALTED));
+            return ControlResult.WRONG_STATE;
+        }
+        String newJobId = nextJobId();
+        ControlResult result = service.rollback(claimId, requester, op, newJobId, server.getTickCount());
+        if (result == ControlResult.OK) {
+            saveJob(newJobId);
+            JobStatus created = service.status(newJobId).orElse(null);
+            if (created != null) {
+                tell(requester, ChildMessages.STATUS_LINE, ServerMessages.status(created));
+            }
+        } else {
+            tell(requester, MessageKey.of(ChildMessages.control(result)));
+        }
+        return result;
+    }
+
+    /**
+     * The devkit's crash barrier (Task 25): installed on the log and, when the sink is the file one, inside it for
+     * the mid-frame point - and only while {@code -Dmicradrone.devBarriers=true}; without the property the call is a
+     * no-op, so a production server can never be held by it.
+     */
+    public void installBarrier(WriteAheadLog.Barrier barrier) {
+        if (!Boolean.getBoolean(DEV_BARRIERS_PROPERTY)) {
+            return;
+        }
+        if (barrier instanceof DevBarrier dev) {
+            dev.bind(service, wal);
+        }
+        wal.setBarrier(barrier);
+        if (wal.sink() instanceof FileWalSink sink) {
+            sink.setBarrier(barrier);
+        }
     }
 
     /** The newest submit outcome of an owner (null when this server run has seen none). */
@@ -581,24 +972,27 @@ public final class ConstructionRuntime {
         surveys.expire(now);
         pendingOwners.values().removeIf(owner -> desk.pending(owner).isEmpty());
         advanceSubmissions(now);
-        List<JobUpdate> updates = service.tick(new TickInput(now, server.getAverageTickTimeNanos() / NANOS_PER_MILLI),
-                world);
-        notifyOwners(updates, now);
-        show.onUpdates(server, updates);
-        checkpointIfWanted();
-        lastTickWorkNanos = System.nanoTime() - t0;
-    }
-
-    /**
-     * A job may end only under a durable point covering its runs, so a job that is waiting gets a flushed
-     * save now. The in-memory WAL makes the marker a no-op for persistence; Task 25 swaps this for the
-     * spaced Checkpoints adapter and a file sink, keeping the call in this one place.
-     */
-    private void checkpointIfWanted() {
-        if (service.checkpointWanted()) {
-            server.saveAllChunks(true, true, false);
-            service.markDurable();
+        List<JobUpdate> updates = List.of();
+        if (!recordingFailed) {
+            try {
+                updates = service.tick(new TickInput(now, server.getAverageTickTimeNanos() / NANOS_PER_MILLI),
+                        world);
+            } catch (RuntimeException e) {
+                // a WAL write that did not go through stops construction, it never silently runs on
+                haltRecording("a job's run could not be recorded", e);
+            }
+            saveClaimsIfChanged();
+            for (JobUpdate u : updates) {
+                // a state change is a new job.bin before the owner hears of it
+                if (u.stateChanged()) {
+                    saveJob(u.job().jobId());
+                }
+            }
+            notifyOwners(updates, now);
+            show.onUpdates(server, updates);
+            checkpoints.tickEnd(now);
         }
+        lastTickWorkNanos = System.nanoTime() - t0;
     }
 
     /**
@@ -621,9 +1015,16 @@ public final class ConstructionRuntime {
                 } else if (status != null) {
                     tell(job.ownerUuid(), ChildMessages.STATUS_LINE, ServerMessages.status(status));
                 }
+                if (job.state() == JobState.PAUSED && job.pauseReason() == PauseReason.RECOVERY_NEEDED) {
+                    tell(job.ownerUuid(), MessageKey.of(ChildMessages.RECOVER_ASK, job.jobId(),
+                            recoveryReason(status == null ? "" : status.lastError())));
+                }
                 // the terminal transition pushes too, so the client always sees a job's last document
                 if (status != null) {
                     BuildNetwork.pushProgress(server, job.ownerUuid(), status);
+                } else if (job.state().terminal()) {
+                    // a rollback that finished released its claim and dropped its record: the panel still needs the last document
+                    BuildNetwork.pushFinalProgress(server, job.ownerUuid(), job);
                 }
             }
             for (var item : u.shortage()) {
@@ -640,6 +1041,68 @@ public final class ConstructionRuntime {
                 if (status.state() == JobState.RUNNING) {
                     BuildNetwork.pushProgress(server, status.owner(), status);
                 }
+            }
+        }
+    }
+
+    /** The reasons a recovery pause asks about: the log part's own answer, without the internal prefix. */
+    private static String recoveryReason(String lastError) {
+        return lastError.startsWith(JobService.RECOVERY_AMBIGUOUS)
+                ? lastError.substring(JobService.RECOVERY_AMBIGUOUS.length()) : lastError;
+    }
+
+    /**
+     * A returning owner is asked once for every job still waiting on their answer (the start-up fold cannot send
+     * chat to an offline player, so the ask is re-sent here instead of relying on the tick updates).
+     */
+    void onLogin(ServerPlayer player) {
+        UUID owner = player.getUUID();
+        for (JobStatus st : service.statuses()) {
+            if (st.owner().equals(owner) && st.state() == JobState.PAUSED
+                    && st.shownPause() == PauseReason.RECOVERY_NEEDED) {
+                tell(owner, MessageKey.of(ChildMessages.RECOVER_ASK, st.jobId(), recoveryReason(st.lastError())));
+            }
+        }
+    }
+
+    /**
+     * Inside a flushed save ({@code LevelEvent.Save}, posted per level before the IO worker is awaited): this
+     * dimension's jobs are written, and under the overworld the claim book and the placed registries with them.
+     * A write that cannot be confirmed stops construction rather than earning a durable point over half a save.
+     */
+    void onSave(ServerLevel level) {
+        String dim = dimensionId(level);
+        try {
+            for (JobRecord r : service.records()) {
+                if (r.job().dimension().equals(dim)) {
+                    files.saveJob(r, service.ledgers());
+                }
+            }
+            // the claims file and the placed registries go with the overworld's own save
+            if (level.dimension() == Level.OVERWORLD) {
+                files.saveClaims(claims);
+                for (SiteClaim c : claims.all()) {
+                    if (!c.released()) {
+                        files.saveRegistry(service.registry(c.claimId()));
+                    }
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            haltRecording("a job's files could not be saved with the world", e);
+        }
+    }
+
+    /**
+     * After the shutdown's own flushed save (every level, {@code noSave} cleared) has written the job files:
+     * the durable point for everything the log still held. Runs without it would be folded again at the next
+     * start; that is legal, but a written point is the honest end of a clean stop.
+     */
+    void afterStop() {
+        if (!recordingFailed && wal.lastRun() > wal.durableUpTo()) {
+            try {
+                service.markDurable();
+            } catch (RuntimeException e) {
+                MicraDrone.LOGGER.error("the durable point could not be written at stop", e);
             }
         }
     }
@@ -720,8 +1183,37 @@ public final class ConstructionRuntime {
         public static void onServerStopping(ServerStoppingEvent event) {
             ConstructionRuntime r = instance;
             if (r != null && r.server == event.getServer()) {
-                instance = null;
+                // the drones go before the shutdown save so none is kept on disk; the runtime stays up while the
+                // save events of stopServer still need it to write the job files
                 r.shutdown();
+            }
+        }
+
+        /** After the flushed shutdown save: the durable point, then the runtime is gone. */
+        @SubscribeEvent
+        public static void onServerStopped(ServerStoppedEvent event) {
+            ConstructionRuntime r = instance;
+            if (r != null && r.server == event.getServer()) {
+                instance = null;
+                r.afterStop();
+            }
+        }
+
+        /** The durable write of the job files happens inside the save that covers them (Task 25). */
+        @SubscribeEvent
+        public static void onLevelSave(LevelEvent.Save event) {
+            ConstructionRuntime r = instance;
+            if (r != null && event.getLevel() instanceof ServerLevel level) {
+                r.onSave(level);
+            }
+        }
+
+        /** An owner coming online hears the ask of every job waiting on their recovery answer. */
+        @SubscribeEvent
+        public static void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
+            ConstructionRuntime r = instance;
+            if (r != null && event.getEntity() instanceof ServerPlayer player) {
+                r.onLogin(player);
             }
         }
 

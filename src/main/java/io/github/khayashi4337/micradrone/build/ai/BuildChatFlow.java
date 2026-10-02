@@ -28,10 +28,11 @@ public final class BuildChatFlow {
     public static final int MAX_REPAIRS = 2;
 
     /** The flow's states; the screen mirrors this for the devkit's state probe. */
-    public enum State { IDLE, NEED_CONSENT, ASKING_AI, WAITING_OFFER, OFFERED, BUILDING, DONE, FAILED }
+    public enum State { IDLE, NEED_CONSENT, ASKING_AI, WAITING_OFFER, OFFERED, BUILDING, DONE, FAILED,
+        CONFIRM_UNDO, UNDOING }
 
     /** Which buttons the screen may show in the insert row; an empty {@link ShowButtons} hides them. */
-    public enum ButtonKind { CONSENT_YES, CONSENT_NO, BUILD, CANCEL }
+    public enum ButtonKind { CONSENT_YES, CONSENT_NO, BUILD, CANCEL, UNDO, UNDO_YES, UNDO_NO }
 
     public sealed interface Action {
     }
@@ -51,6 +52,10 @@ public final class BuildChatFlow {
 
     /** Cancel the running job. */
     public record SendCancel(String jobId) implements Action {
+    }
+
+    /** Ask the server to roll the claim back to its pre-build state (M5; sent only after UNDO_YES). */
+    public record SendRollback(String claimId) implements Action {
     }
 
     /** One child-facing line: a {@code micradrone.build.chat.*} key plus string args. */
@@ -85,17 +90,38 @@ public final class BuildChatFlow {
     public static final String MSG_CANCELLED = "micradrone.build.chat.cancelled";
     /** The approve was sent but the server turned it down (M3b: no job ever started). */
     public static final String MSG_APPROVE_REFUSED = "micradrone.build.chat.approve_refused";
+    /** M5: the undo question, progress, endings and refusal - none may carry an id (M2b). */
+    public static final String MSG_UNDO_ASK = "micradrone.build.chat.undo_ask";
+    public static final String MSG_UNDOING = "micradrone.build.chat.undoing";
+    public static final String MSG_UNDO_DONE = "micradrone.build.chat.undo_done";
+    public static final String MSG_UNDO_PARTIAL = "micradrone.build.chat.undo_partial";
+    public static final String MSG_UNDO_REFUSED = "micradrone.build.chat.undo_refused";
+    /**
+     * Panel-only wording for the two pauses whose status-command text names an adult command and a
+     * job id (pause.recovery_needed, pause.site_changed): the panel has no button for either, so the
+     * child is only told to ask a grown-up.
+     */
+    public static final String MSG_PAUSE_RECOVERY = "micradrone.build.chat.pause_recovery";
+    public static final String MSG_PAUSE_SITE_CHANGED = "micradrone.build.chat.pause_site_changed";
 
     /** Every child-facing key this flow can emit - ChildMessages registers all of them. */
     public static final Set<String> CHAT_MESSAGE_KEYS = Set.of(MSG_CONSENT, MSG_CLI_MISSING,
             MSG_AI_FAILED, MSG_PLAN_FAILED, MSG_SAYS, MSG_OFFER, MSG_OFFER_TERRAIN, MSG_PLACE_IN_FRONT,
-            MSG_BUILDING, MSG_DONE, MSG_PARTIAL, MSG_BUSY, MSG_CANCELLED, MSG_APPROVE_REFUSED);
+            MSG_BUILDING, MSG_DONE, MSG_PARTIAL, MSG_BUSY, MSG_CANCELLED, MSG_APPROVE_REFUSED,
+            MSG_UNDO_ASK, MSG_UNDOING, MSG_UNDO_DONE, MSG_UNDO_PARTIAL, MSG_UNDO_REFUSED,
+            MSG_PAUSE_RECOVERY, MSG_PAUSE_SITE_CHANGED);
 
     // The "state" values of the offer document (construction.core.OfferView writes these; the
     // strings are re-spelled here because build.* may not import construction.*).
     private static final String OFFER_OFFERED = "OFFERED";
     private static final String OFFER_REJECTED = "REJECTED";
     private static final String OFFER_FAILED = "FAILED";
+
+    // The JobKind names ProgressView writes into each progress document's "kind" field (M5);
+    // re-spelled because build.* may not import construction.core.
+    private static final String KIND_BUILD = "BUILD";
+    private static final String KIND_ROLLBACK = "ROLLBACK";
+    private static final String STATE_ROLLED_BACK = "ROLLED_BACK";
 
     /**
      * The pause lines the status command already shows ({@code ChildMessages.pause(PauseReason)}
@@ -106,8 +132,11 @@ public final class BuildChatFlow {
     private static final Set<String> PAUSE_KEYS = Set.of(
             PAUSE_KEY_PREFIX + "owner_offline", PAUSE_KEY_PREFIX + "chunk_unloaded",
             PAUSE_KEY_PREFIX + "materials_missing", PAUSE_KEY_PREFIX + "server_busy",
-            PAUSE_KEY_PREFIX + "recovery_needed", PAUSE_KEY_PREFIX + "user",
-            PAUSE_KEY_PREFIX + "site_changed", PAUSE_KEY_PREFIX + "no_room");
+            PAUSE_KEY_PREFIX + "user", PAUSE_KEY_PREFIX + "no_room");
+    /** Pause names that use the panel-only wording instead of the status command's pause text. */
+    private static final Map<String, String> PANEL_PAUSE_KEYS = Map.of(
+            PAUSE_KEY_PREFIX + "recovery_needed", MSG_PAUSE_RECOVERY,
+            PAUSE_KEY_PREFIX + "site_changed", MSG_PAUSE_SITE_CHANGED);
 
     /** The three texts {@link BuildPromptBuilder} needs - gathered once by the screen. */
     public record PromptParts(String sampleJson, String partsCatalog, String allowedBlocks) {
@@ -127,6 +156,8 @@ public final class BuildChatFlow {
     private long lastShownPercent = -1;
     /** The pause reason last announced (null while unpaused) - the same one is not repeated. */
     private String lastAnnouncedPause;
+    /** The claim a finished BUILD job built on - what {@link SendRollback} names. */
+    private String doneClaimId;
 
     public BuildChatFlow(boolean consentGiven, PromptParts parts) {
         this.consented = consentGiven;
@@ -209,6 +240,9 @@ public final class BuildChatFlow {
      * REJECTED/FAILED re-asks the AI with the technical messages up to {@link #MAX_REPAIRS} times).
      */
     public List<Action> offer(String offerJson) {
+        if (state == State.UNDOING) {
+            return undoRefused(offerJson);
+        }
         if (state != State.WAITING_OFFER && state != State.BUILDING) {
             return List.of();
         }
@@ -285,6 +319,25 @@ public final class BuildChatFlow {
     }
 
     /**
+     * While UNDOING the only offer document still possible is the rollback's own refusal: the
+     * server's handler answers a rollback it could not run with a bare REJECTED doc (M5). The
+     * child hears the refusal line and gets the undo button back; anything else is ignored.
+     */
+    private List<Action> undoRefused(String offerJson) {
+        String offerState;
+        try {
+            offerState = stringAt(mapAt(MiniJson.parse(offerJson), "offer").get("state"), "state");
+        } catch (RuntimeException malformed) {
+            return List.of(); // not a document the flow can read - the rollback's progress tells the rest
+        }
+        if (!OFFER_REJECTED.equals(offerState)) {
+            return List.of();
+        }
+        state = State.DONE;
+        return List.of(say(MSG_UNDO_REFUSED), new ShowButtons(List.of(ButtonKind.UNDO)));
+    }
+
+    /**
      * The つくる button, allowed only at OFFERED: pressing it counts as confirming the terraform /
      * destructive counts that were just spelled out by {@link #MSG_OFFER_TERRAIN} and friends -
      * that simplification is MVP-only (the brief; per-risk checkboxes come with the fleshing out).
@@ -327,6 +380,9 @@ public final class BuildChatFlow {
      * (the same percent is never repeated).
      */
     public List<Action> progress(String progressJson) {
+        if (state == State.UNDOING) {
+            return undoProgress(progressJson);
+        }
         if (state != State.BUILDING) {
             return List.of();
         }
@@ -340,14 +396,26 @@ public final class BuildChatFlow {
         if (id != null) {
             jobId = id;
         }
+        // kind says which job the document is (M5): only a finished BUILD earns the undo button -
+        // a rollback's own done/partial must not offer to roll the rollback back.
+        String kind = tree.get("kind") instanceof String s ? s : null;
         if (Boolean.TRUE.equals(tree.get("done"))) {
             state = State.DONE;
+            if (KIND_BUILD.equals(kind)) {
+                doneClaimId = tree.get("claimId") instanceof String s ? s : null;
+                return List.of(say(MSG_DONE), new ShowButtons(List.of(ButtonKind.UNDO)));
+            }
             return List.of(say(MSG_DONE));
         }
         if (Boolean.TRUE.equals(tree.get("partial"))) {
             state = State.DONE;
             long missing = longOrZero(tree.get("unrepaired"))
                     + longOrZero(tree.get("conflicts"));
+            if (KIND_BUILD.equals(kind)) {
+                doneClaimId = tree.get("claimId") instanceof String s ? s : null;
+                return List.of(say(MSG_PARTIAL, missing),
+                        new ShowButtons(List.of(ButtonKind.UNDO)));
+            }
             return List.of(say(MSG_PARTIAL, missing));
         }
         String pause = tree.get("pause") instanceof String s ? s : null;
@@ -357,11 +425,10 @@ public final class BuildChatFlow {
         } else {
             if (!pause.equals(lastAnnouncedPause)) {
                 String pauseKey = PAUSE_KEY_PREFIX + pause.toLowerCase(Locale.ROOT);
-                if (PAUSE_KEYS.contains(pauseKey)) {
-                    // pause.site_changed's text takes the job id as %1$s, the same way
-                    // ServerMessages renders it; an early doc without a jobId passes "" rather
-                    // than leaving a literal "%1$s" in the child's line.
-                    out.add(say(pauseKey, jobId == null ? "" : jobId));
+                if (PANEL_PAUSE_KEYS.containsKey(pauseKey)) {
+                    out.add(say(PANEL_PAUSE_KEYS.get(pauseKey)));
+                } else if (PAUSE_KEYS.contains(pauseKey)) {
+                    out.add(say(pauseKey));
                 }
             }
             lastAnnouncedPause = pause;
@@ -373,6 +440,87 @@ public final class BuildChatFlow {
         lastShownPercent = percent;
         out.add(say(MSG_BUILDING, percent));
         return out;
+    }
+
+    /**
+     * The もとにもどす button, allowed only at DONE (M5): asks the child to confirm before
+     * anything is sent - the built thing disappears, so one stray tap must not start it.
+     */
+    public List<Action> undo() {
+        if (state != State.DONE) {
+            return List.of();
+        }
+        state = State.CONFIRM_UNDO;
+        return List.of(say(MSG_UNDO_ASK),
+                new ShowButtons(List.of(ButtonKind.UNDO_YES, ButtonKind.UNDO_NO)));
+    }
+
+    /**
+     * UNDO_YES at CONFIRM_UNDO: the claim id remembered from the build's last document goes to the
+     * server inside {@link SendRollback} - it never reaches a child-facing line.
+     */
+    public List<Action> undoConfirmed() {
+        if (state != State.CONFIRM_UNDO) {
+            return List.of();
+        }
+        state = State.UNDOING;
+        lastShownPercent = 0; // the announce below already speaks the 0% line
+        List<Action> out = new ArrayList<>();
+        out.add(new SendRollback(doneClaimId));
+        out.add(say(MSG_UNDOING, 0L));
+        out.add(new ShowButtons(List.of()));
+        return out;
+    }
+
+    /** UNDO_NO at CONFIRM_UNDO: back to DONE with the undo button shown again. */
+    public List<Action> undoCancelled() {
+        if (state != State.CONFIRM_UNDO) {
+            return List.of();
+        }
+        state = State.DONE;
+        return List.of(new ShowButtons(List.of(ButtonKind.UNDO)));
+    }
+
+    /**
+     * A progress document while UNDOING (M5): only the rollback job's own documents count -
+     * {@code kind} anything but ROLLBACK is ignored. A mid-flight doc speaks a changed percent once,
+     * done and partial end the round at IDLE so a fresh request can start.
+     */
+    private List<Action> undoProgress(String progressJson) {
+        Map<String, Object> tree;
+        try {
+            tree = mapAt(MiniJson.parse(progressJson), "progress");
+        } catch (RuntimeException malformed) {
+            return List.of(); // a broken doc is not worth failing the undo over
+        }
+        // an undo ends with the claim's ORIGINAL build job turning ROLLED_BACK (measured in the real game); that document is not
+        // a rollback job's own, so it is recognised by its state and the claim it belongs to
+        String docState = tree.get("state") instanceof String s ? s : null;
+        String docClaim = tree.get("claimId") instanceof String c ? c : null;
+        if (STATE_ROLLED_BACK.equals(docState) && docClaim != null && docClaim.equals(doneClaimId)) {
+            state = State.IDLE;
+            return List.of(say(MSG_UNDO_DONE));
+        }
+        String kind = tree.get("kind") instanceof String s ? s : null;
+        if (!KIND_ROLLBACK.equals(kind)) {
+            return List.of();
+        }
+        if (Boolean.TRUE.equals(tree.get("done"))) {
+            state = State.IDLE;
+            return List.of(say(MSG_UNDO_DONE));
+        }
+        if (Boolean.TRUE.equals(tree.get("partial"))) {
+            state = State.IDLE;
+            long missing = longOrZero(tree.get("unrepaired"))
+                    + longOrZero(tree.get("conflicts"));
+            return List.of(say(MSG_UNDO_PARTIAL, missing));
+        }
+        long percent = longOrZero(tree.get("percent"));
+        if (percent == lastShownPercent) {
+            return List.of();
+        }
+        lastShownPercent = percent;
+        return List.of(say(MSG_UNDOING, percent));
     }
 
     private List<Action> ask(String childText) {
@@ -393,6 +541,7 @@ public final class BuildChatFlow {
         repairs = 0;
         lastShownPercent = -1;
         lastAnnouncedPause = null;
+        doneClaimId = null;
     }
 
     /** The technical {@code message} texts of the offer's issues - for the repair prompt only. */

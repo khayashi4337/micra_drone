@@ -52,6 +52,9 @@
   "gui.micradrone.ide_screen.build_consent_no": "No",
   "gui.micradrone.ide_screen.build_build": "Build",
   "gui.micradrone.ide_screen.build_cancel": "Cancel",
+  "gui.micradrone.ide_screen.build_undo": "Put back",
+  "gui.micradrone.ide_screen.build_undo_yes": "Put back",
+  "gui.micradrone.ide_screen.build_undo_no": "Keep it",
   "gui.micradrone.ide_screen.shop": "Shop",
   "gui.micradrone.ide_screen.loading": "Loading...",
   "gui.micradrone.ide_screen.debug_pause": "Pause",
@@ -134,6 +137,8 @@
   "micradrone.build.issue.site_unloaded": "the spot is not loaded yet. Go closer and send it again.",
   "micradrone.build.drone.arrived": "The drone is here!",
   "micradrone.build.recover.ask": "Job %1$s: I cannot tell whether %2$s happened before it stopped. If it did, choose /micradrone build recover %1$s adopt; if not, choose discard.",
+  "micradrone.build.rollback.ask": "I will put the spot back as it was: %1$s blocks come out. If that is OK: /micradrone build rollback %2$s confirm",
+  "micradrone.build.halted": "I could not write my notes down, so I stopped working.",
   "micradrone.build.state.pending_approval": "waiting for approval",
   "micradrone.build.state.queued": "waiting in line",
   "micradrone.build.state.running": "building",
@@ -200,5 +205,12 @@
   "micradrone.build.chat.partial": "Almost done - %1$s places could not be built.",
   "micradrone.build.chat.busy": "I am still working on another request. Please wait for it.",
   "micradrone.build.chat.cancelled": "Cancelled.",
-  "micradrone.build.chat.approve_refused": "Could not build here. Move somewhere else and try again"
+  "micradrone.build.chat.approve_refused": "Could not build here. Move somewhere else and try again",
+  "micradrone.build.chat.undo_ask": "Really put everything back the way it was? The building will disappear.",
+  "micradrone.build.chat.undoing": "Putting it back (%1$s％)",
+  "micradrone.build.chat.undo_done": "It is back to how it was before.",
+  "micradrone.build.chat.undo_partial": "Almost back - %1$s places could not be put back.",
+  "micradrone.build.chat.undo_refused": "It cannot be put back right now.",
+  "micradrone.build.chat.pause_recovery": "The server stopped part-way. Please ask a grown-up.",
+  "micradrone.build.chat.pause_site_changed": "Something was placed at the build spot. Move it, then ask a grown-up."
 }

@@ -6,6 +6,8 @@ import io.github.khayashi4337.micradrone.chat.MiniJson;
 import io.github.khayashi4337.micradrone.construction.core.ApprovalDecision;
 import io.github.khayashi4337.micradrone.construction.core.ChildMessages;
 import io.github.khayashi4337.micradrone.construction.core.Confirmations;
+import io.github.khayashi4337.micradrone.construction.core.ConstructionJob;
+import io.github.khayashi4337.micradrone.construction.core.ControlResult;
 import io.github.khayashi4337.micradrone.construction.core.JobStatus;
 import io.github.khayashi4337.micradrone.construction.core.OfferView;
 import io.github.khayashi4337.micradrone.construction.core.PlanChunkCheck;
@@ -18,6 +20,7 @@ import io.github.khayashi4337.micradrone.construction.net.BuildCancelPayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildOfferPayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildPlanPayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildProgressPayload;
+import io.github.khayashi4337.micradrone.construction.net.BuildRollbackPayload;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -126,6 +129,30 @@ public final class BuildNetwork {
     }
 
     /**
+     * A rollback ask from the panel's もとにもどす button (M5): the same submit gate as the other
+     * build packets, then the runtime's confirmed rollback - owner-or-operator is judged by
+     * {@code JobService.rollback} itself (D-12). A refusal comes back as a bare REJECTED offer so
+     * the client flow can show its refusal line; the panel mark keeps the command machinery
+     * (the claim's status line) out of the child's chat.
+     */
+    public static void handleRollback(BuildRollbackPayload payload, IPayloadContext context) {
+        if (!(context.player() instanceof ServerPlayer player) || !BuildCommands.maySubmit(player)) {
+            return;
+        }
+        ConstructionRuntime runtime = runtimeOf(player);
+        if (runtime == null) {
+            return;
+        }
+        // the button counts as a panel ask: the rollback's own lines keep the quiet view
+        runtime.markPanel(player.getUUID());
+        ControlResult result = runtime.rollback(player.getUUID(),
+                player.hasPermissions(Commands.LEVEL_GAMEMASTERS), payload.claimId(), true);
+        if (result != ControlResult.OK) {
+            sendOffer(player, OfferView.rejectedTree(List.of()));
+        }
+    }
+
+    /**
      * The offer push: called by {@link ConstructionRuntime} on the tick a submission leaves WORKING
      * for OFFERED or FAILED (once per outcome - each outcome object is written once).
      */
@@ -141,6 +168,14 @@ public final class BuildNetwork {
         ServerPlayer player = server.getPlayerList().getPlayer(owner);
         if (player != null) {
             sendProgress(player, status);
+        }
+    }
+
+    /** The last document of a job whose record is already gone (a finished rollback): built from the job itself. */
+    public static void pushFinalProgress(MinecraftServer server, UUID owner, ConstructionJob job) {
+        ServerPlayer player = server.getPlayerList().getPlayer(owner);
+        if (player != null) {
+            PacketDistributor.sendToPlayer(player, new BuildProgressPayload(MiniJson.write(ProgressView.finalTree(job))));
         }
     }
 

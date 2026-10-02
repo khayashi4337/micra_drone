@@ -25,6 +25,7 @@ public final class QuietPolicy {
             ChildMessages.CANCELLED,           // "しごと job-…"
             ChildMessages.RESUMED,             // "しごと job-…"
             ChildMessages.RECOVER_ASK,         // job id + "/micradrone build recover"
+            ChildMessages.ROLLBACK_ASK,        // claim id + "/micradrone build rollback … confirm"
             ChildMessages.SHORTAGE,            // the missing item's name is a registry id
             ChildMessages.rejection(ApprovalRejection.NO_PENDING),            // "submit してね"
             ChildMessages.rejection(ApprovalRejection.EXPIRED),               // "submit してね"

@@ -9,7 +9,7 @@ import time
 import traceback
 from dataclasses import dataclass
 
-from tools.p4 import devkit_client, evidence, harness, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_mvp, scenarios_regression, scenarios_show
+from tools.p4 import devkit_client, evidence, harness, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_mvp, scenarios_regression, scenarios_restart, scenarios_rollback, scenarios_show, scenarios_undo
 
 MODES = ("sp", "mp", "mp2")
 RESTART_LIMIT = 1
@@ -22,6 +22,7 @@ class Scenario:
     mode: str
     owner_only_reason: "str | None" = None
     claude: "str | None" = None  # the Claude mode the game needs (stub / real / none); None = the --claude option
+    disruptive: bool = False  # restarts or kills the game itself: runs last in its group
 
 
 SCENARIOS = {
@@ -29,7 +30,13 @@ SCENARIOS = {
     "hut-golden": Scenario(scenarios_basic.hut_golden, (1,), "sp"),
     "approve-guard": Scenario(scenarios_approval.approve_guard, (5,), "sp"),
     "farm-regression": Scenario(scenarios_regression.farm_regression, (11,), "sp"),
+    "cancel": Scenario(scenarios_rollback.cancel, (4,), "sp"),
+    "rollback": Scenario(scenarios_rollback.rollback, (4, 14), "sp"),
+    "restart-resume": Scenario(scenarios_restart.restart_resume, (), "sp", disruptive=True),
+    "real-crash-sp": Scenario(scenarios_restart.real_crash_sp, (), "sp", disruptive=True),
+    "missing-journal": Scenario(scenarios_restart.missing_journal, (), "sp", disruptive=True),
     "mvp-japanese-hut": Scenario(scenarios_mvp.mvp_japanese_hut, (), "sp"),
+    "mvp-undo": Scenario(scenarios_undo.mvp_undo, (), "sp"),
     "mvp-site-blocked": Scenario(scenarios_mvp.mvp_site_blocked, (), "sp"),
     "mvp-japanese-hut-real": Scenario(scenarios_mvp.mvp_japanese_hut, (), "sp", claude=harness.CLAUDE_REAL),
     "mvp-cli-missing": Scenario(scenarios_mvp.mvp_cli_missing, (), "sp", claude=harness.CLAUDE_NONE),
@@ -46,8 +53,8 @@ SCENARIOS = {
 # Design 07 completion conditions with no scenario yet -> the task that completes them.
 # A task that adds its scenario removes its own condition here in the same commit.
 PENDING_CONDITIONS = {
-    3: "Task 29", 4: "Task 28", 6: "Task 34", 7: "Task 28", 9: "Task 32", 10: "Task 33",
-    13: "Task 30", 14: "Task 28",
+    3: "Task 29", 6: "Task 34", 7: "Task 27", 9: "Task 32", 10: "Task 33",
+    13: "Task 30",
 }
 
 
@@ -56,6 +63,8 @@ PENDING_CONDITIONS = {
 PARTIAL_CONDITIONS = {
     8: "Task 30: block-entity blocks in general (only a chest with items is exercised so far)",
     12: "Task 27: survival - cut blocks gathered to the owner, fill blocks consumed, nothing created or lost",
+    4: "Task 34: the same crash/restart/rollback checks on a dedicated server (needs the owner's EULA file); crash at every boundary",
+    14: "Task 28b: the job files kept until the claim is released and swept at the next start (restart after a rollback not exercised)",
 }
 
 
@@ -102,7 +111,19 @@ def _groups_by_claude(names, default):
     groups = {}
     for name in names:
         groups.setdefault(SCENARIOS[name].claude or default, []).append(name)
+    for group in groups.values():
+        group.sort(key=lambda n: SCENARIOS[n].disruptive)  # stable: the rest keep their order, the disruptive ones go last
     return groups
+
+
+def _attach_or_start(game, folder, kind):
+    """Reuses a live singleplayer game (a scenario may have restarted it) instead of starting a second one."""
+    for live in ("sp", "sp-load"):
+        proc = game.procs.get(live)
+        if proc is not None and proc.poll() is None:
+            return (devkit_client.Devkit(harness.CLIENT_API_PORT, folder.run_id),
+                    devkit_client.Devkit(harness.SERVER_API_PORT, folder.run_id))
+    return _start_with_one_retry(game, folder, kind)
 
 
 def run_mode_sp(game, folder, names, default_claude=harness.CLAUDE_STUB):
@@ -125,7 +146,7 @@ def run_mode_sp(game, folder, names, default_claude=harness.CLAUDE_STUB):
             scenario = SCENARIOS[name]
             try:
                 if client is None:
-                    client, server = _start_with_one_retry(game, folder, kind)
+                    client, server = _attach_or_start(game, folder, kind)
                 ctx = scenarios_basic.Ctx(name, folder, game, client, server)
                 files = scenario.func(ctx)
                 folder.record(name, scenario.conditions, evidence.PASS, "", files)
@@ -149,7 +170,7 @@ def run_mode_sp(game, folder, names, default_claude=harness.CLAUDE_STUB):
 def run(args):
     harness.main_guard()
     run_id = args.run_id or time.strftime("p4-%Y%m%d-%H%M%S")
-    folder = evidence.RunFolder(run_id, partial=PARTIAL_CONDITIONS)
+    folder = evidence.RunFolder(run_id, partial=PARTIAL_CONDITIONS, pending=PENDING_CONDITIONS)
     game = harness.Game(run_id, folder, claude_mode=args.claude)
     names = _select(args)
     try:

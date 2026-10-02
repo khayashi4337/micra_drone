@@ -52,7 +52,7 @@ public final class JobService {
     private static final Set<JobState> ROLLBACKABLE = EnumSet.of(JobState.VERIFIED, JobState.PARTIAL, JobState.FAILED,
             JobState.CANCELLED);
     /** The lastError prefix of a job whose log waits for the owner's answer; the reasons follow it. */
-    static final String RECOVERY_AMBIGUOUS = "recovery-ambiguous:";
+    public static final String RECOVERY_AMBIGUOUS = "recovery-ambiguous:";
 
     private final BudgetConfig budgetConfig;
     private final ConstructionBudget budget;
@@ -68,6 +68,11 @@ public final class JobService {
     private final Map<String, ConstructionJob> brokenWithoutManifest = new HashMap<>();
     private long admissions;
     private boolean slowed;
+    /**
+     * The record whose executor run is on the stack right now. {@link WriteAheadLog.Barrier#at(String)} carries only a
+     * point name, so the development barrier reads the running job's kind here; empty outside {@link #place}'s run.
+     */
+    private JobRecord placing;
 
     public JobService(BudgetConfig budgetConfig, ClaimBook claims, PartTypeRegistry registry, boolean fastStructure,
                       boolean continueWhileOffline) {
@@ -109,6 +114,26 @@ public final class JobService {
         if (jobs.putIfAbsent(r.job().jobId(), r) != null) {
             throw new IllegalStateException("job " + r.job().jobId() + " exists already");
         }
+    }
+
+    /**
+     * A job read back from its files at start-up (04 F-2). The record goes in carrying the job the planner decided
+     * on (a job that was moving is re-paused by it), with the pending part of the log its file kept, marked for the
+     * {@link #recoverAll} fold when {@code fromLog}, and its saved ledger put back under its job id.
+     */
+    public void addLoaded(ConstructionJob job, JobLoad.Loaded load, boolean fromLog) {
+        JobRecord loaded = load.record();
+        JobRecord r = loaded.job().equals(job) ? loaded
+                : new JobRecord(job, loaded.manifest(), loaded.nodeTypes(), loaded.program(), loaded.journal(),
+                        loaded.outcome(), loaded.operatingBox());
+        if (r != loaded) {
+            r.pendingLog = loaded.pendingLog;
+        }
+        if (fromLog) {
+            r.requireRecovery();
+        }
+        ledgers.put(job.jobId(), load.ledger());
+        add(r);
     }
 
     public List<JobUpdate> tick(TickInput in, JobWorld w) {
@@ -215,7 +240,13 @@ public final class JobService {
         ExecutionContext ctx = new ExecutionContext(j, program, w.world(j.dimension()),
                 w.materials(j.ownerUuid(), j.materialPolicy(), j.claimId()), r.journal(), ledgers, registry(j.claimId()),
                 r.outcome(), r.skipSiteChanges, wal);
-        StepReport rep = ConstructionExecutor.run(ctx, cursor, steps);
+        placing = r;
+        StepReport rep;
+        try {
+            rep = ConstructionExecutor.run(ctx, cursor, steps);
+        } finally {
+            placing = null;
+        }
         r.lastRun = wal.lastRun();
         if (repairing) {
             r.repair = new RepairQueue(program, rep.cursor());
@@ -507,6 +538,79 @@ public final class JobService {
         return ControlResult.OK;
     }
 
+    /**
+     * Whether this caller may roll the claim back right now (04 F-14): the claim exists and is live, the caller is its
+     * owner or an operator, no job is still moving on it (a claim whose jobs all ended — PARTIAL included — may be
+     * rolled back again), and none waits for a recovery answer. The command's preview and the real rollback share this
+     * check, so the count shown is never for a claim the run would refuse.
+     */
+    public ControlResult checkRollback(String claimId, UUID requester, boolean op) {
+        SiteClaim claim = claims.find(claimId).orElse(null);
+        if (claim == null) {
+            return ControlResult.NOT_FOUND;
+        }
+        if (!claim.ownerUuid().equals(requester) && !op) {
+            return ControlResult.NOT_ALLOWED;
+        }
+        List<JobRecord> inClaim = jobsInClaim(claimId);
+        boolean busy = inClaim.stream().anyMatch(r -> !r.job().state().terminal());
+        if (claim.released() || busy || inClaim.isEmpty() || claimAwaitsAnswer(claimId)) {
+            return ControlResult.WRONG_STATE;
+        }
+        return ControlResult.OK;
+    }
+
+    /**
+     * What a rollback of the claim would take down right now: every position its placed registry still holds, in
+     * removal order. The command's preview counts this (empty for a claim nothing is recorded for).
+     */
+    public List<RestoreItem> rollbackPlan(String claimId) {
+        PlacedRegistry reg = registries.get(claimId);
+        return reg == null ? List.of() : RollbackPlanner.plan(reg, this::volatileOfPlacer);
+    }
+
+    /**
+     * The owner's (or an operator's) ask to undo everything the project built on a claim (04 F-14, the confirmed
+     * command of F-5): the claim's last job is the parent and its manifest is carried over — a ROLLBACK's verification
+     * reads only the program's restore positions ({@link #verifyPositions}). A position a player changed is left alone
+     * as a conflict and ends the job PARTIAL, keeping the claim and the registry (the position is still owed); once
+     * the site is clean the job ends VERIFIED and {@link #finishRollback} releases the claim.
+     */
+    public ControlResult rollback(String claimId, UUID requester, boolean op, String newJobId, long tick) {
+        ControlResult check = checkRollback(claimId, requester, op);
+        if (check != ControlResult.OK) {
+            return check;
+        }
+        List<JobRecord> inClaim = jobsInClaim(claimId);
+        JobRecord parent = inClaim.get(inClaim.size() - 1);
+        SiteClaim claim = claims.find(claimId).orElseThrow();
+        JobProgram program = new JobProgram(rollbackPlan(claimId), List.of());
+        ConstructionJob job = ConstructionJob.create(newJobId, claim.ownerUuid(), claim.dimension(),
+                parent.job().manifestHash(), JobKind.ROLLBACK, parent.job().jobId(), program.size(), claimId,
+                parent.job().materialPolicy(), tick, List.of());
+        admitApproved(job, parent.manifest(), parent.nodeTypes(), program, parent.operatingBox());
+        return ControlResult.OK;
+    }
+
+    /**
+     * The volatile block states of the part a source job's ledger key names: looked up in that job's own build list at
+     * {@code key % JobProgram.LEDGER_ROUND_STRIDE} (a repair round's key folds back to its placement index). Empty when
+     * the job or the index is gone — an entry that cannot name its part is compared exactly, never leniently.
+     */
+    private Set<String> volatileOfPlacer(String jobId, int ledgerKey) {
+        Optional<JobRecord> r = record(jobId);
+        if (r.isEmpty()) {
+            return Set.of();
+        }
+        JobRecord source = r.get();
+        int index = ledgerKey % JobProgram.LEDGER_ROUND_STRIDE;
+        if (index >= source.manifest().placements().size()) {
+            return Set.of();
+        }
+        return VolatileProps.of(source.nodeTypes(), registry)
+                .apply(source.manifest().placements().get(index).partNodeId());
+    }
+
     /** Every repair round journals its own placements (keyed by ledger key), so room for all rounds. */
     static int journalCapacity(int programSize) {
         return Math.max(Journal.MAX_ENTRIES, programSize) * (1 + ConstructionJob.MAX_REPAIR_ROUNDS);
@@ -575,6 +679,15 @@ public final class JobService {
 
     public List<JobRecord> records() {
         return List.copyOf(jobs.values());
+    }
+
+    /**
+     * The job whose executor run is on the stack right now, for the development barrier's per-kind arming. Empty
+     * between runs, in tests, and while the service is doing anything but placing.
+     */
+    public Optional<ConstructionJob> placingJob() {
+        JobRecord r = placing;
+        return Optional.ofNullable(r == null ? null : r.job());
     }
 
     public List<JobRecord> jobsInClaim(String claimId) {

@@ -43,6 +43,14 @@ class EvidenceTest(unittest.TestCase):
         self.assertEqual({"1": "PASS"}, s["conditions"])
         self.assertTrue(f.all_passed())
 
+    def test_a_condition_with_no_scenario_shows_as_pending_never_absent(self):
+        f = evidence.RunFolder("p", root=Path(tempfile.mkdtemp()), pending={7: "Task 27"})
+        f.record("a", [1], evidence.PASS, "")
+        self.assertEqual({1: "PASS", 7: "PENDING"}, f.condition_states())
+        s = json.loads((f.path / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual({"7": "Task 27"}, s["pendingConditions"])
+        self.assertEqual("PENDING", s["conditions"]["7"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,7 +7,7 @@ Only devkit endpoints that mirror a click or a typed message are used; no OS inp
 import re
 import time
 
-from tools.p4 import harness
+from tools.p4 import devkit_client, harness
 from tools.p4.scenarios_basic import PLAYER, _prepare_view, _read_back_and_compare, _screenshot, _teleport
 
 REQUEST = "屋根が赤い小屋を建てて"
@@ -26,8 +26,18 @@ LEAK_PATTERN = re.compile(r"E-[A-Z]{2,}|[0-9a-f]{32,}|micradrone[:.]|/micradrone
 CONSENT_FILE = harness.RUN_DIR / "client" / "micradrone" / "build_consent.txt"
 
 
+STATE_RETRIES = 5
+
+
 def _state(ctx):
-    return ctx.client.get("/state")
+    """GET /state; the render thread may be busy for a moment (a big job, a world save): ask again a few times before failing."""
+    for attempt in range(STATE_RETRIES):
+        try:
+            return ctx.client.get("/state")
+        except devkit_client.DevkitError as e:
+            if "render thread did not respond" not in str(e) or attempt == STATE_RETRIES - 1:
+                raise
+            time.sleep(POLL_S)
 
 
 def _wait_flow(ctx, wanted, timeout):

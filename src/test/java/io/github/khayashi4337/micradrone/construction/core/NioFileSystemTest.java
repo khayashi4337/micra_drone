@@ -54,6 +54,21 @@ class NioFileSystemTest {
     }
 
     @Test
+    void directoriesAreListedWithTheTrailingSlashTheRuntimeUses() throws IOException {
+        // the runtime lists ConstructionJob.JOBS_DIR ("jobs/") and JobFiles.CLAIMS_DIR ("claims/"); a world with the mod
+        // crashed at server start when this threw "not a safe relative path: claims/" (found in the first real restart run)
+        NioFileSystem fs = new NioFileSystem(root);
+        fs.writeAtomic(ConstructionJob.JOBS_DIR + "job-1/journal.bin", b("one"));
+        fs.writeAtomic(JobFiles.CLAIMS_DIR + "claim-1.bin", b("two"));
+        assertEquals(List.of("jobs/job-1/journal.bin"), fs.list(ConstructionJob.JOBS_DIR));
+        assertEquals(List.of("claims/claim-1.bin"), fs.list(JobFiles.CLAIMS_DIR));
+        assertEquals(List.of(), fs.list("manifests/"), "a directory that does not exist lists as empty");
+        for (String bad : new String[]{"../", "/etc/", "a/../../x/"}) {
+            assertThrows(IllegalArgumentException.class, () -> fs.list(bad), bad);
+        }
+    }
+
+    @Test
     void pathsCannotLeaveTheRoot() {
         NioFileSystem fs = new NioFileSystem(root);
         for (String bad : new String[]{"../x.bin", "/etc/passwd", "C:/x", "a\\b", "a/../../x"}) {

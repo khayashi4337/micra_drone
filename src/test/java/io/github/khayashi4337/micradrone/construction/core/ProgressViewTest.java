@@ -10,7 +10,11 @@ import org.junit.jupiter.api.Test;
 
 class ProgressViewTest {
     private static JobStatus status(JobState state, PauseReason pause, int cursor, int total) {
-        return new JobStatus("job-1", new UUID(0, 1), JobKind.BUILD, state, pause, cursor, total, 0, 1, 0, 2, "",
+        return status(JobKind.BUILD, state, pause, cursor, total);
+    }
+
+    private static JobStatus status(JobKind kind, JobState state, PauseReason pause, int cursor, int total) {
+        return new JobStatus("job-1", new UUID(0, 1), kind, state, pause, cursor, total, 0, 1, 0, 2, "",
                 "claim-job-1", "minecraft:overworld");
     }
 
@@ -27,6 +31,19 @@ class ProgressViewTest {
         assertEquals(1, ((Number) t.get("conflicts")).intValue());
         assertEquals(false, t.get("done"));
         assertEquals(false, t.get("partial"));
+    }
+
+    @Test
+    void theFinalDocumentOfAJobWithoutARecordCarriesTheKindTheClaimAndTheEnding() {
+        ConstructionJob job = ConstructionJob.create("job-9", new UUID(0, 1), "minecraft:overworld", "h", JobKind.ROLLBACK, "job-1",
+                40, "claim-job-1", MaterialPolicy.CREATIVE_FREE, 0L, java.util.List.of());
+        Map<String, Object> t = ProgressView.finalTree(job);
+        assertEquals("ROLLBACK", t.get("kind"));
+        assertEquals("claim-job-1", t.get("claimId"));
+        assertEquals("job-9", t.get("jobId"));
+        assertEquals("PENDING_APPROVAL", t.get("state"));
+        assertEquals(false, t.get("done"));
+        assertEquals(0, ((Number) t.get("percent")).intValue());
     }
 
     @Test
@@ -47,6 +64,21 @@ class ProgressViewTest {
     void aPausedJobCarriesItsShownPause() {
         Map<String, Object> t = ProgressView.tree(status(JobState.PAUSED, PauseReason.SITE_CHANGED, 3, 25));
         assertEquals("SITE_CHANGED", t.get("pause"));
+    }
+
+    @Test
+    void theProgressTableCarriesTheJobKindAndTheClaimId() {
+        Map<String, Object> t = ProgressView.tree(status(JobState.RUNNING, null, 3, 25));
+        assertEquals("BUILD", t.get("kind"), "the JobKind name, so the panel knows which job the doc is");
+        assertEquals("claim-job-1", t.get("claimId"), "what the もとにもどす button would roll back");
+    }
+
+    @Test
+    void aRollbackJobReportsItsOwnKind() {
+        Map<String, Object> t =
+                ProgressView.tree(status(JobKind.ROLLBACK, JobState.VERIFYING, null, 3, 25));
+        assertEquals("ROLLBACK", t.get("kind"));
+        assertEquals("claim-job-1", t.get("claimId"));
     }
 
     @Test

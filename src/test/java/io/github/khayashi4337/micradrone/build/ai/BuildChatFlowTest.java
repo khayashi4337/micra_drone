@@ -11,6 +11,7 @@ import io.github.khayashi4337.micradrone.build.ai.BuildChatFlow.State;
 import io.github.khayashi4337.micradrone.chat.MiniJson;
 import io.github.khayashi4337.micradrone.construction.core.ChildMessages;
 import io.github.khayashi4337.micradrone.construction.core.PauseReason;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -85,8 +86,16 @@ class BuildChatFlowTest {
 
     private static String progressJson(String jobId, long percent, boolean done, boolean partial,
             long unrepaired, long conflicts) {
+        return progressJson(jobId, null, null, percent, done, partial, unrepaired, conflicts);
+    }
+
+    /** A progress doc as ProgressView writes it since M5: {@code kind} and {@code claimId} included. */
+    private static String progressJson(String jobId, String kind, String claimId, long percent,
+            boolean done, boolean partial, long unrepaired, long conflicts) {
         Map<String, Object> t = new LinkedHashMap<>();
         t.put("jobId", jobId);
+        t.put("kind", kind);
+        t.put("claimId", claimId);
         t.put("state", done ? "VERIFIED" : partial ? "PARTIAL" : "RUNNING");
         t.put("cursor", percent);
         t.put("total", 100L);
@@ -582,22 +591,294 @@ class BuildChatFlowTest {
                 "only the registered pause keys may reach a child line");
     }
 
+    private static final java.util.Set<PauseReason> PANEL_WORDED = java.util.Set.of(
+            PauseReason.RECOVERY_NEEDED, PauseReason.SITE_CHANGED);
+
     @Test
-    void everyPauseReasonMapsToTheRegisteredPauseKey() {
+    void everyPauseReasonMapsToItsPauseKeyExceptTheTwoWithPanelWording() {
         BuildChatFlow flow = atBuilding();
         for (PauseReason r : PauseReason.values()) {
+            if (PANEL_WORDED.contains(r)) {
+                continue;
+            }
             List<Action> actions = flow.progress(pausedProgressJson("job-1", 0, r.name()));
             assertEquals(List.of(ChildMessages.pause(r)), sayKeys(actions), r.name());
         }
     }
 
     @Test
-    void theSiteChangedPauseCarriesTheJobIdForItsPlaceholder() {
+    void theRecoveryAndSiteChangedPausesUseThePanelWordingWithoutAnyArgument() {
+        for (var entry : java.util.Map.of(PauseReason.RECOVERY_NEEDED, BuildChatFlow.MSG_PAUSE_RECOVERY,
+                PauseReason.SITE_CHANGED, BuildChatFlow.MSG_PAUSE_SITE_CHANGED).entrySet()) {
+            BuildChatFlow flow = atBuilding();
+            List<Action> actions = flow.progress(pausedProgressJson("job-42", 0, entry.getKey().name()));
+            BuildChatFlow.Say say = only(actions, BuildChatFlow.Say.class);
+            assertEquals(entry.getValue(), say.key());
+            assertEquals(List.of(), say.args(), "the panel line never carries the job id");
+        }
+    }
+
+    @Test
+    void noPauseLineTheFlowCanSayShowsACommandOrAnIdToAChild() throws java.io.IOException {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> ja = (Map<String, Object>) MiniJson.parse(java.nio.file.Files.readString(
+                java.nio.file.Path.of("src/main/resources/assets/micradrone/lang/ja_jp.json"),
+                java.nio.charset.StandardCharsets.UTF_8));
+        for (PauseReason r : PauseReason.values()) {
+            BuildChatFlow flow = atBuilding();
+            for (Action a : flow.progress(pausedProgressJson("job-42", 0, r.name()))) {
+                if (a instanceof BuildChatFlow.Say say) {
+                    String text = (String) ja.get(say.key());
+                    assertTrue(text != null && !text.contains("/micradrone") && !text.contains("%1$s")
+                            && !text.contains("recover") && !text.contains("resume"), r + ": " + text);
+                }
+            }
+        }
+    }
+
+    // ---- (h) M5: the もとにもどす (undo) button ------------------------------------------------------
+
+    private static final String CLAIM = "claim-job-1";
+
+    /** Drives a flow to DONE through a BUILD job's done document carrying its claim id. */
+    private static BuildChatFlow atDone(String claimId) {
         BuildChatFlow flow = atBuilding();
-        List<Action> actions = flow.progress(pausedProgressJson("job-42", 0, "SITE_CHANGED"));
+        flow.progress(progressJson("job-1", "BUILD", claimId, 100, true, false, 0, 0));
+        assertEquals(State.DONE, flow.state());
+        return flow;
+    }
+
+    /** Drives a flow to UNDOING: done build -> undo -> confirm. */
+    /** The document the real game ends an undo with: the ORIGINAL build job of the claim, now ROLLED_BACK (not "done"). */
+    private static String rolledBackJson(String claimId) {
+        return "{\"jobId\":\"job-1\",\"kind\":\"BUILD\",\"claimId\":\"" + claimId + "\",\"state\":\"ROLLED_BACK\","
+                + "\"cursor\":10,\"total\":10,\"percent\":100,\"pause\":null,\"unrepaired\":0,\"conflicts\":0,"
+                + "\"done\":false,\"partial\":false}";
+    }
+
+    @Test
+    void theRolledBackDocumentOfTheSameClaimEndsTheUndo() {
+        // seen in the real game (p4-undo-003): the last document of an undo is the original BUILD job turned ROLLED_BACK
+        BuildChatFlow flow = atUndoing(CLAIM);
+        List<Action> actions = flow.progress(rolledBackJson(CLAIM));
+        assertEquals(State.IDLE, flow.state());
+        assertEquals(List.of(BuildChatFlow.MSG_UNDO_DONE), sayKeys(actions));
+    }
+
+    @Test
+    void aRolledBackDocumentOfAnotherClaimIsIgnored() {
+        BuildChatFlow flow = atUndoing(CLAIM);
+        assertEquals(List.of(), flow.progress(rolledBackJson("claim-other")));
+        assertEquals(State.UNDOING, flow.state());
+    }
+
+    private static BuildChatFlow atUndoing(String claimId) {
+        BuildChatFlow flow = atDone(claimId);
+        flow.undo();
+        flow.undoConfirmed();
+        assertEquals(State.UNDOING, flow.state());
+        return flow;
+    }
+
+    @Test
+    void aDoneBuildOffersTheUndoButton() {
+        BuildChatFlow flow = atBuilding();
+        List<Action> actions =
+                flow.progress(progressJson("job-1", "BUILD", CLAIM, 100, true, false, 0, 0));
+        assertEquals(State.DONE, flow.state());
+        assertEquals(BuildChatFlow.MSG_DONE, actionAt(actions, 0, BuildChatFlow.Say.class).key());
+        assertEquals(List.of(ButtonKind.UNDO),
+                actionAt(actions, 1, BuildChatFlow.ShowButtons.class).buttons());
+    }
+
+    @Test
+    void aPartialBuildAlsoOffersTheUndoButton() {
+        BuildChatFlow flow = atBuilding();
+        List<Action> actions =
+                flow.progress(progressJson("job-1", "BUILD", CLAIM, 90, false, true, 2, 1));
+        assertEquals(State.DONE, flow.state());
+        BuildChatFlow.ShowButtons buttons = actions.stream()
+                .filter(a -> a instanceof BuildChatFlow.ShowButtons)
+                .map(a -> (BuildChatFlow.ShowButtons) a)
+                .findFirst().orElseThrow(() -> new AssertionError("no ShowButtons in " + actions));
+        assertEquals(List.of(ButtonKind.UNDO), buttons.buttons());
+    }
+
+    @Test
+    void aDoneRollbackDoesNotOfferUndo() {
+        BuildChatFlow flow = atBuilding();
+        List<Action> actions =
+                flow.progress(progressJson("job-2", "ROLLBACK", CLAIM, 100, true, false, 0, 0));
+        assertEquals(State.DONE, flow.state());
+        assertEquals(List.of(BuildChatFlow.MSG_DONE), sayKeys(actions));
+        assertTrue(actions.stream().noneMatch(a -> a instanceof BuildChatFlow.ShowButtons),
+                "a rollback's own completion must not offer another undo");
+    }
+
+    @Test
+    void aDoneDocumentWithoutAKindOffersNoUndo() {
+        // kind is written by ProgressView only since M5; an older doc proves nothing about the job
+        BuildChatFlow flow = atBuilding();
+        List<Action> actions = flow.progress(progressJson("job-1", 100, true, false, 0, 0));
+        assertEquals(State.DONE, flow.state());
+        assertTrue(actions.stream().noneMatch(a -> a instanceof BuildChatFlow.ShowButtons));
+    }
+
+    @Test
+    void undoIsOnlyAllowedFromDone() {
+        BuildChatFlow flow = flow(true);
+        assertEquals(List.of(), flow.undo());
+        assertEquals(State.IDLE, flow.state());
+        BuildChatFlow building = atBuilding();
+        assertEquals(List.of(), building.undo());
+        assertEquals(State.BUILDING, building.state());
+    }
+
+    @Test
+    void undoAsksForConfirmationBeforeAnythingIsSent() {
+        BuildChatFlow flow = atDone(CLAIM);
+        List<Action> actions = flow.undo();
+        assertEquals(State.CONFIRM_UNDO, flow.state());
+        assertEquals(BuildChatFlow.MSG_UNDO_ASK,
+                actionAt(actions, 0, BuildChatFlow.Say.class).key());
+        assertEquals(List.of(ButtonKind.UNDO_YES, ButtonKind.UNDO_NO),
+                actionAt(actions, 1, BuildChatFlow.ShowButtons.class).buttons());
+        assertTrue(actions.stream().noneMatch(a -> a instanceof BuildChatFlow.SendRollback),
+                "the rollback goes out only after the child confirms");
+    }
+
+    @Test
+    void aConfirmedUndoSendsTheClaimId() {
+        BuildChatFlow flow = atDone(CLAIM);
+        flow.undo();
+        List<Action> actions = flow.undoConfirmed();
+        assertEquals(State.UNDOING, flow.state());
+        BuildChatFlow.SendRollback rollback = actionAt(actions, 0, BuildChatFlow.SendRollback.class);
+        assertEquals(CLAIM, rollback.claimId());
+        BuildChatFlow.Say say = actionAt(actions, 1, BuildChatFlow.Say.class);
+        assertEquals(BuildChatFlow.MSG_UNDOING, say.key());
+        assertEquals(List.of("0"), say.args());
+        assertTrue(actionAt(actions, 2, BuildChatFlow.ShowButtons.class).buttons().isEmpty(),
+                "the button row hides while the rollback runs");
+    }
+
+    @Test
+    void undoConfirmedIsOnlyAllowedFromConfirmUndo() {
+        BuildChatFlow flow = atDone(CLAIM);
+        assertEquals(List.of(), flow.undoConfirmed());
+        assertEquals(State.DONE, flow.state());
+    }
+
+    @Test
+    void aCancelledUndoReturnsToDoneWithTheUndoButton() {
+        BuildChatFlow flow = atDone(CLAIM);
+        flow.undo();
+        List<Action> actions = flow.undoCancelled();
+        assertEquals(State.DONE, flow.state());
+        assertEquals(List.of(ButtonKind.UNDO),
+                only(actions, BuildChatFlow.ShowButtons.class).buttons());
+    }
+
+    @Test
+    void undoCancelledIsOnlyAllowedFromConfirmUndo() {
+        BuildChatFlow flow = atDone(CLAIM);
+        assertEquals(List.of(), flow.undoCancelled());
+        assertEquals(State.DONE, flow.state());
+    }
+
+    @Test
+    void undoingProgressSpeaksEachNewPercentOnce() {
+        BuildChatFlow flow = atUndoing(CLAIM);
+        List<Action> at40 =
+                flow.progress(progressJson("job-9", "ROLLBACK", CLAIM, 40, false, false, 0, 0));
+        BuildChatFlow.Say say = only(at40, BuildChatFlow.Say.class);
+        assertEquals(BuildChatFlow.MSG_UNDOING, say.key());
+        assertEquals(List.of("40"), say.args());
+        assertEquals(List.of(),
+                flow.progress(progressJson("job-9", "ROLLBACK", CLAIM, 40, false, false, 0, 0)),
+                "the same percent is not repeated");
+        List<Action> at60 =
+                flow.progress(progressJson("job-9", "ROLLBACK", CLAIM, 60, false, false, 0, 0));
+        assertEquals(List.of("60"), only(at60, BuildChatFlow.Say.class).args());
+    }
+
+    @Test
+    void undoingIgnoresDocumentsThatAreNotTheRollback() {
+        BuildChatFlow flow = atUndoing(CLAIM);
+        assertEquals(List.of(),
+                flow.progress(progressJson("job-1", "BUILD", CLAIM, 50, false, false, 0, 0)));
+        assertEquals(List.of(),
+                flow.progress(progressJson("job-x", null, null, 50, false, false, 0, 0)));
+        assertEquals(State.UNDOING, flow.state());
+    }
+
+    @Test
+    void aDoneRollbackEndsTheUndoRound() {
+        BuildChatFlow flow = atUndoing(CLAIM);
+        List<Action> actions =
+                flow.progress(progressJson("job-9", "ROLLBACK", CLAIM, 100, true, false, 0, 0));
+        assertEquals(State.IDLE, flow.state());
+        assertEquals(BuildChatFlow.MSG_UNDO_DONE, only(actions, BuildChatFlow.Say.class).key());
+    }
+
+    @Test
+    void aPartialRollbackReportsTheLeftoverCount() {
+        BuildChatFlow flow = atUndoing(CLAIM);
+        List<Action> actions =
+                flow.progress(progressJson("job-9", "ROLLBACK", CLAIM, 95, false, true, 2, 1));
+        assertEquals(State.IDLE, flow.state());
         BuildChatFlow.Say say = only(actions, BuildChatFlow.Say.class);
-        assertEquals("micradrone.build.pause.site_changed", say.key());
-        assertEquals(List.of("job-42"), say.args(),
-                "the pause line's %1$s is the job id, the same way ServerMessages renders it");
+        assertEquals(BuildChatFlow.MSG_UNDO_PARTIAL, say.key());
+        assertEquals(List.of("3"), say.args(), "unrepaired 2 + conflicts 1 = 3 places left behind");
+    }
+
+    @Test
+    void aRejectedOfferWhileUndoingReturnsToDone() {
+        BuildChatFlow flow = atUndoing(CLAIM);
+        List<Action> actions =
+                flow.offer(offerJson("REJECTED", null, 0, 0, 0, 0, false, false, List.of()));
+        assertEquals(State.DONE, flow.state());
+        assertEquals(BuildChatFlow.MSG_UNDO_REFUSED,
+                actionAt(actions, 0, BuildChatFlow.Say.class).key());
+        assertEquals(List.of(ButtonKind.UNDO),
+                actionAt(actions, 1, BuildChatFlow.ShowButtons.class).buttons());
+    }
+
+    @Test
+    void aNonRejectedOfferWhileUndoingIsIgnored() {
+        BuildChatFlow flow = atUndoing(CLAIM);
+        assertEquals(List.of(),
+                flow.offer(offerJson("OFFERED", "h", 1, 1, 0, 0, false, false, List.of())));
+        assertEquals(List.of(), flow.offer("this is not json"));
+        assertEquals(State.UNDOING, flow.state());
+    }
+
+    @Test
+    void aRequestWhileConfirmingOrUndoingIsBusy() {
+        BuildChatFlow flow = atDone(CLAIM);
+        flow.undo();
+        assertEquals(BuildChatFlow.MSG_BUSY,
+                only(flow.request("べつの こや"), BuildChatFlow.Say.class).key());
+        assertEquals(State.CONFIRM_UNDO, flow.state());
+        flow.undoConfirmed();
+        assertEquals(BuildChatFlow.MSG_BUSY,
+                only(flow.request("べつの こや"), BuildChatFlow.Say.class).key());
+        assertEquals(State.UNDOING, flow.state());
+    }
+
+    @Test
+    void theUndoFlowNeverLeaksTheClaimIdOrAJobIdIntoAChildLine() {
+        BuildChatFlow flow = atBuilding();
+        List<Action> all = new ArrayList<>(
+                flow.progress(progressJson("job-secret", "BUILD", "claim-secret", 100, true, false, 0, 0)));
+        all.addAll(flow.undo());
+        all.addAll(flow.undoConfirmed());
+        all.addAll(flow.progress(progressJson("job-rb", "ROLLBACK", "claim-secret", 50, false, false, 0, 0)));
+        all.addAll(flow.progress(progressJson("job-rb", "ROLLBACK", "claim-secret", 100, true, false, 0, 0)));
+        for (String text : allSayText(all)) {
+            assertFalse(text.contains("claim-secret"), "the claim id leaked: " + text);
+            assertFalse(text.contains("job-secret"), "the build job id leaked: " + text);
+            assertFalse(text.contains("job-rb"), "the rollback job id leaked: " + text);
+        }
     }
 }
