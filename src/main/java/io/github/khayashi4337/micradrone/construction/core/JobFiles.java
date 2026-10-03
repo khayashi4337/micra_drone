@@ -24,6 +24,8 @@ public final class JobFiles {
     /** All claims in one small file (D-23): the claim map survives a lost registry. */
     public static final String CLAIMS_FILE = "claims.bin";
     public static final String PLACED_FILE = "placed.bin";
+    /** A claim's supply switches (Task 27a); removed when the claim is released, like the registry file. */
+    public static final String SUPPLY_FILE = "supply.bin";
     /** The write-ahead log's segments live here (FileWalSink, Task 25). */
     public static final String WAL_DIR = "wal/";
     public static final String MANIFEST_SUFFIX = ".bin";
@@ -152,6 +154,26 @@ public final class JobFiles {
             return Optional.empty();
         }
         return Optional.of(RegistryCodec.fromTree(migrated(SaveTypes.REGISTRY, bytes.get())));
+    }
+
+    /** Writes the claim's supply switches (Task 27a). */
+    public void saveSupply(String claimId, SupplySettings settings) throws IOException {
+        fs.writeAtomic(CLAIMS_DIR + claimId + "/" + SUPPLY_FILE,
+                envelope(SaveTypes.SUPPLY, SupplyCodec.toTree(settings)));
+    }
+
+    /** The claim's saved supply switches, or empty when it has none. */
+    public Optional<SupplySettings> loadSupply(String claimId) throws IOException {
+        Optional<byte[]> bytes = fs.read(CLAIMS_DIR + claimId + "/" + SUPPLY_FILE);
+        if (bytes.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(SupplyCodec.fromTree(migrated(SaveTypes.SUPPLY, bytes.get())));
+    }
+
+    /** Removes the claim's supply file; a missing file is not an error (a released claim keeps nothing). */
+    public void deleteSupply(String claimId) throws IOException {
+        fs.delete(CLAIMS_DIR + claimId + "/" + SUPPLY_FILE);
     }
 
     /** Every file under the root (jobs, manifests, claims, wal, claims.bin): the orphan sweep's input. */

@@ -156,7 +156,7 @@ def real_crash_sp(ctx):
     samples = []
     first_seen, _ = _wait_running(ctx, job_id, entered, samples)
     sx, sy, sz = STANDS["real-crash-sp"]
-    _teleport(ctx, sx, sy, sz, FACE_NORTH, 20)
+    _teleport(ctx, sx - 3, sy, sz + 3, FACE_NORTH, 20)  # beside the site, not on it: a player standing in the way makes the job wait
     wanted = ("RUNNING", "VERIFYING", "REPAIRING", "VERIFIED", "FAILED", "PAUSED")
     st, seconds = _wait_running_state(ctx, job_id, samples, wanted)
     answered = None

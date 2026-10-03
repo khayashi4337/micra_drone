@@ -9,7 +9,7 @@ import time
 import traceback
 from dataclasses import dataclass
 
-from tools.p4 import devkit_client, evidence, harness, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_mvp, scenarios_regression, scenarios_restart, scenarios_rollback, scenarios_show, scenarios_undo
+from tools.p4 import devkit_client, evidence, harness, scenarios_ai_down, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_materials, scenarios_materials_panel, scenarios_materials_refund, scenarios_mvp, scenarios_regression, scenarios_restart, scenarios_rollback, scenarios_show, scenarios_undo
 
 MODES = ("sp", "mp", "mp2")
 RESTART_LIMIT = 1
@@ -40,6 +40,7 @@ SCENARIOS = {
     "mvp-site-blocked": Scenario(scenarios_mvp.mvp_site_blocked, (), "sp"),
     "mvp-japanese-hut-real": Scenario(scenarios_mvp.mvp_japanese_hut, (), "sp", claude=harness.CLAUDE_REAL),
     "mvp-cli-missing": Scenario(scenarios_mvp.mvp_cli_missing, (), "sp", claude=harness.CLAUDE_NONE),
+    "mvp-ai-not-working": Scenario(scenarios_ai_down.mvp_ai_not_working, (), "sp"),
     "hut-here": Scenario(scenarios_basic.hut_here, (1, 12), "sp"),
     "bad-source": Scenario(scenarios_basic.bad_source, (), "sp"),
     "drone-show": Scenario(scenarios_show.drone_show, (1,), "sp"),
@@ -48,12 +49,16 @@ SCENARIOS = {
     "terrain-slope": Scenario(scenarios_l7.terrain_slope, (12,), "sp"),
     "safety-limits": Scenario(scenarios_l7.safety_limits, (8,), "sp"),
     "survey-pinned": Scenario(scenarios_l7.survey_pinned, (16,), "sp"),
+    "survival-materials": Scenario(scenarios_materials.survival_materials, (7,), "sp"),
+    "player-in-the-way": Scenario(scenarios_materials.player_in_the_way, (), "sp"),
+    "mvp-materials-panel": Scenario(scenarios_materials_panel.mvp_materials_panel, (), "sp"),
+    "survival-refund": Scenario(scenarios_materials_refund.survival_refund, (7,), "sp"),
 }
 
 # Design 07 completion conditions with no scenario yet -> the task that completes them.
 # A task that adds its scenario removes its own condition here in the same commit.
 PENDING_CONDITIONS = {
-    3: "Task 29", 6: "Task 34", 7: "Task 27", 9: "Task 32", 10: "Task 33",
+    3: "Task 29", 6: "Task 34", 9: "Task 32", 10: "Task 33",
     13: "Task 30",
 }
 
@@ -61,8 +66,9 @@ PENDING_CONDITIONS = {
 # Conditions whose scenarios pass but do not cover the whole condition text -> what is missing and who adds it.
 # The condition shows as PARTIAL in summary.json until its task removes it here (Task 38 requires this to be empty).
 PARTIAL_CONDITIONS = {
+    7: "Task 27c: no-room (a refund that does not fit pauses and drops nothing) and the crash-barrier survival set (Task 34); cancel-does-not-refund and rollback-return ARE exercised (survival-refund)",
     8: "Task 30: block-entity blocks in general (only a chest with items is exercised so far)",
-    12: "Task 27: survival - cut blocks gathered to the owner, fill blocks consumed, nothing created or lost",
+    12: "Task 27c: terrain-survival (not written yet) - cut blocks gathered to the owner, fill blocks consumed, nothing created or lost",
     4: "Task 34: the same crash/restart/rollback checks on a dedicated server (needs the owner's EULA file); crash at every boundary",
     14: "Task 28b: the job files kept until the claim is released and swept at the next start (restart after a rollback not exercised)",
 }

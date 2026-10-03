@@ -12,6 +12,7 @@ import io.github.khayashi4337.micradrone.construction.ConstructionConfig;
 import io.github.khayashi4337.micradrone.construction.ConstructionRuntime;
 import io.github.khayashi4337.micradrone.construction.net.BuildApprovePayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildCancelPayload;
+import io.github.khayashi4337.micradrone.construction.net.BuildMaterialsPayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildOfferPayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildPlanPayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildProgressPayload;
@@ -236,6 +237,7 @@ public class MicraDrone {
         registrar.playToServer(BuildApprovePayload.TYPE, BuildApprovePayload.STREAM_CODEC, BuildNetwork::handleApprove);
         registrar.playToServer(BuildCancelPayload.TYPE, BuildCancelPayload.STREAM_CODEC, BuildNetwork::handleCancel);
         registrar.playToServer(BuildRollbackPayload.TYPE, BuildRollbackPayload.STREAM_CODEC, BuildNetwork::handleRollback);
+        registrar.playToServer(BuildMaterialsPayload.TYPE, BuildMaterialsPayload.STREAM_CODEC, BuildNetwork::handleMaterials);
         registrar.playToClient(DroneLogPayload.TYPE, DroneLogPayload.STREAM_CODEC, MicraDroneClient::handleDroneLog);
         registrar.playToClient(ShopStatePayload.TYPE, ShopStatePayload.STREAM_CODEC, MicraDroneClient::handleShopState);
         registrar.playToClient(ScriptSourcePayload.TYPE, ScriptSourcePayload.STREAM_CODEC, MicraDroneClient::handleScriptSource);

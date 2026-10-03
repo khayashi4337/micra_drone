@@ -3,6 +3,7 @@ package io.github.khayashi4337.micradrone.construction;
 import io.github.khayashi4337.micradrone.build.compile.ItemCount;
 import io.github.khayashi4337.micradrone.build.model.BlockSpec;
 import io.github.khayashi4337.micradrone.build.model.IntPos;
+import io.github.khayashi4337.micradrone.construction.core.ClaimBook;
 import io.github.khayashi4337.micradrone.construction.core.ConstructionJob;
 import io.github.khayashi4337.micradrone.construction.core.JobWorld;
 import io.github.khayashi4337.micradrone.construction.core.MaterialPolicy;
@@ -10,10 +11,9 @@ import io.github.khayashi4337.micradrone.construction.core.MaterialPort;
 import io.github.khayashi4337.micradrone.construction.core.Move;
 import io.github.khayashi4337.micradrone.construction.core.PlaceResult;
 import io.github.khayashi4337.micradrone.construction.core.Stock;
+import io.github.khayashi4337.micradrone.construction.core.SupplySettingsBook;
 import io.github.khayashi4337.micradrone.construction.core.WorldCell;
 import io.github.khayashi4337.micradrone.construction.core.WorldPort;
-import java.io.IOException;
-import java.nio.file.Path;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -21,49 +21,19 @@ import java.util.Optional;
 import java.util.UUID;
 import net.minecraft.core.SectionPos;
 import net.minecraft.core.registries.Registries;
-import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.NbtAccounter;
-import net.minecraft.nbt.NbtIo;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.level.storage.LevelResource;
 
 /**
  * The {@link JobWorld} of a live server (F-1: everything here runs on the main thread): dimension ids resolve
  * through {@link MinecraftServer#getLevel}, reads/writes go through {@link ServerWorldPort} so the placement
- * guard sees the owner, and materials follow the job's policy. Survival inventories are Task 27's
- * {@code InventoryMaterials}; until then a consuming job holds nothing and pauses MATERIALS_MISSING (F-7).
+ * guard sees the owner, and materials follow the job's policy. Survival jobs get Task 27a's
+ * {@link InventoryMaterials}: the claim's own supply chests and barrels, plus the owner's inventory only
+ * while the claim's switch allows it (F-7).
  */
 final class RuntimeJobWorld implements JobWorld {
-    /** A port holding nothing: no stocks, applies nothing, persists nothing (F-7, survival until Task 27). */
-    static final MaterialPort NO_MATERIALS = new MaterialPort() {
-        @Override
-        public List<Stock> stocks(Collection<String> itemIds) {
-            return List.of();
-        }
-
-        @Override
-        public Optional<String> giveTarget(List<ItemCount> items) {
-            return Optional.of(INVENTORY);
-        }
-
-        @Override
-        public boolean apply(List<Move> moves) {
-            return false;
-        }
-
-        @Override
-        public void persist(long tx) {
-        }
-
-        @Override
-        public long durableTx() {
-            return NO_TX;
-        }
-    };
-
     /**
      * A port for a dimension id the server does not have: reads report unloaded (the job pauses
      * CHUNK_UNLOADED instead of crashing on a removed dimension), writes are refused, settle is a no-op.
@@ -91,10 +61,21 @@ final class RuntimeJobWorld implements JobWorld {
 
     private final MinecraftServer server;
     private final PlacementGuard guard;
+    private final ClaimBook claims;
+    private final SupplySettingsBook supply;
+    private final SupplyChests chests;
 
-    RuntimeJobWorld(MinecraftServer server, PlacementGuard guard) {
+    RuntimeJobWorld(MinecraftServer server, PlacementGuard guard, ClaimBook claims, SupplySettingsBook supply) {
         this.server = server;
         this.guard = guard;
+        this.claims = claims;
+        this.supply = supply;
+        this.chests = new SupplyChests(server);
+    }
+
+    /** The shared supply scan (for the adult-facing list command); one cache serves every job's port. */
+    SupplyChests chests() {
+        return chests;
     }
 
     @Override
@@ -105,7 +86,8 @@ final class RuntimeJobWorld implements JobWorld {
 
     @Override
     public MaterialPort materials(UUID owner, MaterialPolicy policy, String claimId) {
-        return policy == MaterialPolicy.CREATIVE_FREE ? MaterialPort.FREE : NO_MATERIALS;
+        return policy == MaterialPolicy.CREATIVE_FREE ? MaterialPort.FREE
+                : new InventoryMaterials(server, owner, claims.find(claimId).orElse(null), chests, supply);
     }
 
     @Override
@@ -117,15 +99,6 @@ final class RuntimeJobWorld implements JobWorld {
     public boolean mayRunWithoutOwner(ConstructionJob job) {
         return false;
     }
-
-    /** The tag {@code Entity#getPersistentData} is written under in a player's saved {@code playerdata/<uuid>.dat}. */
-    static final String TX_TAG = "NeoForgeData";
-    /**
-     * The durable transaction id of the owner's saved materials ({@code micradrone:lastTx}). Task 27's
-     * InventoryMaterials writes it through {@code persist(tx)}; recovery only reads it, to tell which WAL runs
-     * the inventory on disk already holds.
-     */
-    static final String TX_KEY = "micradrone:lastTx";
 
     /**
      * The {@link JobWorld} of start-up recovery and of the recover command (Task 25). It differs from the live
@@ -201,15 +174,8 @@ final class RuntimeJobWorld implements JobWorld {
         private final long savedTx;
 
         RecoveryMaterials(MinecraftServer server, UUID owner) {
-            Path file = server.getWorldPath(LevelResource.PLAYER_DATA_DIR).resolve(owner + ".dat");
-            long tx = NO_TX;
-            try {
-                CompoundTag tag = NbtIo.readCompressed(file, NbtAccounter.unlimitedHeap());
-                tx = tag.getCompound(TX_TAG).getLong(TX_KEY);
-            } catch (IOException | RuntimeException e) {
-                // no saved file, a torn one, or no transaction inside: none is provable, so none is claimed
-            }
-            this.savedTx = tx;
+            // the same read InventoryMaterials makes: a missing or torn file proves no transaction
+            this.savedTx = InventoryMaterials.readTx(InventoryMaterials.playerFile(server, owner));
         }
 
         @Override

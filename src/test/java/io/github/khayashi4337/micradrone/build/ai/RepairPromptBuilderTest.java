@@ -1,5 +1,6 @@
 package io.github.khayashi4337.micradrone.build.ai;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -59,5 +60,24 @@ class RepairPromptBuilderTest {
     void anEmptyIssueListIsRejected() {
         assertThrows(IllegalArgumentException.class,
                 () -> RepairPromptBuilder.build("{}", List.of()));
+    }
+
+    // ---- L1: the one-liner language follows the game's language ---------------------------------------
+
+    @Test
+    void theThreeArgumentOverloadWithJapaneseEqualsTheTwoArgumentForm() {
+        String two = RepairPromptBuilder.build("{\"ops\":[]}", List.of("E-FOO: x is bad"));
+        String three = RepairPromptBuilder.build("{\"ops\":[]}", List.of("E-FOO: x is bad"),
+                PromptLanguage.of("ja_jp"));
+        assertEquals(two, three, "ja_jp is the fixed-Japanese behaviour the 2-arg form always had");
+    }
+
+    @Test
+    void aNonJapaneseLanguageReplacesTheWakachiRule() {
+        String prompt = RepairPromptBuilder.build("{}", List.of("E-FOO: x is bad"),
+                PromptLanguage.of("en_us"));
+        assertFalse(prompt.contains(BuildPromptBuilder.WAKACHI_RULE),
+                "word-spacing is a Japanese-learner rule; it must not appear for English");
+        assertTrue(prompt.contains("English"));
     }
 }

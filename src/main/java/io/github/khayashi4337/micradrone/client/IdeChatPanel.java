@@ -32,6 +32,7 @@ import io.github.khayashi4337.micradrone.chat.MiniJson;
 import io.github.khayashi4337.micradrone.construction.ClientBuildState;
 import io.github.khayashi4337.micradrone.construction.net.BuildApprovePayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildCancelPayload;
+import io.github.khayashi4337.micradrone.construction.net.BuildMaterialsPayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildPlanPayload;
 import io.github.khayashi4337.micradrone.construction.net.BuildRollbackPayload;
 import io.github.khayashi4337.micradrone.drone.CommandsHelpDoc;
@@ -49,7 +50,11 @@ import net.minecraft.client.gui.narration.NarratableEntry;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.storage.LevelResource;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.lwjgl.glfw.GLFW;
@@ -124,6 +129,11 @@ final class IdeChatPanel {
     private static final int THINKING_MAX_DOTS = 3;
     private static final int CANCEL_HINT_COLOR = 0xFF9A9A9A;
     private static final int CLI_MISSING_COLOR = 0xFFFF6060;
+    /**
+     * A1: once the probe reports "absent", one build request re-runs it - but never more often
+     * than this, so a child pressing send repeatedly cannot spawn a probe per keystroke.
+     */
+    private static final long CLI_REPROBE_MIN_INTERVAL_MS = 10000;
 
     // ---- "けんちく" build mode (P4 task M3) ---------------------------------------------------
     // Every build-mode decision lives in the pure-Java BuildChatFlow; this panel only executes the
@@ -156,10 +166,12 @@ final class IdeChatPanel {
     private String pendingQuestion;
     /** Client ticks since the panel was built; drives the thinking-dots animation. */
     private int animationTicks = 0;
-    /** Result of the one-time {@code claude --version} probe: null = not probed yet / still running. */
+    /** Result of the {@code claude --version} probe: null = not probed yet / still running. */
     private Boolean cliAvailable;
     private String cliVersion = "";
     private boolean cliProbeStarted;
+    /** When the last probe was started (ms) - A1's re-probe throttle measures from this. */
+    private long lastCliProbeMs;
 
     // build mode's own state (the flow itself is created lazily - the prompt parts read packaged
     // resources, which only pays off when the child actually turns けんちく on)
@@ -282,6 +294,8 @@ final class IdeChatPanel {
             case UNDO -> "gui.micradrone.ide_screen.build_undo";
             case UNDO_YES -> "gui.micradrone.ide_screen.build_undo_yes";
             case UNDO_NO -> "gui.micradrone.ide_screen.build_undo_no";
+            case INVENTORY_YES -> "gui.micradrone.ide_screen.build_inventory_yes";
+            case INVENTORY_NO -> "gui.micradrone.ide_screen.build_inventory_no";
         };
     }
 
@@ -318,10 +332,35 @@ final class IdeChatPanel {
             return;
         }
         cliProbeStarted = true;
+        probeCli();
+    }
+
+    /**
+     * Runs {@code claude --version} on the bridge's executor; the answer lands on the render thread
+     * as {@link #cliAvailable}/{@link #cliVersion}.
+     */
+    private void probeCli() {
+        lastCliProbeMs = System.currentTimeMillis();
         claudeCliBridge.probeVersion().thenAccept(version -> Minecraft.getInstance().execute(() -> {
             cliAvailable = version.isPresent();
             cliVersion = version.orElse("");
         }));
+    }
+
+    /**
+     * A1: a build request made while the CLI is known absent re-tries the probe once (never more
+     * than one per {@link #CLI_REPROBE_MIN_INTERVAL_MS}), so a CLI a grown-up installed in the
+     * meantime is picked up without reopening the panel. The current request still fails on the
+     * stale FALSE - the probe's answer only lets the NEXT request through.
+     */
+    private void reprobeCliIfMissing() {
+        if (!Boolean.FALSE.equals(cliAvailable)) {
+            return;
+        }
+        if (System.currentTimeMillis() - lastCliProbeMs < CLI_REPROBE_MIN_INTERVAL_MS) {
+            return;
+        }
+        probeCli();
     }
 
     /**
@@ -348,6 +387,17 @@ final class IdeChatPanel {
     /** Idle status row: the probed CLI version in grey, or the install hint in red if there is none. */
     private void renderCliStatus(GuiGraphics guiGraphics) {
         if (cliAvailable == null) {
+            return;
+        }
+        if (buildMode) {
+            // A1: build mode faces a child - no English install hint and no version number, only
+            // the child-worded "not ready" line while the CLI is known absent.
+            if (!cliAvailable) {
+                int textY = statusRowY + (STATUS_ROW_HEIGHT - host.font().lineHeight) / 2;
+                guiGraphics.drawString(host.font(),
+                        Component.translatable("gui.micradrone.ide_screen.build_cli_missing").getString(),
+                        statusRowX, textY, CLI_MISSING_COLOR);
+            }
             return;
         }
         int textY = statusRowY + (STATUS_ROW_HEIGHT - host.font().lineHeight) / 2;
@@ -510,6 +560,7 @@ final class IdeChatPanel {
      */
     private void sendBuildMessage(String request) {
         ensureBuildFlow();
+        reprobeCliIfMissing();
         List<BuildChatFlow.Action> actions = buildFlow.request(request);
         if (buildFlow.state() == BuildChatFlow.State.ASKING_AI
                 || buildFlow.state() == BuildChatFlow.State.NEED_CONSENT) {
@@ -547,9 +598,15 @@ final class IdeChatPanel {
                 PacketDistributor.sendToServer(new BuildCancelPayload(sendCancel.jobId()));
             } else if (action instanceof BuildChatFlow.SendRollback sendRollback) {
                 PacketDistributor.sendToServer(new BuildRollbackPayload(sendRollback.claimId()));
+            } else if (action instanceof BuildChatFlow.SendMaterials sendMaterials) {
+                // 27b: the Boolean switch maps to the wire's tri-state (null = leave it alone)
+                PacketDistributor.sendToServer(new BuildMaterialsPayload(sendMaterials.claimId(),
+                        sendMaterials.allowed() == null ? BuildMaterialsPayload.INVENTORY_UNCHANGED
+                                : sendMaterials.allowed() ? 1 : 0,
+                        sendMaterials.exclude(), sendMaterials.include()));
             } else if (action instanceof BuildChatFlow.Say say) {
                 buildTranscript.add(BUILD_LINE_PREFIX
-                        + Component.translatable(say.key(), say.args().toArray()).getString());
+                        + Component.translatable(say.key(), sayArgs(say)).getString());
                 refreshTranscript();
             } else if (action instanceof BuildChatFlow.ShowButtons showButtons) {
                 buildButtons = showButtons.buttons();
@@ -574,12 +631,53 @@ final class IdeChatPanel {
             case UNDO -> runActions(buildFlow.undo());
             case UNDO_YES -> runActions(buildFlow.undoConfirmed());
             case UNDO_NO -> runActions(buildFlow.undoCancelled());
+            case INVENTORY_YES -> runActions(buildFlow.inventoryYes());
+            case INVENTORY_NO -> runActions(buildFlow.inventoryNo());
+        }
+    }
+
+    /**
+     * The args of a {@code Say}, ready for {@code Component.translatable}: the materials lines name
+     * their item as its registry id (a machine string is what the directive carries), which the
+     * child reads as the item's translated display name - "ダイヤモンド", not "minecraft:diamond".
+     */
+    private static Object[] sayArgs(BuildChatFlow.Say say) {
+        boolean itemArgs = BuildChatFlow.MSG_MATERIALS_EXCLUDED.equals(say.key())
+                || BuildChatFlow.MSG_MATERIALS_INCLUDED.equals(say.key());
+        Object[] args = new Object[say.args().size()];
+        for (int i = 0; i < args.length; i++) {
+            args[i] = itemArgs ? itemName(say.args().get(i)) : say.args().get(i);
+        }
+        return args;
+    }
+
+    /** The item's display name as a translatable component; an unreadable id degrades to itself. */
+    private static Component itemName(String itemId) {
+        try {
+            Item item = BuiltInRegistries.ITEM.get(ResourceLocation.parse(itemId));
+            return item == Items.AIR ? Component.literal(itemId) : item.getDescription();
+        } catch (RuntimeException malformed) {
+            return Component.literal(itemId);
+        }
+    }
+
+    /** Whether the running game knows the item id - the materials directive's catalog check. */
+    private static boolean itemExists(String itemId) {
+        try {
+            return BuiltInRegistries.ITEM.containsKey(ResourceLocation.parse(itemId));
+        } catch (RuntimeException malformed) {
+            return false;
         }
     }
 
     private void ensureBuildFlow() {
         if (buildFlow == null) {
-            buildFlow = new BuildChatFlow(loadBuildConsent(), promptParts());
+            // L1: the supplier reads the LIVE language selection per AI call, so a language switch
+            // in the options screen applies from the next request without rebuilding the panel.
+            // A1: the same for the CLI probe - a FALSE lets the flow refuse before asking consent.
+            buildFlow = new BuildChatFlow(loadBuildConsent(), promptParts(), IdeChatPanel::itemExists,
+                    () -> Minecraft.getInstance().getLanguageManager().getSelected(),
+                    () -> cliAvailable);
         }
     }
 

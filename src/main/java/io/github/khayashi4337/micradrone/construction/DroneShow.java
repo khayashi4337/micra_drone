@@ -131,6 +131,9 @@ public final class DroneShow {
             drone.addTag(SHOW_TAG);
             drone.setNoGravity(true);
             drone.setInvulnerable(true);
+            // decoration must never hold construction up: a living entity blocks block placement (Level.isUnobstructed), and a
+            // show drone hovers right over the positions the next layer is about to take
+            drone.blocksBuilding = false;
             drone.moveTo(first.x() + CENTRE, first.y() + DroneChoreographer.HOVER_BLOCKS, first.z() + CENTRE);
             level.addFreshEntity(drone);
             ids.add(drone.getUUID());

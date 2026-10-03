@@ -45,6 +45,7 @@ import io.github.khayashi4337.micradrone.construction.core.JobStatus;
 import io.github.khayashi4337.micradrone.construction.core.JobUpdate;
 import io.github.khayashi4337.micradrone.construction.core.JobViews;
 import io.github.khayashi4337.micradrone.construction.core.JobWorld;
+import io.github.khayashi4337.micradrone.construction.core.MaterialPolicy;
 import io.github.khayashi4337.micradrone.construction.core.MessageKey;
 import io.github.khayashi4337.micradrone.construction.core.NioFileSystem;
 import io.github.khayashi4337.micradrone.construction.core.OperatingBox;
@@ -67,6 +68,9 @@ import io.github.khayashi4337.micradrone.construction.core.ServerWorkerPool;
 import io.github.khayashi4337.micradrone.construction.core.SiteBoxLimits;
 import io.github.khayashi4337.micradrone.construction.core.SiteClaim;
 import io.github.khayashi4337.micradrone.construction.core.SubmitOutcome;
+import io.github.khayashi4337.micradrone.construction.core.SupplyChange;
+import io.github.khayashi4337.micradrone.construction.core.SupplySettings;
+import io.github.khayashi4337.micradrone.construction.core.SupplySettingsBook;
 import io.github.khayashi4337.micradrone.construction.core.SurveyCache;
 import io.github.khayashi4337.micradrone.construction.core.TickInput;
 import io.github.khayashi4337.micradrone.construction.core.WorkResult;
@@ -78,6 +82,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -138,6 +143,8 @@ public final class ConstructionRuntime {
         final PlanSubmission submission;
         final ServerLevel level;
         final boolean op;
+        /** The submitter's gamemode at submit time - what the offer's materialPolicy predicts. */
+        final boolean creative;
         SubmitPhase phase = SubmitPhase.SURVEY;
         SiteSurveyBuilder builder;
         SiteSurvey survey;
@@ -146,10 +153,11 @@ public final class ConstructionRuntime {
         SnapshotCollector collector;
         Map<IntPos, WorldCell> cells;
 
-        Submit(PlanSubmission submission, ServerLevel level, boolean op) {
+        Submit(PlanSubmission submission, ServerLevel level, boolean op, boolean creative) {
             this.submission = submission;
             this.level = level;
             this.op = op;
+            this.creative = creative;
         }
     }
 
@@ -161,6 +169,14 @@ public final class ConstructionRuntime {
     private final ClaimBook claims;
     /** What the claim book looked like when it was last written (see {@link #saveClaimsIfChanged}). */
     private String savedClaimsDigest = "";
+    /** Every claim's supply switches (Task 27a): whether its jobs may take from the owner's inventory. */
+    private final SupplySettingsBook supply = new SupplySettingsBook();
+    /** What the supply switches looked like when they were last written (see {@link #saveSupplyIfChanged}). */
+    private String savedSupplyDigest = "";
+    /** The claim ids that have a supply file on the disk (written here or read at start-up). */
+    private final Set<String> savedSupplyFiles = new HashSet<>();
+    /** Supply files that exist but could not be read: never silently removed or written over (F-2). */
+    private final Set<String> unreadableSupply = new HashSet<>();
     private final NioFileSystem fs;
     private final JobFiles files;
     private final WriteAheadLog wal;
@@ -219,7 +235,7 @@ public final class ConstructionRuntime {
         this.desk = new ApprovalDesk();
         this.surveys = new SurveyCache();
         this.guard = new PlacementGuard(server, this::ownerName);
-        this.world = new RuntimeJobWorld(server, guard);
+        this.world = new RuntimeJobWorld(server, guard, claims, supply);
         this.recoveryWorld = RuntimeJobWorld.recovery(server);
         this.recordingFailed = broken;
         this.checkpoints = new Checkpoints(server, service, wal, () -> recordingFailed, this::haltRecording);
@@ -238,6 +254,7 @@ public final class ConstructionRuntime {
             return;
         }
         loadRegistries();
+        loadSupplyBook();
         Set<String> unreadable = new HashSet<>();
         List<ConstructionJob> kept = loadJobs(unreadable);
         JobService.RecoveryReport report = service.recoverAll(recoveryWorld);
@@ -274,6 +291,90 @@ public final class ConstructionRuntime {
             } catch (IOException | RuntimeException e) {
                 MicraDrone.LOGGER.error("a placed registry could not be read ({})", f, e);
             }
+        }
+    }
+
+    /**
+     * Every claim's {@code supply.bin} (Task 27a). A file that cannot be read is kept on the disk and never
+     * silently reset or removed (F-2): the claim falls back to the safe default - inventory disallowed -
+     * until the owner sets the switch again.
+     */
+    private void loadSupplyBook() {
+        List<String> claimFiles;
+        try {
+            claimFiles = fs.list(JobFiles.CLAIMS_DIR);
+        } catch (IOException e) {
+            haltRecording("the supply settings could not be listed", e);
+            return;
+        }
+        for (String f : claimFiles) {
+            String rest = f.substring(JobFiles.CLAIMS_DIR.length());
+            int slash = rest.indexOf('/');
+            if (slash < 0 || !rest.substring(slash + 1).equals(JobFiles.SUPPLY_FILE)) {
+                continue;
+            }
+            String claimId = rest.substring(0, slash);
+            try {
+                Optional<SupplySettings> found = files.loadSupply(claimId);
+                if (found.isEmpty()) {
+                    continue;
+                }
+                supply.set(claimId, found.get());
+                savedSupplyFiles.add(claimId);
+            } catch (IOException | RuntimeException e) {
+                unreadableSupply.add(claimId);
+                MicraDrone.LOGGER.error("a claim's supply settings could not be read ({})", f, e);
+            }
+        }
+        savedSupplyDigest = supplyDigest();
+    }
+
+    /**
+     * The book's change digest: every entry's claimId, flag and exclusions (sorted), claim-id
+     * sorted - an exclusions-only change must dirty the digest exactly like a flip of the switch.
+     */
+    private String supplyDigest() {
+        return supply.entries().entrySet().stream()
+                .map(e -> e.getKey() + (e.getValue().inventoryAllowed() ? "+" : "-")
+                        + new java.util.TreeSet<>(e.getValue().excludedItems()))
+                .sorted().collect(java.util.stream.Collectors.joining(","));
+    }
+
+    /**
+     * The supply switches follow their claim (Task 27a): a released or gone claim's entry is dropped - the
+     * same release/rollback/cancel path its other files take - and the files are written on the tick the
+     * book changed, like {@link #saveClaimsIfChanged}. A file that could not be read at start-up stays.
+     * Answers whether memory and disk agree (Task 27e): false means the write failed - recording is
+     * halted, and a caller that just changed the book must roll its own change back.
+     */
+    private boolean saveSupplyIfChanged() {
+        for (String id : List.copyOf(supply.entries().keySet())) {
+            SiteClaim c = claims.find(id).orElse(null);
+            if (c == null || c.released()) {
+                supply.remove(id);
+            }
+        }
+        String digest = supplyDigest();
+        if (digest.equals(savedSupplyDigest)) {
+            return true;
+        }
+        try {
+            for (Map.Entry<String, SupplySettings> e : supply.entries().entrySet()) {
+                files.saveSupply(e.getKey(), e.getValue());
+            }
+            // unreadableSupply is deliberately not in savedSupplyFiles, so an unreadable file is never deleted here
+            for (String id : savedSupplyFiles) {
+                if (!supply.entries().containsKey(id)) {
+                    files.deleteSupply(id);
+                }
+            }
+            savedSupplyFiles.clear();
+            savedSupplyFiles.addAll(supply.entries().keySet());
+            savedSupplyDigest = digest;
+            return true;
+        } catch (IOException | RuntimeException e) {
+            haltRecording("a claim's supply settings could not be saved", e);
+            return false;
         }
     }
 
@@ -532,7 +633,8 @@ public final class ConstructionRuntime {
         }
         recordOutcome(owner, SubmitOutcome.working(), 0);
         ServerLevel level = player.serverLevel();
-        Submit s = new Submit(submission, level, player.hasPermissions(Commands.LEVEL_GAMEMASTERS));
+        Submit s = new Submit(submission, level, player.hasPermissions(Commands.LEVEL_GAMEMASTERS),
+                player.isCreative());
         Site site = submission.plan().site();
         if (site == null) {
             // nothing to survey; the compile itself answers E-SITE-MISSING
@@ -678,8 +780,13 @@ public final class ConstructionRuntime {
                 compiled.surveyDigest(), server.getTickCount());
         pendingOwners.put(pending.manifestHash(), owner);
         long eta = etaTicks(manifest);
+        // the same rule the desk applies at approve time (27b): the offer names the policy it
+        // expects so the panel can tell the child where the materials come from
+        MaterialPolicy materialPolicy = ConstructionConfig.forcedMaterialPolicy() != null
+                ? ConstructionConfig.forcedMaterialPolicy()
+                : s.creative ? MaterialPolicy.CREATIVE_FREE : MaterialPolicy.SURVIVAL_CONSUME;
         recordOutcome(owner, SubmitOutcome.offered(pending, pending.issues(), safety.replacements(), eta),
-                manifest.placements().size());
+                manifest.placements().size(), materialPolicy);
         tell(owner, MessageKey.of(ChildMessages.SUBMIT_OK, manifest.placements().size(),
                 eta / TICKS_PER_SECOND, pending.manifestHash()));
         ReplacementSummary replacements = safety.replacements();
@@ -706,9 +813,17 @@ public final class ConstructionRuntime {
      * pushes exactly once; WORKING itself is not pushed.
      */
     private void recordOutcome(UUID owner, SubmitOutcome outcome, int blocks) {
+        recordOutcome(owner, outcome, blocks, null);
+    }
+
+    /**
+     * {@code materialPolicy} is the policy the approval of this offer would decide (27b); it is
+     * null for every non-offered outcome, which is also what the document then carries.
+     */
+    private void recordOutcome(UUID owner, SubmitOutcome outcome, int blocks, MaterialPolicy materialPolicy) {
         lastSubmits.put(owner, outcome);
         if (!SubmitOutcome.WORKING.equals(outcome.state())) {
-            BuildNetwork.pushOffer(server, owner, outcome, blocks);
+            BuildNetwork.pushOffer(server, owner, outcome, blocks, materialPolicy);
         }
     }
 
@@ -858,6 +973,74 @@ public final class ConstructionRuntime {
     }
 
     /**
+     * The one door to the per-claim inventory switch (Task 27a): only the claim's owner - or an op - may set
+     * it, never on a missing or released claim. The change is saved in the same call so a crash cannot lose
+     * an answer the player already saw. A job of the claim paused on missing materials picks the new switch
+     * up on its own at the next review ({@link JobService#RETRY_INTERVAL_TICKS} re-runs the paused run, and
+     * the port reads this book live), so nothing extra is needed here. The result is returned to the caller;
+     * the child-facing line, when there is one, is the caller's to phrase.
+     */
+    public ControlResult setInventoryAllowed(UUID requester, boolean op, String claimId, boolean allowed) {
+        // the same owner-or-operator door, save-or-roll-back and result as the panel's richer update: only the switch is given
+        return updateSupplySettings(requester, op, claimId, allowed, null, null);
+    }
+
+    /**
+     * The panel's richer materials update (Task 27b): the same owner-or-operator door as
+     * {@link #setInventoryAllowed}, but every field is optional - {@code inventory} null leaves the
+     * switch alone, {@code exclude} adds ids to the claim's ruled-out set, {@code include} takes
+     * them back out. The merged set keeps {@link SupplySettings#MAX_EXCLUDED_ITEMS}; a change is
+     * saved in the same call, and a materials-paused job of the claim picks the new answer up at
+     * its next review, exactly like the plain switch does.
+     */
+    public ControlResult updateSupplySettings(UUID requester, boolean op, String claimId,
+                                              Boolean inventory, Set<String> exclude, Set<String> include) {
+        SiteClaim claim = claims.find(claimId).orElse(null);
+        if (claim == null || claim.released()) {
+            return ControlResult.NOT_FOUND;
+        }
+        if (!claim.ownerUuid().equals(requester) && !op) {
+            return ControlResult.NOT_ALLOWED;
+        }
+        SupplySettings current = supply.of(claimId);
+        Set<String> excluded = new LinkedHashSet<>(current.excludedItems());
+        if (exclude != null) {
+            excluded.addAll(exclude);
+        }
+        if (include != null) {
+            excluded.removeAll(include);
+        }
+        if (excluded.size() > SupplySettings.MAX_EXCLUDED_ITEMS) {
+            return ControlResult.WRONG_STATE;
+        }
+        SupplySettings next = new SupplySettings(
+                inventory == null ? current.inventoryAllowed() : inventory, excluded);
+        // a change is only an answer when the disk would answer the same on a restart (Task 27e):
+        // a save that failed rolls the in-memory book back and comes back SAVE_FAILED
+        return SupplyChange.apply(supply, claimId, next, this::saveSupplyIfChanged)
+                ? ControlResult.OK : ControlResult.SAVE_FAILED;
+    }
+
+    /** The claim's inventory switch (false for an unknown claim), for the progress document and 27b's panel. */
+    public boolean inventoryAllowed(String claimId) {
+        return supply.inventoryAllowed(claimId);
+    }
+
+    /** The claim's supply answer for the adult-facing list command: the switch and the chests in use. */
+    public record SupplyInfo(String claimId, UUID ownerUuid, boolean inventoryAllowed, List<IntPos> chests) {
+    }
+
+    /** The claim's supply info, or empty when the claim does not exist or was released. */
+    public Optional<SupplyInfo> supplyInfo(String claimId) {
+        SiteClaim claim = claims.find(claimId).orElse(null);
+        if (claim == null || claim.released()) {
+            return Optional.empty();
+        }
+        return Optional.of(new SupplyInfo(claimId, claim.ownerUuid(), supply.inventoryAllowed(claimId),
+                world.chests().positions(claim)));
+    }
+
+    /**
      * The devkit's crash barrier (Task 25): installed on the log and, when the sink is the file one, inside it for
      * the mid-frame point - and only while {@code -Dmicradrone.devBarriers=true}; without the property the call is a
      * no-op, so a production server can never be held by it.
@@ -982,6 +1165,7 @@ public final class ConstructionRuntime {
                 haltRecording("a job's run could not be recorded", e);
             }
             saveClaimsIfChanged();
+            saveSupplyIfChanged();
             for (JobUpdate u : updates) {
                 // a state change is a new job.bin before the owner hears of it
                 if (u.stateChanged()) {

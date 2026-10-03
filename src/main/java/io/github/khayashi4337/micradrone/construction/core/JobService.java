@@ -48,7 +48,7 @@ public final class JobService {
     private static final Set<JobState> AWAY_PAUSES = EnumSet.of(JobState.QUEUED, JobState.RUNNING, JobState.VERIFYING,
             JobState.REPAIRING);
     private static final Set<PauseReason> RETRIED = EnumSet.of(PauseReason.CHUNK_UNLOADED, PauseReason.MATERIALS_MISSING,
-            PauseReason.NO_ROOM);
+            PauseReason.NO_ROOM, PauseReason.ENTITY_IN_WAY);
     private static final Set<JobState> ROLLBACKABLE = EnumSet.of(JobState.VERIFIED, JobState.PARTIAL, JobState.FAILED,
             JobState.CANCELLED);
     /** The lastError prefix of a job whose log waits for the owner's answer; the reasons follow it. */

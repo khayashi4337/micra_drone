@@ -8,7 +8,7 @@ import re
 import time
 
 from tools.p4 import devkit_client, harness
-from tools.p4.scenarios_basic import PLAYER, _prepare_view, _read_back_and_compare, _screenshot, _teleport
+from tools.p4.scenarios_basic import PLAYER, _prepare_view, _read_back_and_compare, _screenshot, _step_aside, _teleport
 
 REQUEST = "屋根が赤い小屋を建てて"
 MVP_STAND = (1400, -60, 0)
@@ -27,6 +27,7 @@ CONSENT_FILE = harness.RUN_DIR / "client" / "micradrone" / "build_consent.txt"
 
 
 STATE_RETRIES = 5
+CLI_PROBE_WAIT_S = 4
 
 
 def _state(ctx):
@@ -95,6 +96,7 @@ def mvp_japanese_hut(ctx):
     files.append(ctx.out("pending.json"))
     assert pending["state"] == "OFFERED", pending
 
+    _step_aside(ctx)  # the hut starts where the child stood: blocks over a standing player would suffocate them, so the job waits
     ctx.client.post("/build-press", {"kind": "BUILD"})
     st, seen3 = _wait_flow(ctx, {"DONE"}, BUILD_TIMEOUT_S)
     final_text = st["buildTranscript"]
@@ -134,8 +136,9 @@ def mvp_japanese_hut(ctx):
 
 
 def mvp_cli_missing(ctx):
-    """No `claude` on the game's PATH (harness mode `none`): after the consent the panel must say, in Japanese and without
-    technical words, that the AI is not ready, and nothing must be built."""
+    """No `claude` on the game's PATH (harness mode `none`): the panel knows it from its probe when it opens, so the child is told
+    at once, in Japanese and without technical words, that the AI is not ready - WITHOUT first being asked to consent to sending
+    a request that cannot go anywhere - no buttons stay on screen, and nothing is built."""
     if CONSENT_FILE.exists():
         CONSENT_FILE.unlink()
     _prepare_view(ctx)
@@ -147,20 +150,18 @@ def mvp_cli_missing(ctx):
     time.sleep(1)
     ctx.client.post("/open-ide", {"x": cx, "y": cy, "z": cz})
     ctx.client.post("/build-mode", {"enabled": True})
+    time.sleep(CLI_PROBE_WAIT_S)  # the panel probes `claude --version` when it opens: the request must come after the answer
     ctx.client.post("/send-message", {"text": REQUEST})
-    _wait_flow(ctx, {"NEED_CONSENT"}, FLOW_STEP_TIMEOUT_S)
-    ctx.client.post("/build-press", {"kind": "CONSENT_YES"})
-    deadline = time.monotonic() + FLOW_STEP_TIMEOUT_S
-    while True:
-        st = _state(ctx)
-        if st["buildFlowState"] == "FAILED":
-            break
-        assert time.monotonic() < deadline, f"the flow never failed: {st['buildFlowState']}"
-        time.sleep(POLL_S)
+    st, _ = _wait_flow(ctx, {"NEED_CONSENT", "FAILED"}, FLOW_STEP_TIMEOUT_S)
+    assert st["buildFlowState"] == "FAILED", f"the consent question came before the news that the AI is not ready: {st['buildFlowState']}"
+    time.sleep(POLL_S)
+    st = _state(ctx)
     text = st["buildTranscript"]
-    ctx.save_json("flow.json", {"state": st["buildFlowState"], "transcript": text})
+    ctx.save_json("flow.json", {"state": st["buildFlowState"], "transcript": text, "buttons": st["buildButtons"]})
     files = [ctx.out("flow.json"), _screenshot(ctx, "mvp-cli-missing")]
     assert "じゅんびが まだ" in text, f"the child was not told, in Japanese, that the AI is not ready: {text!r}"
+    assert "おくるよ" not in text, f"the consent question was asked although the AI is missing: {text!r}"
+    assert st["buildButtons"] == [], f"buttons stayed on screen after the failure: {st['buildButtons']}"
     assert not LEAK_PATTERN.findall(text), f"technical words in the child-visible text: {text!r}"
     pending = ctx.server.post("/build/pending", {"player": PLAYER})
     assert pending["state"] == "NONE", f"nothing may be submitted when the AI is missing: {pending}"

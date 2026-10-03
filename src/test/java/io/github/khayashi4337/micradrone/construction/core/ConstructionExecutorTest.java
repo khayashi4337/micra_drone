@@ -388,6 +388,69 @@ class ConstructionExecutorTest {
     }
 
     @Test
+    void anEntityInTheWayPausesTheBuildWithoutWritingRecordingOrCharging() {
+        PlacementManifest m = TestManifests.smallHut();
+        FakeWorld w = new FakeWorld();
+        IntPos spot = m.placements().get(3).pos();
+        w.occupy(spot);
+        FakeMaterials mats = new FakeMaterials().with("minecraft:cobblestone", 9).with("minecraft:oak_planks", 16);
+        ExecutionContext c = fresh(m, w, MaterialPolicy.SURVIVAL_CONSUME, mats);
+        StepReport r = ConstructionExecutor.run(c, 0, PLENTY);
+        assertEquals(PauseReason.ENTITY_IN_WAY, r.pause());
+        assertEquals(3, r.cursor(), "the cursor stays on the blocked position: it is not skipped");
+        assertEquals(BlockSpec.AIR, w.blockAt(spot), "nothing was written over the one standing there");
+        assertEquals(3, c.journal().size(), "the blocked position got no journal record");
+        assertEquals(3, c.registry().size(), "and no registry entry");
+        assertFalse(c.outcome().skipped().stream().anyMatch(sk -> sk.pos().equals(spot)),
+                "a wait is not a skip: the position is still owed");
+        assertEquals(6, mats.count("minecraft:cobblestone"), "three foundations paid, the blocked one not");
+        assertEquals(16, mats.count("minecraft:oak_planks"));
+    }
+
+    @Test
+    void theBuildResumesAtTheBlockedSpotOnceTheEntityStepsAside() {
+        PlacementManifest m = TestManifests.smallHut();
+        FakeWorld w = new FakeWorld();
+        IntPos spot = m.placements().get(3).pos();
+        w.occupy(spot);
+        FakeMaterials mats = new FakeMaterials().with("minecraft:cobblestone", 9).with("minecraft:oak_planks", 16);
+        ExecutionContext c = fresh(m, w, MaterialPolicy.SURVIVAL_CONSUME, mats);
+        StepReport paused = ConstructionExecutor.run(c, 0, PLENTY);
+        assertEquals(PauseReason.ENTITY_IN_WAY, paused.pause());
+        w.leave(spot);
+        StepReport r = ConstructionExecutor.run(c, paused.cursor(), PLENTY);
+        assertNull(r.pause());
+        assertEquals(25, r.cursor());
+        assertEquals(m.placements().get(3).block(), w.blockAt(spot), "the position that waited is really built");
+        assertEquals(0, mats.count("minecraft:cobblestone"));
+        assertEquals(0, mats.count("minecraft:oak_planks"), "every block is charged once, the retried one included");
+        assertEquals(25, c.journal().size());
+    }
+
+    @Test
+    void anEntityInTheWayHoldsUpOnlyItsOwnPosition() {
+        PlacementManifest m = TestManifests.smallHut();
+        FakeWorld w = new FakeWorld();
+        IntPos first = m.placements().get(3).pos();
+        IntPos later = m.placements().get(7).pos();
+        w.occupy(first);
+        w.occupy(later);
+        ExecutionContext c = fresh(m, w, MaterialPolicy.CREATIVE_FREE, MaterialPort.FREE);
+        StepReport r = ConstructionExecutor.run(c, 0, PLENTY);
+        assertEquals(PauseReason.ENTITY_IN_WAY, r.pause());
+        assertEquals(3, r.cursor());
+        w.leave(first);
+        StepReport next = ConstructionExecutor.run(c, r.cursor(), PLENTY);
+        assertEquals(PauseReason.ENTITY_IN_WAY, next.pause(), "the next blocked position waits in turn");
+        assertEquals(7, next.cursor());
+        assertEquals(m.placements().get(3).block(), w.blockAt(first), "the cleared position was placed");
+        assertEquals(BlockSpec.AIR, w.blockAt(later), "the still-blocked one was not");
+        w.leave(later);
+        assertNull(ConstructionExecutor.run(c, next.cursor(), PLENTY).pause());
+        assertEquals(25, c.journal().size());
+    }
+
+    @Test
     void aFailedApplyAfterTheWriteLeavesTheBlockJournaledAndPausesForRecovery() {
         PlacementManifest m = TestManifests.of(new Box(-1, 60, -1, 2, 70, 1),
                 List.of(TestManifests.put(0, 64, 0, "minecraft:oak_planks")));

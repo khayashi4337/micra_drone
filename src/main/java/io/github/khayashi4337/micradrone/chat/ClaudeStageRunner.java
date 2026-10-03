@@ -26,10 +26,11 @@ public final class ClaudeStageRunner implements StageCliRunner {
                 .thenApply(ClaudeStageRunner::toStageResult);
     }
 
-    private static StageResult toStageResult(ClaudeCliBridge.ClaudeCliResult result) {
+    static StageResult toStageResult(ClaudeCliBridge.ClaudeCliResult result) {
         boolean cliMissing = ClaudeCliBridge.CLI_NOT_FOUND_MESSAGE.equals(result.errorMessage());
+        boolean loginMissing = ClaudeCliErrors.looksLikeLoginMissing(result.errorMessage());
         return new StageResult(result.success(), result.responseText(), result.errorMessage(),
-                cliMissing);
+                cliMissing, loginMissing);
     }
 
     /** Stops the round trip in flight; the pending future then completes as a failed result. */

@@ -38,6 +38,19 @@ class FakeWorldTest {
     }
 
     @Test
+    void anOccupiedSpotRefusesACollidingWriteButNeverAir() {
+        FakeWorld w = new FakeWorld();
+        w.occupy(P);
+        assertEquals(PlaceResult.BLOCKED_BY_ENTITY, w.place(P, BlockSpec.of("minecraft:stone"), Map.of(), ACTOR));
+        assertEquals(BlockSpec.AIR, w.blockAt(P), "nothing was written");
+        assertEquals(PlaceResult.BLOCKED_BY_ENTITY, w.restore(P, BlockSpec.of("minecraft:stone"), ACTOR, true));
+        assertEquals(PlaceResult.PLACED, w.restore(P, BlockSpec.AIR, ACTOR, false),
+                "air has no collision shape: a removal always goes through");
+        w.leave(P);
+        assertEquals(PlaceResult.PLACED, w.place(P, BlockSpec.of("minecraft:stone"), Map.of(), ACTOR));
+    }
+
+    @Test
     void placedAndRestoredBlockEntitiesKeepTheirType() {
         FakeWorld w = new FakeWorld().blockEntity("minecraft:chest", "minecraft:chest");
         BlockSpec chest = BlockSpec.of("minecraft:chest");

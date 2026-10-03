@@ -3,6 +3,7 @@ package io.github.khayashi4337.micradrone.build.ai;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.khayashi4337.micradrone.build.ai.BuildChatFlow.Action;
@@ -15,14 +16,25 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
 class BuildChatFlowTest {
     private static final BuildChatFlow.PromptParts PARTS =
             new BuildChatFlow.PromptParts("{\"ops\":[]}", "micra:structure(...)", "minecraft:stone");
+    /** The item ids the test "catalog" knows; a materials directive naming anything else is invalid. */
+    private static final java.util.Set<String> KNOWN_ITEMS = java.util.Set.of(
+            "minecraft:diamond", "minecraft:emerald", "minecraft:cobblestone",
+            "minecraft:stone", "minecraft:oak_planks");
 
     private static BuildChatFlow flow(boolean consentGiven) {
-        return new BuildChatFlow(consentGiven, PARTS);
+        return new BuildChatFlow(consentGiven, PARTS, KNOWN_ITEMS::contains);
+    }
+
+    /** A flow whose game language the test can change mid-round by mutating the supplier's ref. */
+    private static BuildChatFlow flow(boolean consentGiven, Supplier<String> languageCode) {
+        return new BuildChatFlow(consentGiven, PARTS, KNOWN_ITEMS::contains, languageCode);
     }
 
     private static <T extends Action> T only(List<Action> actions, Class<T> type) {
@@ -61,6 +73,14 @@ class BuildChatFlowTest {
 
     private static String offerJson(String state, String hash, long blocks, long etaSeconds,
             long cut, long fill, boolean needsTerrain, boolean needsDestructive, List<Object> issues) {
+        return offerJson(state, hash, blocks, etaSeconds, cut, fill, needsTerrain, needsDestructive,
+                issues, null);
+    }
+
+    /** The offer doc as OfferView writes it since Task 27b: {@code materialPolicy} included (null = none). */
+    private static String offerJson(String state, String hash, long blocks, long etaSeconds,
+            long cut, long fill, boolean needsTerrain, boolean needsDestructive, List<Object> issues,
+            String materialPolicy) {
         Map<String, Object> t = new LinkedHashMap<>();
         t.put("state", state);
         t.put("hash", hash);
@@ -73,6 +93,7 @@ class BuildChatFlowTest {
         t.put("emptyContainers", 0L);
         t.put("needsTerrainConfirm", needsTerrain);
         t.put("needsDestructiveConfirm", needsDestructive);
+        t.put("materialPolicy", materialPolicy);
         t.put("issues", issues);
         return MiniJson.write(t);
     }
@@ -110,13 +131,26 @@ class BuildChatFlowTest {
 
     /** A mid-flight progress doc with an explicit {@code pause} name (null = not paused). */
     private static String pausedProgressJson(String jobId, long percent, String pause) {
+        return pausedProgressJson(jobId, null, percent, pause, false);
+    }
+
+    /**
+     * A mid-flight progress doc as Task 27b needs it: {@code kind}, {@code claimId} and
+     * {@code inventoryAllowed} written, so the materials-missing question knows the claim it
+     * would permit and whether the owner already said yes.
+     */
+    private static String pausedProgressJson(String jobId, String claimId, long percent, String pause,
+            boolean inventoryAllowed) {
         Map<String, Object> t = new LinkedHashMap<>();
         t.put("jobId", jobId);
+        t.put("kind", "BUILD");
+        t.put("claimId", claimId);
         t.put("state", pause == null ? "RUNNING" : "PAUSED");
         t.put("cursor", percent);
         t.put("total", 100L);
         t.put("percent", percent);
         t.put("pause", pause);
+        t.put("inventoryAllowed", inventoryAllowed);
         t.put("unrepaired", 0L);
         t.put("conflicts", 0L);
         t.put("done", false);
@@ -209,7 +243,8 @@ class BuildChatFlowTest {
         flow.request("こやを たてて");
         List<Action> actions = flow.aiReply(new StageResult(false, null, "not found", true));
         assertEquals(State.FAILED, flow.state());
-        assertEquals(BuildChatFlow.MSG_CLI_MISSING, only(actions, BuildChatFlow.Say.class).key());
+        assertEquals(BuildChatFlow.MSG_CLI_MISSING,
+                actionAt(actions, 0, BuildChatFlow.Say.class).key());
     }
 
     @Test
@@ -218,7 +253,8 @@ class BuildChatFlowTest {
         flow.request("こやを たてて");
         List<Action> actions = flow.aiReply(new StageResult(false, null, "timeout", false));
         assertEquals(State.FAILED, flow.state());
-        assertEquals(BuildChatFlow.MSG_AI_FAILED, only(actions, BuildChatFlow.Say.class).key());
+        assertEquals(BuildChatFlow.MSG_AI_FAILED,
+                actionAt(actions, 0, BuildChatFlow.Say.class).key());
     }
 
     @Test
@@ -227,7 +263,8 @@ class BuildChatFlowTest {
         flow.request("こやを たてて");
         List<Action> actions = flow.aiReply(aiOk("ごめん、わからない"));
         assertEquals(State.FAILED, flow.state());
-        assertEquals(BuildChatFlow.MSG_PLAN_FAILED, only(actions, BuildChatFlow.Say.class).key());
+        assertEquals(BuildChatFlow.MSG_PLAN_FAILED,
+                actionAt(actions, 0, BuildChatFlow.Say.class).key());
     }
 
     @Test
@@ -338,7 +375,8 @@ class BuildChatFlowTest {
         flow.aiReply(aiOk("```json\n{\"ops\":[],\"v\":3}\n```"));
         List<Action> actions = flow.offer(rejected);   // beyond MAX_REPAIRS = 2
         assertEquals(State.FAILED, flow.state());
-        assertEquals(BuildChatFlow.MSG_PLAN_FAILED, only(actions, BuildChatFlow.Say.class).key());
+        assertEquals(BuildChatFlow.MSG_PLAN_FAILED,
+                actionAt(actions, 0, BuildChatFlow.Say.class).key());
     }
 
     @Test
@@ -589,6 +627,13 @@ class BuildChatFlowTest {
         BuildChatFlow flow = atBuilding();
         assertEquals(List.of(), flow.progress(pausedProgressJson("job-1", 0, "NOT_A_REASON")),
                 "only the registered pause keys may reach a child line");
+    }
+
+    @Test
+    void anEntityInTheWayPauseIsSpokenToThePanel() {
+        BuildChatFlow flow = atBuilding();
+        List<Action> actions = flow.progress(pausedProgressJson("job-1", 0, "ENTITY_IN_WAY"));
+        assertEquals(List.of("micradrone.build.pause.entity_in_way"), sayKeys(actions));
     }
 
     private static final java.util.Set<PauseReason> PANEL_WORDED = java.util.Set.of(
@@ -879,6 +924,589 @@ class BuildChatFlowTest {
             assertFalse(text.contains("claim-secret"), "the claim id leaked: " + text);
             assertFalse(text.contains("job-secret"), "the build job id leaked: " + text);
             assertFalse(text.contains("job-rb"), "the rollback job id leaked: " + text);
+        }
+    }
+
+    // ---- (i) Task 27b: the missing-materials question and its buttons ---------------------------------
+
+    private static List<ButtonKind> shownButtons(List<Action> actions) {
+        return actions.stream()
+                .filter(a -> a instanceof BuildChatFlow.ShowButtons)
+                .map(a -> ((BuildChatFlow.ShowButtons) a).buttons())
+                .findFirst().orElseThrow(() -> new AssertionError("no ShowButtons in " + actions));
+    }
+
+    @Test
+    void aMaterialsPauseWithDisallowedInventoryAsksOnce() {
+        BuildChatFlow flow = atBuilding();
+        List<Action> first =
+                flow.progress(pausedProgressJson("job-1", CLAIM, 0, "MATERIALS_MISSING", false));
+        assertEquals(List.of(BuildChatFlow.MSG_ASK_INVENTORY), sayKeys(first),
+                "the question already says the materials are short: no plain shortage line before it");
+        assertEquals(List.of(ButtonKind.INVENTORY_YES, ButtonKind.INVENTORY_NO), shownButtons(first));
+        assertEquals(List.of(),
+                flow.progress(pausedProgressJson("job-1", CLAIM, 0, "MATERIALS_MISSING", false)),
+                "the same pause interval must not ask again");
+    }
+
+    @Test
+    void theShortageLineStaysWhenTheInventoryIsAlreadyAllowed() {
+        BuildChatFlow flow = atBuilding();
+        List<Action> actions =
+                flow.progress(pausedProgressJson("job-1", CLAIM, 0, "MATERIALS_MISSING", true));
+        assertEquals(List.of("micradrone.build.pause.materials_missing"), sayKeys(actions),
+                "with the inventory already allowed there is no question, so the plain line is what is said");
+        assertTrue(actions.stream().noneMatch(a -> a instanceof BuildChatFlow.ShowButtons),
+                "no yes/no buttons when there is no question");
+    }
+
+    @Test
+    void theInventoryQuestionReturnsWhenThePauseDoes() {
+        BuildChatFlow flow = atBuilding();
+        flow.progress(pausedProgressJson("job-1", CLAIM, 0, "MATERIALS_MISSING", false));
+        flow.progress(pausedProgressJson("job-1", CLAIM, 0, null, false)); // chests refilled, then short again
+        List<Action> again =
+                flow.progress(pausedProgressJson("job-1", CLAIM, 0, "MATERIALS_MISSING", false));
+        assertTrue(sayKeys(again).contains(BuildChatFlow.MSG_ASK_INVENTORY),
+                "a pause that cleared and returned is a new interval");
+        assertEquals(List.of(ButtonKind.INVENTORY_YES, ButtonKind.INVENTORY_NO), shownButtons(again));
+    }
+
+    @Test
+    void aMaterialsPauseWithAllowedInventoryDoesNotAsk() {
+        BuildChatFlow flow = atBuilding();
+        List<Action> actions =
+                flow.progress(pausedProgressJson("job-1", CLAIM, 0, "MATERIALS_MISSING", true));
+        assertEquals(List.of("micradrone.build.pause.materials_missing"), sayKeys(actions),
+                "the owner already said yes - the plain shortage line is all they hear");
+        assertTrue(actions.stream().noneMatch(a -> a instanceof BuildChatFlow.ShowButtons));
+    }
+
+    @Test
+    void aMaterialsPauseWithoutAClaimIdCannotOfferTheButtons() {
+        // the yes-button needs to name the claim: without a claim id there is no question to ask
+        BuildChatFlow flow = atBuilding();
+        List<Action> actions =
+                flow.progress(pausedProgressJson("job-1", null, 0, "MATERIALS_MISSING", false));
+        assertEquals(List.of("micradrone.build.pause.materials_missing"), sayKeys(actions));
+        assertTrue(actions.stream().noneMatch(a -> a instanceof BuildChatFlow.ShowButtons));
+        assertEquals(List.of(), flow.inventoryYes(),
+                "no question was shown, so its button cannot permit anything");
+    }
+
+    @Test
+    void inventoryYesSendsTheClaimPermissionAndHidesTheButtons() {
+        BuildChatFlow flow = atBuilding();
+        flow.progress(pausedProgressJson("job-1", CLAIM, 0, "MATERIALS_MISSING", false));
+        List<Action> actions = flow.inventoryYes();
+        BuildChatFlow.SendMaterials send = actionAt(actions, 0, BuildChatFlow.SendMaterials.class);
+        assertEquals(CLAIM, send.claimId());
+        assertEquals(Boolean.TRUE, send.allowed());
+        assertEquals(List.of(), send.exclude());
+        assertEquals(List.of(), send.include());
+        assertEquals(BuildChatFlow.MSG_INVENTORY_ON, actionAt(actions, 1, BuildChatFlow.Say.class).key());
+        assertTrue(actionAt(actions, 2, BuildChatFlow.ShowButtons.class).buttons().isEmpty());
+    }
+
+    @Test
+    void inventoryNoSaysNoAndSendsNothing() {
+        BuildChatFlow flow = atBuilding();
+        flow.progress(pausedProgressJson("job-1", CLAIM, 0, "MATERIALS_MISSING", false));
+        List<Action> actions = flow.inventoryNo();
+        assertEquals(BuildChatFlow.MSG_INVENTORY_OFF, actionAt(actions, 0, BuildChatFlow.Say.class).key());
+        assertTrue(actionAt(actions, 1, BuildChatFlow.ShowButtons.class).buttons().isEmpty());
+        assertTrue(actions.stream().noneMatch(a -> a instanceof BuildChatFlow.SendMaterials),
+                "no means no packet - the job stays paused until the chests are refilled");
+    }
+
+    @Test
+    void inventoryButtonsDoNothingOutsideBuilding() {
+        BuildChatFlow idle = flow(true);
+        assertEquals(List.of(), idle.inventoryYes());
+        assertEquals(List.of(), idle.inventoryNo());
+        assertEquals(State.IDLE, idle.state());
+        BuildChatFlow offered = atOffered();
+        assertEquals(List.of(), offered.inventoryYes());
+        assertEquals(List.of(), offered.inventoryNo());
+        assertEquals(State.OFFERED, offered.state());
+    }
+
+    @Test
+    void aSurvivalOfferExplainsTheChestSource() {
+        BuildChatFlow flow = atWaitingOffer();
+        List<Action> actions = flow.offer(
+                offerJson("OFFERED", "hash-1", 5, 20, 0, 0, false, false, List.of(), "SURVIVAL_CONSUME"));
+        List<String> keys = sayKeys(actions);
+        assertTrue(keys.indexOf(BuildChatFlow.MSG_OFFER_SOURCE) > keys.indexOf(BuildChatFlow.MSG_OFFER),
+                "the source line follows the offer line: " + keys);
+    }
+
+    @Test
+    void aCreativeOfferDoesNotNameAMaterialSource() {
+        BuildChatFlow flow = atWaitingOffer();
+        List<Action> actions = flow.offer(
+                offerJson("OFFERED", "hash-1", 5, 20, 0, 0, false, false, List.of(), "CREATIVE_FREE"));
+        assertFalse(sayKeys(actions).contains(BuildChatFlow.MSG_OFFER_SOURCE),
+                "creative spends nothing - naming chests would be a lie");
+    }
+
+    @Test
+    void anOfferWithoutThePolicyFieldNamesNoSource() {
+        // an older doc (or a refused submit) never claimed a material source, so neither does the panel
+        BuildChatFlow flow = atWaitingOffer();
+        List<Action> actions =
+                flow.offer(offerJson("OFFERED", "hash-1", 5, 20, 0, 0, false, false, List.of()));
+        assertFalse(sayKeys(actions).contains(BuildChatFlow.MSG_OFFER_SOURCE));
+    }
+
+    // ---- (j) Task 27b (追加): the materials directive a reply may carry -------------------------------
+
+    /** A reply with a plan block plus a {@code ```materials} frame holding {@code materialsJson}. */
+    private static StageResult aiOkWithMaterials(String says, String materialsJson) {
+        return aiOk(says + "\n```json\n{\"ops\":[]}\n```\n```materials\n" + materialsJson + "\n```");
+    }
+
+    private static BuildChatFlow.SendMaterials sendMaterials(List<Action> actions) {
+        return actions.stream()
+                .filter(a -> a instanceof BuildChatFlow.SendMaterials)
+                .map(a -> (BuildChatFlow.SendMaterials) a)
+                .findFirst().orElseThrow(() -> new AssertionError("no SendMaterials in " + actions));
+    }
+
+    @Test
+    void aMaterialsDirectiveIsConfirmedNowAndSentOnceTheClaimExists() {
+        BuildChatFlow flow = flow(true);
+        flow.request("ダイヤは つかわない こやを たてて");
+        List<Action> reply = flow.aiReply(aiOkWithMaterials("ダイヤなしで つくるよ",
+                "{\"materials\":{\"inventory\":true,\"exclude\":[\"minecraft:diamond\"]}}"));
+        assertEquals(State.WAITING_OFFER, flow.state());
+        assertTrue(sayKeys(reply).contains(BuildChatFlow.MSG_MATERIALS_CHANGED),
+                "an accepted directive always confirms itself to the child");
+        BuildChatFlow.Say excluded = reply.stream()
+                .filter(a -> a instanceof BuildChatFlow.Say s
+                        && s.key().equals(BuildChatFlow.MSG_MATERIALS_EXCLUDED))
+                .map(a -> (BuildChatFlow.Say) a).findFirst().orElseThrow();
+        assertEquals(List.of("minecraft:diamond"), excluded.args(),
+                "the item goes in as the arg - the screen turns it into the item's name");
+        assertTrue(reply.stream().noneMatch(a -> a instanceof BuildChatFlow.SendMaterials),
+                "no claim exists yet - the directive waits for the build's first document");
+        flow.offer(offerJson("OFFERED", "h", 5, 20, 0, 0, false, false, List.of()));
+        flow.approve();
+        List<Action> firstDoc =
+                flow.progress(progressJson("job-1", "BUILD", CLAIM, 5, false, false, 0, 0));
+        BuildChatFlow.SendMaterials send = sendMaterials(firstDoc);
+        assertEquals(CLAIM, send.claimId(), "the approved build's claim, not a remembered id");
+        assertEquals(Boolean.TRUE, send.allowed());
+        assertEquals(List.of("minecraft:diamond"), send.exclude());
+        assertEquals(List.of(), send.include());
+        assertTrue(flow.progress(progressJson("job-1", "BUILD", CLAIM, 10, false, false, 0, 0)).stream()
+                .noneMatch(a -> a instanceof BuildChatFlow.SendMaterials),
+                "the pending directive goes out exactly once");
+    }
+
+    @Test
+    void anIncludeOnlyDirectiveStillConfirmsAndSends() {
+        BuildChatFlow flow = flow(true);
+        flow.request("エメラルドも つかって いいよ");
+        List<Action> reply = flow.aiReply(aiOkWithMaterials("エメラルドも つかうよ",
+                "{\"materials\":{\"include\":[\"minecraft:emerald\"]}}"));
+        assertTrue(sayKeys(reply).contains(BuildChatFlow.MSG_MATERIALS_CHANGED));
+        assertTrue(sayKeys(reply).contains(BuildChatFlow.MSG_MATERIALS_INCLUDED));
+        flow.offer(offerJson("OFFERED", "h", 5, 20, 0, 0, false, false, List.of()));
+        flow.approve();
+        BuildChatFlow.SendMaterials send = sendMaterials(
+                flow.progress(progressJson("job-1", "BUILD", CLAIM, 5, false, false, 0, 0)));
+        assertNull(send.allowed(), "an absent inventory field asks for no change");
+        assertEquals(List.of("minecraft:emerald"), send.include());
+    }
+
+    @Test
+    void anInvalidDirectiveSendsNothingAndSaysUnclear() {
+        BuildChatFlow flow = flow(true);
+        flow.request("なんか つかわないで");
+        List<Action> reply = flow.aiReply(aiOkWithMaterials("こやを つくるよ",
+                "{\"materials\":{\"exclude\":[\"minecraft:command_block\"]}}"));
+        assertTrue(sayKeys(reply).contains(BuildChatFlow.MSG_MATERIALS_UNCLEAR),
+                "command_block is not in the test catalog - the child hears that it was not understood");
+        assertTrue(reply.stream().noneMatch(a -> a instanceof BuildChatFlow.SendMaterials));
+        flow.offer(offerJson("OFFERED", "h", 5, 20, 0, 0, false, false, List.of()));
+        flow.approve();
+        assertTrue(flow.progress(progressJson("job-1", "BUILD", CLAIM, 5, false, false, 0, 0)).stream()
+                .noneMatch(a -> a instanceof BuildChatFlow.SendMaterials),
+                "a dropped directive is never sent, not even partially");
+    }
+
+    @Test
+    void anEmptyDirectiveIsNeitherConfirmedNorSent() {
+        BuildChatFlow flow = flow(true);
+        flow.request("こやを たてて");
+        List<Action> reply = flow.aiReply(aiOkWithMaterials("こやを つくるよ", "{\"materials\":{}}"));
+        assertFalse(sayKeys(reply).contains(BuildChatFlow.MSG_MATERIALS_CHANGED),
+                "nothing changed, so nothing is confirmed");
+        flow.offer(offerJson("OFFERED", "h", 5, 20, 0, 0, false, false, List.of()));
+        flow.approve();
+        assertTrue(flow.progress(progressJson("job-1", "BUILD", CLAIM, 5, false, false, 0, 0)).stream()
+                .noneMatch(a -> a instanceof BuildChatFlow.SendMaterials));
+    }
+
+    @Test
+    void aMaterialsWordWhileBuildingStaysBusy() {
+        BuildChatFlow flow = atBuilding();
+        assertEquals(BuildChatFlow.MSG_BUSY,
+                only(flow.request("ダイヤは つかわないで"), BuildChatFlow.Say.class).key());
+        assertEquals(State.BUILDING, flow.state());
+    }
+
+    @Test
+    void theMaterialsControlsNeverLeakAClaimOrJobIdIntoAChildLine() {
+        BuildChatFlow flow = atBuilding();
+        List<Action> all = new ArrayList<>(
+                flow.progress(pausedProgressJson("job-secret", "claim-secret", 0, "MATERIALS_MISSING", false)));
+        all.addAll(flow.inventoryYes());
+        all.addAll(flow.progress(pausedProgressJson("job-secret", "claim-secret", 0, null, true)));
+        for (String text : allSayText(all)) {
+            assertFalse(text.contains("claim-secret"), "the claim id leaked: " + text);
+            assertFalse(text.contains("job-secret"), "the job id leaked: " + text);
+        }
+    }
+
+    // ---- (k) Task 27e: a materials request the server refused -------------------------------------
+
+    /** The offer doc the network answers a refused materials packet with: bare REJECTED, no issues. */
+    private static String rejectedOfferJson() {
+        return offerJson("REJECTED", null, 0, 0, 0, 0, false, false, List.of());
+    }
+
+    @Test
+    void aRejectedOfferAfterMaterialsWereSentTellsTheChild() {
+        BuildChatFlow flow = atBuilding();
+        flow.progress(pausedProgressJson("job-1", CLAIM, 0, "MATERIALS_MISSING", false));
+        List<Action> sent = flow.inventoryYes();
+        assertTrue(sent.stream().anyMatch(a -> a instanceof BuildChatFlow.SendMaterials));
+        List<Action> actions = flow.offer(rejectedOfferJson());
+        assertEquals(List.of(BuildChatFlow.MSG_MATERIALS_REFUSED), sayKeys(actions),
+                "the refusal of the packet just sent is the child's line");
+        assertEquals(List.of(), only(actions, BuildChatFlow.Say.class).args(),
+                "the refusal carries no ids and no technical text");
+        assertEquals(State.BUILDING, flow.state(), "the build itself goes on - only the ask failed");
+    }
+
+    @Test
+    void aRejectedOfferWithoutASentMaterialsAskStaysSilent() {
+        BuildChatFlow flow = atBuilding();
+        flow.progress(progressJson("job-1", "BUILD", CLAIM, 5, false, false, 0, 0));
+        assertEquals(List.of(), flow.offer(rejectedOfferJson()),
+                "no request went out, so a stray refusal is not the child's business");
+        assertEquals(State.BUILDING, flow.state());
+    }
+
+    @Test
+    void aRejectedOfferAnswersAParkedDirectiveToo() {
+        // the directive parked at the AI reply goes out with the build's first document (27b)
+        BuildChatFlow flow = flow(true);
+        flow.request("ダイヤは つかわない こやを たてて");
+        flow.aiReply(aiOkWithMaterials("ダイヤなしで つくるよ",
+                "{\"materials\":{\"exclude\":[\"minecraft:diamond\"]}}"));
+        flow.offer(offerJson("OFFERED", "h", 5, 20, 0, 0, false, false, List.of()));
+        flow.approve();
+        List<Action> firstDoc =
+                flow.progress(progressJson("job-1", "BUILD", CLAIM, 5, false, false, 0, 0));
+        assertTrue(firstDoc.stream().anyMatch(a -> a instanceof BuildChatFlow.SendMaterials),
+                "the parked materials ask leaves with the first progress document");
+        assertEquals(List.of(BuildChatFlow.MSG_MATERIALS_REFUSED),
+                sayKeys(flow.offer(rejectedOfferJson())));
+    }
+
+    @Test
+    void aFailedOfferIsNotTheMaterialsRefusal() {
+        BuildChatFlow flow = atBuilding();
+        flow.progress(pausedProgressJson("job-1", CLAIM, 0, "MATERIALS_MISSING", false));
+        flow.inventoryYes();
+        // FAILED while the job id is known is a job document the panel ignores, not the answer to
+        // the materials packet - only a bare REJECTED is
+        assertEquals(List.of(), flow.offer(
+                offerJson("FAILED", null, 0, 0, 0, 0, false, false, List.of())));
+    }
+
+    @Test
+    void aRefusedMaterialsAskMustBeSentAgainToBeRefusedAgain() {
+        BuildChatFlow flow = atBuilding();
+        flow.progress(pausedProgressJson("job-1", CLAIM, 0, "MATERIALS_MISSING", false));
+        flow.inventoryYes();
+        flow.offer(rejectedOfferJson());
+        assertEquals(List.of(), flow.offer(rejectedOfferJson()),
+                "the refusal was already told; nothing else was sent to answer");
+    }
+
+    @Test
+    void theNewMaterialLinesStayFreeOfCommandsAndIds() throws java.io.IOException {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> ja = (Map<String, Object>) MiniJson.parse(java.nio.file.Files.readString(
+                java.nio.file.Path.of("src/main/resources/assets/micradrone/lang/ja_jp.json"),
+                java.nio.charset.StandardCharsets.UTF_8));
+        for (String key : List.of(BuildChatFlow.MSG_ASK_INVENTORY, BuildChatFlow.MSG_INVENTORY_ON,
+                BuildChatFlow.MSG_INVENTORY_OFF, BuildChatFlow.MSG_OFFER_SOURCE,
+                BuildChatFlow.MSG_MATERIALS_CHANGED, BuildChatFlow.MSG_MATERIALS_UNCLEAR,
+                BuildChatFlow.MSG_MATERIALS_REFUSED)) {
+            String text = (String) ja.get(key);
+            assertTrue(text != null, "missing ja text for " + key);
+            assertFalse(text.contains("/micradrone") || text.contains("%1$s")
+                    || text.contains("recover") || text.contains("resume"), key + ": " + text);
+        }
+        for (String key : List.of(BuildChatFlow.MSG_MATERIALS_EXCLUDED, BuildChatFlow.MSG_MATERIALS_INCLUDED)) {
+            String text = (String) ja.get(key);
+            assertTrue(text != null && text.contains("%1$s"),
+                    "the item's display name goes in as the arg: " + key);
+            assertFalse(text.contains("/micradrone") || text.contains("%2$s")
+                    || text.contains("recover") || text.contains("resume"), key + ": " + text);
+        }
+    }
+
+    // ---- L1: the one-liner language comes from the game's language setting ------------------------------
+
+    @Test
+    void theAskPromptUsesTheLanguageTheSupplierReportsNow() {
+        BuildChatFlow flow = flow(true, () -> "en_us");
+        List<Action> actions = flow.request("こやを たてて");
+        String prompt = askAi(actions).prompt();
+        assertTrue(prompt.contains("English"),
+                "an en_us game language must produce the English one-liner rule");
+        assertFalse(prompt.contains(BuildPromptBuilder.WAKACHI_RULE));
+    }
+
+    @Test
+    void aLanguageChangeAppliesFromTheNextRequest() {
+        AtomicReference<String> lang = new AtomicReference<>("en_us");
+        BuildChatFlow flow = flow(true, lang::get);
+        flow.request("こやを たてて");
+        flow.aiReply(new StageResult(false, null, "boom", false)); // ends the round at FAILED
+        assertEquals(State.FAILED, flow.state());
+        lang.set("th_th");
+        String prompt = askAi(flow.request("もういちど こやを たてて")).prompt();
+        assertTrue(prompt.contains("Thai"),
+                "the supplier is re-read per request - a language switch applies immediately");
+        assertFalse(prompt.contains("English"));
+    }
+
+    @Test
+    void aRepairPromptAlsoUsesTheCurrentLanguage() {
+        BuildChatFlow flow = flow(true, () -> "en_us");
+        flow.request("こやを たてて");
+        flow.aiReply(aiOk("こやを つくるよ\n```json\n{\"ops\":[]}\n```"));
+        List<Action> actions = flow.offer(offerJson("REJECTED", null, 0, 0, 0, 0, false, false,
+                List.of(issueEntry(null, "bad part"))));
+        String prompt = askAi(actions).prompt();
+        assertTrue(prompt.contains("English"), "the repair prompt names the current language too");
+        assertFalse(prompt.contains(BuildPromptBuilder.WAKACHI_RULE));
+    }
+
+    @Test
+    void theThreeArgumentConstructorKeepsJapanese() {
+        List<Action> actions = flow(true).request("こやを たてて");
+        assertTrue(askAi(actions).prompt().contains(BuildPromptBuilder.WAKACHI_RULE),
+                "the legacy constructor is the fixed-Japanese behaviour");
+    }
+
+    // ---- A1: a CLI the probe knows is missing, a logged-out CLI, and repeated failures -----------
+
+    /** A flow whose CLI probe answer the test can flip by mutating the supplier's reference. */
+    private static BuildChatFlow flow(boolean consentGiven, AtomicReference<Boolean> cliAvailable) {
+        return new BuildChatFlow(consentGiven, PARTS, KNOWN_ITEMS::contains,
+                () -> "ja_jp", cliAvailable::get);
+    }
+
+    /**
+     * The FAILED end-state's contract (A1): the transition's LAST ShowButtons is an empty list, so
+     * no dangling consent/build buttons are left under a child who cannot press them safely.
+     */
+    private static void assertFailedWithClosedButtons(BuildChatFlow flow, List<Action> actions) {
+        assertEquals(State.FAILED, flow.state());
+        List<BuildChatFlow.ShowButtons> shown = actions.stream()
+                .filter(a -> a instanceof BuildChatFlow.ShowButtons)
+                .map(a -> (BuildChatFlow.ShowButtons) a)
+                .toList();
+        assertFalse(shown.isEmpty(), "a FAILED transition must close the button row: " + actions);
+        assertTrue(shown.get(shown.size() - 1).buttons().isEmpty(),
+                "the last ShowButtons of a FAILED transition is empty: " + actions);
+    }
+
+    @Test
+    void aRequestWithAKnownMissingCliIsRefusedBeforeConsent() {
+        BuildChatFlow flow = flow(false, new AtomicReference<>(Boolean.FALSE));
+        List<Action> actions = flow.request("こやを たてて");
+        assertEquals(State.FAILED, flow.state());
+        assertEquals(2, actions.size());
+        assertEquals(BuildChatFlow.MSG_CLI_MISSING,
+                actionAt(actions, 0, BuildChatFlow.Say.class).key());
+        assertTrue(actionAt(actions, 1, BuildChatFlow.ShowButtons.class).buttons().isEmpty());
+        assertTrue(actions.stream().noneMatch(a -> a instanceof BuildChatFlow.AskAi),
+                "no AI call goes out for a CLI known to be absent");
+    }
+
+    @Test
+    void aRefusedRequestIsNotRememberedAndTheNextRequestStartsNormally() {
+        AtomicReference<Boolean> available = new AtomicReference<>(Boolean.FALSE);
+        BuildChatFlow flow = flow(false, available);
+        flow.request("さいしょの おねがい");
+        assertEquals(State.FAILED, flow.state());
+        // the grown-up installs the CLI: the very next request must walk the ordinary path, and
+        // the refused text must not surface inside the AI's prompt later
+        available.set(Boolean.TRUE);
+        List<Action> asked = flow.request("つぎの おねがい");
+        assertEquals(State.NEED_CONSENT, flow.state());
+        assertEquals(BuildChatFlow.MSG_CONSENT, actionAt(asked, 0, BuildChatFlow.Say.class).key());
+        BuildChatFlow.AskAi ask = askAi(flow.consent(true));
+        assertTrue(ask.prompt().contains("つぎの おねがい"));
+        assertFalse(ask.prompt().contains("さいしょの おねがい"),
+                "the refused request's text must not be remembered");
+    }
+
+    @Test
+    void aKnownPresentOrUnprobedCliKeepsTheConsentFlow() {
+        for (Boolean probe : new Boolean[]{Boolean.TRUE, null}) {
+            BuildChatFlow flow = new BuildChatFlow(false, PARTS, KNOWN_ITEMS::contains,
+                    () -> "ja_jp", () -> probe);
+            List<Action> actions = flow.request("こやを たてて");
+            assertEquals(State.NEED_CONSENT, flow.state());
+            assertEquals(BuildChatFlow.MSG_CONSENT,
+                    actionAt(actions, 0, BuildChatFlow.Say.class).key());
+        }
+    }
+
+    @Test
+    void aLoggedOutReplyFailsWithTheLoginMissingLineAndNoButtons() {
+        BuildChatFlow flow = flow(true);
+        flow.request("こやを たてて");
+        List<Action> actions = flow.aiReply(new StageResult(false, null,
+                "Not logged in · Please run /login", false, true));
+        assertEquals(State.FAILED, flow.state());
+        assertEquals(2, actions.size());
+        assertEquals(BuildChatFlow.MSG_LOGIN_MISSING,
+                actionAt(actions, 0, BuildChatFlow.Say.class).key());
+        assertTrue(actionAt(actions, 1, BuildChatFlow.ShowButtons.class).buttons().isEmpty());
+    }
+
+    @Test
+    void everyTransitionToFailedClosesTheButtonRow() {
+        // a plain AI failure
+        BuildChatFlow aiFailed = flow(true);
+        aiFailed.request("こや");
+        assertFailedWithClosedButtons(aiFailed,
+                aiFailed.aiReply(new StageResult(false, null, "boom", false)));
+
+        // the missing-CLI reply
+        BuildChatFlow cli = flow(true);
+        cli.request("こや");
+        assertFailedWithClosedButtons(cli,
+                cli.aiReply(new StageResult(false, null, "not found", true)));
+
+        // the logged-out reply
+        BuildChatFlow login = flow(true);
+        login.request("こや");
+        assertFailedWithClosedButtons(login, login.aiReply(new StageResult(false, null,
+                "Not logged in · Please run /login", false, true)));
+
+        // a reply without a JSON block (planFailed)
+        BuildChatFlow plan = flow(true);
+        plan.request("こや");
+        assertFailedWithClosedButtons(plan, plan.aiReply(aiOk("ごめん、わからない")));
+
+        // a malformed offer while waiting for one
+        BuildChatFlow malformed = atWaitingOffer();
+        assertFailedWithClosedButtons(malformed, malformed.offer("this is not json"));
+
+        // an OFFERED doc whose hash is missing
+        BuildChatFlow noHash = atWaitingOffer();
+        assertFailedWithClosedButtons(noHash, noHash.offer(
+                offerJson("OFFERED", null, 5, 20, 0, 0, false, false, List.of())));
+
+        // a REJECTED doc whose issues array is unreadable
+        BuildChatFlow badIssues = atWaitingOffer();
+        assertFailedWithClosedButtons(badIssues,
+                badIssues.offer("{\"offer\":{\"state\":\"REJECTED\",\"issues\":[7]}}"));
+
+        // repairs used up on a third rejection
+        BuildChatFlow exhausted = atWaitingOffer();
+        String rejected = offerJson("REJECTED", null, 0, 0, 0, 0, false, false,
+                List.of(issueEntry(null, "bad part")));
+        exhausted.offer(rejected);
+        exhausted.aiReply(aiOk("```json\n{\"ops\":[]}\n```"));
+        exhausted.offer(rejected);
+        exhausted.aiReply(aiOk("```json\n{\"ops\":[]}\n```"));
+        assertFailedWithClosedButtons(exhausted, exhausted.offer(rejected));
+
+        // the approve refused by the server
+        BuildChatFlow refused = atBuilding();
+        assertFailedWithClosedButtons(refused, refused.offer(
+                offerJson("REJECTED", null, 0, 0, 0, 0, false, false, List.of())));
+
+        // the up-front refusal while the CLI is known absent
+        BuildChatFlow absent = flow(true, new AtomicReference<>(Boolean.FALSE));
+        assertFailedWithClosedButtons(absent, absent.request("こや"));
+    }
+
+    /** A1: the first action of a FAILED reply is its Say - the ShowButtons that follows is checked elsewhere. */
+    private static BuildChatFlow.Say firstSay(List<Action> actions) {
+        return actionAt(actions, 0, BuildChatFlow.Say.class);
+    }
+
+    @Test
+    void theSecondPlainFailureInARowAsksForAGrownUp() {
+        BuildChatFlow flow = flow(true);
+        flow.request("こや");
+        assertEquals(BuildChatFlow.MSG_AI_FAILED,
+                firstSay(flow.aiReply(new StageResult(false, null, "boom", false))).key(),
+                "the first failure still says try again");
+        flow.request("こや");
+        assertEquals(BuildChatFlow.MSG_AI_FAILED_ADULT,
+                firstSay(flow.aiReply(new StageResult(false, null, "boom", false))).key(),
+                "the second in a row asks for a grown-up");
+        flow.request("こや");
+        assertEquals(BuildChatFlow.MSG_AI_FAILED_ADULT,
+                firstSay(flow.aiReply(new StageResult(false, null, "boom", false))).key(),
+                "and every failure after keeps asking");
+    }
+
+    @Test
+    void aSuccessfulReplyResetsTheGrownUpCount() {
+        BuildChatFlow flow = flow(true);
+        flow.request("こや");
+        flow.aiReply(new StageResult(false, null, "boom", false)); // first plain failure
+        flow.request("こや");
+        flow.aiReply(aiOk("こやを つくるよ\n```json\n{\"ops\":[]}\n```")); // the AI answered - count resets
+        flow.offer(offerJson("REJECTED", null, 0, 0, 0, 0, false, false,
+                List.of(issueEntry(null, "bad part")))); // repair round 1 -> ASKING_AI
+        List<Action> actions = flow.aiReply(new StageResult(false, null, "boom", false));
+        assertEquals(BuildChatFlow.MSG_AI_FAILED, firstSay(actions).key(),
+                "a success in between restarts the count at one");
+    }
+
+    @Test
+    void cliAndLoginFailuresDoNotCountTowardTheGrownUpLine() {
+        BuildChatFlow flow = flow(true);
+        flow.request("こや");
+        flow.aiReply(new StageResult(false, null, "not found", true));
+        flow.request("こや");
+        flow.aiReply(new StageResult(false, null, "Not logged in · Please run /login", false, true));
+        flow.request("こや");
+        assertEquals(BuildChatFlow.MSG_AI_FAILED,
+                firstSay(flow.aiReply(new StageResult(false, null, "boom", false))).key(),
+                "cliMissing/loginMissing are not retries of the same kind - the count starts at one");
+    }
+
+    @Test
+    void theNewChildLinesStayFreeOfCommandsAndJargon() throws java.io.IOException {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> ja = (Map<String, Object>) MiniJson.parse(java.nio.file.Files.readString(
+                java.nio.file.Path.of("src/main/resources/assets/micradrone/lang/ja_jp.json"),
+                java.nio.charset.StandardCharsets.UTF_8));
+        for (String key : List.of(BuildChatFlow.MSG_LOGIN_MISSING, BuildChatFlow.MSG_AI_FAILED_ADULT,
+                "gui.micradrone.ide_screen.build_cli_missing")) {
+            String text = (String) ja.get(key);
+            assertTrue(text != null, "missing ja text for " + key);
+            assertFalse(text.contains("/micradrone") || text.contains("%1$s"), key + ": " + text);
+            assertFalse(text.toLowerCase(java.util.Locale.ROOT).contains("claude"),
+                    key + " must not name the tool (only cli_missing may): " + text);
         }
     }
 }

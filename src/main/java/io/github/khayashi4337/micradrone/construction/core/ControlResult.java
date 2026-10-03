@@ -5,5 +5,7 @@ public enum ControlResult {
     OK,
     NOT_FOUND,
     NOT_ALLOWED,
-    WRONG_STATE
+    WRONG_STATE,
+    /** The change was valid, but the write that would make it survive a restart failed (Task 27e). */
+    SAVE_FAILED
 }

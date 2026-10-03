@@ -14,7 +14,11 @@ public final class ProgressView {
     private ProgressView() {
     }
 
-    public static Map<String, Object> tree(JobStatus s) {
+    /**
+     * The running document. {@code inventoryAllowed} (Task 27a) is the claim's current supply switch,
+     * so the panel can tell whether the owner already allowed their things to be used.
+     */
+    public static Map<String, Object> tree(JobStatus s, boolean inventoryAllowed) {
         Map<String, Object> t = new LinkedHashMap<>();
         t.put("jobId", s.jobId());
         t.put("kind", s.kind().name());
@@ -24,6 +28,7 @@ public final class ProgressView {
         t.put("total", (long) s.total());
         t.put("percent", percent(s.cursor(), s.total()));
         t.put("pause", s.shownPause() == null ? null : s.shownPause().name());
+        t.put("inventoryAllowed", inventoryAllowed);
         t.put("unrepaired", (long) s.unrepaired());
         t.put("conflicts", (long) s.conflicts());
         t.put("done", s.state() == JobState.VERIFIED);
@@ -36,7 +41,7 @@ public final class ProgressView {
      * and the service drops the job's record, so no {@link JobStatus} exists to read. {@code unrepaired} and {@code conflicts} are
      * only known to the record, so they read 0 here (the final document of a VERIFIED job has none anyway).
      */
-    public static Map<String, Object> finalTree(ConstructionJob job) {
+    public static Map<String, Object> finalTree(ConstructionJob job, boolean inventoryAllowed) {
         Map<String, Object> t = new LinkedHashMap<>();
         t.put("jobId", job.jobId());
         t.put("kind", job.kind().name());
@@ -46,6 +51,7 @@ public final class ProgressView {
         t.put("total", (long) job.total());
         t.put("percent", percent(job.cursor(), job.total()));
         t.put("pause", job.pauseReason() == null ? null : job.pauseReason().name());
+        t.put("inventoryAllowed", inventoryAllowed);
         t.put("unrepaired", 0L);
         t.put("conflicts", 0L);
         t.put("done", job.state() == JobState.VERIFIED);
