@@ -941,12 +941,23 @@ class BuildChatFlowTest {
         BuildChatFlow flow = atBuilding();
         List<Action> first =
                 flow.progress(pausedProgressJson("job-1", CLAIM, 0, "MATERIALS_MISSING", false));
-        assertEquals(List.of("micradrone.build.pause.materials_missing", BuildChatFlow.MSG_ASK_INVENTORY),
-                sayKeys(first), "the shortage line stays, then the question");
+        assertEquals(List.of(BuildChatFlow.MSG_ASK_INVENTORY), sayKeys(first),
+                "the question already says the materials are short: no plain shortage line before it");
         assertEquals(List.of(ButtonKind.INVENTORY_YES, ButtonKind.INVENTORY_NO), shownButtons(first));
         assertEquals(List.of(),
                 flow.progress(pausedProgressJson("job-1", CLAIM, 0, "MATERIALS_MISSING", false)),
                 "the same pause interval must not ask again");
+    }
+
+    @Test
+    void theShortageLineStaysWhenTheInventoryIsAlreadyAllowed() {
+        BuildChatFlow flow = atBuilding();
+        List<Action> actions =
+                flow.progress(pausedProgressJson("job-1", CLAIM, 0, "MATERIALS_MISSING", true));
+        assertEquals(List.of("micradrone.build.pause.materials_missing"), sayKeys(actions),
+                "with the inventory already allowed there is no question, so the plain line is what is said");
+        assertTrue(actions.stream().noneMatch(a -> a instanceof BuildChatFlow.ShowButtons),
+                "no yes/no buttons when there is no question");
     }
 
     @Test

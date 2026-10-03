@@ -595,20 +595,20 @@ public final class BuildChatFlow {
         } else {
             if (!pause.equals(lastAnnouncedPause)) {
                 String pauseKey = PAUSE_KEY_PREFIX + pause.toLowerCase(Locale.ROOT);
-                if (PANEL_PAUSE_KEYS.containsKey(pauseKey)) {
-                    out.add(say(PANEL_PAUSE_KEYS.get(pauseKey)));
-                } else if (PAUSE_KEYS.contains(pauseKey)) {
-                    out.add(say(pauseKey));
-                }
                 // 27b: a materials shortage while the owner has NOT allowed the inventory gets the
-                // yes/no question beside the usual line - once per pause interval (the dedupe by
-                // lastAnnouncedPause already keeps the same pause from asking twice). With the
-                // switch already on, or with no claim to name, only the plain line stays.
+                // yes/no question INSTEAD of the plain line (the question already opens with "the
+                // materials are short"; both lines in a row read as a stutter) - once per pause
+                // interval (the dedupe by lastAnnouncedPause already keeps the same pause from asking
+                // twice). With the switch already on, or with no claim to name, only the plain line stays.
                 boolean inventoryAllowed = Boolean.TRUE.equals(tree.get("inventoryAllowed"));
                 if (PAUSE_MATERIALS_MISSING.equals(pause) && !inventoryAllowed
                         && buildingClaimId != null) {
                     out.add(say(MSG_ASK_INVENTORY));
                     out.add(new ShowButtons(List.of(ButtonKind.INVENTORY_YES, ButtonKind.INVENTORY_NO)));
+                } else if (PANEL_PAUSE_KEYS.containsKey(pauseKey)) {
+                    out.add(say(PANEL_PAUSE_KEYS.get(pauseKey)));
+                } else if (PAUSE_KEYS.contains(pauseKey)) {
+                    out.add(say(pauseKey));
                 }
             }
             lastAnnouncedPause = pause;
