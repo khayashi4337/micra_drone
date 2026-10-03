@@ -14826,6 +14826,13 @@ MSG
 
 ### Task 27: 材料(サバイバルの消費・補給チェスト・不足で停止・補給で再開・整地の資源)
 
+> **設計変更(所有者合意 2026-10-02)――この Task 27 の下の記述のうち、補給チェストの登録と持ち物を先に使う順は置き換え済み。実装は次のとおり(PR #56、コミット aa7944e・e684c0f・b170edc・b740e91 ほか)。**
+> - **補給チェストは登録しない**(`SupplyRegistry`・`supply add <pos>` は作らない)。区画の稼働の箱の中の**チェストとたる**を自動で使う(座標順。大きなチェストは1つの出どころに正規化し、**両方の半分が箱の中のとき**だけ使う)。
+> - **持ち物は、区画ごとの許可(`SupplySettings.inventoryAllowed`、初期値は使わない)があるときだけ使う**。子供が「チェストに材料を入れておいたのに自分の丸石が減る」と困らないため。足りないときはパネルが「もちものからも つかう?」と聞く。会話で「ダイヤは つかわないで」のように除外品も指定できる(`excludedItems`)。
+> - 渡す側(整地の資源・返却)は、入る所のあるチェストを先、なければ持ち物、どちらも入らなければ `NO_ROOM`。地面には落とさない。
+> - 材料の移動は、スロットの写し(`SlotPlan`)の上で「取る全部→渡す全部」を試し、全部できるときだけ実際に動かす。同意の保存に失敗したらメモリを戻して `SAVE_FAILED` を返す。
+> - 台本は `tools/p4/scenarios_materials.py`・`scenarios_materials_panel.py`・`scenarios_materials_refund.py`(survival-materials / mvp-materials-panel / survival-refund)。**未実施: terrain-survival・no-room(条件7・12の PARTIAL)**。
+
 **担当**: Java(`src/`)とそのコミットはDevin。台本(`tools/p4`)・devkit・`docs/`・実機の確認とそのコミットはコントローラ(Claude)(Global Constraintsの「担当の分け方」)。
 
 **Files:**
