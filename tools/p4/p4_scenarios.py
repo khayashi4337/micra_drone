@@ -66,9 +66,9 @@ PENDING_CONDITIONS = {
 # Conditions whose scenarios pass but do not cover the whole condition text -> what is missing and who adds it.
 # The condition shows as PARTIAL in summary.json until its task removes it here (Task 38 requires this to be empty).
 PARTIAL_CONDITIONS = {
-    7: "Task 27c: no-room (a refund that does not fit pauses and drops nothing) and the crash-barrier survival set (Task 34); cancel-does-not-refund and rollback-return not yet exercised with survival",
+    7: "Task 27e: no-room (a refund that does not fit pauses and drops nothing) and the crash-barrier survival set (Task 34); cancel-does-not-refund and rollback-return ARE exercised (survival-refund)",
     8: "Task 30: block-entity blocks in general (only a chest with items is exercised so far)",
-    12: "Task 27: survival - cut blocks gathered to the owner, fill blocks consumed, nothing created or lost",
+    12: "Task 27e: terrain-survival (not written yet) - cut blocks gathered to the owner, fill blocks consumed, nothing created or lost",
     4: "Task 34: the same crash/restart/rollback checks on a dedicated server (needs the owner's EULA file); crash at every boundary",
     14: "Task 28b: the job files kept until the claim is released and swept at the next start (restart after a rollback not exercised)",
 }
