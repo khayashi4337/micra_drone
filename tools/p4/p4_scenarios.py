@@ -9,7 +9,7 @@ import time
 import traceback
 from dataclasses import dataclass
 
-from tools.p4 import devkit_client, evidence, harness, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_materials, scenarios_materials_panel, scenarios_materials_refund, scenarios_mvp, scenarios_regression, scenarios_restart, scenarios_rollback, scenarios_show, scenarios_undo
+from tools.p4 import devkit_client, evidence, harness, scenarios_ai_down, scenarios_approval, scenarios_basic, scenarios_l7, scenarios_materials, scenarios_materials_panel, scenarios_materials_refund, scenarios_mvp, scenarios_regression, scenarios_restart, scenarios_rollback, scenarios_show, scenarios_undo
 
 MODES = ("sp", "mp", "mp2")
 RESTART_LIMIT = 1
@@ -40,6 +40,7 @@ SCENARIOS = {
     "mvp-site-blocked": Scenario(scenarios_mvp.mvp_site_blocked, (), "sp"),
     "mvp-japanese-hut-real": Scenario(scenarios_mvp.mvp_japanese_hut, (), "sp", claude=harness.CLAUDE_REAL),
     "mvp-cli-missing": Scenario(scenarios_mvp.mvp_cli_missing, (), "sp", claude=harness.CLAUDE_NONE),
+    "mvp-ai-not-working": Scenario(scenarios_ai_down.mvp_ai_not_working, (), "sp"),
     "hut-here": Scenario(scenarios_basic.hut_here, (1, 12), "sp"),
     "bad-source": Scenario(scenarios_basic.bad_source, (), "sp"),
     "drone-show": Scenario(scenarios_show.drone_show, (1,), "sp"),

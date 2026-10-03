@@ -15,6 +15,12 @@ RED_ROOF = "minecraft:red_nether_bricks"
 SESSION_ID = "stub-session"
 LAST_PROMPT_LOG = Path(__file__).resolve().parent / "last_prompt.txt"  # diagnostics: what the game really sent (git-ignored)
 LOG_TAIL_CHARS = 400
+# A scenario switches the stub's behaviour between requests by writing one word into this file (no game restart needed):
+#   login -> what the real CLI prints when nobody is logged in (measured 2026-10-03 with an empty CLAUDE_CONFIG_DIR)
+#   boom  -> an ordinary failure of the AI call
+# no file (or an empty one) -> the canned plan. The file is git-ignored.
+MODE_FILE = Path(__file__).resolve().parent / "mode.txt"
+LOGIN_MISSING_RESULT = "Not logged in \u00b7 Please run /login"
 
 
 def canned_reply(prompt):
@@ -35,7 +41,13 @@ def main():
     raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")
     with LAST_PROMPT_LOG.open("a", encoding="utf-8") as log:  # one entry per real request, newest last
         log.write(f"--- argv={sys.argv[1:]} chars={len(raw)}\n...{raw[-LOG_TAIL_CHARS:]}\n")
-    reply = {"type": "result", "is_error": False, "result": canned_reply(raw), "session_id": SESSION_ID}
+    mode = MODE_FILE.read_text(encoding="utf-8").strip() if MODE_FILE.exists() else ""
+    if mode == "login":
+        reply = {"type": "result", "is_error": True, "result": LOGIN_MISSING_RESULT, "session_id": SESSION_ID}
+    elif mode == "boom":
+        reply = {"type": "result", "is_error": True, "result": "API Error: boom", "session_id": SESSION_ID}
+    else:
+        reply = {"type": "result", "is_error": False, "result": canned_reply(raw), "session_id": SESSION_ID}
     sys.stdout.write(json.dumps(reply, ensure_ascii=True))
     sys.stdout.flush()
 
