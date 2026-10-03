@@ -981,19 +981,8 @@ public final class ConstructionRuntime {
      * the child-facing line, when there is one, is the caller's to phrase.
      */
     public ControlResult setInventoryAllowed(UUID requester, boolean op, String claimId, boolean allowed) {
-        SiteClaim claim = claims.find(claimId).orElse(null);
-        if (claim == null || claim.released()) {
-            return ControlResult.NOT_FOUND;
-        }
-        if (!claim.ownerUuid().equals(requester) && !op) {
-            return ControlResult.NOT_ALLOWED;
-        }
-        // a switch flip is only an answer when the disk would answer the same on a restart
-        // (Task 27e): a save that failed rolls the in-memory book back and comes back SAVE_FAILED
-        return SupplyChange.apply(supply, claimId,
-                new SupplySettings(allowed, supply.of(claimId).excludedItems()),
-                this::saveSupplyIfChanged)
-                ? ControlResult.OK : ControlResult.SAVE_FAILED;
+        // the same owner-or-operator door, save-or-roll-back and result as the panel's richer update: only the switch is given
+        return updateSupplySettings(requester, op, claimId, allowed, null, null);
     }
 
     /**
