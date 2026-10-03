@@ -49,6 +49,8 @@ def mvp_ai_not_working(ctx):
     ctx.client.post("/open-ide", {"x": cx, "y": cy, "z": cz})
     ctx.client.post("/build-mode", {"enabled": True})
     time.sleep(PROBE_WAIT_S)
+    # an earlier scenario may have left this player's last submission behind: "nothing was submitted" means "unchanged", not "none"
+    pending_before = ctx.server.post("/build/pending", {"player": PLAYER})
 
     with stub_mode("login"):
         st = _send(ctx, REQUEST)
@@ -61,7 +63,8 @@ def mvp_ai_not_working(ctx):
         files.append(_screenshot(ctx, "ai-login-missing"))
         ctx.save_json("login.json", {"transcript": st["buildTranscript"], "buttons": st["buildButtons"]})
         files.append(ctx.out("login.json"))
-        assert ctx.server.post("/build/pending", {"player": PLAYER})["state"] == "NONE", "something was submitted without an AI"
+        pending_after = ctx.server.post("/build/pending", {"player": PLAYER})
+        assert (pending_after.get("state"), pending_after.get("hash")) == (pending_before.get("state"), pending_before.get("hash")),             f"something was submitted without an AI: {pending_before} -> {pending_after}"
 
     with stub_mode("boom"):
         before = _state(ctx)["buildTranscript"]
